@@ -1,0 +1,78 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+model User {
+  id        String   @id 
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  connections Connection[]
+
+  @@map("users")
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  connections Connection[]
+  syncJobs    SyncJob[]
+
+  @@map("tenants")
+}
+
+model Connection {
+  id                String   @id @default(uuid())
+  tenantId          String   @map("tenant_id")
+  userId            String   @map("user_id")
+  provider          String
+  providerAccountId String   @map("provider_account_id")
+  accessToken       String   @map("access_token")
+  refreshToken      String?  @map("refresh_token")
+  metadata          Json?    @default("{}")
+  isActive          Boolean? @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syncJobs SyncJob[]
+
+  @@unique([tenantId, provider, providerAccountId])
+  @@map("connections")
+}
+
+model SyncJob {
+  id              String    @id @default(uuid())
+  connectionId    String    @map("connection_id")
+  tenantId        String    @map("tenant_id")
+  provider        String
+  status          String
+  recordsProcessed Int?     @default(0) @map("records_processed")
+  errorDetails    String?   @map("error_details")
+  startedAt       DateTime? @default(now()) @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+  syncWindowStart DateTime? @map("sync_window_start")
+  syncWindowEnd   DateTime? @map("sync_window_end")
+
+  connection Connection @relation(fields: [connectionId], references: [id])
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+
+  @@index([connectionId, status])
+  @@index([tenantId, provider])
+  @@map("sync_jobs")
+}

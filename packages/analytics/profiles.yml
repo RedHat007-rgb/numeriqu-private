@@ -1,0 +1,14 @@
+analytics:
+  target: dev
+  outputs:
+    dev:
+      type: clickhouse
+      schema: "{{ env_var('DBT_CLICKHOUSE_DB', 'analytics') }}"
+      host: "{{ env_var('DBT_CLICKHOUSE_HOST', '4.231.54.153') }}"
+      port: 8123
+      user: "{{ env_var('DBT_CLICKHOUSE_USER', 'dbt_transformer') }}"
+      password: "{{ env_var('DBT_CLICKHOUSE_PASSWORD', 'test@123') }}"
+      driver: http
+      settings:
+        allow_experimental_object_type: 1
+        join_use_nulls: 1

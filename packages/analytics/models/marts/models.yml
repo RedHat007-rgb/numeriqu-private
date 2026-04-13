@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: fact_accounting_invoices
+    description: "Unified accounting invoices from all connected providers (Xero, QuickBooks, etc.)"
+    columns:
+      - name: invoice_id
+        description: "Surrogate key for the dbt warehouse."
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "The unique user ID from our platform."
+        tests:
+          - not_null
+      - name: invoice_external_id
+        description: "The original ID from the provider (e.g., Xero InvoiceID)."
+        tests:
+          - not_null
+      - name: total_amount
+        description: "Total amount of the invoice."
+        tests:
+          - not_null

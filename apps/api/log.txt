@@ -1,0 +1,23 @@
+/Users/basanireddy/Desktop/test-1234/node_modules/.pnpm/ts-node@10.9.2_@types+node@22.15.3_typescript@5.9.2/node_modules/ts-node/src/index.ts:859
+    return new TSError(diagnosticText, diagnosticCodes, diagnostics);
+           ^
+TSError: ⨯ Unable to compile TypeScript:
+test_xero_data.ts(1,10): error TS2305: Module '"@prisma/client"' has no exported member 'PrismaClient'.
+test_xero_data.ts(18,5): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+test_xero_data.ts(19,5): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+test_xero_data.ts(23,33): error TS2554: Expected 3 arguments, but got 1.
+
+    at createTSError (/Users/basanireddy/Desktop/test-1234/node_modules/.pnpm/ts-node@10.9.2_@types+node@22.15.3_typescript@5.9.2/node_modules/ts-node/src/index.ts:859:12)
+    at reportTSError (/Users/basanireddy/Desktop/test-1234/node_modules/.pnpm/ts-node@10.9.2_@types+node@22.15.3_typescript@5.9.2/node_modules/ts-node/src/index.ts:863:19)
+    at getOutput (/Users/basanireddy/Desktop/test-1234/node_modules/.pnpm/ts-node@10.9.2_@types+node@22.15.3_typescript@5.9.2/node_modules/ts-node/src/index.ts:1077:36)
+    at Object.compile (/Users/basanireddy/Desktop/test-1234/node_modules/.pnpm/ts-node@10.9.2_@types+node@22.15.3_typescript@5.9.2/node_modules/ts-node/src/index.ts:1433:41)
+    at Module.m._compile (/Users/basanireddy/Desktop/test-1234/node_modules/.pnpm/ts-node@10.9.2_@types+node@22.15.3_typescript@5.9.2/node_modules/ts-node/src/index.ts:1617:30)
+    at node:internal/modules/cjs/loader:1892:10
+    at Object.require.extensions.<computed> [as .ts] (/Users/basanireddy/Desktop/test-1234/node_modules/.pnpm/ts-node@10.9.2_@types+node@22.15.3_typescript@5.9.2/node_modules/ts-node/src/index.ts:1621:12)
+    at Module.load (node:internal/modules/cjs/loader:1480:32)
+    at Module._load (node:internal/modules/cjs/loader:1299:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14) {
+  diagnosticCodes: [ 2305, 2322, 2322, 2554 ]
+}

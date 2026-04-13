@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: xero_custom
+    description: "Raw Xero data database."
+    tables:
+      - name: xero_raw
+        description: "Raw Xero records."
+
+  - name: quickbooks
+    description: "Raw QuickBooks data database."
+    tables:
+      - name: quickbooks_raw
+        description: "Raw QuickBooks records."

@@ -1,0 +1,11 @@
+{
+  "name": "@repo/analytics",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "sync": "./dbt_venv/bin/dbt run --profiles-dir .",
+    "test": "./dbt_venv/bin/dbt test --profiles-dir .",
+    "debug": "./dbt_venv/bin/dbt debug --profiles-dir .",
+    "deps": "./dbt_venv/bin/dbt deps"
+  }
+}

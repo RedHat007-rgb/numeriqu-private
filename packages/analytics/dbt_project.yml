@@ -1,0 +1,29 @@
+name: 'analytics'
+version: '1.0.0'
+config-version: 2
+
+# Profile matches the name we will give in profiles.yml
+profile: 'analytics'
+
+# Folder configuration
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Default materialization strategy
+models:
+  analytics:
+    # Staging models should usually be views (Silver Layer)
+    staging:
+      +materialized: view
+    # Marts models should be tables for performance (Gold Layer)
+    marts:
+      +materialized: table

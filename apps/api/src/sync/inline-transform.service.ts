@@ -9,16 +9,17 @@ import {
 /**
  * InlineTransformService — Sub-Second Gold Layer Transformation
  *
- * Replaces the dbt subprocess with native ClickHouse INSERT...SELECT queries
- * executed directly in the Node.js process. No subprocess fork overhead,
- * no 5s debounce, no 8.5s dbt runtime.
+ * KEY ARCHITECTURE INVARIANT — JSON Key Casing:
+ * ─────────────────────────────────────────────
+ * xero-node SDK deserializes Xero API responses (PascalCase) into TypeScript
+ * model objects with camelCase property names (confirmed from SDK attributeTypeMap).
+ * When JSON.stringify(record) is called in XeroIngestionService, the output JSON
+ * uses camelCase keys: "total", "status", "invoiceNumber", "currencyCode", "date", etc.
  *
- * Architecture:
- *   Raw Layer (xero_custom.xero_raw / quickbooks.quickbooks_raw)
- *     → [INSERT INTO...SELECT via ClickHouse client] →
- *   Gold Layer (analytics.fact_accounting_invoices, analytics.revenue_by_month)
+ * All JSONExtract calls MUST use camelCase keys to match. Using PascalCase returns 0/''.
  *
- * Target SLA: < 1 second per tenant per provider.
+ * EXCEPTION: Account.Class maps to "_class" (underscore prefix) in xero-node
+ * because 'class' is a reserved keyword in JavaScript.
  */
 @Injectable()
 export class InlineTransformService {
@@ -47,50 +48,40 @@ export class InlineTransformService {
     provider: 'xero' | 'quickbooks',
   ): Promise<void> {
     const start = Date.now();
-    const startTime = new Date().toLocaleTimeString('en-US', {
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
     this.logger.log(
-      `[Transform] ▶ Starting Gold Layer transform for [${provider.toUpperCase()}] org:${orgId} at ${startTime}`,
+      `[Transform] ▶ Starting Gold Layer transform for [${provider.toUpperCase()}] org:${orgId}`,
     );
 
     try {
       await this.upsertFactInvoices(tenantId, orgId, provider);
-      await this.upsertRevenueByMonth(tenantId, orgId, provider);
+      await this.upsertDimAccounts(tenantId, orgId, provider);
+      await this.refreshRevenueByMonth(tenantId, orgId, provider);
 
       const elapsed = Date.now() - start;
-      const completedAt = new Date().toLocaleTimeString('en-US', {
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
       this.logger.log(
-        `[Transform] ✅ [${provider.toUpperCase()}] Gold Layer ready — ` +
-        `completed at ${completedAt} in ${elapsed}ms | ` +
+        `[Transform] ✅ [${provider.toUpperCase()}] Gold Layer ready in ${elapsed}ms | ` +
         `org: ${orgId} | tenant: ${tenantId}`,
       );
     } catch (e: any) {
-      const failedAt = new Date().toLocaleTimeString('en-US', {
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
       this.logger.error(
-        `[Transform] ✗ [${provider.toUpperCase()}] FAILED at ${failedAt} for org:${orgId} — ${e.message}`,
+        `[Transform] ✗ [${provider.toUpperCase()}] FAILED for org:${orgId} — ${e.message}`,
+        e.stack,
       );
-      // Non-fatal: data is already in raw layer. Next sync will re-trigger transform.
+      // Non-fatal: raw layer is intact. Next sync will re-trigger.
     }
   }
 
   /**
-   * Upsert fact_accounting_invoices using native ClickHouse SQL.
-   * Translates stg_xero_invoices.sql + stg_qb_invoices.sql + fact_accounting_invoices.sql
-   * into a single INSERT INTO...SELECT statement per provider.
+   * Upsert fact_accounting_invoices from the raw layer.
+   *
+   * JSON KEY CASING (from xero-node SDK attributeTypeMap):
+   *   invoiceNumber  (baseName: InvoiceNumber)
+   *   total          (baseName: Total)
+   *   currencyCode   (baseName: CurrencyCode)
+   *   date           (baseName: Date)  → JS Date → ISO string via JSON.stringify
+   *   dueDate        (baseName: DueDate) → JS Date → ISO string
+   *   status         (baseName: Status)
+   *   type           (baseName: Type)
    */
   private async upsertFactInvoices(
     tenantId: string,
@@ -99,28 +90,35 @@ export class InlineTransformService {
   ): Promise<void> {
     const dest = `${this.analyticsDb}.fact_accounting_invoices`;
 
-    let selectSql: string;
+    // Explicit column list — position-safe regardless of table column order
+    const COLS = `(
+      invoice_id, tenant_id, user_id, connection_id, provider,
+      org_id, org_name, invoice_external_id, invoice_number,
+      total_amount, currency, issued_at, due_at, status, updated_at, synced_at
+    )`;
+
+    let sql: string;
 
     if (provider === 'xero') {
-      selectSql = `
-        INSERT INTO ${dest}
+      sql = `
+        INSERT INTO ${dest} ${COLS}
         SELECT
-          generateUUIDv4()                                      AS invoice_id,
+          source_id                                               AS invoice_id,
           tenant_id,
           user_id,
           connection_id,
-          'xero'                                                AS provider,
+          'xero'                                                  AS provider,
           org_id,
           org_name,
-          source_id                                             AS invoice_external_id,
-          JSONExtractString(raw_data, 'invoiceNumber')          AS invoice_number,
-          JSONExtractFloat(raw_data, 'total')                   AS total_amount,
-          JSONExtractString(raw_data, 'currencyCode')           AS currency,
+          source_id                                               AS invoice_external_id,
+          JSONExtractString(raw_data, 'invoiceNumber')            AS invoice_number,
+          JSONExtractFloat(raw_data, 'total')                     AS total_amount,
+          JSONExtractString(raw_data, 'currencyCode')             AS currency,
           parseDateTimeBestEffortOrNull(
-            JSONExtractString(raw_data, 'date'))                AS issued_at,
+            JSONExtractString(raw_data, 'date'))                  AS issued_at,
           parseDateTimeBestEffortOrNull(
-            JSONExtractString(raw_data, 'dueDate'))             AS due_at,
-          JSONExtractString(raw_data, 'status')                 AS status,
+            JSONExtractString(raw_data, 'dueDate'))               AS due_at,
+          JSONExtractString(raw_data, 'status')                   AS status,
           updated_at,
           synced_at
         FROM ${this.xeroDb}.xero_raw
@@ -129,25 +127,26 @@ export class InlineTransformService {
           AND org_id    = '${this.escape(orgId)}'
       `;
     } else {
-      selectSql = `
-        INSERT INTO ${dest}
+      // QuickBooks: QBO REST API JSON is PascalCase — no SDK re-serialization
+      sql = `
+        INSERT INTO ${dest} ${COLS}
         SELECT
-          generateUUIDv4()                                          AS invoice_id,
+          source_id                                                   AS invoice_id,
           tenant_id,
           user_id,
           connection_id,
-          'quickbooks'                                              AS provider,
+          'quickbooks'                                                AS provider,
           org_id,
           org_name,
-          source_id                                                 AS invoice_external_id,
-          JSONExtractString(raw_data, 'DocNumber')                  AS invoice_number,
-          JSONExtractFloat(raw_data, 'TotalAmt')                    AS total_amount,
-          JSONExtractString(raw_data, 'CurrencyRef', 'value')       AS currency,
+          source_id                                                   AS invoice_external_id,
+          JSONExtractString(raw_data, 'DocNumber')                    AS invoice_number,
+          JSONExtractFloat(raw_data, 'TotalAmt')                      AS total_amount,
+          JSONExtractString(raw_data, 'CurrencyRef', 'value')         AS currency,
           parseDateTimeBestEffortOrNull(
-            JSONExtractString(raw_data, 'TxnDate'))                 AS issued_at,
+            JSONExtractString(raw_data, 'TxnDate'))                   AS issued_at,
           parseDateTimeBestEffortOrNull(
-            JSONExtractString(raw_data, 'DueDate'))                 AS due_at,
-          JSONExtractString(raw_data, 'EmailStatus')                AS status,
+            JSONExtractString(raw_data, 'DueDate'))                   AS due_at,
+          JSONExtractString(raw_data, 'EmailStatus')                  AS status,
           updated_at,
           synced_at
         FROM ${this.qbDb}.quickbooks_raw
@@ -157,43 +156,104 @@ export class InlineTransformService {
       `;
     }
 
-    await this.chAnalytics.command({ query: selectSql });
-    this.logger.debug(`[Transform] fact_accounting_invoices INSERT...SELECT done for ${provider}`);
+    await this.chAnalytics.command({ query: sql });
+    this.logger.debug(`[Transform] fact_accounting_invoices upserted for ${provider}`);
   }
 
   /**
-   * Rebuild revenue_by_month aggregation for this tenant+org+provider slice.
-   * Overwrites only the rows belonging to this org (idempotent via ReplacingMergeTree).
+   * Upsert dim_accounting_accounts.
    */
-  private async upsertRevenueByMonth(
+  private async upsertDimAccounts(
     tenantId: string,
     orgId: string,
     provider: 'xero' | 'quickbooks',
   ): Promise<void> {
-    const dest = `${this.analyticsDb}.revenue_by_month`;
-    const src  = `${this.analyticsDb}.fact_accounting_invoices`;
+    const dest = `${this.analyticsDb}.dim_accounting_accounts`;
 
-    const sql = `
-      INSERT INTO ${dest}
-      SELECT
-        toStartOfMonth(issued_at)       AS month,
-        currency,
-        sum(total_amount)               AS total_revenue,
-        tenant_id,
-        provider,
-        org_id,
-        org_name
-      FROM ${src}
-      WHERE tenant_id = '${this.escape(tenantId)}'
-        AND org_id    = '${this.escape(orgId)}'
-        AND provider  = '${provider}'
-        AND issued_at IS NOT NULL
-        AND status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
-      GROUP BY month, currency, tenant_id, provider, org_id, org_name
-    `;
+    const COLS = `(
+      account_id, account_name, account_type, classification,
+      provider, tenant_id, org_id, org_name, is_active
+    )`;
+
+    let sql: string;
+    if (provider === 'xero') {
+      sql = `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          source_id                                               AS account_id,
+          JSONExtractString(raw_data, 'name')                     AS account_name,
+          JSONExtractString(raw_data, 'type')                     AS account_type,
+          JSONExtractString(raw_data, '_class')                   AS classification,
+          'xero'                                                  AS provider,
+          tenant_id,
+          org_id,
+          org_name,
+          toBool(1)                                               AS is_active
+        FROM ${this.xeroDb}.xero_raw
+        WHERE resource = 'Accounts'
+          AND tenant_id = '${this.escape(tenantId)}'
+          AND org_id    = '${this.escape(orgId)}'
+      `;
+    } else {
+      sql = `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          source_id                                               AS account_id,
+          JSONExtractString(raw_data, 'Name')                     AS account_name,
+          JSONExtractString(raw_data, 'AccountType')              AS account_type,
+          JSONExtractString(raw_data, 'Classification')           AS classification,
+          'quickbooks'                                            AS provider,
+          tenant_id,
+          org_id,
+          org_name,
+          toBool(1)                                               AS is_active
+        FROM ${this.qbDb}.quickbooks_raw
+        WHERE resource = 'Account'
+          AND tenant_id = '${this.escape(tenantId)}'
+          AND org_id    = '${this.escape(orgId)}'
+      `;
+    }
 
     await this.chAnalytics.command({ query: sql });
-    this.logger.debug(`[Transform] revenue_by_month INSERT...SELECT done for ${provider}`);
+    this.logger.debug(`[Transform] dim_accounting_accounts upserted for ${provider}`);
+  }
+
+  /**
+   * Materialize revenue_by_month.
+   * Leverages case-insensitive status matching for robustness.
+   */
+  private async refreshRevenueByMonth(tenantId: string, orgId: string, provider: string): Promise<void> {
+    const dest = `${this.analyticsDb}.revenue_by_month`;
+    const src  = `${this.analyticsDb}.fact_accounting_invoices`;
+    const syncedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    // IMPORTANT: Aliases in SELECT must NOT collide with source column names
+    // used in WHERE. ClickHouse resolves names before GROUP BY, so
+    // `sum(total_amount) as total_amount` + `WHERE total_amount > 0` → ILLEGAL_AGGREGATION.
+    const query = `
+      INSERT INTO ${dest} (month, total_amount, invoice_count, currency, provider, tenant_id, org_id, org_name, updated_at)
+      SELECT
+        toStartOfMonth(issued_at)   AS month,
+        sum(src.total_amount)       AS agg_total,
+        count(*)                    AS agg_count,
+        any(currency)               AS agg_currency,
+        provider,
+        tenant_id,
+        org_id,
+        org_name,
+        '${syncedAt}'               AS updated_at
+      FROM ${src} AS src
+      WHERE src.tenant_id = '${this.escape(tenantId)}'
+        AND src.org_id    = '${this.escape(orgId)}'
+        AND src.provider  = '${provider}'
+        AND src.issued_at IS NOT NULL
+        AND src.total_amount > 0
+        AND lower(src.status) IN ('authorised', 'paid', 'closed', 'notset', 'needtosend', 'active', 'open')
+      GROUP BY month, provider, tenant_id, org_id, org_name
+    `;
+
+    await this.chAnalytics.command({ query });
+    this.logger.debug(`[Transform] revenue_by_month refreshed for ${provider}/${orgId.slice(0, 8)}`);
   }
 
   /** Minimal SQL injection guard for tenant/org IDs (UUIDs only in practice). */

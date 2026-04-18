@@ -12,6 +12,9 @@ import {
 import { XeroClient } from 'xero-node';
 import axios from 'axios';
 import { prisma } from '@repo/db';
+import { randomUUID } from 'crypto';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import type { Request, Response } from 'express';
 import { IntegrationsService } from './integrations.service';
 import { CryptoService } from '../common/crypto.service';
@@ -47,13 +50,19 @@ export class AuthController {
     return parsed.toISOString().replace(/\.\d{3}Z$/, 'Z');
   }
 
-  private getXeroClient(): XeroClient {
-    const scopes = process.env.XERO_SCOPES || 'openid profile email offline_access accounting.settings.read accounting.invoices.read accounting.contacts.read';
+  /**
+   * Create a XeroClient with an optional OIDC state value.
+   * When `state` is provided, the SDK uses it for OIDC state verification
+   * in apiCallback(). BOTH connect and callback must use the SAME state.
+   */
+  private getXeroClient(state?: string): XeroClient {
+    const scopes = process.env.XERO_SCOPES || 'openid profile email offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read accounting.payments.read accounting.banktransactions.read accounting.manualjournals.read';
     return new XeroClient({
       clientId: process.env.XERO_CLIENT_ID!,
       clientSecret: process.env.XERO_CLIENT_SECRET!,
       redirectUris: [process.env.XERO_REDIRECT_URI!],
       scopes: scopes.split(' '),
+      ...(state ? { state } : {}),
     });
   }
 
@@ -64,86 +73,132 @@ export class AuthController {
     );
   }
 
-  private persistOAuthContext(res: Response, payload: Record<string, any>) {
-    res.cookie('oauth_context', JSON.stringify(payload), {
-      maxAge: 900000,
-      httpOnly: true,
-    });
+  /**
+   * FILE-BASED OAuth State Store
+   *
+   * WHY FILE-BASED instead of in-memory Map?
+   * Dev servers hot-reload on file changes, clearing in-memory state.
+   * The OAuth flow takes 5-15 seconds (user authorizes on Xero's site),
+   * which is more than enough for a hot-reload to wipe the Map.
+   *
+   * In production, replace this with Redis or a DB table.
+   * For now, a JSON file in .oauth-states/ survives restarts.
+   */
+  private readonly STATES_DIR = join(process.cwd(), '.oauth-states');
+  private readonly STATE_TTL_MS = 15 * 60 * 1000; // 15 min
+
+  private persistOAuthState(payload: Record<string, any>, customKey?: string): string {
+    if (!existsSync(this.STATES_DIR)) mkdirSync(this.STATES_DIR, { recursive: true });
+
+    const stateToken = customKey || randomUUID();
+    const filePath = join(this.STATES_DIR, `${stateToken}.json`);
+    writeFileSync(filePath, JSON.stringify({
+      data: payload,
+      expiresAt: Date.now() + this.STATE_TTL_MS,
+    }));
+    this.logger.debug(`[OAuth] State persisted to disk: ${stateToken.slice(0, 8)}...`);
+    return stateToken;
   }
 
-  private getOAuthContext(req: Request) {
-    const cookieStr = req.headers.cookie
-      ?.split(';')
-      .find((c) => c.trim().startsWith('oauth_context='));
-    if (!cookieStr) {
-      throw new BadRequestException('OAuth context cookie missing.');
+  private consumeOAuthState(stateToken: string): Record<string, any> {
+    if (!stateToken) {
+      throw new BadRequestException('Authorization session expired. Please try connecting again.');
     }
-    const payload = JSON.parse(decodeURIComponent(cookieStr.split('=')[1]));
-    const { tenantId, userId } = payload;
-    if (!tenantId || !userId) {
-      throw new BadRequestException('OAuth context invalid.');
-    }
-    return { tenantId, userId, ...payload };
-  }
 
-  @Get('xero/connect')
-  async connectXero(@Req() req: Request, @Res() res: Response) {
-    const tenantId = req.query.tenantId as string;
-    const userId = req.query.userId as string;
-    const requestedStartDate = this.normalizeStartDateInput(
-      req.query.startDate as string | undefined,
-    );
-
-    if (!tenantId || !userId) {
-      return res
-        .status(400)
-        .send('Needs tenantId and userId to start OAuth connection');
+    const filePath = join(this.STATES_DIR, `${stateToken}.json`);
+    if (!existsSync(filePath)) {
+      this.logger.warn(`[OAuth] State file not found for token: ${stateToken.slice(0, 8)}...`);
+      throw new BadRequestException('Authorization session expired. Please try connecting again.');
     }
 
     try {
-      const xero = this.getXeroClient();
-      const consentUrl = await xero.buildConsentUrl();
+      const raw = readFileSync(filePath, 'utf-8');
+      const entry = JSON.parse(raw);
 
-      this.persistOAuthContext(res, {
-        tenantId,
-        userId,
-        startDate: requestedStartDate,
-      });
+      // Cleanup: delete the file (single-use token)
+      try { require('fs').unlinkSync(filePath); } catch {}
 
-      this.logger.log(`Redirecting User ${userId} to Xero IdP...`);
-      res.redirect(consentUrl);
-    } catch (e) {
-      this.logger.error('Failed to init Xero oauth', e);
-      res
-        .status(500)
-        .send('We encountered an issue preparing the integration process.');
+      if (Date.now() > entry.expiresAt) {
+        throw new BadRequestException('Authorization session expired. Please try connecting again.');
+      }
+
+      const { tenantId, userId } = entry.data;
+      if (!tenantId || tenantId === 'undefined' || !userId || userId === 'undefined') {
+        throw new BadRequestException('Authorization context is invalid. Please log in again and retry.');
+      }
+      return entry.data;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      this.logger.error(`[OAuth] Failed to read state file: ${e.message}`);
+      throw new BadRequestException('Authorization session expired. Please try connecting again.');
     }
   }
 
-  @Get('quickbooks/connect')
-  async connectQuickBooks(@Req() req: Request, @Res() res: Response) {
-    const tenantId = req.query.tenantId as string;
-    const userId = req.query.userId as string;
-    if (!tenantId || !userId)
-      throw new BadRequestException('tenantId and userId are required');
+  @Post('xero/connect')
+  @UseGuards(SupabaseAuthGuard)
+  async connectXero(@CurrentUser() user: AuthUser, @Body() body: any) {
+    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const requestedStartDate = this.normalizeStartDateInput(body.startDate);
 
-    this.persistOAuthContext(res, { tenantId, userId });
+    try {
+      // Generate our own state token for OIDC verification
+      const oauthState = randomUUID();
+
+      // Create XeroClient WITH the state — so apiCallback() can verify it
+      const xero = this.getXeroClient(oauthState);
+      const consentUrl = await xero.buildConsentUrl();
+
+      // Store our context keyed by the same state token
+      this.persistOAuthState({
+        tenantId: tenant.id,
+        userId: user.id,
+        startDate: requestedStartDate,
+      }, oauthState);
+
+      return { url: consentUrl };
+    } catch (e) {
+      this.logger.error('Failed to init Xero oauth', e);
+      throw new BadRequestException('Could not prepare Xero authorization.');
+    }
+  }
+
+  @Post('quickbooks/connect')
+  @UseGuards(SupabaseAuthGuard)
+  async connectQuickBooks(@CurrentUser() user: AuthUser) {
+    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+
+    // Persist state server-side
+    const stateToken = this.persistOAuthState({
+      tenantId: tenant.id,
+      userId: user.id,
+    });
 
     const url = new URL('https://appcenter.intuit.com/connect/oauth2');
     url.searchParams.set('client_id', process.env.QB_CLIENT_ID || '');
     url.searchParams.set('scope', 'com.intuit.quickbooks.accounting');
     url.searchParams.set('redirect_uri', this.getQuickBooksRedirectUri());
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('state', 'quickbooks');
+    url.searchParams.set('state', stateToken);
 
-    res.redirect(url.toString());
+    return { url: url.toString() };
+  }
+
+  /**
+   * @deprecated — No longer needed. State is persisted server-side via oauthStates map.
+   * Kept for backward compat but is a no-op.
+   */
+  @Post('persist-context')
+  @UseGuards(SupabaseAuthGuard)
+  async persistContext(@Res() res: Response) {
+    return res.json({ success: true });
   }
 
   @Get('quickbooks/callback')
   async callbackQuickBooks(@Req() req: Request, @Res() res: Response) {
+    const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3001';
     try {
-      const { code, realmId } = req.query as Record<string, string>;
-      const { tenantId, userId } = this.getOAuthContext(req);
+      const { code, realmId, state } = req.query as Record<string, string>;
+      const { tenantId, userId } = this.consumeOAuthState(state);
 
       const tokenPayload = new URLSearchParams({
         grant_type: 'authorization_code',
@@ -225,30 +280,35 @@ export class AuthController {
           this.logger.error('QuickBooks background sync failed', err),
         );
 
-      // 3. Instant redirect to improve UX
-      const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3000';
       res.redirect(`${webAppUrl}/?success=quickbooks_connected`);
-    } catch (e) {
+    } catch (e: any) {
       this.logger.error('QuickBooks callback failed', e);
-      const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3000';
-      res.redirect(`${webAppUrl}/?error=quickbooks_connection_failed`);
+      const userError = e.status === 400
+        ? encodeURIComponent(e.response?.message || 'Connection expired')
+        : 'quickbooks_connection_failed';
+      res.redirect(`${webAppUrl}/?error=${userError}`);
     }
   }
 
   @Get('xero/callback')
   async callbackXero(@Req() req: Request, @Res() res: Response) {
+    const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3001';
     try {
-      const apiUrl = process.env.API_URL || 'http://localhost:3000';
-      const fullUrl = apiUrl + req.url;
-      const xero = this.getXeroClient();
-      const tokenSet = await xero.apiCallback(fullUrl);
-      await xero.updateTenants();
+      const { state } = req.query as Record<string, string>;
 
+      // Consume our context FIRST (before apiCallback, so we fail fast on expired state)
       const {
         tenantId: internalTenantId,
         userId,
         startDate,
-      } = this.getOAuthContext(req);
+      } = this.consumeOAuthState(state);
+
+      // Create XeroClient with the SAME state for OIDC verification
+      const apiUrl = process.env.API_URL || 'http://localhost:3000';
+      const fullUrl = apiUrl + req.url;
+      const xero = this.getXeroClient(state);
+      const tokenSet = await xero.apiCallback(fullUrl);
+      await xero.updateTenants();
 
       for (const xtenant of xero.tenants) {
         this.logger.log(
@@ -297,12 +357,13 @@ export class AuthController {
           );
       }
 
-      const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3000';
       res.redirect(`${webAppUrl}/?success=xero_connected`);
-    } catch (e) {
+    } catch (e: any) {
       this.logger.error('Xero callback failed', e);
-      const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3000';
-      res.redirect(`${webAppUrl}/?error=xero_connection_failed`);
+      const userError = e.status === 400
+        ? encodeURIComponent(e.response?.message || 'Connection expired')
+        : 'xero_connection_failed';
+      res.redirect(`${webAppUrl}/?error=${userError}`);
     }
   }
 

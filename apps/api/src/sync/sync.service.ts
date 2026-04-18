@@ -78,20 +78,27 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       `);
 
       // 3. Ensure Silver Table (Invoices List) — org-aware
+      // Column names match exactly what InlineTransformService writes.
       await safeQuery(`
         CREATE TABLE IF NOT EXISTS ${db}.fact_accounting_invoices (
-          invoice_id String,
-          customer_id String,
-          amount Decimal(18,4),
-          currency String,
-          status String,
-          issue_date Date,
-          tenant_id String,
-          provider String,
-          org_id String DEFAULT '',
-          org_name String DEFAULT ''
+          invoice_id           String,
+          tenant_id            String,
+          user_id              String         DEFAULT '',
+          connection_id        String         DEFAULT '',
+          provider             String         DEFAULT '',
+          org_id               String         DEFAULT '',
+          org_name             String         DEFAULT '',
+          invoice_external_id  String         DEFAULT '',
+          invoice_number       String         DEFAULT '',
+          total_amount         Decimal(18,4)  DEFAULT 0,
+          currency             String         DEFAULT '',
+          issued_at            Nullable(DateTime),
+          due_at               Nullable(DateTime),
+          status               String         DEFAULT '',
+          updated_at           DateTime       DEFAULT now(),
+          synced_at            DateTime       DEFAULT now()
         ) ENGINE = ReplacingMergeTree()
-        ORDER BY (issue_date, invoice_id, tenant_id)
+        ORDER BY (tenant_id, org_id, invoice_id)
       `);
 
       // 4. Ensure Dimension Table (Chart of Accounts) — org-aware
@@ -121,18 +128,52 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         ORDER BY (invoice_id, tenant_id)
       `);
 
-      // 6. Migrate existing tables: safely add org columns if they don't exist yet
+      // 6. Migrate existing tables — repairs old schema and adds all columns that
+      //    InlineTransformService writes but the original DDL was missing.
       const migrations = [
+        // ═══════════════════════════════════════════════════════════════════
+        // CRITICAL: Convert ALL ID columns from UUID → String.
+        // Xero uses UUIDs, but QuickBooks uses numeric IDs (e.g., "16").
+        // String handles both. These are idempotent — safe to re-run.
+        // ═══════════════════════════════════════════════════════════════════
+        `ALTER TABLE ${db}.fact_accounting_invoices MODIFY COLUMN invoice_id String`,
+        `ALTER TABLE ${db}.dim_accounting_accounts MODIFY COLUMN account_id String`,
+        // Core column additions for fact_accounting_invoices
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS user_id String DEFAULT ''`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS connection_id String DEFAULT ''`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS invoice_external_id String DEFAULT ''`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS invoice_number String DEFAULT ''`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS total_amount Decimal(18,4) DEFAULT 0`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS issued_at Nullable(DateTime)`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS due_at Nullable(DateTime)`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS updated_at DateTime DEFAULT now()`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS synced_at DateTime DEFAULT now()`,
+        // Org-awareness columns
         `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS org_id String DEFAULT ''`,
         `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS org_name String DEFAULT ''`,
         `ALTER TABLE ${db}.dim_accounting_accounts ADD COLUMN IF NOT EXISTS org_id String DEFAULT ''`,
         `ALTER TABLE ${db}.dim_accounting_accounts ADD COLUMN IF NOT EXISTS org_name String DEFAULT ''`,
         `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS org_id String DEFAULT ''`,
         `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS org_name String DEFAULT ''`,
+        `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS total_amount Decimal(18,4) DEFAULT 0`,
+        `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS invoice_count UInt64 DEFAULT 0`,
+        `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS updated_at DateTime DEFAULT now()`,
+        `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS currency String DEFAULT ''`,
       ];
       for (const migration of migrations) {
-        try { await safeQuery(migration); } catch { /* column may already exist */ }
+        try { await safeQuery(migration); } catch { /* column may already exist — safe to ignore */ }
       }
+
+      // 7. One-time cleanup: purge stale rows written by the previous broken transform.
+      //    Those rows had total_amount=0 and status='' because JSONExtract was using
+      //    PascalCase keys on camelCase JSON (xero-node SDK serializes camelCase).
+      //    ClickHouse mutations are async — they run in background and are safe to fire here.
+      try {
+        await safeQuery(
+          `ALTER TABLE ${db}.fact_accounting_invoices DELETE WHERE total_amount = 0 AND status = ''`
+        );
+        this.logger.log(`[Bootstrap] Stale zero-amount rows scheduled for cleanup`);
+      } catch { /* mutation may not be supported on this CH edition — non-fatal */ }
 
       this.logger.log(`[Bootstrap] Full Gold Layer (org-aware) mechanized in ${db}`);
     } catch (e: any) {

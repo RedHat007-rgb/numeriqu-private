@@ -17,9 +17,13 @@ model User {
   id        String   @id 
   email     String   @unique
   name      String?
+  tenantId  String?  @map("tenant_id")
   createdAt DateTime @default(now()) @map("created_at")
 
+  tenant      Tenant?      @relation(fields: [tenantId], references: [id])
   connections Connection[]
+  chatSessions ChatSession[]
+  dashboards  Dashboard[]
 
   @@map("users")
 }
@@ -29,8 +33,12 @@ model Tenant {
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
+  users       User[]
   connections Connection[]
   syncJobs    SyncJob[]
+  insights    Insight[]
+  chatSessions ChatSession[]
+  dashboards  Dashboard[]
 
   @@map("tenants")
 }
@@ -75,4 +83,93 @@ model SyncJob {
   @@index([connectionId, status])
   @@index([tenantId, provider])
   @@map("sync_jobs")
+}
+
+model Insight {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  title       String
+  description String?
+  type        String   // 'line', 'bar', 'pie', 'metric', 'table', 'dashboard'
+  config      Json     // The logic/parameters for the chart
+  isFavorite  Boolean  @default(false) @map("is_favorite")
+  pinned      Boolean  @default(false)
+  category    String   @default("general")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("insights")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLATFORM PERSISTENCE LAYER: CHATS, DASHBOARDS & CHARTS
+// durable history, enabling long-lived analytical sessions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ChatSession {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  userId    String   @map("user_id")
+  title     String   @default("Strategic Orchestration Mission")
+  mode      String   @default("agent") // 'agent' vs 'advisor'
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id])
+  user     User          @relation(fields: [userId], references: [id])
+  messages ChatMessage[]
+
+  @@index([tenantId, userId])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id            String   @id @default(uuid())
+  chatSessionId String   @map("chat_session_id")
+  role          String   // 'user', 'assistant', 'system'
+  content       String   @db.Text
+  toolCalls     Json?    @map("tool_calls") // Records emitted JSON dashboard payloads
+  tokens        Int      @default(0)
+  latencyMs     Int      @default(0) @map("latency_ms")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  session ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+
+  @@index([chatSessionId])
+  @@map("chat_messages")
+}
+
+model Dashboard {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  userId      String   @map("user_id")
+  title       String
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id])
+  user   User    @relation(fields: [userId], references: [id])
+  charts Chart[]
+
+  @@index([tenantId])
+  @@map("dashboards")
+}
+
+model Chart {
+  id          String   @id @default(uuid())
+  dashboardId String   @map("dashboard_id")
+  title       String
+  description String?
+  type        String   
+  config      Json     
+  layoutIndex Int      @default(0) @map("layout_index")
+
+  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@index([dashboardId])
+  @@map("charts")
 }

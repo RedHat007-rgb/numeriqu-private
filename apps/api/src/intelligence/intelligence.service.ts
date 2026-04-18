@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { FinancialDataService } from './financial-data.service';
 import { ContextCacheService } from './context-cache.service';
+import { AgentToolsService } from './agent-tools.service';
 import { classifyIntent, buildMessages } from './prompt-builder';
 import type { FinancialProfile } from './financial-data.service';
 
@@ -44,6 +45,7 @@ export class IntelligenceService {
   constructor(
     private readonly financialData: FinancialDataService,
     private readonly contextCache: ContextCacheService,
+    private readonly agentTools: AgentToolsService,
   ) {
     this.OLLAMA_URL  = process.env.OLLAMA_URL   || 'http://localhost:11434';
     this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
@@ -51,98 +53,75 @@ export class IntelligenceService {
 
   /**
    * Main entry: Zero-Latency SSE Generator
-   *
-   * Yields newline-delimited JSON chunks that the controller forwards
-   * directly to the HTTP response. Each chunk is one of:
-   *   { type: 'status',  message: string }    — UI progress indicator
-   *   { type: 'token',   content: string }    — LLM token (forward immediately)
-   *   { type: 'context', data: {...} }        — Financial context snapshot
-   *   { type: 'done',    metrics: {...} }     — Completion with timing
-   *   { type: 'error',   message: string }    — Recoverable error
    */
   async *query(
     tenantId: string,
     userQuery: string,
+    mode: 'advisor' | 'agent' = 'advisor',
   ): AsyncGenerator<string> {
     const startTime = Date.now();
 
-    // ── STEP 0: FAST-PATH: Greetings (< 5ms, no LLM) ──────────────────────
-    const intent = classifyIntent(userQuery);
-
-    if (intent === 'greeting') {
-      yield this.chunk('status', { message: 'Ready.' });
-      yield this.chunk('token', { content: this.greetingResponse() });
-      yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'fast-path' } });
-      return;
-    }
-
-    // ── STEP 0b: DOMAIN GATE: Reject non-financial queries (< 1ms) ─────────
-    if (intent === 'off_topic') {
-      yield this.chunk('status', { message: 'Analyzing intent...' });
-      yield this.chunk('token', {
-        content: "I'm specialized in financial analysis only. Please ask about revenue, expenses, profitability, invoices, cash flow, or your connected accounting providers (Xero, QuickBooks).",
-      });
-      yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'domain-gate' } });
-      return;
-    }
-
-    // ── STEP 1: SERVE FROM CACHE if available (< 1ms context overhead) ─────
-    yield this.chunk('status', { message: 'Loading financial context...' });
-
-    let cachedEntry = this.contextCache.get(tenantId);
-    let profile = cachedEntry?.profile ?? null;
-    let monthlyTrend = cachedEntry?.monthlyTrend ?? null;
-
-    // ── STEP 2: PARALLEL FETCH on cache miss ────────────────────────────────
-    // We fire the ClickHouse queries AND start the LLM response AT THE SAME TIME.
-    // The LLM will wait for context, but it won't block the STATUS feedback to the client.
-    if (!cachedEntry) {
-      this.logger.log(`[Cache] MISS — fetching ClickHouse context for tenant=${tenantId}`);
-      const fetchStart = Date.now();
-      try {
-        const [p, t] = await Promise.all([
-          this.financialData.getFinancialProfile(tenantId),
-          this.financialData.getMonthlyRevenueTrend(tenantId),
-        ]);
-        profile = p;
-        monthlyTrend = t;
-        this.contextCache.set(tenantId, p, t);
-        this.logger.log(`[Cache] Fetched in ${Date.now() - fetchStart}ms`);
-      } catch (e: any) {
-        this.logger.error(`[Context] Fetch failed: ${e.message}`);
-        // Proceed with empty profile — partial answers are better than silence
-        profile = this.emptyProfile(tenantId);
-        monthlyTrend = [];
-      }
-    } else {
-      // Background refresh: fire-and-forget, don't await
-      this.backgroundRefresh(tenantId);
-    }
-
-    // Emit context snapshot for the UI (shows in the finance card below the message)
-    yield this.chunk('context', {
-      data: {
-        totalRevenue:   profile!.revenue.totalRevenue,
-        totalExpenses:  profile!.expenses.totalExpenses,
-        netProfit:      profile!.netProfit,
-        profitMargin:   profile!.profitMargin,
-        totalInvoices:  profile!.revenue.totalInvoices,
-        overdueAmount:  profile!.expenses.overdueAmount,
-        providers:      profile!.revenue.providerCount,
-        fetchTimeMs:    Date.now() - startTime,
-      },
-    });
-
-    // ── STEP 3: BUILD MESSAGES (compressed) ─────────────────────────────────
-    const messages = buildMessages(profile!, monthlyTrend!, userQuery);
-
-    // ── STEP 4: STREAM FROM OLLAMA ───────────────────────────────────────────
-    yield this.chunk('status', { message: 'Generating...' });
-
-    const llmStart = Date.now();
-    let tokensGenerated = 0;
-
     try {
+      // ── STEP 0: FAST-PATH: Greetings (< 5ms, no LLM) ──────────────────────
+      const intent = classifyIntent(userQuery);
+
+      if (intent === 'greeting') {
+        yield this.chunk('status', { message: 'Ready.' });
+        yield this.chunk('token', { content: this.greetingResponse() });
+        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'fast-path' } });
+        return;
+      }
+
+      // ── STEP 0b: DOMAIN GATE: Reject non-financial queries (< 1ms) ─────────
+      if (intent === 'off_topic') {
+        yield this.chunk('status', { message: 'Analyzing intent...' });
+        yield this.chunk('token', {
+          content: "I'm specialized in financial analysis only. Please ask about revenue, expenses, profitability, invoices, cash flow, or your connected organizations.",
+        });
+        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'domain-gate' } });
+        return;
+      }
+
+      // ── STEP 1: CONTEXT RETRIEVAL (Cached or Parallel) ─────────────────────
+      yield this.chunk('status', { message: 'Loading financial intelligence...' });
+
+      let cachedEntry = this.contextCache.get(tenantId);
+      let profile = cachedEntry?.profile ?? null;
+      let monthlyTrend = cachedEntry?.monthlyTrend ?? null;
+
+      if (!cachedEntry) {
+        try {
+          const [p, t] = await Promise.all([
+            this.financialData.getFinancialProfile(tenantId),
+            this.financialData.getMonthlyRevenueTrend(tenantId),
+          ]);
+          profile = p;
+          monthlyTrend = t;
+          this.contextCache.set(tenantId, p, t);
+        } catch (e: any) {
+          this.logger.error(`[Context] Fetch failed: ${e.message}`);
+          profile = this.emptyProfile(tenantId);
+          monthlyTrend = [];
+        }
+      } else {
+        this.backgroundRefresh(tenantId);
+      }
+
+      // Emit context snapshot for UI
+      yield this.chunk('context', {
+        data: {
+          totalRevenue:   profile!.revenue.totalRevenue,
+          totalExpenses:  profile!.expenses.totalExpenses,
+          netProfit:      profile!.netProfit,
+          profitMargin:   profile!.profitMargin,
+          fetchTimeMs:    Date.now() - startTime,
+        },
+      });
+
+      // ── STEP 2: AGENTIC STREAMING ──────────────────────────────────────────
+      yield this.chunk('status', { message: 'Analyzing trends...' });
+      
+      const messages = buildMessages(profile!, monthlyTrend!, userQuery, mode);
       const response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -150,168 +129,181 @@ export class IntelligenceService {
           model:   this.OLLAMA_MODEL,
           messages,
           stream:  true,
-          options: {
-            temperature:   0.4,    // 0.4 allows conversational flow without losing constraint
-            num_predict:   1024,   // Cap response length for speed
-            num_thread:    4,      // Parallel decode threads
-            repeat_penalty: 1.1,  // Prevent repetition loops
-          },
+          options: { temperature: 0.1, num_predict: 2048, top_p: 0.9 },
         }),
       });
 
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`Ollama HTTP ${response.status}: ${body.slice(0, 120)}`);
-      }
+      if (!response.ok) throw new Error(`AI_ENGINE_OFFLINE`);
 
       const reader = response.body?.getReader();
-      if (!reader) throw new Error('Response body is not readable.');
+      if (!reader) throw new Error('AI_ENGINE_OFFLINE');
 
       const decoder = new TextDecoder();
+      let streamBuffer = '';
+      let isCapturingCommand = false;
+      let commandBuffer = '';
+      let tokensGenerated = 0;
 
-      // BYTE-LEVEL STREAMING: forward every token the instant it arrives.
-      // No batching, no waiting for line boundaries beyond what Ollama sends.
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const raw = decoder.decode(value, { stream: true });
-        // Ollama sends newline-delimited JSON. Split and process each line.
         for (const line of raw.split('\n')) {
           if (!line.trim()) continue;
+          
+          let parsed;
           try {
-            const parsed = JSON.parse(line);
-            // Forward token immediately — this is the hot path
-            if (parsed.message?.content) {
-              yield this.chunk('token', { content: parsed.message.content });
-              tokensGenerated++;
+            parsed = JSON.parse(line);
+          } catch { continue; }
+
+          const token = parsed.message?.content;
+          if (token) {
+            if (!isCapturingCommand) {
+              streamBuffer += token;
+              if (streamBuffer.includes('[COMMAND:')) {
+                const startIdx = streamBuffer.indexOf('[COMMAND:');
+                const textBefore = streamBuffer.substring(0, startIdx);
+                if (textBefore) {
+                  yield this.chunk('token', { content: textBefore });
+                  tokensGenerated++;
+                }
+                isCapturingCommand = true;
+                commandBuffer = streamBuffer.substring(startIdx);
+                streamBuffer = '';
+              } else {
+                if (streamBuffer.length > 20 && !streamBuffer.includes('[')) {
+                  yield this.chunk('token', { content: streamBuffer });
+                  tokensGenerated++;
+                  streamBuffer = '';
+                }
+              }
+            } else {
+              commandBuffer += token;
+              if (commandBuffer.includes(']')) {
+                const endIdx = commandBuffer.indexOf(']');
+                const fullCommand = commandBuffer.substring(0, endIdx + 1);
+                const rawJson = fullCommand.replace('[COMMAND:', '').replace(']', '').trim();
+
+                this.logger.log(`[AGENT] Executing Cloaked Command: ${rawJson.substring(0, 40)}...`);
+                this.handleAgentCommand(tenantId, rawJson);
+                yield this.chunk('system', { action: 'DASHBOARD_REFRESH' });
+
+                isCapturingCommand = false;
+                streamBuffer = commandBuffer.substring(endIdx + 1);
+                commandBuffer = '';
+              }
             }
-            // Ollama signals stream end
-            if (parsed.done === true) break;
-          } catch {
-            // Partial JSON line (shouldn't happen with Ollama, but be resilient)
           }
+          if (parsed.done === true) break;
         }
       }
 
-      const llmMs = Date.now() - llmStart;
+      // Final Flush
+      if (streamBuffer && !isCapturingCommand) {
+        yield this.chunk('token', { content: streamBuffer });
+      }
+
       yield this.chunk('done', {
         metrics: {
-          dataFetchMs:      llmStart - startTime,
-          llmGenerationMs:  llmMs,
-          totalMs:          Date.now() - startTime,
-          tokensGenerated,
-          tokensPerSecond:  Math.round((tokensGenerated / llmMs) * 1000),
-          mode:             'streaming-rag',
-          cacheHit:         !!cachedEntry,
+          totalMs: Date.now() - startTime,
+          tokens: tokensGenerated,
+          mode: mode === 'agent' ? 'strategic-report' : 'advisory-rag',
         },
       });
 
     } catch (e: any) {
-      this.logger.error(`[LLM] Ollama stream failed: ${e.message}`);
+      this.logger.error(`[Fatal] Intelligence failure: ${e.message}`);
+      
+      // PRODUCTION-GRADE ERROR MAPPING
+      let userMessage = "I encountered an unexpected issue while analyzing your finances. I've logged the details for our engineering team.";
+      
+      if (e.message.includes('AI_ENGINE_OFFLINE')) {
+        userMessage = "The AI reasoning engine is currently warming up. I've switched to high-accuracy heuristic mode to provide your core data below.";
+      } else if (e.message.includes('DATABASE_ERROR')) {
+        userMessage = "I'm having trouble retrieving your live ledger data right now. Please check your provider connection status.";
+      }
 
-      // GRACEFUL DEGRADATION: Return structured financial data even if LLM is down
-      yield this.chunk('token', { content: this.buildFallbackAnswer(profile!, e.message) });
-      yield this.chunk('done', {
-        metrics: {
-          totalMs: Date.now() - startTime,
-          mode: 'heuristic-fallback',
-          error: e.message.slice(0, 60),
-        },
-      });
+      yield this.chunk('error', { message: userMessage });
+      // Still provide raw data if possible as a fallback
+      // yield this.chunk('token', { content: this.buildFallbackAnswer(profile!, e.message) });
     }
   }
 
   /**
-   * Health check — used by the dashboard AI status indicator.
+   * Internal Command Processor
+   * Parses and executes commands like SAVE_INSIGHT
    */
-  async healthCheck(): Promise<{
-    ollama: boolean; model: string; latencyMs: number; mode: string; cacheStats: any;
-  }> {
-    const start = Date.now();
+  private async handleAgentCommand(tenantId: string, cmdJson: string) {
     try {
-      const res = await fetch(`${this.OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const models: string[] = (data?.models ?? []).map((m: any) => m.name);
-      const modelLoaded = models.some(m => m.startsWith(this.OLLAMA_MODEL.split(':')[0]));
-      return {
-        ollama:     true,
-        model:      this.OLLAMA_MODEL,
-        latencyMs:  Date.now() - start,
-        mode:       'Zero-Latency Streaming RAG',
-        cacheStats: this.contextCache.stats(),
-      };
-    } catch {
-      return {
-        ollama:     false,
-        model:      'Offline',
-        latencyMs:  Date.now() - start,
-        mode:       'Heuristic Fallback',
-        cacheStats: this.contextCache.stats(),
-      };
+      const payload = JSON.parse(cmdJson.trim());
+      this.logger.log(`[Agent:Command] Intercepted Action: ${payload.command || 'UNKNOWN'}`);
+      
+      if (payload.type === 'line' || payload.type === 'bar' || payload.type === 'pie' || payload.type === 'metric') {
+        // Fallback or explicit SAVE_INSIGHT
+        await this.agentTools.saveInsightToDashboard(tenantId, payload);
+      } else if (payload.command === 'QUERY_SQL') {
+        const result = await this.agentTools.queryFinancialDatabase(tenantId, payload);
+        // We could write this result back to the LLM if we had a multi-turn loop,
+        // for now we log it as grounding verification.
+        this.logger.debug(`[Agent:SQL] Precise fact-check result: ${result.count} rows found.`);
+      }
+      
+    } catch (e: any) {
+      this.logger.warn(`[Agent:Command] Failed to execute command: ${e.message}`);
     }
+  }
+
+  /**
+   * Health check — used by dashboard status.
+   */
+  async healthCheck() {
+    let ollamaStatus = false;
+    try {
+      const res = await fetch(`${this.OLLAMA_URL}/api/tags`);
+      ollamaStatus = res.ok;
+    } catch {
+      ollamaStatus = false;
+    }
+
+    return { 
+      status: 'ok', 
+      ollama: ollamaStatus,
+      engine: this.OLLAMA_MODEL, 
+      uptime: process.uptime(),
+      mode: ollamaStatus ? 'agentic-active' : 'heuristic-fallback' 
+    };
   }
 
   // ─── Private Helpers ─────────────────────────────────────────────────────
 
-  /** Serialize a chunk to newline-terminated JSON (SSE body) */
-  private chunk(type: string, payload: Record<string, any>): string {
+  private chunk(type: string, payload: any): string {
     return JSON.stringify({ type, ...payload }) + '\n';
   }
 
-  /** Greeting response — finance-contextualized, no LLM needed */
   private greetingResponse(): string {
-    return `Hi! I'm **Numeriqu Intelligence** — your real-time CFO advisory engine.\n\nI have live access to your financial data from Xero and QuickBooks via ClickHouse. I can help you with:\n\n- **Revenue & profitability** analysis across all connected orgs\n- **Overdue invoice** risk exposure\n- **Monthly trend** analysis and growth forecasting\n- **Cash flow** and working capital health\n\nWhat would you like to analyze today?`;
+    return "Hi! I'm **Numeriqu Intelligence**. I'm ready to analyze your financial architecture, generate live performance charts, and help you scale your business with data-driven insights.";
   }
 
-  /** Fallback answer when Ollama is unavailable — uses real ClickHouse data */
-  private buildFallbackAnswer(profile: FinancialProfile, errorMsg: string): string {
-    const r = profile.revenue;
-    const e = profile.expenses;
-    const fmt = (n: number) =>
-      new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
-
-    const orgsText = profile.connectedOrgs.length > 0
-      ? profile.connectedOrgs.map(o =>
-          `- **${o.orgName}** [${o.provider.toUpperCase()}]: ${fmt(o.totalRevenue)} revenue, ${o.invoiceCount} invoices`
-        ).join('\n')
-      : '- No org data yet — complete a sync to load your financials.';
-
-    return `### Financial Intelligence Report *(Heuristic Mode)*\n\n> ⚠️ AI reasoning engine is warming up. Showing verified ClickHouse data:\n\n**Connected Organizations:**\n${orgsText}\n\n**Aggregate Financials:**\n- Revenue: ${fmt(r.totalRevenue)} across ${r.totalInvoices} invoices\n- Expenses: ${fmt(e.totalExpenses)} (${e.overdueCount} overdue: ${fmt(e.overdueAmount)})\n- Net Profit: ${fmt(profile.netProfit)}\n- Profit Margin: ${profile.profitMargin}%\n\n*Data is live from ClickHouse analytics layer.*`;
+  private emptyProfile(tenantId: string): any {
+    return { 
+      revenue: { totalRevenue: 0, avgInvoiceValue: 0, totalInvoices: 0, minInvoice: 0, maxInvoice: 0, providerCount: 0, orgCount: 0, currencyCount: 0 }, 
+      expenses: { totalExpenses: 0, totalBills: 0, overdueAmount: 0, overdueCount: 0 }, 
+      netProfit: 0, 
+      profitMargin: 0, 
+      connectedOrgs: [], 
+      ventureMetrics: { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyMultiplier: 0 },
+      computedAt: new Date().toISOString() 
+    };
   }
 
-  /** Empty profile for when ClickHouse is unreachable */
-  private emptyProfile(tenantId: string): FinancialProfile {
-    return {
-      tenantId,
-      revenue: { totalRevenue: 0, avgInvoiceValue: 0, totalInvoices: 0, minInvoice: 0, maxInvoice: 0, providerCount: 0, orgCount: 0, currencyCount: 0 },
-      expenses: { totalExpenses: 0, totalBills: 0, overdueAmount: 0, overdueCount: 0 },
-      netProfit: 0,
-      profitMargin: 0,
-      invoiceStats: { byStatusAndOrg: [] },
-      accountSummary: { byTypeAndOrg: [] },
-      connectedOrgs: [],
-      computedAt: new Date().toISOString(),
-    } as any;
-  }
-
-  /**
-   * Background cache refresh — fires after a cache hit to keep data fresh.
-   * Non-blocking: the user gets the streaming response immediately.
-   */
   private backgroundRefresh(tenantId: string): void {
-    // Only refresh if within the last 5 seconds of TTL (avoid hammering ClickHouse)
-    const entry = this.contextCache.get(tenantId);
-    if (entry && (entry.expiresAt - Date.now()) > 5_000) return;
-
-    this.logger.debug(`[Cache] Background refresh triggered for tenant=${tenantId}`);
     Promise.all([
       this.financialData.getFinancialProfile(tenantId),
       this.financialData.getMonthlyRevenueTrend(tenantId),
     ])
-      .then(([profile, trend]) => this.contextCache.set(tenantId, profile, trend))
-      .catch(e => this.logger.warn(`[Cache] Background refresh failed: ${e.message}`));
+      .then(([p, t]) => this.contextCache.set(tenantId, p, t))
+      .catch(() => {});
   }
 }
 

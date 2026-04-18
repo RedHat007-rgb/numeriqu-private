@@ -21,50 +21,55 @@ export class UserProvisioningService {
     user: { id: string; email: string };
     tenant: { id: string; name: string };
   }> {
-    // Check if user already exists
+    // 1. Check if user already exists with an associated tenant
     let user = await prisma.user.findUnique({
       where: { id: supabaseUserId },
-      include: { connections: { include: { tenant: true }, take: 1 } },
+      include: { tenant: true },
     });
 
-    if (user) {
-      // Find their tenant from connections, or create one
-      const existingTenant = user.connections[0]?.tenant;
-      if (existingTenant) {
-        return {
-          user: { id: user.id, email: user.email },
-          tenant: { id: existingTenant.id, name: existingTenant.name },
-        };
-      }
+    if (user?.tenant) {
+      return {
+        user: { id: user.id, email: user.email },
+        tenant: { id: user.tenant.id, name: user.tenant.name },
+      };
     }
 
-    // JIT Provisioning
-    this.logger.log(`[JIT] Provisioning new user: ${email}`);
+    // 2. JIT Provisioning Strategy
+    this.logger.log(`[JIT] Provisioning infrastructure for user: ${email}`);
 
-    // Upsert user (use Supabase auth UUID as the PK)
-    user = await prisma.user.upsert({
-      where: { id: supabaseUserId },
-      create: {
+    // If user exists but has no tenantId (legacy migration path)
+    if (user && !user.tenantId) {
+      this.logger.warn(`[JIT] User ${user.email} exists without tenant. Creating stable association...`);
+      const tenant = await prisma.tenant.create({
+        data: { name: email.split('@')[0] + "'s Organization" },
+      });
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { tenantId: tenant.id },
+        include: { tenant: true },
+      });
+      return {
+        user: { id: user.id, email: user.email },
+        tenant: { id: tenant.id, name: tenant.name },
+      };
+    }
+
+    // 3. Complete new provisioning
+    const tenant = await prisma.tenant.create({
+      data: { name: email.split('@')[0] + "'s Organization" },
+    });
+
+    user = await prisma.user.create({
+      data: {
         id: supabaseUserId,
         email,
         name: email.split('@')[0],
+        tenantId: tenant.id,
       },
-      update: { email }, // Keep email in sync with Supabase
-      include: { connections: { include: { tenant: true }, take: 1 } },
+      include: { tenant: true },
     });
 
-    // Check if they have a tenant via connections
-    let tenant = user.connections[0]?.tenant;
-
-    if (!tenant) {
-      // Create a default tenant for this user
-      tenant = await prisma.tenant.create({
-        data: {
-          name: email.split('@')[0] + "'s Organization",
-        },
-      });
-      this.logger.log(`[JIT] Created tenant=${tenant.id} for user=${user.id}`);
-    }
+    this.logger.log(`[JIT] Production environment ready: tenant=${tenant.id} for user=${user.id}`);
 
     return {
       user: { id: user.id, email: user.email },

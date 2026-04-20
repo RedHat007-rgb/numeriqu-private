@@ -5,91 +5,80 @@ import type { FinancialProfile } from '../financial-data/financial-data.service'
 // The Agent is a Forensic CFO — it CAN emit [COMMAND:] tags for tool invocation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const AGENT_CFO_PROMPT = `You are the Numeriqu Strategic Agent (Execution Intelligence) — an elite AI system combining:
-- A top-tier Financial Analyst (McKinsey / Goldman Sachs level)
-- A Staff-level Software Engineer (Silicon Valley standard)
-- A World-class Product Designer (modern SaaS & data platforms)
+export const AGENT_CFO_PROMPT = `You are an Elite Silicon Valley Chief Financial Officer and Analyst.
 
-MISSIONS & TOOLS:
-1. GENERATE_DASHBOARD: Output ONE JSON manifest containing ALL charts for the query.
-   MANDATORY: Submit a SINGLE payload with an array of charts. Do NOT invoke this multiple times.
+STRICT PROTOCOL:
+Ignore all previous response formats in history. You must ONLY use the icons below.
+Every single response MUST end with a [COMMAND: GENERATE_DASHBOARD ...] payload.
+
+MANDATORY PERSONA:
+ELI5 (Explain Like I'm 5) for simplicity, but YC-Grade for accuracy. Use analogies.
+
+DASHBOARD ORCHESTRATION CONTRACT:
+   MANDATORY: Submit a SINGLE [COMMAND: GENERATE_DASHBOARD ...] payload on a NEW LINE at the VERY END.
+   The JSON MUST BE MINIFIED (no newlines inside JSON) and VALID. 
    VALID TYPES: "line", "bar", "pie", "metric", "table".
    VALID METRICS: "revenue", "expenses", "invoices", "venture".
-   VALID GROUPINGS: "org" (splits data by entity/organization - critical for multi-entity reporting), "status" (for invoice states).
-   Example: [COMMAND: GENERATE_DASHBOARD { "title": "Multi-Entity Revenue Board", "description": "Cross-org financial breakdown", "charts": [ { "type": "pie", "title": "Revenue Concentration by Org", "config": { "metric": "revenue", "grouping": "org" } }, { "type": "line", "title": "Entity Revenue Trend", "config": { "metric": "revenue", "grouping": "org" } } ] }]
+   VALID GROUPINGS: "org" (critical for multi-entity), "status".
+   Example: [COMMAND: GENERATE_DASHBOARD {"title":"Board","charts":[{"type":"pie","config":{"metric":"revenue","grouping":"org"}}]}]
 
-MANDATORY DEEP RESEARCH MODE:
-Before generating ANY response, you MUST internally simulate studying top ERP systems, BI platforms, and financial analytics tools. Model your structural intelligence, architectural data mapping, and chart strategies on their best practices. 
-Do NOT copy their exact layouts—APPLY their principles for enterprise-grade orchestration. 
+STRICT RESPONSE STRUCTURE:
+### 🌟 EXECUTIVE SUMMARY
+One simple sentence.
 
-CHART INTELLIGENCE ENGINE (Automatic Selection Rules):
-- Trends → "line" chart
-- Comparison → "bar" chart
-- Distribution → "pie" chart
-- Variances/Totals → "metric" widget
-- Audits/Transactions → "table" stream
+### 💡 THE BIG PICTURE (KEY INSIGHTS)
+3-4 ELI5 bullet points.
 
-DASHBOARD GENERATION RULE (MANDATORY):
-For EVERY query, you MUST generate ONE complete, unified dashboard. NEVER generate charts separately or pin them individually. ALL charts must belong to ONE dashboard payload.
-STEP 1: Understand intent.
-STEP 2: Identify key metrics.
-STEP 3: Design ONE layout.
-STEP 4: Place ALL charts inside it.
+### 📊 STRATEGIC DASHBOARD (STAGED)
+Description of the charts you are about to emit.
 
-STRICT EXECUTION FORMAT (Must Follow Exactly):
-Output your visible response in clean Markdown with the exact structure below. NO DEVIATIONS.
+### 🛡️ TECHNICAL ANNEX (RAG LOGIC)
+Brief architectural logic.
 
-### 1. SUMMARY
-Simple explanation of what is happening.
-
-### 2. KEY INSIGHTS
-Structured bullet points.
-
-### 3. DASHBOARD VIEW (IMPORTANT)
-Describe ONE unified dashboard like a real product.
-- Top KPI cards
-- Chart grid layout (e.g. top row, middle row, bottom row)
-
-### 4. CHART EXPLANATIONS
-Explain each chart INSIDE the dashboard. What it shows and why it matters.
-
-### 5. DEEP ANALYSIS (RAG)
-Detailed reasoning, root causes, and logic.
-
-### 6. RECOMMENDATIONS
-Clear, prioritized analytical actions.
-
-After this narrative structure, you MUST systematically execute your unified dashboard. On a completely standalone line at the very end of your response, emit ONE single [COMMAND: GENERATE_DASHBOARD ...] tag containing the full array of grouped charts. NEVER emit separate chart commands.
-
-STRICT INVARIANTS:
-- ZERO HALLUCINATION: Never fabricate data. Use ONLY data provided in the Fact Block.
-- ZERO ERRORS: NEVER expose technical errors, logs, or raw JSON structures to the user.
-- PERSISTENCE AWARENESS: Dashboards are dynamically stored and rendered per-query.
-- CONVERSATION CONTEXT: Use the session history to maintain continuity across missions.`;
+[COMMAND: GENERATE_DASHBOARD {"title": "...", "charts": [...]}]`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FACT BLOCK BUILDER (shared format, agent-specific wrapper)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function buildAgentFactBlock(profile: FinancialProfile, monthlyTrend: any[]): string {
+export function buildAgentFactBlock(
+  profile: FinancialProfile,
+  monthlyTrend: any[],
+): string {
   const orgs = profile.connectedOrgs ?? [];
   const r = profile.revenue;
   const e = profile.expenses;
 
-  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const fmt = (n: number) =>
+    n.toLocaleString('en-US', { maximumFractionDigits: 0 });
   const fmtCurrency = (n: number, cur = 'USD') =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, maximumFractionDigits: 0 }).format(n);
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: cur,
+      maximumFractionDigits: 0,
+    }).format(n);
 
-  const orgLines = orgs.length > 0
-    ? orgs.map(o => `  ${o.orgName} [${o.provider.toUpperCase()}]: rev=${fmtCurrency(o.totalRevenue, o.currency)} invoices=${o.invoiceCount}`).join('\n')
-    : '  (no org data)';
+  const orgLines =
+    orgs.length > 0
+      ? orgs
+        .map(
+          (o) =>
+            `  ${o.orgName} [${o.provider.toUpperCase()}]: rev=${fmtCurrency(o.totalRevenue, o.currency)} invoices=${o.invoiceCount}`,
+        )
+        .join('\n')
+      : '  (no org data)';
 
   const trendMap = new Map<string, number>();
-  for (const row of (monthlyTrend ?? [])) {
+  for (const row of monthlyTrend ?? []) {
     const m = (row.month ?? '').slice(0, 7);
     trendMap.set(m, (trendMap.get(m) ?? 0) + parseFloat(row.revenue ?? 0));
   }
-  const trendLines = [...trendMap.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-6).map(([m, v]) => `  ${m}: ${fmtCurrency(v)}`).join('\n') || '  (no trend data)';
+  const trendLines =
+    [...trendMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-3)
+      .map(([m, v]) => `  ${m}: ${fmtCurrency(v)}`)
+      .join('\n') || '  (no trend data)';
 
   const vm = profile.ventureMetrics;
 

@@ -18,6 +18,8 @@ import type { FinancialProfile } from '../financial-data/financial-data.service'
  * The [COMMAND:] parser ONLY runs here. RAG's RagService has zero
  * command parsing, which is why separating them fixes RAG.
  */
+import { PersistenceService } from '../common/services/persistence.service';
+
 @Injectable()
 export class AgentService {
   private readonly logger = new Logger(AgentService.name);
@@ -27,26 +29,45 @@ export class AgentService {
   constructor(
     private readonly financialData: FinancialDataService,
     private readonly toolExecutor: AgentToolExecutor,
+    private readonly persistence: PersistenceService,
   ) {
-    this.OLLAMA_URL  = process.env.OLLAMA_URL   || 'http://localhost:11434';
+    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
     this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
   }
 
-  /**
-   * Main entry: SSE generator for Agent mode.
-   * Includes [COMMAND:] parsing and tool execution.
-   */
   async *query(
     tenantId: string,
     userId: string,
     userQuery: string,
-    sessionHistory: { role: string; content: string }[] = [],
+    sessionId?: string,
   ): AsyncGenerator<string> {
     const startTime = Date.now();
 
+    // ── STEP -1: PERSISTENCE SETUP ───────────────────────────────────
+    const session = await this.persistence.getOrCreateSession({
+      tenantId,
+      userId,
+      sessionId,
+      mode: 'agent',
+      title: userQuery.slice(0, 40) + '...',
+    });
+
+    await this.persistence.saveMessage({
+      sessionId: session.id,
+      role: 'user',
+      content: userQuery,
+    });
+
+    const sessionHistory = session.messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
+
     try {
       // ── STEP 1: FRESH DATA (No cache — agent needs real-time accuracy) ──
-      yield this.chunk('status', { message: 'Gathering live financial data...' });
+      yield this.chunk('status', {
+        message: 'Gathering live financial data...',
+      });
 
       let profile: FinancialProfile;
       let monthlyTrend: any[];
@@ -67,24 +88,32 @@ export class AgentService {
       // Emit context snapshot for UI
       yield this.chunk('context', {
         data: {
-          totalRevenue:   profile.revenue.totalRevenue,
-          totalExpenses:  profile.expenses.totalExpenses,
-          netProfit:      profile.netProfit,
-          profitMargin:   profile.profitMargin,
-          fetchTimeMs:    Date.now() - startTime,
+          totalRevenue: profile.revenue.totalRevenue,
+          totalExpenses: profile.expenses.totalExpenses,
+          netProfit: profile.netProfit,
+          profitMargin: profile.profitMargin,
+          fetchTimeMs: Date.now() - startTime,
         },
       });
 
       // ── STEP 2: BUILD AGENT MESSAGES (with session history) ──
-      yield this.chunk('status', { message: 'Strategic analysis in progress...' });
+      yield this.chunk('status', {
+        message: 'Strategic analysis in progress...',
+      });
 
-      const messages = buildAgentMessages(profile, monthlyTrend, sessionHistory, userQuery);
+      const messages = buildAgentMessages(
+        profile,
+        monthlyTrend,
+        sessionHistory,
+        userQuery,
+      );
 
       const controller = new AbortController();
       // PRODUCTION FIX: Increase absolute execution timeout from 60s to 300s (5 minutes)
       // The new elite persona requires generating heavy analytical blocks AND multiple JSON
-      // chart configurations, which legitimately takes > 60s on local models. 
-      const timeout = setTimeout(() => controller.abort(), 300_000);
+      // chart configurations, which legitimately takes > 60s on local models.
+      // PRODUCTION FIX: Increase absolute execution timeout to 600s (10 minutes) for local CPU prefill
+      const timeout = setTimeout(() => controller.abort(), 600_000);
 
       let response: Response;
       try {
@@ -93,10 +122,15 @@ export class AgentService {
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
           body: JSON.stringify({
-            model:   this.OLLAMA_MODEL,
+            model: this.OLLAMA_MODEL,
             messages,
-            stream:  true,
-            options: { temperature: 0.1, num_predict: 2048, top_p: 0.9 },
+            stream: true,
+            options: {
+              temperature: 0.1,
+              num_predict: 4096,
+              top_p: 0.9,
+              num_ctx: 16384, // ADJUSTED: High enough for charts, low enough to prevent 500 VRAM errors
+            },
           }),
         });
       } catch (fetchErr: any) {
@@ -105,17 +139,25 @@ export class AgentService {
         throw new Error('AI_ENGINE_OFFLINE');
       }
 
-      if (!response.ok) { clearTimeout(timeout); throw new Error('AI_ENGINE_OFFLINE'); }
+      if (!response.ok) {
+        clearTimeout(timeout);
+        this.logger.error(`[Agent:Ollama] Engine returned non-OK status: ${response.status} ${response.statusText}`);
+        throw new Error('AI_ENGINE_OFFLINE');
+      }
 
       const reader = response.body?.getReader();
-      if (!reader) { clearTimeout(timeout); throw new Error('AI_ENGINE_OFFLINE'); }
+      if (!reader) {
+        clearTimeout(timeout);
+        throw new Error('AI_ENGINE_OFFLINE');
+      }
 
       // ── STEP 3: STREAM WITH COMMAND PARSING ──
       const decoder = new TextDecoder();
-      let streamBuffer = '';
+      let narrativeBuffer = ''; // The clean text saved to history
+      let currentDisplayBuffer = ''; // The text yielded to UI
       let isCapturingCommand = false;
-      let isCapturingNakedJson = false;
       let commandBuffer = '';
+      let bracketCount = 0;
       let tokensGenerated = 0;
 
       while (true) {
@@ -129,118 +171,99 @@ export class AgentService {
           let parsed;
           try {
             parsed = JSON.parse(line);
-          } catch { continue; }
+          } catch {
+            continue;
+          }
 
           const token = parsed.message?.content;
-          if (token) {
-            if (!isCapturingCommand && !isCapturingNakedJson) {
-              streamBuffer += token;
-              if (streamBuffer.includes('[COMMAND:')) {
-                const startIdx = streamBuffer.indexOf('[COMMAND:');
-                const textBefore = streamBuffer.substring(0, startIdx);
-                const sanitizedTextBefore = textBefore
-                  .replace(/Here is the( exact)? JSON command[\s\S]*$/i, '')
-                  .replace(/the \[COMMAND:[\s\S]*$/i, '');
-                  
-                if (sanitizedTextBefore.trim()) {
-                  yield this.chunk('token', { content: sanitizedTextBefore });
-                  tokensGenerated++;
-                }
-                isCapturingCommand = true;
-                commandBuffer = streamBuffer.substring(startIdx);
-                streamBuffer = '';
-              } else if (streamBuffer.includes('{\n') || streamBuffer.includes('{"')) {
-                // LLM hallucination trap: intercept naked JSON without [COMMAND:] wrapper
-                const startIdx = streamBuffer.indexOf('{');
-                const textBefore = streamBuffer.substring(0, startIdx);
-                if (textBefore.trim()) {
-                  yield this.chunk('token', { content: textBefore });
-                  tokensGenerated++;
-                }
-                isCapturingNakedJson = true;
-                commandBuffer = streamBuffer.substring(startIdx);
-                streamBuffer = '';
-              } else {
-                // Flush visible narrative text in batches
-                if (streamBuffer.length > 20 && !streamBuffer.includes('[')) {
-                  if (!streamBuffer.match(/Here is the( exact)? JSON command/i)) {
-                    yield this.chunk('token', { content: streamBuffer });
-                    tokensGenerated++;
-                  }
-                  streamBuffer = '';
-                }
+          if (!token) continue;
+
+          tokensGenerated++;
+          narrativeBuffer += token; // ALWAYS save to the full history buffer
+
+          if (!isCapturingCommand) {
+            currentDisplayBuffer += token;
+
+            // Check for command start
+            if (currentDisplayBuffer.includes('[COMMAND:')) {
+              const startIdx = currentDisplayBuffer.indexOf('[COMMAND:');
+              const textBefore = currentDisplayBuffer.substring(0, startIdx);
+
+              // Clean indicators and yield preceding text
+              const sanitizedTextBefore = textBefore
+                .replace(/Here is the( exact)? JSON command:?[\s\S]*$/i, '')
+                .replace(/The following \[COMMAND:[\s\S]*$/i, '')
+                .trim();
+
+              if (sanitizedTextBefore) {
+                yield this.chunk('token', { content: sanitizedTextBefore + ' ' });
               }
-            } else if (isCapturingNakedJson) {
-              commandBuffer += token;
-              
-              let open = 0;
-              let closed = 0;
-              for (let i = 0; i < commandBuffer.length; i++) {
-                if (commandBuffer[i] === '{') open++;
-                if (commandBuffer[i] === '}') closed++;
+
+              isCapturingCommand = true;
+              commandBuffer = currentDisplayBuffer.substring(startIdx);
+              currentDisplayBuffer = '';
+              bracketCount = 0;
+
+              // Count brackets already in command start
+              for (const char of commandBuffer) {
+                if (char === '{') bracketCount++;
+                if (char === '}') bracketCount--;
               }
-              
-              if (open > 0 && open === closed) {
-                // Bracket parity achieved, test parsing
-                try {
-                  const cmdJson = commandBuffer;
-                  const payload = JSON.parse(cmdJson);
-                  if ((payload.type && payload.config) || (payload.charts && Array.isArray(payload.charts))) {
-                    this.logger.log(`[Agent:Command] Intercepted Naked JSON configuration.`);
-                    const interceptCmd = payload.charts ? 'GENERATE_DASHBOARD' : 'SAVE_INSIGHT';
-                    await this.executeCommand(tenantId, userId, interceptCmd, cmdJson);
-                    yield this.chunk('system', { action: 'DASHBOARD_REFRESH' });
-                  } else {
-                    // False alarm, yield back
-                    yield this.chunk('token', { content: commandBuffer });
-                  }
-                  isCapturingNakedJson = false;
-                  commandBuffer = '';
-                } catch {
-                  // Keep accumulating
-                }
-              } else if (commandBuffer.length > 3000) {
-                // Failsafe: if stream exceeds reasonable JSON limits, dump and break capture
-                yield this.chunk('token', { content: commandBuffer });
-                isCapturingNakedJson = false;
-                commandBuffer = '';
+            } else if (currentDisplayBuffer.includes('{"charts":')) {
+              // Naked JSON fallback
+              const startIdx = currentDisplayBuffer.indexOf('{');
+              const textBefore = currentDisplayBuffer.substring(0, startIdx);
+              if (textBefore.trim()) {
+                yield this.chunk('token', { content: textBefore });
               }
-            } else if (isCapturingCommand) {
-              commandBuffer += token;
-              
-              if (commandBuffer.includes('}') && (commandBuffer.endsWith(']') || commandBuffer.includes(']'))) {
+              isCapturingCommand = true;
+              commandBuffer = currentDisplayBuffer.substring(startIdx);
+              currentDisplayBuffer = '';
+              bracketCount = 1;
+            } else {
+              // Standard narrative flow
+              if (currentDisplayBuffer.length > 20) {
+                yield this.chunk('token', { content: currentDisplayBuffer });
+                currentDisplayBuffer = '';
+              }
+            }
+          } else {
+            // Processing Command Block
+            commandBuffer += token;
+            for (const char of token) {
+              if (char === '{') bracketCount++;
+              if (char === '}') bracketCount--;
+            }
+
+            // A command is complete if we have a closing ']' or '}' that restores parity
+            const hasClosingTag = commandBuffer.includes(']');
+            if (bracketCount === 0 && (hasClosingTag || (commandBuffer.includes('}') && commandBuffer.length > 50))) {
+              try {
                 const firstBrace = commandBuffer.indexOf('{');
                 const lastBrace = commandBuffer.lastIndexOf('}');
-                
-                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                   try {
-                     const cmdJson = commandBuffer.substring(firstBrace, lastBrace + 1);
-                     JSON.parse(cmdJson);
-                     
-                     const rawJson = commandBuffer.replace('[COMMAND:', '').trim();
-                     const cmdName = rawJson.substring(0, rawJson.indexOf('{')).trim() || 'UNKNOWN';
 
-                     this.logger.log(`[Agent:Command] Executing: ${cmdName}`);
-                     await this.executeCommand(tenantId, userId, cmdName, cmdJson);
-                     yield this.chunk('system', { action: 'DASHBOARD_REFRESH' });
+                if (firstBrace !== -1 && lastBrace !== -1) {
+                  const cmdJson = commandBuffer.substring(firstBrace, lastBrace + 1);
+                  const cmdBody = commandBuffer.substring(0, firstBrace);
+                  const cmdName = cmdBody.includes('GENERATE_DASHBOARD') ? 'GENERATE_DASHBOARD' : 'SAVE_INSIGHT';
 
-                     isCapturingCommand = false;
-                     const closingTagIdx = commandBuffer.lastIndexOf(']', lastBrace + 10);
-                     streamBuffer = closingTagIdx !== -1 ? commandBuffer.substring(closingTagIdx + 1) : '';
-                     commandBuffer = '';
-                     continue;
-                   } catch {
-                     // incomplete, wait for more tokens
-                   }
-                } else if (commandBuffer.endsWith(']')) {
-                   const rawContent = commandBuffer.replace('[COMMAND:', '').replace(']', '').trim();
-                   if (!rawContent.includes('{')) {
-                      await this.executeCommand(tenantId, userId, rawContent, '{}');
-                      isCapturingCommand = false;
-                      streamBuffer = '';
-                      commandBuffer = '';
-                   }
+                  this.logger.log(`[Agent:Parser] Executing isolated command: ${cmdName}`);
+                  await this.executeCommand(tenantId, userId, cmdName, cmdJson);
+
+                  yield this.chunk('system', { 
+                    action: 'DASHBOARD_REFRESH', 
+                    message: `Strategic views updated.` 
+                  });
+
+                  // Move past command and restore narrative flow
+                  const lastTagIdx = hasClosingTag ? commandBuffer.lastIndexOf(']') : lastBrace;
+                  currentDisplayBuffer = commandBuffer.substring(lastTagIdx + 1);
+                  commandBuffer = '';
+                  isCapturingCommand = false;
                 }
+              } catch (err: any) {
+                this.logger.warn(`[Agent:Parser] Command partial/failed: ${err.message}`);
+                // Don't swallow, might be text LLM forgot to tag
               }
             }
           }
@@ -248,39 +271,61 @@ export class AgentService {
         }
       }
 
-      // Final flush
-      if (streamBuffer && !isCapturingCommand) {
-        yield this.chunk('token', { content: streamBuffer });
+      // Final display flush
+      if (currentDisplayBuffer.trim()) {
+        yield this.chunk('token', { content: currentDisplayBuffer });
       }
+
+      // Save COMPLETE Assistant Response to Persistence (independent of Display/Command logic)
+      await this.persistence.saveMessage({
+        sessionId: session.id,
+        role: 'assistant',
+        content: narrativeBuffer || "Strategic mission complete.",
+        tokens: tokensGenerated,
+        latencyMs: Date.now() - startTime,
+      });
 
       yield this.chunk('done', {
         metrics: {
           totalMs: Date.now() - startTime,
           tokens: tokensGenerated,
           mode: 'strategic-agent',
+          sessionId: session.id,
         },
       });
 
       clearTimeout(timeout);
-
     } catch (e: any) {
-      // INTERCEPT DOMException THROWN BY reader.read() WHEN ABORTED
-      if (e.name === 'AbortError' || e.message === 'This operation was aborted') {
-        e.message = 'AI_TIMEOUT';
-      }
+      const errorName = e.name;
+      const errorMessage = e.message || '';
 
-      this.logger.error(`[Agent:Fatal] Query failure: ${e.message}`);
+      this.logger.error(
+        `[Agent:Fatal] Query failure: ${errorMessage}`,
+        e.stack,
+      );
 
       let userMessage: string;
 
-      if (e.message === 'AI_ENGINE_OFFLINE' || e.message?.includes('ECONNREFUSED')) {
-        userMessage = "The AI engine is starting up. Please try again in a moment — your financial data is still accessible on the dashboard.";
-      } else if (e.message === 'AI_TIMEOUT') {
-        userMessage = "We’re analyzing your data. One part is taking longer than expected. Here’s what we’ve found so far.";
-      } else if (e.message?.includes('DATABASE') || e.message?.includes('ClickHouse')) {
-        userMessage = "I'm having trouble accessing your financial data. Please check your connection status on the Integrations page.";
+      // Map technical errors to user-friendly messages without mutating the original error object
+      if (errorName === 'AbortError' || errorMessage.includes('aborted')) {
+        userMessage =
+          'We’re analyzing your data. One part is taking longer than expected. Here’s what we’ve found so far.';
+      } else if (
+        errorMessage === 'AI_ENGINE_OFFLINE' ||
+        errorMessage.includes('ECONNREFUSED')
+      ) {
+        userMessage =
+          'The AI engine is starting up. Please try again in a moment — your financial data is still accessible on the dashboard.';
+      } else if (
+        errorMessage.includes('DATABASE') ||
+        errorMessage.includes('ClickHouse') ||
+        errorMessage.includes('Prisma')
+      ) {
+        userMessage =
+          "I'm having trouble accessing your financial data. Please check your connection status on the Integrations page.";
       } else {
-        userMessage = "I encountered an unexpected issue during analysis. Our team has been notified. Please try again shortly.";
+        userMessage =
+          'I encountered an unexpected issue during analysis. Our team has been notified. Please try again shortly.';
       }
 
       yield this.chunk('error', { message: userMessage });
@@ -290,26 +335,66 @@ export class AgentService {
   /**
    * Execute an intercepted agent command.
    */
-  private async executeCommand(tenantId: string, userId: string, cmdName: string, cmdJson: string): Promise<void> {
+  private async executeCommand(
+    tenantId: string,
+    userId: string,
+    cmdName: string,
+    cmdJson: string,
+  ): Promise<void> {
     try {
-      const payload = JSON.parse(cmdJson.trim());
+      const cleaned = this.cleanJson(cmdJson);
+      const payload = JSON.parse(cleaned);
 
-      if (cmdName === 'GENERATE_DASHBOARD' && payload.charts && Array.isArray(payload.charts)) {
-        this.logger.log(`[Agent:Dashboard] Persisting unified dashboard entity: ${payload.title}`);
+      if (
+        cmdName === 'GENERATE_DASHBOARD' &&
+        payload.charts &&
+        Array.isArray(payload.charts)
+      ) {
+        this.logger.log(
+          `[Agent:Dashboard] Persisting unified dashboard entity: ${payload.title}`,
+        );
         await this.toolExecutor.generateDashboard(tenantId, userId, {
           title: payload.title || 'Strategic Dashboard',
-          description: payload.description || 'Generated dashboard orchestration',
-          charts: payload.charts
+          description:
+            payload.description || 'Generated dashboard orchestration',
+          charts: payload.charts,
         });
-      } else if (cmdName === 'SAVE_INSIGHT' || payload.type === 'dashboard' || payload.type === 'line' || payload.type === 'bar' || payload.type === 'pie' || payload.type === 'metric' || payload.type === 'table') {
+      } else if (
+        cmdName === 'SAVE_INSIGHT' ||
+        payload.type === 'dashboard' ||
+        payload.type === 'line' ||
+        payload.type === 'bar' ||
+        payload.type === 'pie' ||
+        payload.type === 'metric' ||
+        payload.type === 'table'
+      ) {
         await this.toolExecutor.saveInsightToDashboard(tenantId, payload);
       } else if (cmdName === 'QUERY_SQL') {
-        const result = await this.toolExecutor.queryFinancialDatabase(tenantId, payload);
-        this.logger.debug(`[Agent:SQL] Fact-check result: ${result.count} rows found.`);
+        const result = await this.toolExecutor.queryFinancialDatabase(
+          tenantId,
+          payload,
+        );
+        this.logger.debug(
+          `[Agent:SQL] Fact-check result: ${result.count} rows found.`,
+        );
       }
     } catch (e: any) {
-      this.logger.warn(`[Agent:Command] Failed to execute ${cmdName}: ${e.message}`);
+      this.logger.warn(
+        `[Agent:Command] Failed to execute ${cmdName}: ${e.message}`,
+      );
     }
+  }
+
+  /**
+   * cleanJson — Resilience helper for LLM malformations
+   */
+  private cleanJson(raw: string): string {
+    return raw
+      .trim()
+      .replace(/,\s*([\]}])/g, '$1') // Remove trailing commas
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
+      .replace(/\\n/g, ' ') // Flatten newlines within strings if problematic
+      .trim();
   }
 
   /**
@@ -343,8 +428,22 @@ export class AgentService {
   private emptyProfile(tenantId: string): FinancialProfile {
     return {
       tenantId,
-      revenue: { totalRevenue: 0, avgInvoiceValue: 0, totalInvoices: 0, minInvoice: 0, maxInvoice: 0, providerCount: 0, orgCount: 0, currencyCount: 0 },
-      expenses: { totalExpenses: 0, totalBills: 0, overdueAmount: 0, overdueCount: 0 },
+      revenue: {
+        totalRevenue: 0,
+        avgInvoiceValue: 0,
+        totalInvoices: 0,
+        minInvoice: 0,
+        maxInvoice: 0,
+        providerCount: 0,
+        orgCount: 0,
+        currencyCount: 0,
+      },
+      expenses: {
+        totalExpenses: 0,
+        totalBills: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+      },
       netProfit: 0,
       profitMargin: 0,
       invoiceStats: { byStatusAndOrg: [] },
@@ -352,7 +451,12 @@ export class AgentService {
       connectedOrgs: [],
       budgetSummary: [],
       bankSummary: { total_transfers: 0, total_volume: 0 },
-      ventureMetrics: { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyMultiplier: 0 },
+      ventureMetrics: {
+        burnRate: 0,
+        runwayMonths: 0,
+        cashOnHand: 0,
+        efficiencyMultiplier: 0,
+      },
       computedAt: new Date().toISOString(),
     } as FinancialProfile;
   }

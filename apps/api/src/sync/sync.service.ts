@@ -1,7 +1,16 @@
-import { Injectable, Inject, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { spawn } from 'child_process';
 import * as path from 'path';
-import { PRISMA_TOKEN, CLICKHOUSE_ANALYTICS_TOKEN } from '../database/database.module';
+import {
+  PRISMA_TOKEN,
+  CLICKHOUSE_ANALYTICS_TOKEN,
+} from '../database/database.module';
 import { ClickHouseClient } from '@clickhouse/client';
 import type { PrismaClient } from '@repo/db';
 import { InlineTransformService } from './inline-transform.service';
@@ -35,12 +44,13 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     @Inject(PRISMA_TOKEN) private readonly prisma: PrismaClient,
-    @Inject(CLICKHOUSE_ANALYTICS_TOKEN) private readonly chAnalytics: ClickHouseClient,
+    @Inject(CLICKHOUSE_ANALYTICS_TOKEN)
+    private readonly chAnalytics: ClickHouseClient,
     private readonly inlineTransform: InlineTransformService,
   ) {}
 
   /**
-   * On startup: 
+   * On startup:
    * 1. Bootstrap the Gold Layer (Create DB/Tables if missing)
    * 2. Recovery: Fail any orphaned jobs
    */
@@ -52,7 +62,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   private async bootstrapAnalyticsLayer() {
     const db = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
     this.logger.log(`[Bootstrap] Verifying Gold Layer: ${db}`);
-    
+
     try {
       // Helper: All @clickhouse/client responses MUST be consumed to close the socket
       const safeQuery = async (q: string) => {
@@ -62,7 +72,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
       // 1. Ensure Database exists
       await safeQuery(`CREATE DATABASE IF NOT EXISTS ${db}`);
-      
+
       // 2. Ensure Gold Table (Revenue Trends) — org-aware
       await safeQuery(`
         CREATE TABLE IF NOT EXISTS ${db}.revenue_by_month (
@@ -161,7 +171,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS currency String DEFAULT ''`,
       ];
       for (const migration of migrations) {
-        try { await safeQuery(migration); } catch { /* column may already exist — safe to ignore */ }
+        try {
+          await safeQuery(migration);
+        } catch {
+          /* column may already exist — safe to ignore */
+        }
       }
 
       // 7. One-time cleanup: purge stale rows written by the previous broken transform.
@@ -170,14 +184,22 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       //    ClickHouse mutations are async — they run in background and are safe to fire here.
       try {
         await safeQuery(
-          `ALTER TABLE ${db}.fact_accounting_invoices DELETE WHERE total_amount = 0 AND status = ''`
+          `ALTER TABLE ${db}.fact_accounting_invoices DELETE WHERE total_amount = 0 AND status = ''`,
         );
-        this.logger.log(`[Bootstrap] Stale zero-amount rows scheduled for cleanup`);
-      } catch { /* mutation may not be supported on this CH edition — non-fatal */ }
+        this.logger.log(
+          `[Bootstrap] Stale zero-amount rows scheduled for cleanup`,
+        );
+      } catch {
+        /* mutation may not be supported on this CH edition — non-fatal */
+      }
 
-      this.logger.log(`[Bootstrap] Full Gold Layer (org-aware) mechanized in ${db}`);
+      this.logger.log(
+        `[Bootstrap] Full Gold Layer (org-aware) mechanized in ${db}`,
+      );
     } catch (e: any) {
-      this.logger.error(`[Bootstrap] Critical Initialization failure: ${e.message}`);
+      this.logger.error(
+        `[Bootstrap] Critical Initialization failure: ${e.message}`,
+      );
     }
   }
 
@@ -259,7 +281,13 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async completeSyncJob(jobId: string, recordsProcessed: number, orgId?: string, tenantId?: string, provider?: string) {
+  async completeSyncJob(
+    jobId: string,
+    recordsProcessed: number,
+    orgId?: string,
+    tenantId?: string,
+    provider?: string,
+  ) {
     try {
       await this.prisma.syncJob.update({
         where: { id: jobId },
@@ -273,10 +301,18 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       // ── Inline Gold Layer Transform ────────────────────────────────────────
       // Fires immediately after ingestion completes — no subprocess, no debounce.
       // Falls back to dbt (scheduleDbtTransformation) if org/tenant context missing.
-      if (orgId && tenantId && (provider === 'xero' || provider === 'quickbooks')) {
+      if (
+        orgId &&
+        tenantId &&
+        (provider === 'xero' || provider === 'quickbooks')
+      ) {
         this.inlineTransform
           .transformForProvider(tenantId, orgId, provider)
-          .catch((err) => this.logger.error(`[Transform] Background transform failed: ${err.message}`));
+          .catch((err) =>
+            this.logger.error(
+              `[Transform] Background transform failed: ${err.message}`,
+            ),
+          );
       } else {
         // Legacy fallback for providers that don't pass orgId yet
         this.scheduleDbtTransformation();
@@ -322,7 +358,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
    * ROOT CAUSE FIX for dbt transformation not running:
    *
    * 1. Uses spawn() instead of exec() — properly handles stdout/stderr streams
-   * 2. Injects env vars directly into child process ENV (bypasses buggy 
+   * 2. Injects env vars directly into child process ENV (bypasses buggy
    *    `export $(cat .env | xargs)` which breaks on quoted values)
    * 3. Extracts host from CLICKHOUSE_ANALYTICS_URL (already set in API .env)
    *    so dbt always connects to the correct live ClickHouse host
@@ -345,7 +381,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const dbtPassword = process.env.CLICKHOUSE_ANALYTICS_PASSWORD || '';
     const dbtDatabase = process.env.CLICKHOUSE_ANALYTICS_DB!;
 
-    this.logger.log(`${logTag} Triggering transformation → ${dbtHost}/${dbtDatabase}`);
+    this.logger.log(
+      `${logTag} Triggering transformation → ${dbtHost}/${dbtDatabase}`,
+    );
 
     const child = spawn('pnpm', ['run', 'sync'], {
       cwd: analyticsPath,
@@ -364,8 +402,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     let stdoutBuf = '';
     let stderrBuf = '';
 
-    child.stdout?.on('data', (d) => { stdoutBuf += d.toString(); });
-    child.stderr?.on('data', (d) => { stderrBuf += d.toString(); });
+    child.stdout?.on('data', (d) => {
+      stdoutBuf += d.toString();
+    });
+    child.stderr?.on('data', (d) => {
+      stderrBuf += d.toString();
+    });
 
     child.on('close', (code) => {
       this.isDbtRunning = false;
@@ -374,7 +416,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`${logTag} ✓ Transformation completed successfully`);
         if (stdoutBuf) this.logger.debug(stdoutBuf.slice(-800));
       } else {
-        this.logger.error(`${logTag} ✗ Transformation FAILED (exit code ${code})`);
+        this.logger.error(
+          `${logTag} ✗ Transformation FAILED (exit code ${code})`,
+        );
         if (stderrBuf) this.logger.error(stderrBuf.slice(-1500));
         if (stdoutBuf) this.logger.debug(stdoutBuf.slice(-800));
       }

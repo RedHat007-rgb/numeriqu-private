@@ -23,26 +23,40 @@ export class Dynamics365Provider implements IntegrationProvider {
 
   async refreshToken(connectionId: string): Promise<void> {
     // Client Credentials flow manages tokens at runtime, no manual refresh needed in DB
-    this.logger.log(`Dynamics 365 BC uses Client Credentials for connection ${connectionId}`);
+    this.logger.log(
+      `Dynamics 365 BC uses Client Credentials for connection ${connectionId}`,
+    );
   }
 
-  async triggerSync(jobDetails: SyncJobConfig, ...extraArgs: any[]): Promise<void> {
+  async triggerSync(
+    jobDetails: SyncJobConfig,
+    ...extraArgs: any[]
+  ): Promise<void> {
     const connectionId = jobDetails.connectionId;
-    const connection = await this.prisma.connection.findUnique({ where: { id: connectionId } });
+    const connection = await this.prisma.connection.findUnique({
+      where: { id: connectionId },
+    });
 
     if (!connection || !connection.refreshToken) {
-      throw new Error(`Dynamics 365 connection ${connectionId} is missing Client Secret / Credentials.`);
+      throw new Error(
+        `Dynamics 365 connection ${connectionId} is missing Client Secret / Credentials.`,
+      );
     }
 
     try {
       // 1. Get Decrypted Credentials
-      const clientSecret = this.crypto.decrypt(connection.refreshToken); 
-      const metadata = (typeof connection.metadata === 'string') 
-        ? this.crypto.decryptJson(connection.metadata as string) 
-        : (connection.metadata as any);
+      const clientSecret = this.crypto.decrypt(connection.refreshToken);
+      const metadata =
+        typeof connection.metadata === 'string'
+          ? this.crypto.decryptJson(connection.metadata)
+          : (connection.metadata as any);
 
       const { tenantId, clientId, environment, companyId } = metadata;
-      const accessToken = await this.getAccessToken(tenantId, clientId, clientSecret);
+      const accessToken = await this.getAccessToken(
+        tenantId,
+        clientId,
+        clientSecret,
+      );
 
       // 2. Define High-Value Financial Entities for D365BC
       const endpoints = [
@@ -52,24 +66,35 @@ export class Dynamics365Provider implements IntegrationProvider {
         'salesInvoices',
         'purchaseInvoices',
         'bankAccounts',
-        'generalLedgerEntries' // Note: Some environments may require custom API for this
+        'generalLedgerEntries', // Note: Some environments may require custom API for this
       ];
 
       for (const entity of endpoints) {
-        this.logger.log(`[D365BC] Ingesting ${entity} for company ${companyId}...`);
-        const data = await this.fetchFullCollection(tenantId, environment, companyId, entity, accessToken);
-        
+        this.logger.log(
+          `[D365BC] Ingesting ${entity} for company ${companyId}...`,
+        );
+        const data = await this.fetchFullCollection(
+          tenantId,
+          environment,
+          companyId,
+          entity,
+          accessToken,
+        );
+
         // 3. Robust Medallion Streaming to ClickHouse
         await this.streamToClickHouse(connection.tenantId, entity, data);
       }
-
     } catch (error: any) {
       this.logger.error(`Dynamics 365 Sync Failed: ${error.message}`);
       throw error;
     }
   }
 
-  private async getAccessToken(tenantId: string, clientId: string, clientSecret: string): Promise<string> {
+  private async getAccessToken(
+    tenantId: string,
+    clientId: string,
+    clientSecret: string,
+  ): Promise<string> {
     const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
     const payload = new URLSearchParams({
       client_id: clientId,
@@ -79,24 +104,24 @@ export class Dynamics365Provider implements IntegrationProvider {
     });
 
     const res = await axios.post(tokenUrl, payload.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
     return res.data.access_token;
   }
 
   private async fetchFullCollection(
-    tenantId: string, 
-    environment: string, 
-    companyId: string, 
-    entity: string, 
-    token: string
+    tenantId: string,
+    environment: string,
+    companyId: string,
+    entity: string,
+    token: string,
   ): Promise<any[]> {
     let allRecords: any[] = [];
     let nextUrl = `https://api.businesscentral.dynamics.com/v2.0/${tenantId}/${environment}/api/v2.0/companies(${companyId})/${entity}`;
 
     while (nextUrl) {
       const res = await axios.get(nextUrl, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       allRecords = allRecords.concat(res.data.value);
       nextUrl = res.data['@odata.nextLink'] || null;
@@ -105,26 +130,34 @@ export class Dynamics365Provider implements IntegrationProvider {
     return allRecords;
   }
 
-  private async streamToClickHouse(internalTenantId: string, entity: string, data: any[]) {
+  private async streamToClickHouse(
+    internalTenantId: string,
+    entity: string,
+    data: any[],
+  ) {
     if (data.length === 0) return;
 
     const tableName = `dynamics_raw.tenant_${internalTenantId.replace(/-/g, '_')}_${entity.toLowerCase()}`;
-    
+
     // Create DB if not exists
-    await this.clickhouse.command({ query: `CREATE DATABASE IF NOT EXISTS dynamics_raw` });
+    await this.clickhouse.command({
+      query: `CREATE DATABASE IF NOT EXISTS dynamics_raw`,
+    });
 
     // Dynamic Schema Creation (Production-grade flexibility)
     const firstRow = data[0];
-    const columns = Object.keys(firstRow).map(k => `\`${k}\` String`).join(', ');
-    
+    const columns = Object.keys(firstRow)
+      .map((k) => `\`${k}\` String`)
+      .join(', ');
+
     await this.clickhouse.command({
-      query: `CREATE TABLE IF NOT EXISTS ${tableName} (${columns}, _ingested_at DateTime DEFAULT now()) ENGINE = MergeTree() ORDER BY _ingested_at`
+      query: `CREATE TABLE IF NOT EXISTS ${tableName} (${columns}, _ingested_at DateTime DEFAULT now()) ENGINE = MergeTree() ORDER BY _ingested_at`,
     });
 
     // Batch Insert (High performance)
     await this.clickhouse.insert({
       table: tableName,
-      values: data.map(row => {
+      values: data.map((row) => {
         const sanitized: any = {};
         for (const [k, v] of Object.entries(row)) {
           sanitized[k] = typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -134,6 +167,8 @@ export class Dynamics365Provider implements IntegrationProvider {
       format: 'JSONEachRow',
     });
 
-    this.logger.log(`[D365BC] Successfully ingested ${data.length} records into ${tableName}`);
+    this.logger.log(
+      `[D365BC] Successfully ingested ${data.length} records into ${tableName}`,
+    );
   }
 }

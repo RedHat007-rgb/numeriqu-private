@@ -36,7 +36,7 @@ export class AuthController {
     private readonly integrationsService: IntegrationsService,
     private readonly crypto: CryptoService,
     private readonly provisioning: UserProvisioningService,
-  ) { }
+  ) {}
 
   private normalizeStartDateInput(value?: string | string[]): string {
     const raw = Array.isArray(value) ? value[0] : value;
@@ -56,7 +56,9 @@ export class AuthController {
    * in apiCallback(). BOTH connect and callback must use the SAME state.
    */
   private getXeroClient(state?: string): XeroClient {
-    const scopes = process.env.XERO_SCOPES || 'openid profile email offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read accounting.payments.read accounting.banktransactions.read accounting.manualjournals.read';
+    const scopes =
+      process.env.XERO_SCOPES ||
+      'openid profile email offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read accounting.payments.read accounting.banktransactions.read accounting.manualjournals.read';
     return new XeroClient({
       clientId: process.env.XERO_CLIENT_ID!,
       clientSecret: process.env.XERO_CLIENT_SECRET!,
@@ -87,28 +89,43 @@ export class AuthController {
   private readonly STATES_DIR = join(process.cwd(), '.oauth-states');
   private readonly STATE_TTL_MS = 15 * 60 * 1000; // 15 min
 
-  private persistOAuthState(payload: Record<string, any>, customKey?: string): string {
-    if (!existsSync(this.STATES_DIR)) mkdirSync(this.STATES_DIR, { recursive: true });
+  private persistOAuthState(
+    payload: Record<string, any>,
+    customKey?: string,
+  ): string {
+    if (!existsSync(this.STATES_DIR))
+      mkdirSync(this.STATES_DIR, { recursive: true });
 
     const stateToken = customKey || randomUUID();
     const filePath = join(this.STATES_DIR, `${stateToken}.json`);
-    writeFileSync(filePath, JSON.stringify({
-      data: payload,
-      expiresAt: Date.now() + this.STATE_TTL_MS,
-    }));
-    this.logger.debug(`[OAuth] State persisted to disk: ${stateToken.slice(0, 8)}...`);
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        data: payload,
+        expiresAt: Date.now() + this.STATE_TTL_MS,
+      }),
+    );
+    this.logger.debug(
+      `[OAuth] State persisted to disk: ${stateToken.slice(0, 8)}...`,
+    );
     return stateToken;
   }
 
   private consumeOAuthState(stateToken: string): Record<string, any> {
     if (!stateToken) {
-      throw new BadRequestException('Authorization session expired. Please try connecting again.');
+      throw new BadRequestException(
+        'Authorization session expired. Please try connecting again.',
+      );
     }
 
     const filePath = join(this.STATES_DIR, `${stateToken}.json`);
     if (!existsSync(filePath)) {
-      this.logger.warn(`[OAuth] State file not found for token: ${stateToken.slice(0, 8)}...`);
-      throw new BadRequestException('Authorization session expired. Please try connecting again.');
+      this.logger.warn(
+        `[OAuth] State file not found for token: ${stateToken.slice(0, 8)}...`,
+      );
+      throw new BadRequestException(
+        'Authorization session expired. Please try connecting again.',
+      );
     }
 
     try {
@@ -116,28 +133,44 @@ export class AuthController {
       const entry = JSON.parse(raw);
 
       // Cleanup: delete the file (single-use token)
-      try { require('fs').unlinkSync(filePath); } catch {}
+      try {
+        require('fs').unlinkSync(filePath);
+      } catch {}
 
       if (Date.now() > entry.expiresAt) {
-        throw new BadRequestException('Authorization session expired. Please try connecting again.');
+        throw new BadRequestException(
+          'Authorization session expired. Please try connecting again.',
+        );
       }
 
       const { tenantId, userId } = entry.data;
-      if (!tenantId || tenantId === 'undefined' || !userId || userId === 'undefined') {
-        throw new BadRequestException('Authorization context is invalid. Please log in again and retry.');
+      if (
+        !tenantId ||
+        tenantId === 'undefined' ||
+        !userId ||
+        userId === 'undefined'
+      ) {
+        throw new BadRequestException(
+          'Authorization context is invalid. Please log in again and retry.',
+        );
       }
       return entry.data;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       this.logger.error(`[OAuth] Failed to read state file: ${e.message}`);
-      throw new BadRequestException('Authorization session expired. Please try connecting again.');
+      throw new BadRequestException(
+        'Authorization session expired. Please try connecting again.',
+      );
     }
   }
 
   @Post('xero/connect')
   @UseGuards(SupabaseAuthGuard)
   async connectXero(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     const requestedStartDate = this.normalizeStartDateInput(body.startDate);
 
     try {
@@ -149,11 +182,14 @@ export class AuthController {
       const consentUrl = await xero.buildConsentUrl();
 
       // Store our context keyed by the same state token
-      this.persistOAuthState({
-        tenantId: tenant.id,
-        userId: user.id,
-        startDate: requestedStartDate,
-      }, oauthState);
+      this.persistOAuthState(
+        {
+          tenantId: tenant.id,
+          userId: user.id,
+          startDate: requestedStartDate,
+        },
+        oauthState,
+      );
 
       return { url: consentUrl };
     } catch (e) {
@@ -165,7 +201,10 @@ export class AuthController {
   @Post('quickbooks/connect')
   @UseGuards(SupabaseAuthGuard)
   async connectQuickBooks(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
 
     // Persist state server-side
     const stateToken = this.persistOAuthState({
@@ -195,7 +234,7 @@ export class AuthController {
 
   @Get('quickbooks/callback')
   async callbackQuickBooks(@Req() req: Request, @Res() res: Response) {
-    const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3001';
+    const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3010';
     try {
       const { code, realmId, state } = req.query as Record<string, string>;
       const { tenantId, userId } = this.consumeOAuthState(state);
@@ -223,9 +262,10 @@ export class AuthController {
       // Fetch company name from QB API to tag all future syncs with a human-readable org name
       let orgName = `QB-${realmId}`;
       try {
-        const baseUrl = process.env.QB_ENVIRONMENT === 'production'
-          ? 'https://quickbooks.api.intuit.com'
-          : 'https://sandbox-quickbooks.api.intuit.com';
+        const baseUrl =
+          process.env.QB_ENVIRONMENT === 'production'
+            ? 'https://quickbooks.api.intuit.com'
+            : 'https://sandbox-quickbooks.api.intuit.com';
         const companyRes = await axios.get(
           `${baseUrl}/v3/company/${realmId}/companyinfo/${realmId}`,
           {
@@ -237,7 +277,9 @@ export class AuthController {
         );
         orgName = companyRes.data?.CompanyInfo?.CompanyName || orgName;
       } catch (e: any) {
-        this.logger.warn(`[QB] Could not fetch company name for realm ${realmId}: ${e.message}`);
+        this.logger.warn(
+          `[QB] Could not fetch company name for realm ${realmId}: ${e.message}`,
+        );
       }
 
       // 1. Persist the connection with encrypted tokens + org name in metadata
@@ -283,16 +325,17 @@ export class AuthController {
       res.redirect(`${webAppUrl}/?success=quickbooks_connected`);
     } catch (e: any) {
       this.logger.error('QuickBooks callback failed', e);
-      const userError = e.status === 400
-        ? encodeURIComponent(e.response?.message || 'Connection expired')
-        : 'quickbooks_connection_failed';
+      const userError =
+        e.status === 400
+          ? encodeURIComponent(e.response?.message || 'Connection expired')
+          : 'quickbooks_connection_failed';
       res.redirect(`${webAppUrl}/?error=${userError}`);
     }
   }
 
   @Get('xero/callback')
   async callbackXero(@Req() req: Request, @Res() res: Response) {
-    const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3001';
+    const webAppUrl = process.env.WEB_APP_URL || 'http://localhost:3010';
     try {
       const { state } = req.query as Record<string, string>;
 
@@ -360,9 +403,10 @@ export class AuthController {
       res.redirect(`${webAppUrl}/?success=xero_connected`);
     } catch (e: any) {
       this.logger.error('Xero callback failed', e);
-      const userError = e.status === 400
-        ? encodeURIComponent(e.response?.message || 'Connection expired')
-        : 'xero_connection_failed';
+      const userError =
+        e.status === 400
+          ? encodeURIComponent(e.response?.message || 'Connection expired')
+          : 'xero_connection_failed';
       res.redirect(`${webAppUrl}/?error=${userError}`);
     }
   }
@@ -370,7 +414,10 @@ export class AuthController {
   @Post('workday/setup')
   @UseGuards(SupabaseAuthGuard)
   async setupWorkday(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
 
     const connection = await prisma.connection.upsert({
       where: {
@@ -423,10 +470,11 @@ export class AuthController {
       companyId: string;
     },
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    this.logger.log(
-      `Setting up Dynamics 365 for internal tenant ${tenant.id}`,
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
     );
+    this.logger.log(`Setting up Dynamics 365 for internal tenant ${tenant.id}`);
 
     // 1. Persist the connection with encrypted Client Secret
     const connection = await prisma.connection.upsert({

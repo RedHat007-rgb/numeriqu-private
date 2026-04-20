@@ -2,7 +2,9 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
+  Param,
   Res,
   Query,
   Logger,
@@ -17,6 +19,7 @@ import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
 import { UserProvisioningService } from '../common/services/user-provisioning.service';
+import { PersistenceService } from '../common/services/persistence.service';
 
 /**
  * AgentController — SSE Streaming Endpoint for Strategic Agent
@@ -32,7 +35,10 @@ export class AgentController {
     private readonly agentService: AgentService,
     private readonly financialData: FinancialDataService,
     private readonly provisioning: UserProvisioningService,
-  ) {}
+    private readonly persistence: PersistenceService,
+  ) {
+    this.logger.log('AgentController initialized with Strategist V2 routes');
+  }
 
   /**
    * POST /agent/query — SSE streaming for Agent strategic mode
@@ -41,7 +47,8 @@ export class AgentController {
   @UseGuards(SupabaseAuthGuard)
   async streamQuery(
     @CurrentUser() user: AuthUser,
-    @Body() body: { query: string; history?: { role: string; content: string }[] },
+    @Body()
+    body: { query: string; history?: { role: string; content: string }[] },
     @Res() res: Response,
   ) {
     const { query, history = [] } = body;
@@ -49,8 +56,13 @@ export class AgentController {
       throw new HttpException('Query is required.', HttpStatus.BAD_REQUEST);
     }
 
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    this.logger.log(`[Agent:SSE] Stream for tenant=${tenant.id}: "${query.slice(0, 60)}"`);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    this.logger.log(
+      `[Agent:SSE] Stream for tenant=${tenant.id}: "${query.slice(0, 60)}"`,
+    );
 
     // SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -60,22 +72,39 @@ export class AgentController {
     res.flushHeaders();
 
     try {
-      for await (const chunk of this.agentService.query(tenant.id, user.id, query, history)) {
+      const sessionId = (body as any).sessionId;
+      for await (const chunk of this.agentService.query(
+        tenant.id,
+        user.id,
+        query,
+        sessionId,
+      )) {
         res.write(`data: ${chunk}\n`);
         (res as any).flush?.();
       }
     } catch (error: any) {
-      this.logger.error(`[Agent:SSE] Stream error: ${error.message}`);
+      this.logger.error(
+        `[Agent:SSE:Fatal] Stream crashed: ${error.message}`,
+        error.stack,
+      );
       try {
-        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Strategic analysis interrupted. Please try again.' })}\n\n`);
-      } catch { /* client already gone */ }
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'error',
+            message:
+              'Analysis stream was interrupted due to technical turbulence.',
+          })}\n\n`,
+        );
+      } catch {
+        /* connection dead */
+      }
     } finally {
       res.end();
     }
   }
 
   /**
-   * GET /agent/metrics — Chart-ready analytics data for agent-generated insights
+   * GET /agent/metrics — Chart-ready analytics data
    */
   @Get('metrics')
   @UseGuards(SupabaseAuthGuard)
@@ -84,7 +113,10 @@ export class AgentController {
     @Query('metric') metric: string,
     @Query('grouping') grouping: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
 
     if (metric === 'venture') {
       const profile = await this.financialData.getFinancialProfile(tenant.id);
@@ -93,7 +125,7 @@ export class AgentController {
 
     if (metric === 'revenue' && grouping === 'org') {
       const profile = await this.financialData.getFinancialProfile(tenant.id);
-      const data = profile.connectedOrgs.map(org => ({
+      const data = profile.connectedOrgs.map((org) => ({
         name: org.orgName,
         value: Math.round(org.totalRevenue),
       }));
@@ -105,35 +137,30 @@ export class AgentController {
         const profile = await this.financialData.getFinancialProfile(tenant.id);
         const map = new Map();
         for (const stat of profile.invoiceStats.byStatusAndOrg) {
-           const existing = map.get(stat.status) || 0;
-           map.set(stat.status, existing + Math.abs(stat.totalAmount));
+          const existing = map.get(stat.status) || 0;
+          map.set(stat.status, existing + Math.abs(stat.totalAmount));
         }
-        return { data: Array.from(map.entries()).map(([name, value]) => ({ name, value: Math.round(value) })) };
+        return {
+          data: Array.from(map.entries()).map(([name, value]) => ({
+            name,
+            value: Math.round(value),
+          })),
+        };
       }
       return { data: await this.financialData.getInvoicesList(tenant.id) };
     }
 
-    // Default: time series trend
     const trend = await this.financialData.getMonthlyRevenueTrend(tenant.id);
-
-    if (grouping === 'org') {
-      // Multiple lines: map data into { name: 'Month', 'OrgA': 100, 'OrgB': 200 }
-      const periods = new Map<string, any>();
-      for (const t of trend) {
-        const monthLabel = t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2);
-        const existing = periods.get(monthLabel) || { name: monthLabel };
-        existing[t.org_name] = Math.abs(parseFloat(t.revenue) || 0);
-        periods.set(monthLabel, existing);
-      }
-      return { data: Array.from(periods.values()) };
-    }
-
-    // Default: Aggregate chronologically
     const periods = new Map<string, any>();
     for (const t of trend) {
-      const monthLabel = t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2);
+      const monthLabel =
+        t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2);
       const existing = periods.get(monthLabel) || { name: monthLabel, value: 0 };
-      existing.value += Math.abs(parseFloat(t.revenue) || 0);
+      if (grouping === 'org') {
+        existing[t.org_name] = Math.abs(parseFloat(t.revenue) || 0);
+      } else {
+        existing.value += Math.abs(parseFloat(t.revenue) || 0);
+      }
       periods.set(monthLabel, existing);
     }
     return { data: Array.from(periods.values()) };
@@ -152,5 +179,67 @@ export class AgentController {
         ? `Strategic Agent is ready. Mode: ${health.mode}`
         : 'Ollama offline — start with: ollama serve && ollama pull llama3.2:3b',
     };
+  }
+
+  /**
+   * GET /agent/sessions — List historical Agent sessions
+   */
+  @Get('sessions')
+  @UseGuards(SupabaseAuthGuard)
+  async listSessions(@CurrentUser() user: AuthUser) {
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.persistence.listSessions(tenant.id, user.id, 'agent');
+  }
+
+  /**
+   * GET /agent/sessions/:id — Retrieve a specific Agent session
+   */
+  @Get('sessions/:id')
+  @UseGuards(SupabaseAuthGuard)
+  async getSession(
+    @CurrentUser() user: AuthUser,
+    @Param('id') sessionId: string,
+  ) {
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.persistence.getOrCreateSession({
+      tenantId: tenant.id,
+      userId: user.id,
+      sessionId,
+      mode: 'agent',
+    });
+  }
+
+  /**
+   * GET /agent/dashboards — List available dashboards
+   */
+  @Get('dashboards')
+  @UseGuards(SupabaseAuthGuard)
+  async listDashboards(@CurrentUser() user: AuthUser) {
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.persistence.listDashboards(tenant.id, user.id);
+  }
+
+  /**
+   * GET /agent/dashboards/latest — Get the current operational dashboard for sync
+   */
+  @Get('dashboards/latest')
+  @UseGuards(SupabaseAuthGuard)
+  async getLatestDashboard(@CurrentUser() user: AuthUser) {
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    const list = await this.persistence.listDashboards(tenant.id, user.id);
+    if (list.length === 0) return null;
+    return this.persistence.getDashboard(list[0].id, tenant.id);
   }
 }

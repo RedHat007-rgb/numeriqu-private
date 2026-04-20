@@ -1,4 +1,11 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
 import { Response } from 'express';
 
 /**
@@ -23,7 +30,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (response.headersSent) return;
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message = 'Something went wrong. Our team has been notified and is looking into it.';
+    let message =
+      'Something went wrong. Our team has been notified and is looking into it.';
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -31,10 +39,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
       if (typeof responsePayload === 'string') {
         message = responsePayload;
-      } else if (typeof responsePayload === 'object' && responsePayload !== null) {
+      } else if (
+        typeof responsePayload === 'object' &&
+        responsePayload !== null
+      ) {
         const payload = responsePayload as any;
         if (payload.message) {
-          message = Array.isArray(payload.message) ? payload.message.join(', ') : payload.message;
+          message = Array.isArray(payload.message)
+            ? payload.message.join(', ')
+            : payload.message;
         }
       }
 
@@ -44,7 +57,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else {
         this.logger.error(`[${status}] ${message}`);
       }
-
     } else if (exception instanceof Error) {
       // ── Domain-Specific Error Mapping ──────────────────────────────────
       // Map technical errors to user-friendly messages
@@ -54,45 +66,78 @@ export class AllExceptionsFilter implements ExceptionFilter {
       this.logger.error(`Unhandled: ${raw}`, stack);
 
       // ClickHouse errors
-      if (raw.includes('ECONNREFUSED') && (raw.includes('8123') || raw.includes('9000') || raw.includes('clickhouse'))) {
-        message = 'Our analytics engine is temporarily unavailable. Your data is safe — please try again in a moment.';
+      if (
+        raw.includes('ECONNREFUSED') &&
+        (raw.includes('8123') ||
+          raw.includes('9000') ||
+          raw.includes('clickhouse'))
+      ) {
+        message =
+          'Our analytics engine is temporarily unavailable. Your data is safe — please try again in a moment.';
         status = HttpStatus.SERVICE_UNAVAILABLE;
       }
       // ClickHouse query errors
-      else if (raw.includes('DB::Exception') || raw.includes('Code: 60') || raw.includes('UNKNOWN_TABLE')) {
-        message = 'Your financial data is being prepared. Please allow a few moments for the initial setup to complete.';
+      else if (
+        raw.includes('DB::Exception') ||
+        raw.includes('Code: 60') ||
+        raw.includes('UNKNOWN_TABLE')
+      ) {
+        message =
+          'Your financial data is being prepared. Please allow a few moments for the initial setup to complete.';
         status = HttpStatus.SERVICE_UNAVAILABLE;
       }
       // Prisma / PostgreSQL errors
-      else if (raw.includes('PrismaClientKnownRequestError') || raw.includes('P2002') || raw.includes('P2025')) {
+      else if (
+        raw.includes('PrismaClientKnownRequestError') ||
+        raw.includes('P2002') ||
+        raw.includes('P2025')
+      ) {
         message = 'A data conflict occurred. Please refresh and try again.';
         status = HttpStatus.CONFLICT;
-      }
-      else if (raw.includes('PrismaClient') || raw.includes('prisma')) {
-        message = 'We encountered a temporary issue accessing your account data. Please try again.';
+      } else if (raw.includes('PrismaClient') || raw.includes('prisma')) {
+        message =
+          'We encountered a temporary issue accessing your account data. Please try again.';
         status = HttpStatus.SERVICE_UNAVAILABLE;
       }
       // Ollama / AI engine errors
-      else if (raw.includes('AI_ENGINE_OFFLINE') || (raw.includes('ECONNREFUSED') && raw.includes('11434'))) {
-        message = 'The AI reasoning engine is warming up. Please try your query again in a moment.';
+      else if (
+        raw.includes('AI_ENGINE_OFFLINE') ||
+        (raw.includes('ECONNREFUSED') && raw.includes('11434'))
+      ) {
+        message =
+          'The AI reasoning engine is warming up. Please try your query again in a moment.';
         status = HttpStatus.SERVICE_UNAVAILABLE;
       }
       // Network / timeout errors
-      else if (raw.includes('ETIMEDOUT') || raw.includes('ESOCKETTIMEDOUT') || raw.includes('timeout')) {
-        message = 'The request took too long to complete. Please try again with a simpler query.';
+      else if (
+        raw.includes('ETIMEDOUT') ||
+        raw.includes('ESOCKETTIMEDOUT') ||
+        raw.includes('timeout')
+      ) {
+        message =
+          'The request took too long to complete. Please try again with a simpler query.';
         status = HttpStatus.GATEWAY_TIMEOUT;
       }
       // OAuth errors
-      else if (raw.includes('OAuth') || raw.includes('oauth') || raw.includes('token')) {
-        message = 'Your authorization session has expired. Please reconnect your provider.';
+      else if (
+        raw.includes('OAuth') ||
+        raw.includes('oauth') ||
+        raw.includes('token')
+      ) {
+        message =
+          'Your authorization session has expired. Please reconnect your provider.';
         status = HttpStatus.UNAUTHORIZED;
       }
       // Generic connection errors
-      else if (raw.includes('ECONNREFUSED') || raw.includes('ENOTFOUND') || raw.includes('fetch failed')) {
-        message = 'A required service is temporarily unavailable. Please try again in a moment.';
+      else if (
+        raw.includes('ECONNREFUSED') ||
+        raw.includes('ENOTFOUND') ||
+        raw.includes('fetch failed')
+      ) {
+        message =
+          'A required service is temporarily unavailable. Please try again in a moment.';
         status = HttpStatus.SERVICE_UNAVAILABLE;
       }
-
     } else {
       this.logger.error(`Unknown exception type: ${JSON.stringify(exception)}`);
     }

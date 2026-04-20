@@ -26,11 +26,16 @@ export class QuickBooksProvider implements IntegrationProvider {
   }
 
   refreshToken(connectionId: string): Promise<void> {
-    this.logger.log(`Refreshing Quickbooks token for connection ${connectionId}`);
+    this.logger.log(
+      `Refreshing Quickbooks token for connection ${connectionId}`,
+    );
     return Promise.resolve();
   }
 
-  async triggerSync(jobDetails: SyncJobConfig, ...extraArgs: any[]): Promise<number> {
+  async triggerSync(
+    jobDetails: SyncJobConfig,
+    ...extraArgs: any[]
+  ): Promise<number> {
     const realmId = extraArgs[0];
     const internalTenantId = jobDetails.tenantId;
 
@@ -43,24 +48,43 @@ export class QuickBooksProvider implements IntegrationProvider {
     // Robustly handle encrypted metadata
     let metadata: any = {};
     if (connection.metadata) {
-      metadata = (typeof connection.metadata === 'string') 
-        ? this.crypto.decryptJson(connection.metadata as string) 
-        : connection.metadata;
+      metadata =
+        typeof connection.metadata === 'string'
+          ? this.crypto.decryptJson(connection.metadata)
+          : connection.metadata;
     }
 
     // Native custom ingestion flow: Proactive Refresh ensures zero 401s during the loop
-    let accessToken = connection.accessToken ? this.crypto.decrypt(connection.accessToken) : extraArgs[1];
-    let refreshToken = connection.refreshToken ? this.crypto.decrypt(connection.refreshToken) : extraArgs[2];
+    let accessToken = connection.accessToken
+      ? this.crypto.decrypt(connection.accessToken)
+      : extraArgs[1];
+    let refreshToken = connection.refreshToken
+      ? this.crypto.decrypt(connection.refreshToken)
+      : extraArgs[2];
 
-    this.logger.log(`Performing proactive credential rotation for QuickBooks ID: ${realmId}`);
-    const refreshed = await this.refreshConnectionTokens(jobDetails.connectionId, realmId, accessToken, refreshToken);
+    this.logger.log(
+      `Performing proactive credential rotation for QuickBooks ID: ${realmId}`,
+    );
+    const refreshed = await this.refreshConnectionTokens(
+      jobDetails.connectionId,
+      realmId,
+      accessToken,
+      refreshToken,
+    );
     if (refreshed) {
       accessToken = refreshed.accessToken;
       refreshToken = refreshed.refreshToken;
     }
 
-    this.logger.log(`Triggering high-integrity native ingestion for QuickBooks (Job: ${jobDetails.syncJobId})`);
-    return await this.qbIngestion.runIncrementalSync(jobDetails, accessToken, refreshToken, realmId);
+    this.logger.log(
+      `Triggering high-integrity native ingestion for QuickBooks (Job: ${jobDetails.syncJobId})`,
+    );
+    return await this.qbIngestion.runIncrementalSync(
+      jobDetails,
+      accessToken,
+      refreshToken,
+      realmId,
+    );
   }
 
   private async refreshConnectionTokens(
@@ -74,18 +98,25 @@ export class QuickBooksProvider implements IntegrationProvider {
     const qbClient = createQuickBooksClient({
       consumerKey: process.env.QB_CLIENT_ID || '',
       consumerSecret: process.env.QB_CLIENT_SECRET || '',
-      accessToken, realmId, refreshToken,
+      accessToken,
+      realmId,
+      refreshToken,
       useSandbox: process.env.QB_ENVIRONMENT !== 'production',
-      oauthVersion: '2.0', minorVersion: '75',
+      oauthVersion: '2.0',
+      minorVersion: '75',
     });
 
     try {
-      const refreshed = await new Promise<{ accessToken: string; refreshToken: string }>((resolve, reject) => {
+      const refreshed = await new Promise<{
+        accessToken: string;
+        refreshToken: string;
+      }>((resolve, reject) => {
         qbClient.refreshAccessToken((err) => {
           if (err) return reject(err);
           const token = qbClient.token;
           const rToken = qbClient.refreshToken;
-          if (!token || !rToken) return reject(new Error('Empty tokens after refresh'));
+          if (!token || !rToken)
+            return reject(new Error('Empty tokens after refresh'));
           resolve({ accessToken: token, refreshToken: rToken });
         });
       });
@@ -101,7 +132,10 @@ export class QuickBooksProvider implements IntegrationProvider {
 
       return refreshed;
     } catch (refreshError: any) {
-      this.logger.error('Failed to refresh QuickBooks token', refreshError?.message);
+      this.logger.error(
+        'Failed to refresh QuickBooks token',
+        refreshError?.message,
+      );
       return null;
     }
   }

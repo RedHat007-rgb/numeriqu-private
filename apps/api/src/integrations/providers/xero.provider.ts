@@ -12,7 +12,10 @@ import { CryptoService } from '../../common/crypto.service';
 export class XeroProvider implements IntegrationProvider {
   private readonly logger = new Logger(XeroProvider.name);
 
-  private static activeRefreshes = new Map<string, Promise<{ accessToken: string }>>();
+  private static activeRefreshes = new Map<
+    string,
+    Promise<{ accessToken: string }>
+  >();
 
   constructor(
     private readonly xeroIngestion: XeroIngestionService,
@@ -24,7 +27,10 @@ export class XeroProvider implements IntegrationProvider {
     this.logger.log('Connecting Xero via proper OAuth flow');
   }
 
-  async refreshToken(connectionId: string, providerAccountId?: string): Promise<{ accessToken: string }> {
+  async refreshToken(
+    connectionId: string,
+    providerAccountId?: string,
+  ): Promise<{ accessToken: string }> {
     // If we have providerAccountId, check for an existing job to deduplicate
     const lockKey = providerAccountId || `conn_${connectionId}`;
     if (XeroProvider.activeRefreshes.has(lockKey)) {
@@ -39,14 +45,21 @@ export class XeroProvider implements IntegrationProvider {
         });
 
         if (!connection || !connection.refreshToken) {
-          throw new Error(`Cannot refresh Xero token: Connection or Refresh Token missing for ${connectionId}`);
+          throw new Error(
+            `Cannot refresh Xero token: Connection or Refresh Token missing for ${connectionId}`,
+          );
         }
 
-        const effectiveProviderAccountId = providerAccountId || connection.providerAccountId;
-        const decryptedRefreshToken = this.crypto.decrypt(connection.refreshToken);
-        
-        this.logger.log(`Performing atomic Xero token refresh for Org ${effectiveProviderAccountId} via connection ${connectionId}`);
-        
+        const effectiveProviderAccountId =
+          providerAccountId || connection.providerAccountId;
+        const decryptedRefreshToken = this.crypto.decrypt(
+          connection.refreshToken,
+        );
+
+        this.logger.log(
+          `Performing atomic Xero token refresh for Org ${effectiveProviderAccountId} via connection ${connectionId}`,
+        );
+
         const authHeader = Buffer.from(
           `${process.env.XERO_CLIENT_ID}:${process.env.XERO_CLIENT_SECRET}`,
         ).toString('base64');
@@ -76,14 +89,16 @@ export class XeroProvider implements IntegrationProvider {
         }
 
         await this.prisma.connection.updateMany({
-          where: { 
+          where: {
             provider: 'xero',
-            providerAccountId: effectiveProviderAccountId 
+            providerAccountId: effectiveProviderAccountId,
           },
           data: updateData,
         });
 
-        this.logger.log(`Atomic refresh complete for Org ${effectiveProviderAccountId}. Fresh tokens propagated.`);
+        this.logger.log(
+          `Atomic refresh complete for Org ${effectiveProviderAccountId}. Fresh tokens propagated.`,
+        );
         return { accessToken: access_token };
       } finally {
         XeroProvider.activeRefreshes.delete(lockKey);
@@ -101,10 +116,15 @@ export class XeroProvider implements IntegrationProvider {
     // 2. Custom SDK Ingestion Flow (Orchestrated natively)
     try {
       // Always refresh before a full sync to ensure validity
-      const { accessToken } = await this.refreshToken(jobDetails.connectionId, providerAccountId);
+      const { accessToken } = await this.refreshToken(
+        jobDetails.connectionId,
+        providerAccountId,
+      );
 
-      this.logger.log(`Triggering custom SDK ingestion for Xero (job: ${jobDetails.syncJobId})`);
-      
+      this.logger.log(
+        `Triggering custom SDK ingestion for Xero (job: ${jobDetails.syncJobId})`,
+      );
+
       const recordsProcessed = await this.xeroIngestion.runSync(
         jobDetails,
         accessToken,
@@ -112,7 +132,10 @@ export class XeroProvider implements IntegrationProvider {
       );
       return recordsProcessed;
     } catch (error: any) {
-      const errorMsg = error.response?.body?.Message || error.message || 'Unknown Xero SDK Error';
+      const errorMsg =
+        error.response?.body?.Message ||
+        error.message ||
+        'Unknown Xero SDK Error';
       this.logger.error(`[Xero-Custom] Synchronization failed: ${errorMsg}`);
       throw error;
     }

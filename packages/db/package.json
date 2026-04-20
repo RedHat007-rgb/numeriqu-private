@@ -4,7 +4,6 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "prepare": "prisma generate",
     "db:generate": "prisma generate",
     "db:build": " prisma generate && tsc -b",
     "db:migrate": "prisma migrate dev",

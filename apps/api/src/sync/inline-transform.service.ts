@@ -25,7 +25,8 @@ import {
 export class InlineTransformService {
   private readonly logger = new Logger(InlineTransformService.name);
 
-  private readonly analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
+  private readonly analyticsDb =
+    process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
   private readonly xeroDb = process.env.CLICKHOUSE_XERO_DB || 'xero_custom';
   private readonly qbDb = 'quickbooks';
 
@@ -60,7 +61,7 @@ export class InlineTransformService {
       const elapsed = Date.now() - start;
       this.logger.log(
         `[Transform] ✅ [${provider.toUpperCase()}] Gold Layer ready in ${elapsed}ms | ` +
-        `org: ${orgId} | tenant: ${tenantId}`,
+          `org: ${orgId} | tenant: ${tenantId}`,
       );
     } catch (e: any) {
       this.logger.error(
@@ -157,7 +158,9 @@ export class InlineTransformService {
     }
 
     await this.chAnalytics.command({ query: sql });
-    this.logger.debug(`[Transform] fact_accounting_invoices upserted for ${provider}`);
+    this.logger.debug(
+      `[Transform] fact_accounting_invoices upserted for ${provider}`,
+    );
   }
 
   /**
@@ -215,17 +218,26 @@ export class InlineTransformService {
     }
 
     await this.chAnalytics.command({ query: sql });
-    this.logger.debug(`[Transform] dim_accounting_accounts upserted for ${provider}`);
+    this.logger.debug(
+      `[Transform] dim_accounting_accounts upserted for ${provider}`,
+    );
   }
 
   /**
    * Materialize revenue_by_month.
    * Leverages case-insensitive status matching for robustness.
    */
-  private async refreshRevenueByMonth(tenantId: string, orgId: string, provider: string): Promise<void> {
+  private async refreshRevenueByMonth(
+    tenantId: string,
+    orgId: string,
+    provider: string,
+  ): Promise<void> {
     const dest = `${this.analyticsDb}.revenue_by_month`;
-    const src  = `${this.analyticsDb}.fact_accounting_invoices`;
-    const syncedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const src = `${this.analyticsDb}.fact_accounting_invoices`;
+    const syncedAt = new Date()
+      .toISOString()
+      .replace('T', ' ')
+      .substring(0, 19);
 
     // IMPORTANT: Aliases in SELECT must NOT collide with source column names
     // used in WHERE. ClickHouse resolves names before GROUP BY, so
@@ -253,7 +265,9 @@ export class InlineTransformService {
     `;
 
     await this.chAnalytics.command({ query });
-    this.logger.debug(`[Transform] revenue_by_month refreshed for ${provider}/${orgId.slice(0, 8)}`);
+    this.logger.debug(
+      `[Transform] revenue_by_month refreshed for ${provider}/${orgId.slice(0, 8)}`,
+    );
   }
 
   /** Minimal SQL injection guard for tenant/org IDs (UUIDs only in practice). */

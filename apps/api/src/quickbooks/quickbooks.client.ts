@@ -17,9 +17,11 @@ interface QuickBooksConstructorType {
 }
 
 const quickbooksFactory =
-  ((quickbooksModule as QuickBooksConstructorType & {
-    default?: QuickBooksConstructorType;
-  }).default ?? quickbooksModule) as QuickBooksConstructorType;
+  (
+    quickbooksModule as QuickBooksConstructorType & {
+      default?: QuickBooksConstructorType;
+    }
+  ).default ?? quickbooksModule;
 
 export interface QuickBooksOptions {
   consumerKey: string;

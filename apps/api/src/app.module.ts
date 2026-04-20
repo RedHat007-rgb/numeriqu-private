@@ -22,16 +22,16 @@ import { IntelligenceModule } from './intelligence/intelligence.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    CommonModule,      // Auth, provisioning (global)
-    DatabaseModule,     // Prisma, ClickHouse (global)
+    CommonModule, // Auth, provisioning (global)
+    DatabaseModule, // Prisma, ClickHouse (global)
 
     // ── Shared Data Layer ──
     FinancialDataModule,
 
     // ── Independent Intelligence Layers ──
-    RagModule,          // POST /rag/query — RAG advisor (INDEPENDENT)
-    AgentModule,        // POST /agent/query — Strategic agent (INDEPENDENT)
-    AnalyticsModule,    // GET /analytics/insights — Chart gallery
+    RagModule, // POST /rag/query — RAG advisor (INDEPENDENT)
+    AgentModule, // POST /agent/query — Strategic agent (INDEPENDENT)
+    AnalyticsModule, // GET /analytics/insights — Chart gallery
 
     // ── Data Pipeline ──
     SyncModule,

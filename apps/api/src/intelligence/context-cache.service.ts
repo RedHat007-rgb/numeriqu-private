@@ -56,7 +56,9 @@ export class ContextCacheService {
       monthlyTrend,
       expiresAt: Date.now() + this.TTL_MS,
     });
-    this.logger.debug(`[Cache] SET for tenant=${tenantId} (TTL=${this.TTL_MS}ms)`);
+    this.logger.debug(
+      `[Cache] SET for tenant=${tenantId} (TTL=${this.TTL_MS}ms)`,
+    );
   }
 
   /**
@@ -71,7 +73,9 @@ export class ContextCacheService {
    * Returns cache hit ratio and entry count for health checks.
    */
   stats(): { entries: number; tenants: string[] } {
-    const alive = [...this.cache.entries()].filter(([, v]) => Date.now() <= v.expiresAt);
+    const alive = [...this.cache.entries()].filter(
+      ([, v]) => Date.now() <= v.expiresAt,
+    );
     return {
       entries: alive.length,
       tenants: alive.map(([k]) => k),

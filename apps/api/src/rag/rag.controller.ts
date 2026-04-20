@@ -19,6 +19,7 @@ import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
 import { UserProvisioningService } from '../common/services/user-provisioning.service';
+import { PersistenceService } from '../common/services/persistence.service';
 
 /**
  * RagController — SSE Streaming Endpoint for Personal Advisor
@@ -35,6 +36,7 @@ export class RagController {
     private readonly financialData: FinancialDataService,
     private readonly provisioning: UserProvisioningService,
     private readonly contextCache: RagContextCacheService,
+    private readonly persistence: PersistenceService,
   ) {}
 
   /**
@@ -44,7 +46,8 @@ export class RagController {
   @UseGuards(SupabaseAuthGuard)
   async streamQuery(
     @CurrentUser() user: AuthUser,
-    @Body() body: { query: string; history?: { role: string; content: string }[] },
+    @Body()
+    body: { query: string; history?: { role: string; content: string }[] },
     @Res() res: Response,
   ) {
     const { query, history = [] } = body;
@@ -52,8 +55,13 @@ export class RagController {
       throw new HttpException('Query is required.', HttpStatus.BAD_REQUEST);
     }
 
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    this.logger.log(`[RAG:SSE] Stream for tenant=${tenant.id}: "${query.slice(0, 60)}"`);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    this.logger.log(
+      `[RAG:SSE] Stream for tenant=${tenant.id}: "${query.slice(0, 60)}"`,
+    );
 
     // SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -63,27 +71,40 @@ export class RagController {
     res.flushHeaders();
 
     try {
-      for await (const chunk of this.ragService.query(tenant.id, query, history)) {
+      const sessionId = (body as any).sessionId;
+      for await (const chunk of this.ragService.query(
+        tenant.id,
+        user.id,
+        query,
+        sessionId,
+      )) {
         res.write(`data: ${chunk}\n`);
         (res as any).flush?.();
       }
     } catch (error: any) {
       this.logger.error(`[RAG:SSE] Stream error: ${error.message}`);
       try {
-        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Stream interrupted. Please try again.' })}\n\n`);
-      } catch { /* client already gone */ }
+        res.write(
+          `data: ${JSON.stringify({ type: 'error', message: 'Stream interrupted.' })}\n\n`,
+        );
+      } catch {
+        /* client already gone */
+      }
     } finally {
       res.end();
     }
   }
 
   /**
-   * GET /rag/profile — Raw financial profile (no LLM)
+   * GET /rag/profile — Raw financial profile
    */
   @Get('profile')
   @UseGuards(SupabaseAuthGuard)
   async getProfile(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     return this.financialData.getFinancialProfile(tenant.id);
   }
 
@@ -96,7 +117,10 @@ export class RagController {
     @CurrentUser() user: AuthUser,
     @Param('tenantId') tenantId: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     if (tenantId !== tenant.id) {
       throw new HttpException('Forbidden.', HttpStatus.FORBIDDEN);
     }
@@ -117,5 +141,39 @@ export class RagController {
         ? `RAG Advisor is ready. Mode: ${health.mode}`
         : 'Ollama offline — start with: ollama serve && ollama pull llama3.2:3b',
     };
+  }
+
+  /**
+   * GET /rag/sessions — List historical RAG sessions
+   */
+  @Get('sessions')
+  @UseGuards(SupabaseAuthGuard)
+  async listSessions(@CurrentUser() user: AuthUser) {
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.persistence.listSessions(tenant.id, user.id, 'rag');
+  }
+
+  /**
+   * GET /rag/sessions/:id — Retrieve a specific RAG session
+   */
+  @Get('sessions/:id')
+  @UseGuards(SupabaseAuthGuard)
+  async getSession(
+    @CurrentUser() user: AuthUser,
+    @Param('id') sessionId: string,
+  ) {
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.persistence.getOrCreateSession({
+      tenantId: tenant.id,
+      userId: user.id,
+      sessionId,
+      mode: 'rag',
+    });
   }
 }

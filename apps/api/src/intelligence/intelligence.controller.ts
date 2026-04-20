@@ -54,8 +54,13 @@ export class IntelligenceController {
       throw new HttpException('Query is required.', HttpStatus.BAD_REQUEST);
     }
 
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    this.logger.log(`[SSE] Stream (${mode}) for tenant=${tenant.id}: "${query.slice(0, 60)}"`);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    this.logger.log(
+      `[SSE] Stream (${mode}) for tenant=${tenant.id}: "${query.slice(0, 60)}"`,
+    );
 
     // ... headers ...
     res.setHeader('Content-Type', 'text/event-stream');
@@ -65,7 +70,11 @@ export class IntelligenceController {
     res.flushHeaders();
 
     try {
-      for await (const chunk of this.intelligence.query(tenant.id, query, mode)) {
+      for await (const chunk of this.intelligence.query(
+        tenant.id,
+        query,
+        mode,
+      )) {
         // Write as SSE `data:` frame — the `\n` at end of chunk is already there
         res.write(`data: ${chunk}\n`);
         // Force-flush the TCP buffer after EVERY chunk.
@@ -75,8 +84,12 @@ export class IntelligenceController {
     } catch (error: any) {
       this.logger.error(`[SSE] Stream error: ${error.message}`);
       try {
-        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Stream interrupted.' })}\n\n`);
-      } catch { /* client already gone */ }
+        res.write(
+          `data: ${JSON.stringify({ type: 'error', message: 'Stream interrupted.' })}\n\n`,
+        );
+      } catch {
+        /* client already gone */
+      }
     } finally {
       res.end();
     }
@@ -89,7 +102,10 @@ export class IntelligenceController {
   @Get('profile')
   @UseGuards(SupabaseAuthGuard)
   async getProfile(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     return this.financialData.getFinancialProfile(tenant.id);
   }
 
@@ -103,7 +119,10 @@ export class IntelligenceController {
     @CurrentUser() user: AuthUser,
     @Param('tenantId') tenantId: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     // Only allow tenants to invalidate their own cache
     if (tenantId !== tenant.id) {
       throw new HttpException('Forbidden.', HttpStatus.FORBIDDEN);
@@ -122,21 +141,24 @@ export class IntelligenceController {
     @Query('metric') metric: string,
     @Query('grouping') grouping: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+
     if (metric === 'venture') {
-       const profile = await this.financialData.getFinancialProfile(tenant.id);
-       return { data: profile.ventureMetrics };
+      const profile = await this.financialData.getFinancialProfile(tenant.id);
+      return { data: profile.ventureMetrics };
     }
 
     if (metric === 'invoices') {
-       const data = await this.financialData.getInvoicesList(tenant.id);
-       return { data };
+      const data = await this.financialData.getInvoicesList(tenant.id);
+      return { data };
     }
 
     // In a production environment, this would call specialized ClickHouse aggregators.
     const trend = await this.financialData.getMonthlyRevenueTrend(tenant.id);
-    
+
     // Format for Recharts: { name: 'Jan', value: 12000 }
     const formatted = trend.map((t: any) => ({
       name: t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2),
@@ -155,7 +177,7 @@ export class IntelligenceController {
     const health = await this.intelligence.healthCheck();
     return {
       ...health,
-      status:   health.ollama ? 'operational' : 'degraded',
+      status: health.ollama ? 'operational' : 'degraded',
       advisory: health.ollama
         ? `Numeriqu Intelligence is ready. Mode: ${health.mode}`
         : 'Ollama offline — start with: ollama serve && ollama pull llama3.2:3b',

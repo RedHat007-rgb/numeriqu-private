@@ -1,5 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Local Python tooling (thousands of files — slows / breaks Next file watchers if scanned)
+packages/analytics/dbt_venv/
+
 # Dependencies
 node_modules
 .pnp

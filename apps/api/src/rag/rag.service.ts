@@ -23,6 +23,8 @@ import type { FinancialProfile } from '../financial-data/financial-data.service'
  * - Every token is yielded immediately (no 20-char buffer stall)
  * - Small batches for network efficiency without stalling
  */
+import { PersistenceService } from '../common/services/persistence.service';
+
 @Injectable()
 export class RagService {
   private readonly logger = new Logger(RagService.name);
@@ -32,45 +34,92 @@ export class RagService {
   constructor(
     private readonly financialData: FinancialDataService,
     private readonly contextCache: RagContextCacheService,
+    private readonly persistence: PersistenceService,
   ) {
-    this.OLLAMA_URL  = process.env.OLLAMA_URL   || 'http://localhost:11434';
+    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
     this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
   }
 
-  /**
-   * Main entry: Zero-Latency SSE generator for RAG mode.
-   * Each yield produces one SSE event chunk.
-   */
   async *query(
     tenantId: string,
+    userId: string,
     userQuery: string,
-    conversationHistory: { role: string; content: string }[] = [],
+    sessionId?: string,
   ): AsyncGenerator<string> {
     const startTime = Date.now();
+
+    // ── STEP -1: PERSISTENCE SETUP ───────────────────────────────────
+    const session = await this.persistence.getOrCreateSession({
+      tenantId,
+      userId,
+      sessionId,
+      mode: 'rag',
+      title: userQuery.slice(0, 40) + '...',
+    });
+
+    await this.persistence.saveMessage({
+      sessionId: session.id,
+      role: 'user',
+      content: userQuery,
+    });
+
+    const conversationHistory = session.messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
 
     try {
       // ── STEP 0: FAST-PATH — Greetings (< 5ms, no LLM) ──────────────────
       const intent = classifyIntent(userQuery);
 
       if (intent === 'greeting') {
+        const text = this.greetingResponse();
         yield this.chunk('status', { message: 'Ready.' });
-        yield this.chunk('token', { content: this.greetingResponse() });
-        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'fast-path' } });
+        yield this.chunk('token', { content: text });
+        await this.persistence.saveMessage({
+          sessionId: session.id,
+          role: 'assistant',
+          content: text,
+          tokens: 0,
+          latencyMs: Date.now() - startTime,
+        });
+        yield this.chunk('done', {
+          metrics: {
+            totalMs: Date.now() - startTime,
+            mode: 'fast-path',
+            sessionId: session.id,
+          },
+        });
         return;
       }
 
       // ── STEP 0b: DOMAIN GATE — Reject non-financial queries (< 1ms) ─────
       if (intent === 'off_topic') {
+        const text =
+          "I'm specialized in financial analysis only. Please ask about revenue, expenses, profitability, invoices, cash flow, or your connected organizations.";
         yield this.chunk('status', { message: 'Analyzing intent...' });
-        yield this.chunk('token', {
-          content: "I'm specialized in financial analysis only. Please ask about revenue, expenses, profitability, invoices, cash flow, or your connected organizations.",
+        yield this.chunk('token', { content: text });
+        await this.persistence.saveMessage({
+          sessionId: session.id,
+          role: 'assistant',
+          content: text,
+          tokens: 0,
+          latencyMs: Date.now() - startTime,
         });
-        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'domain-gate' } });
+        yield this.chunk('done', {
+          metrics: {
+            totalMs: Date.now() - startTime,
+            mode: 'domain-gate',
+            sessionId: session.id,
+          },
+        });
         return;
       }
 
       // ── STEP 1: CONTEXT RETRIEVAL (Cached or Parallel) ─────────────────
-      yield this.chunk('status', { message: 'Loading financial intelligence...' });
+      yield this.chunk('status', {
+        message: 'Loading financial intelligence...',
+      });
 
       let profile: FinancialProfile;
       let monthlyTrend: any[];
@@ -100,18 +149,23 @@ export class RagService {
       // Emit context snapshot for UI dashboard widgets
       yield this.chunk('context', {
         data: {
-          totalRevenue:   profile.revenue.totalRevenue,
-          totalExpenses:  profile.expenses.totalExpenses,
-          netProfit:      profile.netProfit,
-          profitMargin:   profile.profitMargin,
-          fetchTimeMs:    Date.now() - startTime,
+          totalRevenue: profile.revenue.totalRevenue,
+          totalExpenses: profile.expenses.totalExpenses,
+          netProfit: profile.netProfit,
+          profitMargin: profile.profitMargin,
+          fetchTimeMs: Date.now() - startTime,
         },
       });
 
       // ── STEP 2: LLM STREAMING (Pure token passthrough) ─────────────────
       yield this.chunk('status', { message: 'Analyzing your finances...' });
 
-      const messages = buildRagMessages(profile, monthlyTrend, conversationHistory, userQuery);
+      const messages = buildRagMessages(
+        profile,
+        monthlyTrend,
+        conversationHistory,
+        userQuery,
+      );
 
       const controller = new AbortController();
       // PRODUCTION FIX: Increase execution timeout to 300s to handle deep analytical stream generation
@@ -124,9 +178,9 @@ export class RagService {
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
           body: JSON.stringify({
-            model:   this.OLLAMA_MODEL,
+            model: this.OLLAMA_MODEL,
             messages,
-            stream:  true,
+            stream: true,
             options: { temperature: 0.1, num_predict: 2048, top_p: 0.9 },
           }),
         });
@@ -136,30 +190,47 @@ export class RagService {
         throw new Error('AI_ENGINE_OFFLINE');
       }
 
-      if (!response.ok) { clearTimeout(timeout); throw new Error('AI_ENGINE_OFFLINE'); }
+      if (!response.ok) {
+        clearTimeout(timeout);
+        throw new Error('AI_ENGINE_OFFLINE');
+      }
 
       const reader = response.body?.getReader();
-      if (!reader) { clearTimeout(timeout); throw new Error('AI_ENGINE_OFFLINE'); }
+      if (!reader) {
+        clearTimeout(timeout);
+        throw new Error('AI_ENGINE_OFFLINE');
+      }
 
       const decoder = new TextDecoder();
       let tokensGenerated = 0;
       let streamBuffer = '';
+      /** Full model output for durable history (streamBuffer is only the tail between flushes). */
+      let fullAssistantContent = '';
+      /** Ollama NDJSON lines can split across TCP chunks; reassemble before JSON.parse. */
+      let lineCarry = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const raw = decoder.decode(value, { stream: true });
-        for (const line of raw.split('\n')) {
+        lineCarry += decoder.decode(value, { stream: true });
+        const lines = lineCarry.split('\n');
+        lineCarry = lines.pop() ?? '';
+
+        let streamEnded = false;
+        for (const line of lines) {
           if (!line.trim()) continue;
 
-          let parsed;
+          let parsed: { message?: { content?: string }; done?: boolean };
           try {
             parsed = JSON.parse(line);
-          } catch { continue; }
+          } catch {
+            continue;
+          }
 
           const token = parsed.message?.content;
           if (token) {
+            fullAssistantContent += token;
             streamBuffer += token;
 
             // Flush in small batches for network efficiency
@@ -169,15 +240,45 @@ export class RagService {
               streamBuffer = '';
             }
           }
-          if (parsed.done === true) break;
+          if (parsed.done === true) {
+            streamEnded = true;
+            break;
+          }
+        }
+        if (streamEnded) break;
+      }
+
+      if (lineCarry.trim()) {
+        try {
+          const parsed = JSON.parse(lineCarry.trim()) as {
+            message?: { content?: string };
+            done?: boolean;
+          };
+          const token = parsed.message?.content;
+          if (token) {
+            fullAssistantContent += token;
+            streamBuffer += token;
+          }
+        } catch {
+          /* ignore trailing garbage */
         }
       }
 
       // Final flush
-      if (streamBuffer) {
-        yield this.chunk('token', { content: streamBuffer });
+      const finalResponse = streamBuffer;
+      if (finalResponse) {
+        yield this.chunk('token', { content: finalResponse });
         tokensGenerated++;
       }
+
+      // Save Assistant Response to Persistence
+      await this.persistence.saveMessage({
+        sessionId: session.id,
+        role: 'assistant',
+        content: fullAssistantContent.trim() || 'Analysis complete.',
+        tokens: tokensGenerated,
+        latencyMs: Date.now() - startTime,
+      });
 
       clearTimeout(timeout);
 
@@ -186,11 +287,14 @@ export class RagService {
           totalMs: Date.now() - startTime,
           tokens: tokensGenerated,
           mode: 'rag-advisor',
+          sessionId: session.id,
         },
       });
-
     } catch (e: any) {
-      if (e.name === 'AbortError' || e.message === 'This operation was aborted') {
+      if (
+        e.name === 'AbortError' ||
+        e.message === 'This operation was aborted'
+      ) {
         e.message = 'AI_TIMEOUT';
       }
 
@@ -198,14 +302,24 @@ export class RagService {
 
       let userMessage: string;
 
-      if (e.message === 'AI_ENGINE_OFFLINE' || e.message?.includes('ECONNREFUSED')) {
-        userMessage = "The AI engine is starting up. Please try again in a moment — your data is available on the dashboard while we warm up.";
+      if (
+        e.message === 'AI_ENGINE_OFFLINE' ||
+        e.message?.includes('ECONNREFUSED')
+      ) {
+        userMessage =
+          'The AI engine is starting up. Please try again in a moment — your data is available on the dashboard while we warm up.';
       } else if (e.message === 'AI_TIMEOUT') {
-        userMessage = "We’re analyzing your data. One part is taking longer than expected. Here’s what we’ve found so far.";
-      } else if (e.message?.includes('DATABASE') || e.message?.includes('ClickHouse')) {
-        userMessage = "I'm having trouble retrieving your financial data right now. Please check your connection status on the Integrations page.";
+        userMessage =
+          'We’re analyzing your data. One part is taking longer than expected. Here’s what we’ve found so far.';
+      } else if (
+        e.message?.includes('DATABASE') ||
+        e.message?.includes('ClickHouse')
+      ) {
+        userMessage =
+          "I'm having trouble retrieving your financial data right now. Please check your connection status on the Integrations page.";
       } else {
-        userMessage = "I encountered an unexpected issue. Our team has been notified. Please try again shortly.";
+        userMessage =
+          'I encountered an unexpected issue. Our team has been notified. Please try again shortly.';
       }
 
       yield this.chunk('error', { message: userMessage });
@@ -247,8 +361,22 @@ export class RagService {
   private emptyProfile(tenantId: string): FinancialProfile {
     return {
       tenantId,
-      revenue: { totalRevenue: 0, avgInvoiceValue: 0, totalInvoices: 0, minInvoice: 0, maxInvoice: 0, providerCount: 0, orgCount: 0, currencyCount: 0 },
-      expenses: { totalExpenses: 0, totalBills: 0, overdueAmount: 0, overdueCount: 0 },
+      revenue: {
+        totalRevenue: 0,
+        avgInvoiceValue: 0,
+        totalInvoices: 0,
+        minInvoice: 0,
+        maxInvoice: 0,
+        providerCount: 0,
+        orgCount: 0,
+        currencyCount: 0,
+      },
+      expenses: {
+        totalExpenses: 0,
+        totalBills: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+      },
       netProfit: 0,
       profitMargin: 0,
       invoiceStats: { byStatusAndOrg: [] },
@@ -256,7 +384,12 @@ export class RagService {
       connectedOrgs: [],
       budgetSummary: [],
       bankSummary: { total_transfers: 0, total_volume: 0 },
-      ventureMetrics: { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyMultiplier: 0 },
+      ventureMetrics: {
+        burnRate: 0,
+        runwayMonths: 0,
+        cashOnHand: 0,
+        efficiencyMultiplier: 0,
+      },
       computedAt: new Date().toISOString(),
     } as FinancialProfile;
   }

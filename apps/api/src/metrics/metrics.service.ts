@@ -17,11 +17,15 @@ export class MetricsService {
   private readonly dbName: string;
 
   /** 30s cache to prevent redundant ClickHouse queries from frontend polling */
-  private readonly cache = new Map<string, { data: any[]; expiresAt: number }>();
+  private readonly cache = new Map<
+    string,
+    { data: any[]; expiresAt: number }
+  >();
   private readonly CACHE_TTL_MS = 30_000;
 
   constructor(
-    @Inject(CLICKHOUSE_ANALYTICS_TOKEN) private readonly clickhouse: ClickHouseClient,
+    @Inject(CLICKHOUSE_ANALYTICS_TOKEN)
+    private readonly clickhouse: ClickHouseClient,
   ) {
     this.dbName = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
   }
@@ -47,10 +51,15 @@ export class MetricsService {
       });
       const data: any[] = await result.json();
 
-      this.cache.set(`revenue:${tenantId}`, { data, expiresAt: Date.now() + this.CACHE_TTL_MS });
+      this.cache.set(`revenue:${tenantId}`, {
+        data,
+        expiresAt: Date.now() + this.CACHE_TTL_MS,
+      });
 
       if (data.length === 0) {
-        this.logger.debug(`[Metrics] Gold Layer has no revenue data yet for tenant=${tenantId}. Transformation may be pending.`);
+        this.logger.debug(
+          `[Metrics] Gold Layer has no revenue data yet for tenant=${tenantId}. Transformation may be pending.`,
+        );
       }
 
       return data;

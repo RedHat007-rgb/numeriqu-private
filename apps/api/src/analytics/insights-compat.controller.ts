@@ -1,4 +1,13 @@
-import { Controller, Get, Param, Patch, Body, Delete, UseGuards, Inject } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Body,
+  Delete,
+  UseGuards,
+  Inject,
+} from '@nestjs/common';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
@@ -25,7 +34,10 @@ export class InsightsCompatController {
 
   @Get()
   async getInsights(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     return this.prisma.insight.findMany({
       where: { tenantId: tenant.id },
       orderBy: { createdAt: 'desc' },
@@ -34,7 +46,10 @@ export class InsightsCompatController {
 
   @Get(':id')
   async getInsight(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     return this.prisma.insight.findFirstOrThrow({
       where: { id, tenantId: tenant.id },
     });
@@ -46,15 +61,25 @@ export class InsightsCompatController {
     @Body() data: { isFavorite?: boolean; pinned?: boolean; title?: string },
     @CurrentUser() user: AuthUser,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    const insight = await this.prisma.insight.findFirst({ where: { id, tenantId: tenant.id } });
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    const insight = await this.prisma.insight.findFirst({
+      where: { id, tenantId: tenant.id },
+    });
     if (!insight) throw new Error('Insight not found or access denied.');
     return this.prisma.insight.update({ where: { id }, data });
   }
 
   @Delete(':id')
   async deleteInsight(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    return this.prisma.insight.deleteMany({ where: { id, tenantId: tenant.id } });
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.prisma.insight.deleteMany({
+      where: { id, tenantId: tenant.id },
+    });
   }
 }

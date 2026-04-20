@@ -2,7 +2,7 @@ import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 
 /**
  * @CurrentUser() decorator — extracts the authenticated user from the request.
- * 
+ *
  * Usage:
  *   @Get('profile')
  *   @UseGuards(SupabaseAuthGuard)

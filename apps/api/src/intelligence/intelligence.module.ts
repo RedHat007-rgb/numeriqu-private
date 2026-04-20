@@ -10,7 +10,12 @@ import { DatabaseModule } from '../database/database.module';
 @Module({
   imports: [DatabaseModule],
   controllers: [IntelligenceController, InsightsController],
-  providers: [IntelligenceService, FinancialDataService, ContextCacheService, AgentToolsService],
+  providers: [
+    IntelligenceService,
+    FinancialDataService,
+    ContextCacheService,
+    AgentToolsService,
+  ],
   exports: [IntelligenceService, ContextCacheService],
 })
 export class IntelligenceModule {}

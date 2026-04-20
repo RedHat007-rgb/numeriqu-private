@@ -6,7 +6,7 @@ import { prisma } from '@repo/db';
 /** Applied to every ClickHouse query — prevents a single aggregation from OOM-killing the server */
 const SAFE_QUERY_SETTINGS = {
   max_memory_usage: '536870912', // 512 MB per-query cap (string)
-  max_execution_time: 30,        // 30s hard timeout (number)
+  max_execution_time: 30, // 30s hard timeout (number)
 };
 
 /**
@@ -26,7 +26,8 @@ export class FinancialDataService {
   private readonly dbName: string;
 
   constructor(
-    @Inject(CLICKHOUSE_ANALYTICS_TOKEN) private readonly clickhouse: ClickHouseClient,
+    @Inject(CLICKHOUSE_ANALYTICS_TOKEN)
+    private readonly clickhouse: ClickHouseClient,
   ) {
     this.dbName = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
   }
@@ -36,19 +37,35 @@ export class FinancialDataService {
    * This is the "Ground Truth Block" injected into every LLM prompt.
    */
   async getFinancialProfile(tenantId: string): Promise<FinancialProfile> {
-    this.logger.log(`[GroundTruth] Building financial profile for tenant=${tenantId}`);
+    this.logger.log(
+      `[GroundTruth] Building financial profile for tenant=${tenantId}`,
+    );
 
     // SECURE ISOLATION: Fetch strictly verified and active orchestration pipelines.
     const activeConns = await prisma.connection.findMany({
       where: { tenantId, isActive: true },
-      select: { providerAccountId: true, provider: true, metadata: true }
+      select: { providerAccountId: true, provider: true, metadata: true },
     });
 
     if (activeConns.length === 0) {
       return {
         tenantId,
-        revenue: { totalRevenue: 0, avgInvoiceValue: 0, totalInvoices: 0, minInvoice: 0, maxInvoice: 0, providerCount: 0, orgCount: 0, currencyCount: 0 },
-        expenses: { totalExpenses: 0, totalBills: 0, overdueAmount: 0, overdueCount: 0 },
+        revenue: {
+          totalRevenue: 0,
+          avgInvoiceValue: 0,
+          totalInvoices: 0,
+          minInvoice: 0,
+          maxInvoice: 0,
+          providerCount: 0,
+          orgCount: 0,
+          currencyCount: 0,
+        },
+        expenses: {
+          totalExpenses: 0,
+          totalBills: 0,
+          overdueAmount: 0,
+          overdueCount: 0,
+        },
         netProfit: 0,
         profitMargin: 0,
         invoiceStats: { byStatusAndOrg: [] },
@@ -56,14 +73,28 @@ export class FinancialDataService {
         connectedOrgs: [],
         budgetSummary: [],
         bankSummary: { total_transfers: 0, total_volume: 0 },
-        ventureMetrics: { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyMultiplier: 0 },
+        ventureMetrics: {
+          burnRate: 0,
+          runwayMonths: 0,
+          cashOnHand: 0,
+          efficiencyMultiplier: 0,
+        },
         computedAt: new Date().toISOString(),
       };
     }
 
     const activeOrgIds = activeConns.map((c) => c.providerAccountId);
 
-    const [revenue, expenses, invoiceStats, accountSummary, connectedOrgs, budgetSummary, bankSummary, ventureMetrics] = await Promise.all([
+    const [
+      revenue,
+      expenses,
+      invoiceStats,
+      accountSummary,
+      connectedOrgs,
+      budgetSummary,
+      bankSummary,
+      ventureMetrics,
+    ] = await Promise.all([
       this.getRevenueMetrics(tenantId, activeOrgIds),
       this.getExpenseMetrics(tenantId, activeOrgIds),
       this.getInvoiceStatistics(tenantId, activeOrgIds),
@@ -73,15 +104,14 @@ export class FinancialDataService {
       this.getBankSummary(tenantId, activeOrgIds),
       this.getVentureMetrics(tenantId, activeOrgIds),
     ]);
-    
+
     // Deterministically enforce identity counts bypassing Clickhouse cold-start boundaries
     revenue.orgCount = activeConns.length;
     revenue.providerCount = new Set(activeConns.map((c) => c.provider)).size;
 
     const netProfit = revenue.totalRevenue - expenses.totalExpenses;
-    const profitMargin = revenue.totalRevenue > 0
-      ? ((netProfit / revenue.totalRevenue) * 100)
-      : 0;
+    const profitMargin =
+      revenue.totalRevenue > 0 ? (netProfit / revenue.totalRevenue) * 100 : 0;
 
     return {
       tenantId,
@@ -102,7 +132,10 @@ export class FinancialDataService {
   /**
    * Budget Summary — Pulled from raw Xero data until Gold Layer transform is implemented.
    */
-  private async getBudgetSummary(tenantId: string, activeOrgIds: string[]): Promise<any[]> {
+  private async getBudgetSummary(
+    tenantId: string,
+    activeOrgIds: string[],
+  ): Promise<any[]> {
     try {
       const db = process.env.CLICKHOUSE_XERO_DB || 'xero_custom';
       const result = await this.clickhouse.query({
@@ -121,13 +154,18 @@ export class FinancialDataService {
         format: 'JSONEachRow',
       });
       return await result.json();
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
   /**
    * Bank Transfer Summary — Recent volume and velocity.
    */
-  private async getBankSummary(tenantId: string, activeOrgIds: string[]): Promise<any> {
+  private async getBankSummary(
+    tenantId: string,
+    activeOrgIds: string[],
+  ): Promise<any> {
     try {
       const db = process.env.CLICKHOUSE_XERO_DB || 'xero_custom';
       const result = await this.clickhouse.query({
@@ -145,7 +183,9 @@ export class FinancialDataService {
       });
       const rows: any[] = await result.json();
       return rows[0] || { total_transfers: 0, total_volume: 0 };
-    } catch { return { total_transfers: 0, total_volume: 0 }; }
+    } catch {
+      return { total_transfers: 0, total_volume: 0 };
+    }
   }
 
   /**
@@ -153,21 +193,24 @@ export class FinancialDataService {
    * has data in the Gold Layer, along with per-org revenue and invoice count.
    * This is the core fix: surfaces each Xero org and QB company separately.
    */
-  async getConnectedOrgs(tenantId: string, activeConns: any[]): Promise<ConnectedOrg[]> {
+  async getConnectedOrgs(
+    tenantId: string,
+    activeConns: any[],
+  ): Promise<ConnectedOrg[]> {
     const activeOrgIds = activeConns.map((c) => c.providerAccountId);
     if (activeOrgIds.length === 0) return [];
 
     // Seed from Prisma connection metadata (always available, even if Gold is empty)
     const orgMap = new Map<string, ConnectedOrg>();
     for (const conn of activeConns) {
-      const meta = conn.metadata as Record<string, any> || {};
+      const meta = (conn.metadata as Record<string, any>) || {};
       orgMap.set(conn.providerAccountId, {
         provider: conn.provider,
         orgId: conn.providerAccountId,
         orgName: meta.orgName || meta.companyId || conn.providerAccountId,
         invoiceCount: 0,
         totalRevenue: 0,
-        currency: 'USD'
+        currency: 'USD',
       });
     }
 
@@ -205,16 +248,23 @@ export class FinancialDataService {
         }
       }
     } catch (e: any) {
-      this.logger.error(`[FinancialData] ConnectedOrgs enrichment failed: ${e.message}`);
+      this.logger.error(
+        `[FinancialData] ConnectedOrgs enrichment failed: ${e.message}`,
+      );
     }
 
-    return Array.from(orgMap.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+    return Array.from(orgMap.values()).sort(
+      (a, b) => b.totalRevenue - a.totalRevenue,
+    );
   }
 
   /**
    * Revenue metrics aggregated from the Gold Layer
    */
-  private async getRevenueMetrics(tenantId: string, activeOrgIds: string[]): Promise<RevenueMetrics> {
+  private async getRevenueMetrics(
+    tenantId: string,
+    activeOrgIds: string[],
+  ): Promise<RevenueMetrics> {
     try {
       const res = await this.clickhouse.query({
         query: `
@@ -241,7 +291,8 @@ export class FinancialDataService {
 
       return {
         totalRevenue: parseFloat(r.total_revenue) || 0,
-        avgInvoiceValue: Math.round((parseFloat(r.avg_invoice_value) || 0) * 100) / 100,
+        avgInvoiceValue:
+          Math.round((parseFloat(r.avg_invoice_value) || 0) * 100) / 100,
         totalInvoices: parseInt(r.total_invoices) || 0,
         minInvoice: parseFloat(r.min_invoice) || 0,
         maxInvoice: parseFloat(r.max_invoice) || 0,
@@ -252,8 +303,14 @@ export class FinancialDataService {
     } catch (e: any) {
       this.logger.error(`[FinancialData] Revenue query failed: ${e.message}`);
       return {
-        totalRevenue: 0, avgInvoiceValue: 0, totalInvoices: 0, minInvoice: 0, maxInvoice: 0,
-        providerCount: 0, orgCount: 0, currencyCount: 0
+        totalRevenue: 0,
+        avgInvoiceValue: 0,
+        totalInvoices: 0,
+        minInvoice: 0,
+        maxInvoice: 0,
+        providerCount: 0,
+        orgCount: 0,
+        currencyCount: 0,
       };
     }
   }
@@ -261,7 +318,10 @@ export class FinancialDataService {
   /**
    * Expense metrics from overdue / payable invoices
    */
-  private async getExpenseMetrics(tenantId: string, activeOrgIds: string[]): Promise<ExpenseMetrics> {
+  private async getExpenseMetrics(
+    tenantId: string,
+    activeOrgIds: string[],
+  ): Promise<ExpenseMetrics> {
     try {
       const res = await this.clickhouse.query({
         query: `
@@ -290,14 +350,22 @@ export class FinancialDataService {
       };
     } catch (e: any) {
       this.logger.error(`[FinancialData] Expense query failed: ${e.message}`);
-      return { totalExpenses: 0, totalBills: 0, overdueAmount: 0, overdueCount: 0 };
+      return {
+        totalExpenses: 0,
+        totalBills: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+      };
     }
   }
 
   /**
    * Invoice-level statistics — status distribution, per org breakdown
    */
-  private async getInvoiceStatistics(tenantId: string, activeOrgIds: string[]): Promise<InvoiceStats> {
+  private async getInvoiceStatistics(
+    tenantId: string,
+    activeOrgIds: string[],
+  ): Promise<InvoiceStats> {
     try {
       const result = await this.clickhouse.query({
         query: `
@@ -321,7 +389,7 @@ export class FinancialDataService {
       });
       const rows: any[] = await result.json();
       return {
-        byStatusAndOrg: rows.map(r => ({
+        byStatusAndOrg: rows.map((r) => ({
           status: r.status || 'UNKNOWN',
           provider: r.provider,
           orgId: r.org_id,
@@ -339,7 +407,10 @@ export class FinancialDataService {
   /**
    * Chart of Accounts summary — per org
    */
-  private async getAccountSummary(tenantId: string, activeOrgIds: string[]): Promise<AccountSummary> {
+  private async getAccountSummary(
+    tenantId: string,
+    activeOrgIds: string[],
+  ): Promise<AccountSummary> {
     try {
       const result = await this.clickhouse.query({
         query: `
@@ -364,7 +435,7 @@ export class FinancialDataService {
       });
       const rows: any[] = await result.json();
       return {
-        byTypeAndOrg: rows.map(r => ({
+        byTypeAndOrg: rows.map((r) => ({
           accountType: r.account_type,
           classification: r.classification,
           provider: r.provider,
@@ -383,25 +454,46 @@ export class FinancialDataService {
    * Execute a dynamic, tenant-scoped SQL query against the Gold Layer.
    */
   async executeScopedQuery(tenantId: string, sqlQuery: string): Promise<any[]> {
-    this.logger.log(`[ScopedQuery] Intent received: ${sqlQuery.slice(0, 50)}...`);
-    
+    this.logger.log(
+      `[ScopedQuery] Intent received: ${sqlQuery.slice(0, 50)}...`,
+    );
+
     const normalized = sqlQuery.trim().toUpperCase();
-    
+
     if (!normalized.startsWith('SELECT')) {
       throw new Error('Only SELECT queries permitted.');
     }
-    const forbidden = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'TRUNCATE'];
-    if (forbidden.some(word => normalized.includes(word))) {
+    const forbidden = [
+      'DROP',
+      'DELETE',
+      'INSERT',
+      'UPDATE',
+      'ALTER',
+      'CREATE',
+      'TRUNCATE',
+    ];
+    if (forbidden.some((word) => normalized.includes(word))) {
       throw new Error('Unsafe SQL keywords detected.');
     }
 
     let finalQuery = sqlQuery;
     if (!normalized.includes('TENANT_ID')) {
       if (normalized.includes('WHERE')) {
-        finalQuery = sqlQuery.replace(/WHERE/i, 'WHERE tenant_id = {tenantId:String} AND ');
-      } else if (normalized.includes('GROUP BY') || normalized.includes('ORDER BY')) {
-        const keyword = normalized.includes('GROUP BY') ? 'GROUP BY' : 'ORDER BY';
-        finalQuery = sqlQuery.replace(new RegExp(keyword, 'i'), `WHERE tenant_id = {tenantId:String} ${keyword}`);
+        finalQuery = sqlQuery.replace(
+          /WHERE/i,
+          'WHERE tenant_id = {tenantId:String} AND ',
+        );
+      } else if (
+        normalized.includes('GROUP BY') ||
+        normalized.includes('ORDER BY')
+      ) {
+        const keyword = normalized.includes('GROUP BY')
+          ? 'GROUP BY'
+          : 'ORDER BY';
+        finalQuery = sqlQuery.replace(
+          new RegExp(keyword, 'i'),
+          `WHERE tenant_id = {tenantId:String} ${keyword}`,
+        );
       } else {
         finalQuery = `${sqlQuery} WHERE tenant_id = {tenantId:String}`;
       }
@@ -410,12 +502,15 @@ export class FinancialDataService {
     try {
       const activeConns = await prisma.connection.findMany({
         where: { tenantId, isActive: true },
-        select: { providerAccountId: true }
+        select: { providerAccountId: true },
       });
       const activeOrgIds = activeConns.map((c) => c.providerAccountId);
       if (activeOrgIds.length > 0) {
         if (finalQuery.includes('WHERE')) {
-          finalQuery = finalQuery.replace(/WHERE/i, 'WHERE org_id IN ({activeOrgIds:Array(String)}) AND ');
+          finalQuery = finalQuery.replace(
+            /WHERE/i,
+            'WHERE org_id IN ({activeOrgIds:Array(String)}) AND ',
+          );
         } else {
           finalQuery = `${finalQuery} WHERE org_id IN ({activeOrgIds:Array(String)})`;
         }
@@ -429,7 +524,9 @@ export class FinancialDataService {
       });
       return await result.json();
     } catch (e: any) {
-      this.logger.error(`[ScopedQuery] SQL Error: ${e.message} for query: ${finalQuery}`);
+      this.logger.error(
+        `[ScopedQuery] SQL Error: ${e.message} for query: ${finalQuery}`,
+      );
       return [];
     }
   }
@@ -441,7 +538,7 @@ export class FinancialDataService {
     try {
       const activeConns = await prisma.connection.findMany({
         where: { tenantId, isActive: true },
-        select: { providerAccountId: true }
+        select: { providerAccountId: true },
       });
       const activeOrgIds = activeConns.map((c) => c.providerAccountId);
       if (activeOrgIds.length === 0) return [];
@@ -472,7 +569,7 @@ export class FinancialDataService {
     try {
       const activeConns = await prisma.connection.findMany({
         where: { tenantId, isActive: true },
-        select: { providerAccountId: true }
+        select: { providerAccountId: true },
       });
       const activeOrgIds = activeConns.map((c) => c.providerAccountId);
       if (activeOrgIds.length === 0) return [];
@@ -500,7 +597,9 @@ export class FinancialDataService {
       });
       return await result.json();
     } catch (e: any) {
-      this.logger.error(`[FinancialData] Monthly trend query failed: ${e.message}`);
+      this.logger.error(
+        `[FinancialData] Monthly trend query failed: ${e.message}`,
+      );
       return [];
     }
   }
@@ -511,7 +610,7 @@ export class FinancialDataService {
     try {
       const activeConns = await prisma.connection.findMany({
         where: { tenantId, isActive: true },
-        select: { providerAccountId: true }
+        select: { providerAccountId: true },
       });
       const activeOrgIds = activeConns.map((c) => c.providerAccountId);
       if (activeOrgIds.length === 0) return [];
@@ -537,7 +636,9 @@ export class FinancialDataService {
       });
       return await result.json();
     } catch (e: any) {
-      this.logger.error(`[FinancialData] Invoices list query failed: ${e.message}`);
+      this.logger.error(
+        `[FinancialData] Invoices list query failed: ${e.message}`,
+      );
       return [];
     }
   }
@@ -546,7 +647,10 @@ export class FinancialDataService {
    * Venture Intelligence — Burn, Runway, and Efficiency.
    * Superior to ChartMogul by factoring in actual accounting outflows, not just MRR.
    */
-  async getVentureMetrics(tenantId: string, activeOrgIds: string[]): Promise<VentureMetrics> {
+  async getVentureMetrics(
+    tenantId: string,
+    activeOrgIds: string[],
+  ): Promise<VentureMetrics> {
     try {
       const result = await this.clickhouse.query({
         query: `
@@ -580,19 +684,25 @@ export class FinancialDataService {
       });
       const rows: any[] = await result.json();
       const r = rows[0] || { avg_burn_rate: 0, current_cash: 0 };
-      
+
       const burnRate = parseFloat(r.avg_burn_rate);
       const cash = parseFloat(r.current_cash);
-      const runway = burnRate > 0 ? (cash / burnRate) : 99; // 99 as infinity proxy
+      const runway = burnRate > 0 ? cash / burnRate : 99; // 99 as infinity proxy
 
       return {
         burnRate: Math.round(burnRate),
         runwayMonths: Math.round(runway * 10) / 10,
         cashOnHand: Math.round(cash),
-        efficiencyMultiplier: burnRate > 0 ? Math.round((cash / burnRate) * 100) / 100 : 0
+        efficiencyMultiplier:
+          burnRate > 0 ? Math.round((cash / burnRate) * 100) / 100 : 0,
       };
     } catch {
-      return { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyMultiplier: 0 };
+      return {
+        burnRate: 0,
+        runwayMonths: 0,
+        cashOnHand: 0,
+        efficiencyMultiplier: 0,
+      };
     }
   }
 }

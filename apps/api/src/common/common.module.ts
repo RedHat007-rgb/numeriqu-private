@@ -5,15 +5,17 @@ import { DatabaseModule } from '../database/database.module';
 
 /**
  * COMMON MODULE (GLOBAL)
- * 
+ *
  * Provides shared utilities for Auth, Multi-tenancy, and Data Encryption.
- * Marked as @Global() so it can be used across Metrics, Intelligence, 
+ * Marked as @Global() so it can be used across Metrics, Intelligence,
  * and Integrations without redundant imports.
  */
+import { PersistenceService } from './services/persistence.service';
+
 @Global()
 @Module({
   imports: [DatabaseModule],
-  providers: [UserProvisioningService, CryptoService],
-  exports: [UserProvisioningService, CryptoService],
+  providers: [UserProvisioningService, CryptoService, PersistenceService],
+  exports: [UserProvisioningService, CryptoService, PersistenceService],
 })
 export class CommonModule {}

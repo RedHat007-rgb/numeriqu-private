@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Patch,
+  Delete,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { AgentToolsService } from './agent-tools.service';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { Inject, Injectable } from '@nestjs/common';
@@ -7,7 +17,7 @@ import type { PrismaClient } from '@repo/db';
 
 /**
  * InsightsController — The "Financial Insights Hub"
- * 
+ *
  * Manages the AI-generated visualizations that are pinned to the user's dashboard.
  */
 @Controller('insights')
@@ -48,15 +58,15 @@ export class InsightsController {
   async updateInsight(
     @Param('id') id: string,
     @Body() data: { isFavorite?: boolean; pinned?: boolean; title?: string },
-    @Request() req: any
+    @Request() req: any,
   ) {
     const tenantId = req.user.tenantId;
-    
+
     // Ensure the insight belongs to the requester's tenant
     const insight = await this.prisma.insight.findFirst({
       where: { id, tenantId },
     });
-    
+
     if (!insight) {
       throw new Error('Insight not found or access denied.');
     }

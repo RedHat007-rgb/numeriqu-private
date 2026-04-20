@@ -48,16 +48,22 @@ export class IntegrationsService {
     ...providerArgs: any[]
   ) {
     // Advanced: Deterministic Lock Key based on Provider and Account ID if available
-    const providerAccountId = (providerArgs && providerArgs.length > 0) ? providerArgs[0] : null;
+    const providerAccountId =
+      providerArgs && providerArgs.length > 0 ? providerArgs[0] : null;
     const providerLower = providerStr.toLowerCase();
-    
+
     let lockKey = connectionId;
-    if (providerAccountId && (providerLower === 'xero' || providerLower === 'quickbooks')) {
+    if (
+      providerAccountId &&
+      (providerLower === 'xero' || providerLower === 'quickbooks')
+    ) {
       lockKey = `${providerLower}_org_${providerAccountId}`;
     }
 
     if (this.activeSyncs.has(lockKey)) {
-      this.logger.warn(`Synchronization lock active for ${lockKey}. Orchestration deferred to prevent data corruption or credential fragmentation.`);
+      this.logger.warn(
+        `Synchronization lock active for ${lockKey}. Orchestration deferred to prevent data corruption or credential fragmentation.`,
+      );
       return;
     }
 

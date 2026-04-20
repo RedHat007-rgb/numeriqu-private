@@ -126,7 +126,10 @@ export class QuickbooksIngestionService {
 
         skippedEntities++;
         const status = error?.response?.status || error?.status || 'Unknown';
-        const detail = error?.response?.data?.fault?.error?.[0]?.Message || error?.message || 'No detail available';
+        const detail =
+          error?.response?.data?.fault?.error?.[0]?.Message ||
+          error?.message ||
+          'No detail available';
 
         this.logger.warn(
           `[QuickBooks] Resource ${entity.name} skipped: [${status}] ${detail}`,
@@ -146,10 +149,11 @@ export class QuickbooksIngestionService {
     entity: QuickBooksEntity,
   ): Promise<number> {
     // Enforce a minimum bound of 2014 for Quickbooks since older dates can trigger a 400 Bad Request on QBOv3 SQL
-    const validStart = jobDetails.syncWindowStart < new Date('2014-01-01') 
-      ? new Date('2014-01-01T00:00:00Z') 
-      : jobDetails.syncWindowStart;
-    
+    const validStart =
+      jobDetails.syncWindowStart < new Date('2014-01-01')
+        ? new Date('2014-01-01T00:00:00Z')
+        : jobDetails.syncWindowStart;
+
     // YYYY-MM-DD format is universally accepted and the safest syntax for node-quickbooks
     const formattedDate = validStart.toISOString().split('T')[0];
     const requiresFilter = entity.requiresMetaFilter !== false;
@@ -257,17 +261,20 @@ export class QuickbooksIngestionService {
   }
 
   private isUnauthorizedError(error: any): boolean {
-    const status = error?.response?.status ?? error?.status ?? error?.statusCode ?? null;
+    const status =
+      error?.response?.status ?? error?.status ?? error?.statusCode ?? null;
     const bodyStatus = error?.response?.data?.status;
-    
+
     if (status === 401 || bodyStatus === 401) return true;
-    
+
     const message = (error?.message || '').toString().toLowerCase();
-    const errorDetail = JSON.stringify(error?.response?.data || '').toLowerCase();
-    
+    const errorDetail = JSON.stringify(
+      error?.response?.data || '',
+    ).toLowerCase();
+
     return (
-      message.includes('401') || 
-      message.includes('unauthorized') || 
+      message.includes('401') ||
+      message.includes('unauthorized') ||
       errorDetail.includes('invalid_token') ||
       errorDetail.includes('authentication_failed')
     );
@@ -350,8 +357,14 @@ export class QuickbooksIngestionService {
     );
 
     // Add columns to existing tables (safe for already-created tables)
-    await this.createTableSafely(qualifiedTable, `ALTER TABLE ${qualifiedTable} ADD COLUMN IF NOT EXISTS org_id String DEFAULT ''`);
-    await this.createTableSafely(qualifiedTable, `ALTER TABLE ${qualifiedTable} ADD COLUMN IF NOT EXISTS org_name String DEFAULT ''`);
+    await this.createTableSafely(
+      qualifiedTable,
+      `ALTER TABLE ${qualifiedTable} ADD COLUMN IF NOT EXISTS org_id String DEFAULT ''`,
+    );
+    await this.createTableSafely(
+      qualifiedTable,
+      `ALTER TABLE ${qualifiedTable} ADD COLUMN IF NOT EXISTS org_name String DEFAULT ''`,
+    );
   }
 
   private getQuickBooksDatabase(): string {
@@ -362,7 +375,11 @@ export class QuickbooksIngestionService {
     ).trim();
   }
 
-  private withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  private withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    message: string,
+  ): Promise<T> {
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(message)), ms);

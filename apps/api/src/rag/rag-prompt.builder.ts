@@ -7,19 +7,76 @@ import type { FinancialProfile } from '../financial-data/financial-data.service'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FINANCE_KEYWORDS = [
-  'revenue', 'income', 'profit', 'margin', 'expense', 'cost', 'invoice',
-  'bill', 'payment', 'overdue', 'cashflow', 'cash flow', 'budget', 'forecast',
-  'tax', 'vat', 'gst', 'balance', 'account', 'ledger', 'xero', 'quickbooks',
-  'qbo', 'sync', 'connect', 'provider', 'org', 'currency', 'financial',
-  'money', 'dollar', 'pound', 'euro', 'debt', 'credit', 'debit', 'growth',
-  'trend', 'quarter', 'monthly', 'annual', 'ytd', 'mtd', 'risk', 'exposure',
-  'profitability', 'roi', 'working capital', 'ar', 'ap', 'receivable', 'payable',
-  'loss', 'gain', 'asset', 'liability', 'equity', 'numeriqu',
+  'revenue',
+  'income',
+  'profit',
+  'margin',
+  'expense',
+  'cost',
+  'invoice',
+  'bill',
+  'payment',
+  'overdue',
+  'cashflow',
+  'cash flow',
+  'budget',
+  'forecast',
+  'tax',
+  'vat',
+  'gst',
+  'balance',
+  'account',
+  'ledger',
+  'xero',
+  'quickbooks',
+  'qbo',
+  'sync',
+  'connect',
+  'provider',
+  'org',
+  'currency',
+  'financial',
+  'money',
+  'dollar',
+  'pound',
+  'euro',
+  'debt',
+  'credit',
+  'debit',
+  'growth',
+  'trend',
+  'quarter',
+  'monthly',
+  'annual',
+  'ytd',
+  'mtd',
+  'risk',
+  'exposure',
+  'profitability',
+  'roi',
+  'working capital',
+  'ar',
+  'ap',
+  'receivable',
+  'payable',
+  'loss',
+  'gain',
+  'asset',
+  'liability',
+  'equity',
+  'numeriqu',
 ];
 
 const GREETING_PATTERNS = [
-  'hi', 'hello', 'hey', 'who are you', 'how are you', 'what can you do',
-  'what do you do', 'help', 'sup',
+  'hi',
+  'hello',
+  'hey',
+  'who are you',
+  'how are you',
+  'what can you do',
+  'what do you do',
+  'help',
+  'sup',
 ];
 
 export type QueryIntent = 'greeting' | 'financial' | 'off_topic';
@@ -31,14 +88,18 @@ export type QueryIntent = 'greeting' | 'financial' | 'off_topic';
 export function classifyIntent(query: string): QueryIntent {
   const q = query.toLowerCase().trim();
 
-  if (GREETING_PATTERNS.some(g => q === g || q.startsWith(g + ' ') || q.startsWith(g + '!'))) {
+  if (
+    GREETING_PATTERNS.some(
+      (g) => q === g || q.startsWith(g + ' ') || q.startsWith(g + '!'),
+    )
+  ) {
     return 'greeting';
   }
 
   // Short queries (< 15 chars) that aren't greetings get routed as financial
   if (q.length < 15) return 'financial';
 
-  if (FINANCE_KEYWORDS.some(kw => q.includes(kw))) return 'financial';
+  if (FINANCE_KEYWORDS.some((kw) => q.includes(kw))) return 'financial';
 
   return 'off_topic';
 }
@@ -63,37 +124,66 @@ CORE PRINCIPLES (STRICT):
 4. TONE: Professional, articulate, and friendly. Like a private banker.
 
 RAG LAYER MISSION (Knowledge Intelligence):
-Provide deep, structured, logically explained, and multi-layered reasoning. Do NOT emit [COMMAND:] tags or JSON configurations; you are pure conversational intelligence. Focus on historical data analysis, trends, root causes, and business impact. ALWAYS use Markdown for visual hierarchy.
+Provide deep, structured, logically explained, and multi-layered reasoning. Do NOT emit [COMMAND:] tags or JSON configurations; you are pure conversational intelligence. Focus on historical data analysis, trends, root causes, and business impact. 
 
 STRICT ANALYTICAL RULES:
 1. ACKNOWLEDGE IDENTITY: Always mention specific organization names you see in the Fact Block.
 2. CONTEXT AWARENESS: Use the conversation history below to provide contextual, follow-up responses and smart recommendations.
 3. DOMAIN VETO: Only discuss finances. Politely redirect off-topic questions.
-4. STRUCTURE YOUR OUTPUT: You must follow this output format strictly: Break your response into logical sections (e.g., DEEP ANALYSIS, KEY INSIGHTS, RECOMMENDATIONS).`;
+4. STRUCTURE YOUR OUTPUT: You MUST use Markdown for high visual hierarchy. Use bold text for key figures. Use tables for multi-org comparisons.
+5. RESPONSE SCHEMA:
+   ## DEEP ANALYSIS
+   Interpret the data and explain the "why". Use bullet points.
+   
+   ## FINANCIAL HIGHLIGHTS
+   Use a Markdown table if comparing multiple organizations or months. Use bold text for numbers.
+   
+   ## STRATEGIC RECOMMENDATIONS
+   3-4 actionable next steps based on the findings.
+`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FACT BLOCK BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function buildFactBlock(profile: FinancialProfile, monthlyTrend: any[]): string {
+export function buildFactBlock(
+  profile: FinancialProfile,
+  monthlyTrend: any[],
+): string {
   const orgs = profile.connectedOrgs ?? [];
   const r = profile.revenue;
   const e = profile.expenses;
 
-  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const fmt = (n: number) =>
+    n.toLocaleString('en-US', { maximumFractionDigits: 0 });
   const fmtCurrency = (n: number, cur = 'USD') =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, maximumFractionDigits: 0 }).format(n);
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: cur,
+      maximumFractionDigits: 0,
+    }).format(n);
 
-  const orgLines = orgs.length > 0
-    ? orgs.map(o => `  ${o.orgName} [${o.provider.toUpperCase()}]: rev=${fmtCurrency(o.totalRevenue, o.currency)} invoices=${o.invoiceCount}`).join('\n')
-    : '  (no org data)';
+  const orgLines =
+    orgs.length > 0
+      ? orgs
+          .map(
+            (o) =>
+              `  ${o.orgName} [${o.provider.toUpperCase()}]: rev=${fmtCurrency(o.totalRevenue, o.currency)} invoices=${o.invoiceCount}`,
+          )
+          .join('\n')
+      : '  (no org data)';
 
   const trendMap = new Map<string, number>();
-  for (const row of (monthlyTrend ?? [])) {
+  for (const row of monthlyTrend ?? []) {
     const m = (row.month ?? '').slice(0, 7);
     trendMap.set(m, (trendMap.get(m) ?? 0) + parseFloat(row.revenue ?? 0));
   }
-  const trendLines = [...trendMap.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-6).map(([m, v]) => `  ${m}: ${fmtCurrency(v)}`).join('\n') || '  (no trend data)';
+  const trendLines =
+    [...trendMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-6)
+      .map(([m, v]) => `  ${m}: ${fmtCurrency(v)}`)
+      .join('\n') || '  (no trend data)';
 
   return `
 === FACT BLOCK (live from ClickHouse) ===

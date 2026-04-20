@@ -9,10 +9,10 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * SupabaseAuthGuard — Production JWT Validation
- * 
+ *
  * Validates the Bearer token against Supabase Auth.
  * Attaches the authenticated user to the request object.
- * 
+ *
  * Usage: @UseGuards(SupabaseAuthGuard) on controllers/routes
  */
 @Injectable()
@@ -30,7 +30,7 @@ export class SupabaseAuthGuard implements CanActivate {
           autoRefreshToken: false,
           detectSessionInUrl: false,
         },
-      }
+      },
     );
   }
 
@@ -39,13 +39,18 @@ export class SupabaseAuthGuard implements CanActivate {
     const authHeader = request.headers['authorization'];
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing or invalid Authorization header');
+      throw new UnauthorizedException(
+        'Missing or invalid Authorization header',
+      );
     }
 
     const token = authHeader.replace('Bearer ', '');
 
     try {
-      const { data: { user }, error } = await this.supabase.auth.getUser(token);
+      const {
+        data: { user },
+        error,
+      } = await this.supabase.auth.getUser(token);
 
       if (error || !user) {
         this.logger.warn(`[Auth] Token validation failed: ${error?.message}`);

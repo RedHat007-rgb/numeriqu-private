@@ -5,7 +5,6 @@ import { AgentToolsService } from './agent-tools.service';
 import { classifyIntent, buildMessages } from './prompt-builder';
 import type { FinancialProfile } from './financial-data.service';
 
-
 /**
  * IntelligenceService — Zero-Latency Financial AI Engine
  *
@@ -47,7 +46,7 @@ export class IntelligenceService {
     private readonly contextCache: ContextCacheService,
     private readonly agentTools: AgentToolsService,
   ) {
-    this.OLLAMA_URL  = process.env.OLLAMA_URL   || 'http://localhost:11434';
+    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
     this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
   }
 
@@ -68,7 +67,9 @@ export class IntelligenceService {
       if (intent === 'greeting') {
         yield this.chunk('status', { message: 'Ready.' });
         yield this.chunk('token', { content: this.greetingResponse() });
-        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'fast-path' } });
+        yield this.chunk('done', {
+          metrics: { totalMs: Date.now() - startTime, mode: 'fast-path' },
+        });
         return;
       }
 
@@ -76,16 +77,21 @@ export class IntelligenceService {
       if (intent === 'off_topic') {
         yield this.chunk('status', { message: 'Analyzing intent...' });
         yield this.chunk('token', {
-          content: "I'm specialized in financial analysis only. Please ask about revenue, expenses, profitability, invoices, cash flow, or your connected organizations.",
+          content:
+            "I'm specialized in financial analysis only. Please ask about revenue, expenses, profitability, invoices, cash flow, or your connected organizations.",
         });
-        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'domain-gate' } });
+        yield this.chunk('done', {
+          metrics: { totalMs: Date.now() - startTime, mode: 'domain-gate' },
+        });
         return;
       }
 
       // ── STEP 1: CONTEXT RETRIEVAL (Cached or Parallel) ─────────────────────
-      yield this.chunk('status', { message: 'Loading financial intelligence...' });
+      yield this.chunk('status', {
+        message: 'Loading financial intelligence...',
+      });
 
-      let cachedEntry = this.contextCache.get(tenantId);
+      const cachedEntry = this.contextCache.get(tenantId);
       let profile = cachedEntry?.profile ?? null;
       let monthlyTrend = cachedEntry?.monthlyTrend ?? null;
 
@@ -110,25 +116,25 @@ export class IntelligenceService {
       // Emit context snapshot for UI
       yield this.chunk('context', {
         data: {
-          totalRevenue:   profile!.revenue.totalRevenue,
-          totalExpenses:  profile!.expenses.totalExpenses,
-          netProfit:      profile!.netProfit,
-          profitMargin:   profile!.profitMargin,
-          fetchTimeMs:    Date.now() - startTime,
+          totalRevenue: profile!.revenue.totalRevenue,
+          totalExpenses: profile!.expenses.totalExpenses,
+          netProfit: profile!.netProfit,
+          profitMargin: profile!.profitMargin,
+          fetchTimeMs: Date.now() - startTime,
         },
       });
 
       // ── STEP 2: AGENTIC STREAMING ──────────────────────────────────────────
       yield this.chunk('status', { message: 'Analyzing trends...' });
-      
+
       const messages = buildMessages(profile!, monthlyTrend!, userQuery, mode);
       const response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model:   this.OLLAMA_MODEL,
+          model: this.OLLAMA_MODEL,
           messages,
-          stream:  true,
+          stream: true,
           options: { temperature: 0.1, num_predict: 2048, top_p: 0.9 },
         }),
       });
@@ -151,11 +157,13 @@ export class IntelligenceService {
         const raw = decoder.decode(value, { stream: true });
         for (const line of raw.split('\n')) {
           if (!line.trim()) continue;
-          
+
           let parsed;
           try {
             parsed = JSON.parse(line);
-          } catch { continue; }
+          } catch {
+            continue;
+          }
 
           const token = parsed.message?.content;
           if (token) {
@@ -183,9 +191,14 @@ export class IntelligenceService {
               if (commandBuffer.includes(']')) {
                 const endIdx = commandBuffer.indexOf(']');
                 const fullCommand = commandBuffer.substring(0, endIdx + 1);
-                const rawJson = fullCommand.replace('[COMMAND:', '').replace(']', '').trim();
+                const rawJson = fullCommand
+                  .replace('[COMMAND:', '')
+                  .replace(']', '')
+                  .trim();
 
-                this.logger.log(`[AGENT] Executing Cloaked Command: ${rawJson.substring(0, 40)}...`);
+                this.logger.log(
+                  `[AGENT] Executing Cloaked Command: ${rawJson.substring(0, 40)}...`,
+                );
                 this.handleAgentCommand(tenantId, rawJson);
                 yield this.chunk('system', { action: 'DASHBOARD_REFRESH' });
 
@@ -211,17 +224,19 @@ export class IntelligenceService {
           mode: mode === 'agent' ? 'strategic-report' : 'advisory-rag',
         },
       });
-
     } catch (e: any) {
       this.logger.error(`[Fatal] Intelligence failure: ${e.message}`);
-      
+
       // PRODUCTION-GRADE ERROR MAPPING
-      let userMessage = "I encountered an unexpected issue while analyzing your finances. I've logged the details for our engineering team.";
-      
+      let userMessage =
+        "I encountered an unexpected issue while analyzing your finances. I've logged the details for our engineering team.";
+
       if (e.message.includes('AI_ENGINE_OFFLINE')) {
-        userMessage = "The AI reasoning engine is currently warming up. I've switched to high-accuracy heuristic mode to provide your core data below.";
+        userMessage =
+          "The AI reasoning engine is currently warming up. I've switched to high-accuracy heuristic mode to provide your core data below.";
       } else if (e.message.includes('DATABASE_ERROR')) {
-        userMessage = "I'm having trouble retrieving your live ledger data right now. Please check your provider connection status.";
+        userMessage =
+          "I'm having trouble retrieving your live ledger data right now. Please check your provider connection status.";
       }
 
       yield this.chunk('error', { message: userMessage });
@@ -237,20 +252,33 @@ export class IntelligenceService {
   private async handleAgentCommand(tenantId: string, cmdJson: string) {
     try {
       const payload = JSON.parse(cmdJson.trim());
-      this.logger.log(`[Agent:Command] Intercepted Action: ${payload.command || 'UNKNOWN'}`);
-      
-      if (payload.type === 'line' || payload.type === 'bar' || payload.type === 'pie' || payload.type === 'metric') {
+      this.logger.log(
+        `[Agent:Command] Intercepted Action: ${payload.command || 'UNKNOWN'}`,
+      );
+
+      if (
+        payload.type === 'line' ||
+        payload.type === 'bar' ||
+        payload.type === 'pie' ||
+        payload.type === 'metric'
+      ) {
         // Fallback or explicit SAVE_INSIGHT
         await this.agentTools.saveInsightToDashboard(tenantId, payload);
       } else if (payload.command === 'QUERY_SQL') {
-        const result = await this.agentTools.queryFinancialDatabase(tenantId, payload);
+        const result = await this.agentTools.queryFinancialDatabase(
+          tenantId,
+          payload,
+        );
         // We could write this result back to the LLM if we had a multi-turn loop,
         // for now we log it as grounding verification.
-        this.logger.debug(`[Agent:SQL] Precise fact-check result: ${result.count} rows found.`);
+        this.logger.debug(
+          `[Agent:SQL] Precise fact-check result: ${result.count} rows found.`,
+        );
       }
-      
     } catch (e: any) {
-      this.logger.warn(`[Agent:Command] Failed to execute command: ${e.message}`);
+      this.logger.warn(
+        `[Agent:Command] Failed to execute command: ${e.message}`,
+      );
     }
   }
 
@@ -266,12 +294,12 @@ export class IntelligenceService {
       ollamaStatus = false;
     }
 
-    return { 
-      status: 'ok', 
+    return {
+      status: 'ok',
       ollama: ollamaStatus,
-      engine: this.OLLAMA_MODEL, 
+      engine: this.OLLAMA_MODEL,
       uptime: process.uptime(),
-      mode: ollamaStatus ? 'agentic-active' : 'heuristic-fallback' 
+      mode: ollamaStatus ? 'agentic-active' : 'heuristic-fallback',
     };
   }
 
@@ -286,14 +314,33 @@ export class IntelligenceService {
   }
 
   private emptyProfile(tenantId: string): any {
-    return { 
-      revenue: { totalRevenue: 0, avgInvoiceValue: 0, totalInvoices: 0, minInvoice: 0, maxInvoice: 0, providerCount: 0, orgCount: 0, currencyCount: 0 }, 
-      expenses: { totalExpenses: 0, totalBills: 0, overdueAmount: 0, overdueCount: 0 }, 
-      netProfit: 0, 
-      profitMargin: 0, 
-      connectedOrgs: [], 
-      ventureMetrics: { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyMultiplier: 0 },
-      computedAt: new Date().toISOString() 
+    return {
+      revenue: {
+        totalRevenue: 0,
+        avgInvoiceValue: 0,
+        totalInvoices: 0,
+        minInvoice: 0,
+        maxInvoice: 0,
+        providerCount: 0,
+        orgCount: 0,
+        currencyCount: 0,
+      },
+      expenses: {
+        totalExpenses: 0,
+        totalBills: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+      },
+      netProfit: 0,
+      profitMargin: 0,
+      connectedOrgs: [],
+      ventureMetrics: {
+        burnRate: 0,
+        runwayMonths: 0,
+        cashOnHand: 0,
+        efficiencyMultiplier: 0,
+      },
+      computedAt: new Date().toISOString(),
     };
   }
 
@@ -306,4 +353,3 @@ export class IntelligenceService {
       .catch(() => {});
   }
 }
-

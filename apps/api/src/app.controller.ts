@@ -23,14 +23,17 @@ export class AppController {
 
   /**
    * GET /auth/me — Authenticated user profile + tenant
-   * 
+   *
    * First call triggers JIT provisioning (creates user + tenant).
    * Subsequent calls return the existing records.
    */
   @Get('auth/me')
   @UseGuards(SupabaseAuthGuard)
   async getMe(@CurrentUser() user: AuthUser) {
-    const result = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const result = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     return result;
   }
 
@@ -79,7 +82,10 @@ export class AppController {
   @Post('test/trigger-sync')
   @UseGuards(SupabaseAuthGuard)
   async triggerSync(@CurrentUser() user: AuthUser, @Req() req: any) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
 
     const provider = req.query.provider;
     const filter: any = { isActive: true, tenantId: tenant.id };
@@ -116,7 +122,10 @@ export class AppController {
   @Get('test/jobs')
   @UseGuards(SupabaseAuthGuard)
   async checkJobs(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
 
     const jobs = await prisma.syncJob.findMany({
       where: { tenantId: tenant.id },

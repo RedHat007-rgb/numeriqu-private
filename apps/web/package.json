@@ -4,31 +4,48 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3001",
+    "dev:free": "node ./scripts/kill-next-dev.mjs",
+    "dev": "node ./scripts/kill-next-dev.mjs && next dev --port 3001 --webpack",
+    "dev:turbo": "node ./scripts/kill-next-dev.mjs && next dev --port 3010 --turbopack",
+    "dev:legacy": "node ./scripts/kill-next-dev.mjs && next dev --port 3001 --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@repo/db": "workspace:^",
     "@repo/ui": "workspace:*",
-    "@supabase/supabase-js": "^2.49.4",
-    "framer-motion": "^12.38.0",
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.45.4",
+    "axios": "^1.14.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "12.0.0-alpha.0",
     "lucide-react": "^1.8.0",
     "next": "16.2.0",
+    "next-themes": "^0.4.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-hook-form": "^7.72.1",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.1",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
+    "@tailwindcss/typography": "^0.5.15",
     "@types/node": "^22.15.3",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
+    "autoprefixer": "^10.4.20",
     "eslint": "^9.39.1",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.1",
     "typescript": "5.9.2"
   }
 }

@@ -1,4 +1,16 @@
-import { Controller, Get, Post, Body, Param, Query, Patch, Delete, UseGuards, Logger, Inject } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  Patch,
+  Delete,
+  UseGuards,
+  Logger,
+  Inject,
+} from '@nestjs/common';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
@@ -32,8 +44,11 @@ export class AnalyticsController {
    */
   @Get('insights')
   async getInsights(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+
     // Fetch legacy individual charts
     const insights = await this.prisma.insight.findMany({
       where: { tenantId: tenant.id },
@@ -47,7 +62,7 @@ export class AnalyticsController {
       orderBy: { createdAt: 'desc' },
     });
 
-    const mappedDashboards = dashboards.map(d => ({
+    const mappedDashboards = dashboards.map((d) => ({
       id: d.id,
       tenantId: d.tenantId,
       title: d.title,
@@ -59,13 +74,20 @@ export class AnalyticsController {
       createdAt: d.createdAt,
     }));
 
-    return [...mappedDashboards, ...insights].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return [...mappedDashboards, ...insights].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
   }
 
   @Get('insights/:id')
   async getInsight(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    return this.prisma.insight.findFirst({ where: { id, tenantId: tenant.id } });
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.prisma.insight.findFirst({
+      where: { id, tenantId: tenant.id },
+    });
   }
 
   @Patch('insights/:id')
@@ -74,16 +96,29 @@ export class AnalyticsController {
     @Body() data: { isFavorite?: boolean; pinned?: boolean; title?: string },
     @CurrentUser() user: AuthUser,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    return this.prisma.insight.updateMany({ where: { id, tenantId: tenant.id }, data });
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    return this.prisma.insight.updateMany({
+      where: { id, tenantId: tenant.id },
+      data,
+    });
   }
 
   @Delete('insights/:id')
   async deleteInsight(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
-    const delDashboard = await this.prisma.dashboard.deleteMany({ where: { id, tenantId: tenant.id } });
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
+    const delDashboard = await this.prisma.dashboard.deleteMany({
+      where: { id, tenantId: tenant.id },
+    });
     if (delDashboard.count > 0) return { success: true };
-    return this.prisma.insight.deleteMany({ where: { id, tenantId: tenant.id } });
+    return this.prisma.insight.deleteMany({
+      where: { id, tenantId: tenant.id },
+    });
   }
 
   // ─── EXECUTIVE DASHBOARD DATA ENDPOINTS ────────────────────────────────────
@@ -94,7 +129,10 @@ export class AnalyticsController {
    */
   @Get('dashboard')
   async getDashboard(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     const startTime = Date.now();
 
     try {
@@ -109,10 +147,17 @@ export class AnalyticsController {
       ]);
 
       // Transform monthly trend into Recharts-ready format
-      const trendMap = new Map<string, { revenue: number; expenses: number; invoices: number }>();
+      const trendMap = new Map<
+        string,
+        { revenue: number; expenses: number; invoices: number }
+      >();
       for (const row of monthlyTrend) {
         const month = (row.month ?? '').slice(0, 7);
-        const existing = trendMap.get(month) || { revenue: 0, expenses: 0, invoices: 0 };
+        const existing = trendMap.get(month) || {
+          revenue: 0,
+          expenses: 0,
+          invoices: 0,
+        };
         existing.revenue += Math.abs(parseFloat(row.revenue) || 0);
         existing.invoices += parseInt(row.invoice_count) || 0;
         trendMap.set(month, existing);
@@ -129,7 +174,7 @@ export class AnalyticsController {
         }));
 
       // Revenue by org for donut chart
-      const orgBreakdown = (profile.connectedOrgs || []).map(org => ({
+      const orgBreakdown = (profile.connectedOrgs || []).map((org) => ({
         name: org.orgName,
         value: Math.round(org.totalRevenue),
         provider: org.provider,
@@ -139,24 +184,38 @@ export class AnalyticsController {
 
       // Invoice status distribution
       const statusMap = new Map<string, { count: number; amount: number }>();
-      for (const stat of (profile.invoiceStats?.byStatusAndOrg || [])) {
+      for (const stat of profile.invoiceStats?.byStatusAndOrg || []) {
         const key = stat.status;
         const existing = statusMap.get(key) || { count: 0, amount: 0 };
         existing.count += stat.count;
         existing.amount += stat.totalAmount;
         statusMap.set(key, existing);
       }
-      const invoiceStatusChart = [...statusMap.entries()].map(([status, data]) => ({
-        name: status,
-        count: data.count,
-        amount: Math.round(data.amount),
-      }));
+      const invoiceStatusChart = [...statusMap.entries()].map(
+        ([status, data]) => ({
+          name: status,
+          count: data.count,
+          amount: Math.round(data.amount),
+        }),
+      );
 
       // Cash flow waterfall
       const cashflowWaterfall = [
-        { name: 'Revenue', value: Math.round(profile.revenue.totalRevenue), fill: '#00F5D4' },
-        { name: 'Expenses', value: -Math.round(profile.expenses.totalExpenses), fill: '#FF6B6B' },
-        { name: 'Net Profit', value: Math.round(profile.netProfit), fill: profile.netProfit >= 0 ? '#00F5D4' : '#FF6B6B' },
+        {
+          name: 'Revenue',
+          value: Math.round(profile.revenue.totalRevenue),
+          fill: '#00F5D4',
+        },
+        {
+          name: 'Expenses',
+          value: -Math.round(profile.expenses.totalExpenses),
+          fill: '#FF6B6B',
+        },
+        {
+          name: 'Net Profit',
+          value: Math.round(profile.netProfit),
+          fill: profile.netProfit >= 0 ? '#00F5D4' : '#FF6B6B',
+        },
       ];
 
       return {
@@ -190,15 +249,36 @@ export class AnalyticsController {
       this.logger.error(`[Dashboard] Failed: ${error.message}`);
       return {
         kpis: {
-          totalRevenue: 0, totalExpenses: 0, netProfit: 0, profitMargin: 0,
-          totalInvoices: 0, avgInvoiceValue: 0, overdueAmount: 0, overdueCount: 0,
-          orgCount: 0, providerCount: 0,
+          totalRevenue: 0,
+          totalExpenses: 0,
+          netProfit: 0,
+          profitMargin: 0,
+          totalInvoices: 0,
+          avgInvoiceValue: 0,
+          overdueAmount: 0,
+          overdueCount: 0,
+          orgCount: 0,
+          providerCount: 0,
         },
-        venture: { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyMultiplier: 0 },
-        charts: { monthlyTrend: [], orgBreakdown: [], invoiceStatus: [], cashflowWaterfall: [] },
+        venture: {
+          burnRate: 0,
+          runwayMonths: 0,
+          cashOnHand: 0,
+          efficiencyMultiplier: 0,
+        },
+        charts: {
+          monthlyTrend: [],
+          orgBreakdown: [],
+          invoiceStatus: [],
+          cashflowWaterfall: [],
+        },
         connectedOrgs: [],
         insights: [],
-        meta: { computedAt: new Date().toISOString(), latencyMs: Date.now() - startTime, error: 'Data temporarily unavailable' },
+        meta: {
+          computedAt: new Date().toISOString(),
+          latencyMs: Date.now() - startTime,
+          error: 'Data temporarily unavailable',
+        },
       };
     }
   }
@@ -211,7 +291,10 @@ export class AnalyticsController {
     @CurrentUser() user: AuthUser,
     @Query('orgId') orgId?: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     const trend = await this.financialData.getMonthlyRevenueTrend(tenant.id);
 
     let filtered = trend;
@@ -220,7 +303,10 @@ export class AnalyticsController {
     }
 
     return filtered.map((t: any) => ({
-      name: (t.month ?? '').slice(0, 7).split('-')[1] + '/' + (t.month ?? '').slice(0, 7).split('-')[0].slice(2),
+      name:
+        (t.month ?? '').slice(0, 7).split('-')[1] +
+        '/' +
+        (t.month ?? '').slice(0, 7).split('-')[0].slice(2),
       month: (t.month ?? '').slice(0, 7),
       revenue: Math.abs(parseFloat(t.revenue) || 0),
       invoices: parseInt(t.invoice_count) || 0,
@@ -234,7 +320,10 @@ export class AnalyticsController {
    */
   @Get('invoices')
   async getInvoices(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(user.id, user.email);
+    const { tenant } = await this.provisioning.ensureProvisioned(
+      user.id,
+      user.email,
+    );
     return this.financialData.getInvoicesList(tenant.id);
   }
 }

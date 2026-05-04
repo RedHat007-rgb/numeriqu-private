@@ -12,6 +12,11 @@ export type {
   DashboardResponse,
   Connection,
   SyncJob,
+  Organization,
+  OrgMember,
+  OrgInvite,
+  OrgDetail,
+  InviteDetails,
   HealthResponse,
   ChatMessage,
   ChatMode,
@@ -27,6 +32,6 @@ export type {
 
 export { AuthApi } from "./auth";
 export { AnalyticsApi } from "./analytics";
-export { IntegrationsApi } from "./integrations";
+export { IntegrationsApi, getInviteDetails } from "./integrations";
 export { RagApi } from "./rag";
 export { AgentApi } from "./agent";

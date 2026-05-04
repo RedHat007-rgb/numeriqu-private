@@ -86,8 +86,8 @@ export class OtpService {
     email: string,
     password: string,
     name?: string,
-  ): Promise<void> {
-    const { error } = await this.supabaseAdmin.auth.admin.createUser({
+  ): Promise<{ supabaseId: string }> {
+    const { data, error } = await this.supabaseAdmin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
@@ -103,5 +103,6 @@ export class OtpService {
     }
 
     this.logger.log(`[OTP] Supabase user created and verified: ${email}`);
+    return { supabaseId: data.user.id };
   }
 }

@@ -18,6 +18,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 
 // ── LEGACY: Kept for backward compat — will be removed after frontend migration
 import { IntelligenceModule } from './intelligence/intelligence.module';
+import { OrgModule } from './org/org.module';
 
 @Module({
   imports: [
@@ -32,6 +33,9 @@ import { IntelligenceModule } from './intelligence/intelligence.module';
     RagModule, // POST /rag/query — RAG advisor (INDEPENDENT)
     AgentModule, // POST /agent/query — Strategic agent (INDEPENDENT)
     AnalyticsModule, // GET /analytics/insights — Chart gallery
+
+    // ── Organization & Membership ──
+    OrgModule,
 
     // ── Data Pipeline ──
     SyncModule,

@@ -371,6 +371,7 @@ export class AuthController {
             refreshToken: tokenSet.refresh_token
               ? this.crypto.encrypt(tokenSet.refresh_token)
               : null,
+            isActive: true,
             metadata: { orgName: xtenant.tenantName },
           },
           create: {

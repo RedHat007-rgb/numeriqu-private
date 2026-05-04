@@ -11,7 +11,7 @@ export class UserProvisioningService {
     opts?: { name?: string; accountType?: 'solo' | 'organization'; role?: string },
   ): Promise<{
     user: { id: string; email: string; role: string };
-    tenant: { id: string; name: string; accountType: string };
+    tenant: { id: string; name: string; accountType: string; slug: string | null };
   }> {
     let user = await prisma.user.findUnique({
       where: { id: supabaseUserId },
@@ -21,7 +21,12 @@ export class UserProvisioningService {
     if (user?.tenant) {
       return {
         user: { id: user.id, email: user.email, role: user.role },
-        tenant: { id: user.tenant.id, name: user.tenant.name, accountType: user.tenant.accountType },
+        tenant: {
+          id: user.tenant.id,
+          name: user.tenant.name,
+          accountType: user.tenant.accountType,
+          slug: user.tenant.slug,
+        },
       };
     }
 
@@ -32,7 +37,7 @@ export class UserProvisioningService {
 
     if (user && !user.tenantId) {
       const tenant = await prisma.tenant.create({
-        data: { name: this.defaultOrgName(email), accountType },
+        data: { name: opts?.name ?? this.defaultOrgName(email), accountType },
       });
       user = await prisma.user.update({
         where: { id: user.id },
@@ -41,12 +46,13 @@ export class UserProvisioningService {
       });
       return {
         user: { id: user.id, email: user.email, role: user.role },
-        tenant: { id: tenant.id, name: tenant.name, accountType: tenant.accountType },
+        tenant: { id: tenant.id, name: tenant.name, accountType: tenant.accountType, slug: tenant.slug },
       };
     }
 
+    const tenantName = opts?.name ?? this.defaultOrgName(email);
     const tenant = await prisma.tenant.create({
-      data: { name: opts?.name ?? this.defaultOrgName(email), accountType },
+      data: { name: tenantName, accountType },
     });
 
     user = await prisma.user.create({
@@ -64,7 +70,7 @@ export class UserProvisioningService {
 
     return {
       user: { id: user.id, email: user.email, role: user.role },
-      tenant: { id: tenant.id, name: tenant.name, accountType: tenant.accountType },
+      tenant: { id: tenant.id, name: tenant.name, accountType: tenant.accountType, slug: tenant.slug },
     };
   }
 

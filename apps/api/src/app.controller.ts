@@ -75,7 +75,12 @@ export class AppController {
       throw new BadRequestException('email, code, and password are required.');
     }
     await this.otpService.verify(body.email, body.code);
-    await this.otpService.createVerifiedUser(body.email, body.password, body.name);
+    const { supabaseId } = await this.otpService.createVerifiedUser(body.email, body.password, body.name);
+    // JIT-provision the tenant now so orgName + accountType are captured immediately.
+    await this.provisioning.ensureProvisioned(supabaseId, body.email, {
+      name: body.orgName ?? body.name,
+      accountType: body.accountType ?? 'solo',
+    });
     return {
       message: 'Email verified. You can now sign in.',
       accountType: body.accountType ?? 'solo',

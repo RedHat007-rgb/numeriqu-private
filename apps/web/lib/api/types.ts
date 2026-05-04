@@ -138,6 +138,49 @@ export type MetricsResponse = {
   grouping?: string;
 };
 
+// ── Organisation management ────────────────────────────────────────────────
+
+export type Organization = {
+  id: string;             // connection id
+  orgName: string;
+  provider: string;
+  providerAccountId: string;
+  isActive: boolean | null;
+  updatedAt: string;
+  memberCount: number;
+};
+
+export type OrgMember = {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: string;
+  joinedAt: string;
+};
+
+export type OrgInvite = {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+  createdAt: string;
+};
+
+export type OrgDetail = {
+  org: Organization;
+  members: OrgMember[];
+  invites: OrgInvite[];
+};
+
+export type InviteDetails = {
+  email: string;
+  orgName: string;
+  role: string;
+  expired: boolean;
+};
+
+// ── Stream ─────────────────────────────────────────────────────────────────
+
 export type StreamControlMessage = {
   type?: string;
   action?: string;

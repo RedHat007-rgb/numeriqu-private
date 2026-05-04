@@ -13,11 +13,13 @@ import { ThemeToggle } from "../../components/ui/ThemeToggle";
 import { useAuth } from "../providers";
 
 type Step = "form" | "otp";
+type AccountType = "solo" | "organization";
 
 type FormErrors = {
   name?: string;
   email?: string;
   password?: string;
+  orgName?: string;
   otp?: string;
   global?: string;
 };
@@ -38,6 +40,8 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [orgName, setOrgName] = useState("");
+  const [accountType, setAccountType] = useState<AccountType>("solo");
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -58,11 +62,14 @@ export default function SignupPage() {
 
   function validateForm(): FormErrors {
     const next: FormErrors = {};
-    if (!name.trim()) next.name = "Tell us your name so we can personalize your workspace.";
+    if (!name.trim()) next.name = "Tell us your name so we can personalise your workspace.";
     if (!email) next.email = "Email is required.";
     else if (!/.+@.+\..+/.test(email)) next.email = "Enter a valid email.";
     if (!password) next.password = "Password is required.";
     else if (password.length < 8) next.password = "Use at least 8 characters.";
+    if (accountType === "organization" && !orgName.trim()) {
+      next.orgName = "Enter your organisation name.";
+    }
     return next;
   }
 
@@ -147,7 +154,14 @@ export default function SignupPage() {
       const response = await fetch(`${getApiBaseURL()}/auth/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code: otp, password, name }),
+        body: JSON.stringify({
+          email,
+          code: otp,
+          password,
+          name,
+          accountType,
+          orgName: accountType === "organization" ? orgName : name + "'s Workspace",
+        }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -249,6 +263,41 @@ export default function SignupPage() {
                   ))}
                 </div>
               </div>
+
+              {/* Account type selector */}
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-text-secondary">Account type</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(["solo", "organization"] as AccountType[]).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setAccountType(type)}
+                      className={`rounded-xl border px-4 py-3 text-left text-sm transition-colors ${
+                        accountType === type
+                          ? "border-accent-blue bg-accent-blue/10 text-text-primary"
+                          : "border-default bg-surface-card/40 text-text-muted hover:border-accent-blue/40"
+                      }`}
+                    >
+                      <span className="block font-semibold capitalize">{type === "solo" ? "Just me" : "Team / Org"}</span>
+                      <span className="block text-xs opacity-70 mt-0.5">
+                        {type === "solo" ? "Personal workspace" : "Invite teammates"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {accountType === "organization" && (
+                <Field
+                  label="Organisation name"
+                  autoComplete="organization"
+                  value={orgName}
+                  onChange={(event) => setOrgName(event.target.value)}
+                  placeholder="Acme Corp"
+                  error={errors.orgName}
+                />
+              )}
 
               <Button type="submit" className="w-full" loading={loading}>
                 {loading ? "Sending code..." : "Send verification code"}

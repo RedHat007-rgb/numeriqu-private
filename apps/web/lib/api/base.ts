@@ -13,14 +13,61 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+
+  /**
+   * Map a structured backend error to a user-friendly, calm message that does
+   * not leak technical details. Falls back to a safe generic if nothing fits.
+   */
+  toUserMessage(fallback = "Something went wrong. Please try again."): string {
+    if (this.status === 401) return "Your session expired. Please sign in again.";
+    if (this.status === 403) return "You do not have access to this resource.";
+    if (this.status === 404) return "We could not find what you were looking for.";
+    if (this.status === 429) return "Too many requests. Wait a moment and retry.";
+    if (this.status >= 500) return "Our service is having trouble right now. Please retry shortly.";
+    return this.message || fallback;
+  }
 }
 
 export type TokenProvider = () => Promise<string | null>;
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  process.env.NEXT_PUBLIC_API_URL ??
-  "http://localhost:3000";
+/**
+ * Browser: same-origin `/api/numeriqu` (Next.js rewrite to Nest) unless NEXT_PUBLIC_API_*_URL is set.
+ * Server: direct internal URL for any SSR usage.
+ */
+export function getApiBaseURL(): string {
+  const explicit =
+    process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    return `${window.location.origin.replace(/\/$/, "")}/api/numeriqu`;
+  }
+  const internal =
+    process.env.API_INTERNAL_URL?.trim() ||
+    process.env.API_PROXY_TARGET?.trim() ||
+    "http://127.0.0.1:3000";
+  return internal.replace(/\/$/, "");
+}
+
+/**
+ * Streaming POSTs (SSE) must hit Nest directly. Next.js dev rewrites can buffer
+ * the upstream response so the UI sees no tokens until completion.
+ */
+export function getStreamApiBaseURL(): string {
+  const stream = process.env.NEXT_PUBLIC_API_STREAM_URL?.trim();
+  if (stream) return stream.replace(/\/$/, "");
+  const explicit =
+    process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    return "http://localhost:3000";
+  }
+  return getApiBaseURL();
+}
+
+/** Backwards-compatible export so existing imports keep working. */
+export const API_BASE_URL = getApiBaseURL();
 
 function normalizeMessage(payload: ApiErrorPayload | undefined, fallback: string) {
   if (!payload?.message) return payload?.error ?? fallback;
@@ -36,7 +83,7 @@ export function createRequester(getToken: TokenProvider) {
     headers.set("Authorization", `Bearer ${token}`);
     if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(`${getApiBaseURL()}${path}`, {
       ...init,
       headers,
       cache: "no-store",
@@ -57,13 +104,29 @@ export function createRequester(getToken: TokenProvider) {
   };
 }
 
+export type StreamMessage = {
+  type?: string;
+  token?: string;
+  content?: string;
+  message?: string;
+  action?: string;
+  metrics?: { sessionId?: string } & Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type StreamCallbacks = {
+  onDelta: (delta: string) => void;
+  onMessage?: (msg: StreamMessage) => void;
+};
+
 export async function streamJsonSseLines(params: {
   path: string;
   token: string;
   body: unknown;
   onDelta: (delta: string) => void;
+  onMessage?: (msg: StreamMessage) => void;
 }) {
-  const response = await fetch(`${API_BASE_URL}${params.path}`, {
+  const response = await fetch(`${getStreamApiBaseURL()}${params.path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${params.token}`,
@@ -73,7 +136,17 @@ export async function streamJsonSseLines(params: {
   });
 
   if (!response.ok || !response.body) {
-    throw new ApiError(`Chat stream failed with ${response.status}.`, response.status);
+    let payload: ApiErrorPayload | undefined;
+    try {
+      payload = (await response.json()) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiError(
+      normalizeMessage(payload, "Streaming request failed."),
+      response.status,
+      payload,
+    );
   }
 
   const reader = response.body.getReader();
@@ -91,17 +164,26 @@ export async function streamJsonSseLines(params: {
       const clean = line.startsWith("data:") ? line.slice(5).trim() : line.trim();
       if (!clean || clean === "[DONE]") continue;
       try {
-        const parsed = JSON.parse(clean) as {
-          type?: string;
-          token?: string;
-          content?: string;
-          message?: string;
-        };
-        if (parsed.type === "error") throw new Error(parsed.message ?? "Stream interrupted.");
-        params.onDelta(parsed.token ?? parsed.content ?? parsed.message ?? "");
+        const parsed = JSON.parse(clean) as StreamMessage;
+        if (parsed.type === "error") {
+          throw new ApiError(
+            (parsed.message as string) ?? "Stream interrupted.",
+            500,
+          );
+        }
+        if (params.onMessage) params.onMessage(parsed);
+        if (parsed.type === "token" && typeof parsed.content === "string") {
+          params.onDelta(parsed.content);
+        } else if (typeof parsed.token === "string") {
+          params.onDelta(parsed.token);
+        }
       } catch (error) {
-        if (error instanceof SyntaxError) params.onDelta(clean);
-        else throw error;
+        if (error instanceof SyntaxError) {
+          // SSE frame was raw text rather than JSON; emit as-is so streaming surfaces still see content.
+          params.onDelta(clean);
+        } else {
+          throw error;
+        }
       }
     }
   }

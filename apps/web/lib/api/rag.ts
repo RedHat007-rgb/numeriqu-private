@@ -1,15 +1,29 @@
-import { API_BASE_URL, ApiError, streamJsonSseLines, type TokenProvider } from "./base";
-import type { ChatMessage, HealthResponse } from "./types";
+import {
+  ApiError,
+  createRequester,
+  getApiBaseURL,
+  streamJsonSseLines,
+  type TokenProvider,
+} from "./base";
+import type {
+  ChatSessionDetail,
+  ChatSessionSummary,
+  HealthResponse,
+  StreamQueryParams,
+} from "./types";
 
 export class RagApi {
-  constructor(private readonly getToken: TokenProvider) {}
+  private readonly request: ReturnType<typeof createRequester>;
+
+  constructor(private readonly getToken: TokenProvider) {
+    this.request = createRequester(getToken);
+  }
 
   async health(): Promise<HealthResponse> {
     const token = await this.getToken();
     if (!token) throw new ApiError("Sign in before calling the backend.", 401);
 
-    // Health endpoints are protected by default in this project; keep the auth header consistent.
-    const response = await fetch(`${API_BASE_URL}/rag/health`, {
+    const response = await fetch(`${getApiBaseURL()}/rag/health`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -17,15 +31,28 @@ export class RagApi {
     return (await response.json()) as HealthResponse;
   }
 
-  async streamQuery(params: { query: string; history: ChatMessage[]; onDelta: (delta: string) => void }) {
+  sessions() {
+    return this.request<ChatSessionSummary[]>("/rag/sessions");
+  }
+
+  session(id: string) {
+    return this.request<ChatSessionDetail>(`/rag/sessions/${id}`);
+  }
+
+  async streamQuery(params: StreamQueryParams) {
     const token = await this.getToken();
     if (!token) throw new ApiError("Sign in before calling the backend.", 401);
 
     return streamJsonSseLines({
       path: "/rag/query",
       token,
-      body: { query: params.query, history: params.history },
+      body: {
+        query: params.query,
+        history: params.history,
+        sessionId: params.sessionId ?? undefined,
+      },
       onDelta: params.onDelta,
+      onMessage: params.onMessage,
     });
   }
 }

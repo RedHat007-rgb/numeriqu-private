@@ -5,33 +5,28 @@ import { GlassCard } from "./GlassCard";
 
 export const InsightsChatbot: React.FC = () => {
   return (
-    <section id="rag" className="py-24 px-6 max-w-7xl mx-auto">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-        {/* Left: Copy */}
+    <section id="rag" className="mx-auto max-w-7xl px-6 py-24">
+      <div className="grid grid-cols-1 items-center gap-12 md:grid-cols-2">
         <div>
-          <div className="font-mono text-xs text-blue-400 tracking-widest mb-4">
-            INSIGHTS CHATBOT
-          </div>
-          <h2 className="text-4xl md:text-5xl font-bold mb-6 text-white">
-            Ask your data anything. Get answers instantly.
-          </h2>
-          <p className="text-lg text-text-muted mb-8 leading-relaxed">
-            Our RAG-powered search understands your financial documents,
-            reports, and market feeds. Every answer is source-cited, combining
-            multiple documents for comprehensive insights your team can trust
-            and act on immediately.
+          <p className="mb-4 font-mono text-xs uppercase tracking-[0.28em] text-accent-blue">
+            RAG Advisor
+          </p>
+          <h2 className="mb-6 text-text-primary">Ask your finance data anything</h2>
+          <p className="mb-8 text-lg leading-relaxed text-text-secondary">
+            Numeriqu&apos;s retrieval-augmented advisor reads your synced
+            invoices, ledgers, and reports — then answers in plain English with
+            sources you can verify in one click.
           </p>
 
-          {/* Feature Chips */}
           <div className="flex flex-wrap gap-3">
             {[
               "Source-cited answers",
-              "Multi-doc search",
-              "Real-time context",
+              "Tenant-isolated retrieval",
+              "Streaming responses",
             ].map((feature) => (
               <div
                 key={feature}
-                className="px-4 py-2 bg-blue-500/10 border border-blue-400/30 rounded-full text-sm text-blue-300"
+                className="rounded-full border border-accent-blue/30 bg-accent-blue/10 px-4 py-2 text-sm text-accent-blue"
               >
                 ✓ {feature}
               </div>
@@ -39,62 +34,55 @@ export const InsightsChatbot: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: Animated Chat UI */}
         <GlassCard glowColor="blue" className="p-6">
           <div className="space-y-4">
-            {/* System Message */}
             <div className="text-sm text-text-muted">
-              💬 Assistant:{" "}
-              <span className="text-blue-300">
-                Ready to analyze your data...
-              </span>
+              💬 Advisor:{" "}
+              <span className="text-accent-blue">Connected to Acme Inc · last sync 4m ago</span>
             </div>
 
-            {/* User Message */}
-            <div className="bg-blue-500/20 rounded p-4 text-right">
-              <p className="text-sm text-blue-100">
-                "What drove the revenue spike in Q3?"
+            <div className="rounded-xl bg-accent-blue/10 p-4 text-right ring-1 ring-accent-blue/20">
+              <p className="text-sm text-text-primary">
+                What drove the revenue spike in Q3?
               </p>
             </div>
 
-            {/* AI Response with Streaming Effect */}
-            <div className="bg-violet-500/10 rounded p-4 border border-violet-400/20">
-              <p className="text-sm text-violet-200 leading-relaxed">
-                Based on analysis of Q3 reports and market data:
+            <div className="rounded-xl border border-accent-violet/20 bg-accent-violet/10 p-4">
+              <p className="text-sm leading-relaxed text-text-primary">
+                Three factors explain the +24% Q3 lift:
                 <br />
                 <br />
-                • New enterprise partnerships contributed 35% growth
+                • Two enterprise renewals shipped early (+$1.2M)
                 <br />
-                • Seasonal market demand surge (+28%)
-                <br />• Operational efficiency gains added $1.2M
+                • Seasonal demand for Plan B SKUs (+18% units)
+                <br />
+                • One-time consulting revenue from Acme East (+$340K)
                 <span className="animate-blink">|</span>
               </p>
             </div>
 
-            {/* Citation Chips */}
-            <div className="flex flex-wrap gap-2 mt-4">
-              {[
-                "[Q3_Report.pdf]",
-                "[MarketTrends_2026.csv]",
-                "[Revenue_Analysis.docx]",
-              ].map((source) => (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {["Q3_Close.pdf", "Invoices_2026Q3.csv", "Plan_B_Demand.xlsx"].map((source) => (
                 <div
                   key={source}
-                  className="text-xs px-2 py-1 bg-cyan-500/10 border border-cyan-400/30 rounded text-cyan-300"
+                  className="rounded border border-accent-cyan/30 bg-accent-cyan/10 px-2 py-1 text-xs text-accent-cyan"
                 >
                   {source}
                 </div>
               ))}
             </div>
 
-            {/* Input Bar */}
-            <div className="mt-6 flex gap-2 pt-4 border-t border-white/10">
+            <div className="mt-6 flex gap-2 border-t border-default pt-4">
               <input
                 type="text"
                 placeholder="Ask another question..."
-                className="flex-1 bg-slate-800/50 border border-white/10 rounded px-3 py-2 text-sm text-text-primary placeholder-text-muted outline-none"
+                aria-label="Sample advisor input"
+                className="flex-1 rounded-md border border-default bg-bg-elevated/40 px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none"
               />
-              <button className="px-4 py-2 bg-blue-500 text-white rounded text-sm font-medium hover:bg-blue-600">
+              <button
+                aria-label="Send (preview only)"
+                className="rounded-md bg-accent-blue px-4 py-2 text-sm font-medium text-white hover:bg-accent-blue/80"
+              >
                 ↑
               </button>
             </div>

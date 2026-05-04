@@ -6,51 +6,46 @@ import { SparklineChart } from "./SparklineChart";
 
 export const FeaturesGrid: React.FC = () => {
   return (
-    <section id="features" className="py-24 px-6 max-w-7xl mx-auto">
-      <h2 className="text-4xl md:text-5xl font-bold mb-16 text-white">
-        Powerful Features Built for Modern Finance
-      </h2>
+    <section id="features" className="mx-auto max-w-7xl px-6 py-24">
+      <div className="mb-12 text-center">
+        <p className="font-mono text-xs uppercase tracking-[0.28em] text-accent-blue">
+          Platform
+        </p>
+        <h2 className="mt-3 text-text-primary">A calm command center for finance</h2>
+        <p className="mx-auto mt-4 max-w-2xl text-lg text-text-secondary">
+          Replace ad-hoc spreadsheets with a unified view of revenue, runway,
+          and exceptions — explained in plain English.
+        </p>
+      </div>
 
-      {/* Bento Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-        {/* Card A: Market Overview - 2 cols */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
         <GlassCard
           glowColor="blue"
-          className="md:col-span-6 p-8 hover:translate-y-[-4px] transition-transform cursor-pointer"
+          className="cursor-pointer p-8 transition-transform hover:-translate-y-1 md:col-span-6"
         >
-          <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-            <span className="text-blue-400">📊</span> Market Overview
+          <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-text-primary">
+            <span aria-hidden className="text-accent-blue">📊</span> Live financial overview
           </h3>
 
-          {/* Ticker Simulation */}
           <div className="space-y-3">
             {[
-              { ticker: "NASDAQ:MSFT", price: "$425.30", change: "+2.3%" },
-              { ticker: "S&P:SPX", price: "$5,280.15", change: "+1.8%" },
-              { ticker: "NYSE:AAPL", price: "$189.45", change: "-0.5%" },
+              { ticker: "Revenue", price: "$1.84M", change: "+12.4%" },
+              { ticker: "Runway", price: "14.2 mo", change: "+0.6 mo" },
+              { ticker: "Burn", price: "$128K", change: "-3.1%" },
             ].map((item) => (
               <div
                 key={item.ticker}
-                className="flex justify-between items-center p-3 bg-slate-800/30 rounded border border-white/5"
+                className="flex items-center justify-between rounded-xl border border-default bg-bg-elevated/40 p-3"
               >
                 <div className="flex-1">
-                  <p className="text-sm font-mono font-bold text-blue-300">
-                    {item.ticker}
-                  </p>
-                  <SparklineChart
-                    data={[10, 15, 13, 20, 18, 25, 22]}
-                    color="cyan"
-                    width={100}
-                    height={20}
-                  />
+                  <p className="text-sm font-semibold text-text-primary">{item.ticker}</p>
+                  <SparklineChart data={[10, 15, 13, 20, 18, 25, 22]} color="cyan" width={100} height={20} />
                 </div>
                 <div className="text-right">
-                  <p className="text-sm font-mono text-white">{item.price}</p>
+                  <p className="text-sm font-mono text-text-primary">{item.price}</p>
                   <p
                     className={`text-xs font-mono ${
-                      item.change.includes("-")
-                        ? "text-red-400"
-                        : "text-green-400"
+                      item.change.startsWith("-") ? "text-feedback-danger" : "text-feedback-success"
                     }`}
                   >
                     {item.change}
@@ -61,69 +56,54 @@ export const FeaturesGrid: React.FC = () => {
           </div>
         </GlassCard>
 
-        {/* Card B: RAG Search - 1 col */}
         <GlassCard
           glowColor="violet"
-          className="md:col-span-3 p-6 hover:translate-y-[-4px] transition-transform cursor-pointer"
+          className="cursor-pointer p-6 transition-transform hover:-translate-y-1 md:col-span-3"
         >
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-            <span>🔍</span> RAG Search
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-text-primary">
+            <span aria-hidden>🔍</span> RAG advisor
           </h3>
-          <div className="space-y-3">
-            <input
-              type="text"
-              placeholder="Search documents..."
-              className="w-full bg-slate-800/50 border border-white/10 rounded px-3 py-2 text-sm text-text-primary"
-            />
-            <div className="space-y-2">
-              {["Q3 Report", "Budget Plan", "Market Trends"].map((doc) => (
-                <div
-                  key={doc}
-                  className="text-xs p-2 bg-slate-800/30 rounded border border-white/5 text-text-muted"
-                >
-                  📄 {doc}
-                </div>
-              ))}
-            </div>
+          <p className="mb-4 text-sm text-text-muted">
+            Source-cited answers grounded in your finance data, not the public web.
+          </p>
+          <div className="space-y-2">
+            {["Revenue drivers Q3", "Margin variance review", "Cash runway sensitivity"].map((doc) => (
+              <div
+                key={doc}
+                className="rounded-md border border-default bg-bg-elevated/40 p-2 text-xs text-text-secondary"
+              >
+                {doc}
+              </div>
+            ))}
           </div>
         </GlassCard>
 
-        {/* Card C: Revenue Analytics - 1 col */}
-        <GlassCard className="md:col-span-3 p-6 hover:translate-y-[-4px] transition-transform cursor-pointer">
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-            <span>💰</span> Revenue Analytics
+        <GlassCard className="cursor-pointer p-6 transition-transform hover:-translate-y-1 md:col-span-3">
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-text-primary">
+            <span aria-hidden>💰</span> Margin tracker
           </h3>
           <div className="text-center">
-            <p className="text-3xl font-bold text-cyan-400 mb-2">78%</p>
-            <p className="text-sm text-text-muted">Goal Achieved</p>
-            <SparklineChart
-              data={[20, 35, 28, 50, 45, 65, 78]}
-              color="teal"
-              width={120}
-              height={40}
-            />
+            <p className="mb-2 text-3xl font-bold text-accent-cyan">78%</p>
+            <p className="text-sm text-text-muted">Goal achieved this quarter</p>
+            <SparklineChart data={[20, 35, 28, 50, 45, 65, 78]} color="teal" width={120} height={40} />
           </div>
         </GlassCard>
 
-        {/* Card D: KPI Monitoring - 1 col */}
-        <GlassCard className="md:col-span-3 p-6 hover:translate-y-[-4px] transition-transform cursor-pointer">
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-            <span>📈</span> Key Metrics
+        <GlassCard className="cursor-pointer p-6 transition-transform hover:-translate-y-1 md:col-span-3">
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-text-primary">
+            <span aria-hidden>📈</span> Key health metrics
           </h3>
           <div className="space-y-3">
             {[
-              { metric: "Profitability", value: "+$2.4M", trend: "↑" },
-              { metric: "Cost Savings", value: "18%", trend: "↑" },
-              { metric: "Efficiency", value: "+34%", trend: "↑" },
+              { metric: "Profitability", value: "+$2.4M", positive: true },
+              { metric: "Cost discipline", value: "-18%", positive: true },
+              { metric: "Operational efficiency", value: "+34%", positive: true },
             ].map((item) => (
-              <div
-                key={item.metric}
-                className="flex justify-between items-center"
-              >
+              <div key={item.metric} className="flex items-center justify-between">
                 <span className="text-xs text-text-muted">{item.metric}</span>
                 <span
                   className={`text-sm font-mono font-bold ${
-                    item.trend === "↑" ? "text-green-400" : "text-red-400"
+                    item.positive ? "text-feedback-success" : "text-feedback-danger"
                   }`}
                 >
                   {item.value}
@@ -133,25 +113,22 @@ export const FeaturesGrid: React.FC = () => {
           </div>
         </GlassCard>
 
-        {/* Card E: Reports - 1 col */}
         <GlassCard
           glowColor="blue"
-          className="md:col-span-3 p-6 hover:translate-y-[-4px] transition-transform cursor-pointer"
+          className="cursor-pointer p-6 transition-transform hover:-translate-y-1 md:col-span-3"
         >
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-            <span>📅</span> Scheduled Reports
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-text-primary">
+            <span aria-hidden>📅</span> Scheduled reports
           </h3>
           <div className="space-y-2">
-            {["Weekly Report", "Monthly Summary", "Quarterly Analysis"].map(
-              (report) => (
-                <div
-                  key={report}
-                  className="text-xs p-2 bg-blue-500/10 border border-blue-400/30 rounded text-blue-300"
-                >
-                  ⏰ {report}
-                </div>
-              ),
-            )}
+            {["Weekly board pack", "Monthly close summary", "Quarterly variance report"].map((report) => (
+              <div
+                key={report}
+                className="rounded-md border border-accent-blue/30 bg-accent-blue/10 p-2 text-xs text-accent-blue"
+              >
+                ⏰ {report}
+              </div>
+            ))}
           </div>
         </GlassCard>
       </div>

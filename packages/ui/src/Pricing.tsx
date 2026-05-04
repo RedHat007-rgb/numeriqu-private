@@ -5,133 +5,122 @@ import { GlassCard } from "./GlassCard";
 import { GlowButton } from "./GlowButton";
 
 export const Pricing: React.FC = () => {
-  const [isAnnual, setIsAnnual] = useState(false);
+  const [isAnnual, setIsAnnual] = useState(true);
 
   const tiers = [
     {
-      name: "Free",
+      name: "Starter",
       price: "$0",
-      description: "Get started with basics",
+      description: "For founders evaluating Numeriqu",
       features: [
-        "1 data integration",
-        "Basic dashboards",
-        "5 users",
-        "Community support",
+        "1 finance integration",
+        "CFO overview dashboard",
+        "RAG advisor (50 queries / mo)",
+        "Email support",
       ],
+      ctaLabel: "Start free",
+      ctaHref: "/signup",
       highlighted: false,
     },
     {
-      name: "Pro",
+      name: "Growth",
       price: isAnnual ? "$758" : "$79",
-      period: isAnnual ? "/year" : "/month",
-      description: "Most Popular - Perfect for growing teams",
+      period: isAnnual ? " / year" : " / month",
+      description: "For finance teams running monthly close",
       features: [
         "Unlimited integrations",
-        "Advanced analytics",
-        "50 users",
+        "Agent workbench + dashboards",
+        "RAG advisor (unlimited)",
+        "Per-org access controls",
         "Priority support",
-        "RAG-powered search",
-        "Scheduled reports",
       ],
+      ctaLabel: "Start free trial",
+      ctaHref: "/signup",
       highlighted: true,
     },
     {
       name: "Enterprise",
       price: "Custom",
-      description: "Advanced features for large organizations",
+      description: "Multi-entity finance with custom controls",
       features: [
-        "Everything in Pro",
-        "White-label platform",
+        "Everything in Growth",
+        "SSO + SCIM",
         "Custom integrations",
-        "Dedicated support",
-        "SLA guarantee",
-        "Advanced security",
+        "Dedicated success engineer",
+        "SLA & data residency",
       ],
+      ctaLabel: "Talk to sales",
+      ctaHref: "mailto:hello@numeriqu.com?subject=Numeriqu%20Enterprise",
       highlighted: false,
     },
   ];
 
   return (
-    <section id="pricing" className="py-24 px-6 max-w-7xl mx-auto">
-      <div className="text-center mb-16">
-        <h2 className="text-4xl md:text-5xl font-bold mb-6 text-white">
-          Simple, Transparent Pricing
-        </h2>
-        <p className="text-lg text-text-muted mb-8">
-          Choose the perfect plan for your team
-        </p>
+    <section id="pricing" className="mx-auto max-w-7xl px-6 py-24">
+      <div className="mb-12 text-center">
+        <h2 className="mb-4 text-text-primary">Simple, honest pricing</h2>
+        <p className="text-lg text-text-secondary">Pick a plan that fits your team. Cancel any time.</p>
 
-        {/* Annual Toggle */}
-        <div className="flex items-center justify-center gap-4 mb-12">
-          <span
-            className={`text-sm ${!isAnnual ? "text-white" : "text-text-muted"}`}
+        <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-default bg-bg-card/60 p-1.5 text-sm">
+          <button
+            type="button"
+            onClick={() => setIsAnnual(false)}
+            className={`rounded-full px-4 py-1.5 transition-colors ${
+              !isAnnual ? "bg-accent-blue text-white" : "text-text-muted"
+            }`}
+            aria-pressed={!isAnnual}
           >
             Monthly
-          </span>
-          <button
-            onClick={() => setIsAnnual(!isAnnual)}
-            className="relative inline-flex h-8 w-14 items-center rounded-full bg-slate-700 cursor-pointer transition-colors"
-            title="Toggle between monthly and annual billing"
-            aria-label={`Switch to ${isAnnual ? "monthly" : "annual"} billing`}
-          >
-            <span
-              className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
-                isAnnual ? "translate-x-7" : "translate-x-1"
-              }`}
-              aria-hidden="true"
-            />
           </button>
-          <span
-            className={`text-sm ${isAnnual ? "text-white" : "text-text-muted"}`}
+          <button
+            type="button"
+            onClick={() => setIsAnnual(true)}
+            className={`rounded-full px-4 py-1.5 transition-colors ${
+              isAnnual ? "bg-accent-blue text-white" : "text-text-muted"
+            }`}
+            aria-pressed={isAnnual}
           >
-            Annual
-          </span>
-          {isAnnual && (
-            <span className="ml-2 px-3 py-1 bg-green-500/20 border border-green-400/50 text-green-300 text-xs rounded-full">
-              Save 20%
-            </span>
-          )}
+            Annual <span className="ml-1 text-feedback-success">-20%</span>
+          </button>
         </div>
       </div>
 
-      {/* Pricing Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
         {tiers.map((tier) => (
           <GlassCard
             key={tier.name}
             glowColor={tier.highlighted ? "blue" : "none"}
-            className={`p-8 flex flex-col ${tier.highlighted ? "md:scale-105 relative z-10" : ""}`}
+            className={`flex flex-col p-8 ${tier.highlighted ? "relative md:scale-[1.03]" : ""}`}
           >
-            {tier.highlighted && (
-              <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 px-4 py-1 bg-blue-500 text-white text-xs font-bold rounded-full">
-                MOST POPULAR
+            {tier.highlighted ? (
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-accent-blue px-4 py-1 text-xs font-bold uppercase tracking-wide text-white">
+                Most popular
               </div>
-            )}
+            ) : null}
 
-            <h3 className="text-2xl font-bold mb-2 text-white">{tier.name}</h3>
-            <p className="text-sm text-text-muted mb-6">{tier.description}</p>
+            <h3 className="mb-1 text-2xl font-bold text-text-primary">{tier.name}</h3>
+            <p className="mb-6 text-sm text-text-muted">{tier.description}</p>
 
             <div className="mb-8">
-              <span className="text-4xl font-bold text-white">
-                {tier.price}
-              </span>
-              {tier.period && (
+              <span className="text-4xl font-bold text-text-primary">{tier.price}</span>
+              {tier.period ? (
                 <span className="text-sm text-text-muted">{tier.period}</span>
-              )}
+              ) : null}
             </div>
 
             <GlowButton
               variant={tier.highlighted ? "primary" : "ghost"}
               className="mb-8 w-full"
+              href={tier.ctaHref}
             >
-              Get Started
+              {tier.ctaLabel}
             </GlowButton>
 
-            <div className="space-y-4 flex-1">
+            <div className="flex-1 space-y-3">
               {tier.features.map((feature) => (
                 <div key={feature} className="flex items-start gap-3">
-                  <span className="text-cyan-400 mt-1">✓</span>
-                  <span className="text-sm text-text-primary">{feature}</span>
+                  <span className="mt-0.5 text-accent-cyan" aria-hidden>✓</span>
+                  <span className="text-sm text-text-secondary">{feature}</span>
                 </div>
               ))}
             </div>

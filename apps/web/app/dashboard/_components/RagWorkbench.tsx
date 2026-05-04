@@ -5,11 +5,21 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApiError, type ChatMessage, type HealthResponse } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
-import { cardClass, classNames, EmptyState } from "./ui";
+import { Button } from "../../../components/ui/Button";
+import { ErrorBanner } from "../../../components/ui/ErrorBanner";
+import { EmptyState } from "../../../components/ui/EmptyState";
+import { StatusPill } from "../../../components/ui/StatusPill";
+import { cn } from "../../../components/ui/cn";
+
+const SAMPLE_PROMPTS = [
+  "What changed in revenue this month?",
+  "Summarize last week's sync activity.",
+  "Which entities had the largest expense swings?",
+];
 
 export function RagWorkbench() {
   const { rag, loading } = useNumeriquApi();
-  const [input, setInput] = useState("What changed in revenue this month?");
+  const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -29,8 +39,9 @@ export function RagWorkbench() {
     const load = async () => {
       try {
         const sessions = await rag.sessions();
-        if (sessions.length > 0) {
-          const detailed = await rag.session(sessions[0].id);
+        const first = sessions[0];
+        if (first) {
+          const detailed = await rag.session(first.id);
           setMessages(detailed.messages ?? []);
           setSessionId(detailed.id);
         }
@@ -45,18 +56,22 @@ export function RagWorkbench() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  async function ask() {
-    const query = input.trim();
-    if (!query || isStreaming) return;
+  async function ask(query: string) {
+    const trimmed = query.trim();
+    if (!trimmed || isStreaming) return;
 
     setError(null);
     setInput("");
     setIsStreaming(true);
-    setMessages((current) => [...current, { role: "user", content: query }, { role: "assistant", content: "" }]);
+    setMessages((current) => [
+      ...current,
+      { role: "user", content: trimmed },
+      { role: "assistant", content: "" },
+    ]);
 
     try {
       await rag.streamQuery({
-        query,
+        query: trimmed,
         sessionId,
         onDelta: (delta) => {
           setMessages((current) => {
@@ -74,11 +89,19 @@ export function RagWorkbench() {
         },
       });
     } catch (caught) {
-      const message = caught instanceof ApiError ? caught.message : caught instanceof Error ? caught.message : "Stream failed.";
+      const message =
+        caught instanceof ApiError
+          ? caught.toUserMessage("The advisor stream was interrupted. Please retry.")
+          : caught instanceof Error
+            ? caught.message
+            : "The advisor stream was interrupted. Please retry.";
       setError(message);
       setMessages((current) => {
         const copy = [...current];
-        copy[copy.length - 1] = { role: "assistant", content: `Backend error: ${message}` };
+        copy[copy.length - 1] = {
+          role: "assistant",
+          content: `_The advisor couldn't finish that response._\n\n${message}`,
+        };
         return copy;
       });
     } finally {
@@ -86,54 +109,81 @@ export function RagWorkbench() {
     }
   }
 
+  const healthTone = health?.status === "operational" ? "success" : health ? "warning" : "neutral";
+
   return (
     <div className="space-y-6">
-      <section className={cardClass()}>
+      <section className="surface-card p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-violet-300">AI Workbench</p>
-            <h2 className="mt-2 font-display text-2xl font-bold text-white">RAG (Advisor) Layer</h2>
-            <p className="mt-2 text-sm text-slate-400">{health?.advisory ?? "Health check pending"}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-violet">
+              AI Workbench
+            </p>
+            <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
+              RAG advisor
+            </h2>
+            <p className="mt-2 text-sm text-text-muted">
+              Source-cited answers grounded in your synced finance data.
+            </p>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-300">
-            This page only calls <span className="font-mono text-xs text-cyan-200">/rag</span> endpoints.
+          <div className="flex items-center gap-3">
+            <StatusPill tone={healthTone}>
+              {health?.status ? health.status : "checking"}
+            </StatusPill>
+            <p className="font-mono text-xs text-text-muted">/rag endpoints</p>
           </div>
         </div>
       </section>
 
       {error ? (
-        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 p-4 text-rose-100">{error}</div>
+        <ErrorBanner title="Advisor error" tone="danger" onDismiss={() => setError(null)}>
+          {error}
+        </ErrorBanner>
       ) : null}
 
-      <section className={cardClass("h-full")}>
+      <section className="surface-card p-4 md:p-6">
         <div
           ref={scrollRef}
-          className="h-[420px] space-y-3 overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/60 p-4"
+          className="h-[420px] space-y-3 overflow-y-auto rounded-2xl border border-default bg-bg-elevated/40 p-4"
         >
           {messages.length === 0 ? (
-            <EmptyState title="Ready for questions" detail="Streams from /rag/query with your bearer token." />
+            <EmptyState
+              title="Ready to ask"
+              detail="Try one of these to get started, or type any CFO-grade question."
+              action={
+                <div className="flex flex-wrap justify-center gap-2">
+                  {SAMPLE_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => void ask(prompt)}
+                      className="rounded-full border border-default px-3 py-1.5 text-xs text-text-secondary hover:border-accent-blue/50 hover:text-text-primary"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              }
+            />
           ) : (
             messages.map((message, index) => (
               <div
                 key={`${message.role}-${index}`}
-                className={classNames(
-                  "flex rounded-2xl p-3 text-sm",
-                  message.role === "user" ? "ml-8 justify-end" : "mr-8 justify-start",
-                )}
+                className={cn("flex p-1", message.role === "user" ? "justify-end" : "justify-start")}
               >
                 <div
-                  className={classNames(
-                    "max-w-[90%] rounded-2xl p-3",
+                  className={cn(
+                    "max-w-[90%] rounded-2xl p-3 ring-1",
                     message.role === "user"
-                      ? "bg-blue-500/20 text-blue-50 ring-1 ring-blue-400/20"
-                      : "bg-white/[0.04] text-slate-100 ring-1 ring-white/10",
+                      ? "bg-accent-blue/15 text-text-primary ring-accent-blue/20"
+                      : "bg-surface-card/60 text-text-primary ring-default",
                   )}
                 >
-                  <div className="prose prose-invert prose-sm max-w-none leading-relaxed prose-headings:text-slate-100 prose-p:text-slate-200 prose-strong:text-white prose-a:text-cyan-300">
+                  <div className="prose prose-sm max-w-none leading-relaxed text-text-primary prose-headings:text-text-primary prose-strong:text-text-primary prose-a:text-accent-blue prose-code:text-accent-cyan">
                     {message.content ? (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                     ) : isStreaming && index === messages.length - 1 ? (
-                      <span className="text-slate-500 italic">Thinking…</span>
+                      <span className="text-text-muted italic">Thinking…</span>
                     ) : null}
                   </div>
                 </div>
@@ -142,24 +192,24 @@ export function RagWorkbench() {
           )}
         </div>
 
-        <div className="mt-4 flex gap-3">
+        <form
+          className="mt-4 flex gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void ask(input);
+          }}
+        >
           <input
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void ask();
-            }}
-            className="min-h-12 flex-1 rounded-full border border-white/10 bg-slate-900 px-5 text-white outline-none focus:border-violet-400"
+            aria-label="Ask the advisor"
+            className="min-h-12 flex-1 rounded-full border border-default bg-surface-card/70 px-5 text-text-primary outline-none focus:border-accent-violet"
             placeholder="Ask a CFO-grade question..."
           />
-          <button
-            onClick={() => void ask()}
-            disabled={isStreaming}
-            className="rounded-full bg-violet-500 px-6 py-3 font-semibold text-white hover:bg-violet-400 disabled:opacity-50"
-          >
+          <Button type="submit" loading={isStreaming} disabled={!input.trim() || isStreaming}>
             {isStreaming ? "Streaming" : "Ask"}
-          </button>
-        </div>
+          </Button>
+        </form>
       </section>
     </div>
   );

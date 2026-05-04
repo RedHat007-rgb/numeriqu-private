@@ -1,109 +1,99 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { GlowButton } from "./GlowButton";
 
-export const Navbar: React.FC = () => {
+type NavbarProps = {
+  /** Optional render slot for a theme toggle or any extra control on the right. */
+  trailing?: React.ReactNode;
+};
+
+export const Navbar: React.FC<NavbarProps> = ({ trailing }) => {
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
-    };
+    const handleScroll = () => setIsScrolled(window.scrollY > 10);
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   return (
     <nav
-      className={`fixed top-0 w-full z-50 transition-all duration-300 ${
+      className={`fixed top-0 z-50 w-full transition-all duration-300 ${
         isScrolled
-          ? "bg-slate-900/80 backdrop-blur-xl border-b border-blue-500/20 shadow-lg shadow-blue-500/10"
-          : "bg-slate-900/50 backdrop-blur-lg"
+          ? "border-b border-default bg-bg-base/85 shadow-lg shadow-accent-blue/10 backdrop-blur-xl"
+          : "bg-bg-base/40 backdrop-blur-md"
       }`}
+      aria-label="Primary"
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-20">
-          {/* Logo Section */}
-          <div className="flex items-center gap-3">
-            {/* Geometric SVG Logo */}
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex h-20 items-center justify-between">
+          <a href="/" className="flex items-center gap-3" aria-label="Numeriqu home">
             <svg
               width="32"
               height="32"
               viewBox="0 0 32 32"
-              className="text-blue-400"
+              className="text-accent-blue"
               fill="none"
+              aria-hidden
             >
               <defs>
-                <linearGradient
-                  id="logoGrad"
-                  x1="0%"
-                  y1="0%"
-                  x2="100%"
-                  y2="100%"
-                >
+                <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stopColor="#3b82f6" />
                   <stop offset="100%" stopColor="#7c3aed" />
                 </linearGradient>
               </defs>
-              {/* Triangular N shape */}
-              <polygon
-                points="16,4 26,28 6,28"
-                fill="url(#logoGrad)"
-                opacity="0.8"
-              />
-              <polygon
-                points="14,10 20,22 8,22"
-                fill="currentColor"
-                opacity="0.3"
-              />
+              <polygon points="16,4 26,28 6,28" fill="url(#logoGrad)" opacity="0.9" />
+              <polygon points="14,10 20,22 8,22" fill="currentColor" opacity="0.32" />
             </svg>
 
             <div>
-              <h1 className="text-xl font-bold font-display text-white">
+              <h1 className="font-display text-xl font-bold text-text-primary">
                 Numeriqu
               </h1>
-              <p className="text-xs font-mono text-muted tracking-widest">
-                ANALYTICAL PLATFORM
+              <p className="font-mono text-[10px] tracking-[0.28em] text-text-muted">
+                FINANCIAL INTELLIGENCE
               </p>
             </div>
-          </div>
+          </a>
 
-          {/* Center Navigation */}
-          <div className="hidden md:flex items-center gap-8">
+          <div className="hidden items-center gap-8 md:flex">
             <a
               href="#platform"
-              className="text-sm text-text-primary hover:text-blue-400 transition-colors"
+              className="text-sm text-text-secondary transition-colors hover:text-accent-blue"
             >
               Platform
             </a>
             <a
-              href="#rag"
-              className="text-sm text-text-primary hover:text-blue-400 transition-colors"
-            >
-              RAG Search
-            </a>
-            <a
               href="#features"
-              className="text-sm text-text-primary hover:text-blue-400 transition-colors"
+              className="text-sm text-text-secondary transition-colors hover:text-accent-blue"
             >
               Features
             </a>
             <a
               href="#pricing"
-              className="text-sm text-text-primary hover:text-blue-400 transition-colors"
+              className="text-sm text-text-secondary transition-colors hover:text-accent-blue"
             >
               Pricing
             </a>
+            <a
+              href="#trust"
+              className="text-sm text-text-secondary transition-colors hover:text-accent-blue"
+            >
+              Trust
+            </a>
           </div>
 
-          {/* Right CTA Buttons */}
-          <div className="flex items-center gap-4">
-            <a href="/dashboard" className="text-sm text-text-primary hover:text-blue-400 transition-colors">
+          <div className="flex items-center gap-3">
+            {trailing}
+            <a
+              href="/login"
+              className="text-sm font-medium text-text-secondary transition-colors hover:text-text-primary"
+            >
               Sign in
             </a>
-            <GlowButton variant="primary" size="sm" href="/dashboard">
-              Get Access →
+            <GlowButton variant="primary" size="sm" href="/signup">
+              Start free →
             </GlowButton>
           </div>
         </div>

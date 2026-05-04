@@ -1,96 +1,144 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Button } from "../../../components/ui/Button";
+import { Surface } from "../../../components/ui/Surface";
+import { Field } from "../../../components/ui/Field";
+import { ErrorBanner } from "../../../components/ui/ErrorBanner";
+import { ThemeToggle } from "../../../components/ui/ThemeToggle";
 import { getSupabaseClient } from "../../../lib/supabase";
 
-function cardClass(extra = "") {
-  return `rounded-3xl border border-white/10 bg-slate-950/55 p-6 shadow-2xl shadow-blue-950/20 backdrop-blur-xl ${extra}`;
-}
-
 export function AuthPanel({ onDevToken }: { onDevToken: (token: string) => void }) {
-  /** Supabase browser client is null during SSR; branching on it here caused hydration mismatches. */
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-
   const supabase = mounted ? getSupabaseClient() : null;
+  const router = useRouter();
+
   const [email, setEmail] = useState("");
   const [manualToken, setManualToken] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ tone: "info" | "danger"; text: string } | null>(null);
+  const [sending, setSending] = useState(false);
 
   async function sendMagicLink() {
     if (!supabase || !email) return;
-    setStatus("Sending magic link...");
+    setSending(true);
+    setStatus({ tone: "info", text: "Sending magic link..." });
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: `${window.location.origin}/dashboard` },
     });
-    setStatus(error ? error.message : "Magic link sent. Check your inbox.");
+    setSending(false);
+    setStatus(
+      error
+        ? { tone: "danger", text: error.message ?? "We could not send the magic link." }
+        : { tone: "info", text: "Magic link sent. Check your inbox." },
+    );
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-16 text-white">
-      <div className="mx-auto max-w-3xl">
-        <Link href="/" className="text-sm text-cyan-300 hover:text-cyan-200">
+    <main className="relative min-h-screen bg-hero-luxury px-6 py-16 text-text-primary">
+      <div className="absolute right-6 top-6">
+        <ThemeToggle />
+      </div>
+      <div className="mx-auto max-w-2xl">
+        <Link href="/" className="text-xs text-text-muted hover:text-text-primary">
           ← Back to landing
         </Link>
-        <div className={cardClass("mt-8")}>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-blue-300">Secure Gateway</p>
-          <h1 className="mt-4 font-display text-4xl font-bold">Connect to the backend</h1>
-          <p className="mt-4 text-slate-300">
-            The API is protected with Supabase JWTs. Sign in here, or paste a bearer token for development.
-          </p>
 
-          {!mounted ? (
-            <div
-              className="mt-8 min-h-[52px] rounded-2xl bg-white/[0.04]"
-              aria-busy="true"
-              aria-label="Loading sign-in options"
-            />
-          ) : supabase ? (
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <input
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@company.com"
-                className="min-h-12 flex-1 rounded-full border border-white/10 bg-slate-900 px-5 text-white outline-none focus:border-blue-400"
-              />
-              <button
-                onClick={sendMagicLink}
-                className="rounded-full bg-blue-500 px-6 py-3 font-semibold text-white hover:bg-blue-400"
-              >
-                Send magic link
-              </button>
-            </div>
-          ) : (
-            <div className="mt-6 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-100">
-              Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` to enable hosted auth.
-            </div>
-          )}
+        <Surface className="mt-8 space-y-6 p-8">
+          <header className="space-y-2">
+            <p className="font-mono text-xs uppercase tracking-[0.28em] text-accent-blue">
+              Secure gateway
+            </p>
+            <h1 className="text-3xl font-bold text-text-primary">Sign in to your workspace</h1>
+            <p className="text-sm text-text-muted">
+              Numeriqu is protected with Supabase JWTs. Sign in with your account, or
+              receive a one-tap magic link below.
+            </p>
+          </header>
 
-          <div className="mt-8 border-t border-white/10 pt-8">
-            <p className="text-sm font-semibold text-slate-200">Development token override</p>
-            <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-              <input
-                value={manualToken}
-                onChange={(event) => setManualToken(event.target.value)}
-                placeholder="Paste Supabase access token"
-                className="min-h-12 flex-1 rounded-full border border-white/10 bg-slate-900 px-5 text-white outline-none focus:border-cyan-400"
-              />
-              <button
-                onClick={() => onDevToken(manualToken.trim())}
-                disabled={!manualToken.trim()}
-                className="rounded-full bg-cyan-500 px-6 py-3 font-semibold text-slate-950 hover:bg-cyan-300 disabled:opacity-50"
-              >
-                Use token
-              </button>
-            </div>
+          {status ? (
+            <ErrorBanner
+              tone={status.tone === "danger" ? "danger" : "info"}
+              onDismiss={() => setStatus(null)}
+            >
+              {status.text}
+            </ErrorBanner>
+          ) : null}
+
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Button onClick={() => router.push("/login")} className="flex-1">
+              Sign in with password
+            </Button>
+            <Button variant="secondary" onClick={() => router.push("/signup")} className="flex-1">
+              Create account
+            </Button>
           </div>
 
-          {status ? <p className="mt-5 text-sm text-cyan-200">{status}</p> : null}
-        </div>
+          {!mounted ? (
+            <div className="h-12 rounded-xl bg-surface-card/40" aria-busy="true" />
+          ) : supabase ? (
+            <div className="space-y-3 rounded-2xl border border-default bg-surface-card/30 p-5">
+              <p className="text-sm font-medium text-text-secondary">
+                Or get a one-time magic link
+              </p>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <div className="flex-1">
+                  <Field
+                    label="Work email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="you@company.com"
+                  />
+                </div>
+                <Button
+                  className="self-end"
+                  onClick={sendMagicLink}
+                  loading={sending}
+                  disabled={!email}
+                >
+                  Send magic link
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <ErrorBanner tone="warning" title="Auth not configured">
+              Add <code>NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
+              <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to your environment to enable
+              hosted authentication.
+            </ErrorBanner>
+          )}
+
+          <details className="group rounded-2xl border border-default bg-surface-card/30 p-4 text-sm text-text-secondary">
+            <summary className="cursor-pointer text-text-muted">
+              Developer access (paste a Supabase access token)
+            </summary>
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+              <div className="flex-1">
+                <Field
+                  label="Bearer token"
+                  type="text"
+                  value={manualToken}
+                  onChange={(event) => setManualToken(event.target.value)}
+                  placeholder="Paste Supabase access token"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                className="self-end"
+                onClick={() => onDevToken(manualToken.trim())}
+                disabled={!manualToken.trim()}
+              >
+                Use token
+              </Button>
+            </div>
+          </details>
+        </Surface>
       </div>
     </main>
   );
 }
-

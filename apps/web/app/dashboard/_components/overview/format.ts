@@ -1,8 +1,14 @@
-const currency = new Intl.NumberFormat("en-US", {
+const currencyCompact = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   notation: "compact",
   maximumFractionDigits: 1,
+});
+
+const currencyFull = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
 });
 
 const numberCompact = new Intl.NumberFormat("en-US", {
@@ -10,11 +16,40 @@ const numberCompact = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+const percentFormat = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  maximumFractionDigits: 1,
+  signDisplay: "auto",
+});
+
 export function formatMoney(value: number | null | undefined) {
-  return currency.format(value ?? 0);
+  return currencyCompact.format(value ?? 0);
+}
+
+export function formatMoneyFull(value: number | null | undefined) {
+  return currencyFull.format(value ?? 0);
 }
 
 export function formatNumber(value: number | null | undefined) {
   return numberCompact.format(value ?? 0);
 }
 
+export function formatPercentDelta(ratio: number | null | undefined) {
+  if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) return "—";
+  return percentFormat.format(ratio);
+}
+
+export function formatRelativeTime(iso: string | null | undefined) {
+  if (!iso) return "never";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "—";
+  const diff = Date.now() - at.getTime();
+  if (diff < 30_000) return "just now";
+  const minutes = Math.round(diff / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return at.toLocaleDateString();
+}

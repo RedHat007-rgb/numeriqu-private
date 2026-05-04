@@ -1,46 +1,33 @@
 import type { Metadata } from "next";
-import { DM_Sans, JetBrains_Mono, Instrument_Serif } from "next/font/google";
+import { Inter, Outfit } from "next/font/google";
 import { Providers } from "./providers";
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  variable: "--font-dm-sans",
-  display: "swap",
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-jetbrains-mono",
-  display: "swap",
-});
-
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
-  variable: "--font-instrument-serif",
-  display: "swap",
-});
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
 
 export const metadata: Metadata = {
-  title: "NumeriQu | Strategic Financial Intelligence",
-  description: "NumeriQu transforms financial complexity into real-time strategic clarity — connecting every data source, eliminating hidden leakages, and giving leadership the confidence to move faster.",
-  openGraph: {
-    title: "NumeriQu | Strategic Financial Intelligence",
-    description: "Real-time financial intelligence for modern CFOs.",
-    type: "website",
-  },
+  title: "Numeriqu — Strategic Financial Intelligence",
+  description:
+    "Numeriqu turns connected financial data into clear decisions. RAG advisors, agent automations, and CFO-grade dashboards in one calm surface.",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{ children: React.ReactNode }>) {
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${dmSans.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable} font-sans antialiased bg-void text-text-primary`}
+        className={`${inter.variable} ${outfit.variable} font-sans antialiased bg-bg-base text-text-primary`}
       >
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-full focus:bg-accent-blue focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
+        >
+          Skip to content
+        </a>
         <Providers>{children}</Providers>
       </body>
     </html>

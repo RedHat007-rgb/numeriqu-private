@@ -5,26 +5,26 @@ import { GlowButton } from "./GlowButton";
 
 export const CTABanner: React.FC = () => {
   return (
-    <section className="py-24 px-6">
-      <div className="max-w-5xl mx-auto relative">
-        {/* Background */}
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-violet-600/20 rounded-2xl blur-3xl" />
+    <section className="px-6 py-24">
+      <div className="relative mx-auto max-w-5xl">
+        <div className="absolute inset-0 rounded-3xl bg-gradient-to-r from-accent-blue/15 to-accent-violet/15 blur-3xl" aria-hidden />
 
-        {/* Content */}
-        <div className="relative z-10 bg-gradient-to-r from-slate-900/90 to-slate-800/90 rounded-2xl border border-blue-400/20 p-12 text-center backdrop-blur-xl">
-          <h2 className="text-4xl md:text-5xl font-bold mb-6 text-white">
-            The future of analytics is conversational.
+        <div className="relative z-10 rounded-3xl border border-default bg-bg-card/85 p-12 text-center backdrop-blur-xl">
+          <h2 className="mb-5 text-text-primary">
+            Ready to make finance feel{" "}
+            <span className="gradient-text-blue-cyan">calm and decisive?</span>
           </h2>
-          <p className="text-lg text-text-muted mb-10 max-w-2xl mx-auto">
-            Join 2,400+ finance teams using Numeriqu to make faster, smarter
-            decisions with AI-driven insights from their data.
+          <p className="mx-auto mb-10 max-w-2xl text-lg text-text-secondary">
+            Plug in your accounting stack, and within minutes Numeriqu surfaces
+            what changed, what matters, and what to do next — backed by your
+            own data.
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <GlowButton variant="primary" size="lg" href="/dashboard">
-              Start for Free →
+          <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <GlowButton variant="primary" size="lg" href="/signup">
+              Start free →
             </GlowButton>
-            <GlowButton variant="ghost" size="lg">
-              Schedule Demo
+            <GlowButton variant="ghost" size="lg" href="mailto:hello@numeriqu.com?subject=Numeriqu%20demo">
+              Book a demo
             </GlowButton>
           </div>
         </div>

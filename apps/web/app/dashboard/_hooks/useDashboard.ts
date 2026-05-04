@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, type DashboardResponse } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 
-type LoadState = "idle" | "loading" | "ready" | "error";
+export type LoadState = "idle" | "loading" | "ready" | "error";
 
 function makeFallbackDashboard(): DashboardResponse {
   return {
@@ -33,6 +33,7 @@ export function useDashboard() {
   const [state, setState] = useState<LoadState>("idle");
   const [dashboard, setDashboard] = useState<DashboardResponse>(() => makeFallbackDashboard());
   const [error, setError] = useState<string | null>(null);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   const refresh = useCallback(async () => {
     setState("loading");
@@ -41,9 +42,13 @@ export function useDashboard() {
       setDashboard(payload);
       setError(null);
       setState("ready");
+      setHasLoadedOnce(true);
     } catch (caught) {
-      setDashboard(makeFallbackDashboard());
-      setError(caught instanceof ApiError ? caught.message : "Could not load backend data.");
+      if (caught instanceof ApiError) {
+        setError(caught.toUserMessage("We could not load your financial overview."));
+      } else {
+        setError("We could not load your financial overview. Please retry.");
+      }
       setState("error");
     }
   }, [analytics]);
@@ -53,6 +58,5 @@ export function useDashboard() {
     void refresh();
   }, [refresh, loading]);
 
-  return { state, dashboard, error, refresh };
+  return { state, dashboard, error, refresh, hasLoadedOnce };
 }
-

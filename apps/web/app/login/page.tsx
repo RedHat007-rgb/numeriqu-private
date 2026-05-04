@@ -1,154 +1,162 @@
 "use client";
 
-import React, { useState } from "react";
-import { useAuth } from "../providers";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
+import { Surface } from "../../components/ui/Surface";
+import { Button } from "../../components/ui/Button";
+import { Field } from "../../components/ui/Field";
+import { ErrorBanner } from "../../components/ui/ErrorBanner";
+import { ThemeToggle } from "../../components/ui/ThemeToggle";
+import { useAuth } from "../providers";
+
+type FormErrors = {
+  email?: string;
+  password?: string;
+  global?: string;
+};
+
+function emailLooksValid(value: string) {
+  return /.+@.+\..+/.test(value);
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<FormErrors>({});
   const { supabase } = useAuth();
   const router = useRouter();
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!supabase) {
-      toast.error("Auth not configured. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+  const handleLogin = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setErrors({});
+
+    const next: FormErrors = {};
+    if (!email) next.email = "Email is required.";
+    else if (!emailLooksValid(email)) next.email = "Enter a valid work email.";
+    if (!password) next.password = "Password is required.";
+    if (Object.keys(next).length > 0) {
+      setErrors(next);
       return;
     }
+
+    if (!supabase) {
+      setErrors({
+        global:
+          "Authentication is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable sign-in.",
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      toast.success("Welcome back.");
+      if (error) {
+        const friendly =
+          error.message?.toLowerCase().includes("invalid")
+            ? "Email or password is incorrect."
+            : error.message ?? "Sign-in failed. Please try again.";
+        setErrors({ global: friendly });
+        return;
+      }
+
+      toast.success("Welcome back to Numeriqu.");
       router.push("/dashboard");
       router.refresh();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Authentication failed.");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Sign-in failed. Please try again.";
+      setErrors({ global: message });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-void flex">
-      {/* Left panel — branding */}
-      <div className="hidden lg:flex flex-col justify-between w-[45%] bg-ink border-r border-white/[0.04] p-12 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-hero opacity-60" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-accent/8 rounded-full blur-[120px]" />
-
-        <div className="relative">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-xl bg-accent flex items-center justify-center shadow-glow-blue group-hover:scale-110 transition-transform duration-300">
-              <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 text-white" aria-hidden>
-                <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" fill="currentColor" />
-              </svg>
-            </div>
-            <span className="font-display font-semibold text-text-primary">NumeriQu</span>
-          </Link>
-        </div>
-
-        <div className="relative space-y-6">
-          <blockquote className="text-xl font-display leading-relaxed text-text-primary">
-            &ldquo;NumeriQu replaced four different reporting tools and gave us a single view we could actually trust.&rdquo;
-          </blockquote>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center text-accent font-semibold text-sm">
-              SC
-            </div>
-            <div>
-              <p className="text-sm font-medium text-text-primary">Sarah Chen</p>
-              <p className="text-xs text-text-muted">CFO, Meridian Logistics</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="relative flex items-center gap-4">
-          <div className="flex -space-x-2">
-            {["#2563EB", "#7C3AED", "#06B6D4", "#10B981"].map((color) => (
-              <div key={color} className="w-7 h-7 rounded-full border-2 border-ink" style={{ backgroundColor: color }} />
-            ))}
-          </div>
-          <p className="text-xs text-text-muted">
-            <span className="text-text-primary font-medium">200+ teams</span> · SOC 2 compliant
-          </p>
-        </div>
+    <main className="relative flex min-h-screen items-center justify-center bg-hero-luxury px-6 py-16">
+      <div className="absolute right-6 top-6">
+        <ThemeToggle />
       </div>
 
-      {/* Right panel — form */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
-        <div className="w-full max-w-sm">
-          {/* Mobile logo */}
-          <div className="lg:hidden flex items-center gap-2.5 mb-10">
-            <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
-              <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 text-white" aria-hidden>
-                <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" fill="currentColor" />
-              </svg>
-            </div>
-            <span className="font-display font-semibold text-text-primary">NumeriQu</span>
-          </div>
+      <div className="w-full max-w-md">
+        <div className="mb-6 flex items-center justify-between text-xs">
+          <Link href="/" className="text-text-muted transition-colors hover:text-text-primary">
+            ← Back to landing
+          </Link>
+          <span className="font-mono uppercase tracking-[0.24em] text-text-muted">Sign in</span>
+        </div>
 
-          <div className="mb-8">
-            <h1 className="text-2xl font-display font-bold text-text-primary mb-1">Welcome back</h1>
-            <p className="text-sm text-text-muted">Sign in to your financial intelligence platform.</p>
-          </div>
+        <Surface className="space-y-7 p-8">
+          <header className="space-y-2">
+            <h1 className="text-3xl font-bold text-text-primary">Welcome back</h1>
+            <p className="text-sm text-text-muted">
+              Sign in to your Numeriqu workspace to access dashboards, sync jobs,
+              and the RAG advisor.
+            </p>
+          </header>
 
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary uppercase tracking-widest mb-2">
-                Email address
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                placeholder="jane@company.com"
-                autoComplete="email"
-                className="w-full bg-surface border border-white/[0.08] hover:border-white/[0.14] focus:border-accent/50 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-muted text-sm outline-none transition-all duration-200 focus:ring-1 focus:ring-accent/20"
-              />
-            </div>
+          {errors.global ? <ErrorBanner title="Sign-in failed">{errors.global}</ErrorBanner> : null}
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-xs font-medium text-text-secondary uppercase tracking-widest">
-                  Password
-                </label>
-                <a href="#" className="text-xs text-accent-glow hover:text-accent transition-colors duration-200">
-                  Forgot password?
-                </a>
-              </div>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="••••••••"
+          <form onSubmit={handleLogin} className="space-y-5" noValidate>
+            <Field
+              label="Work email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="name@company.com"
+              error={errors.email}
+            />
+
+            <div className="space-y-1.5">
+              <Field
+                label="Password"
+                type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
-                className="w-full bg-surface border border-white/[0.08] hover:border-white/[0.14] focus:border-accent/50 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-muted text-sm outline-none transition-all duration-200 focus:ring-1 focus:ring-accent/20"
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="At least 8 characters"
+                error={errors.password}
               />
+              <div className="flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="text-text-muted transition-colors hover:text-text-primary"
+                >
+                  {showPassword ? "Hide" : "Show"} password
+                </button>
+                <Link href="/signup" className="text-text-muted hover:text-text-primary">
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full mt-2 px-6 py-3 rounded-xl bg-accent hover:bg-accent-glow text-white font-semibold text-sm shadow-glow-blue/50 transition-all duration-300 hover:shadow-glow-blue disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Signing in…" : "Sign in →"}
-            </button>
+            <Button type="submit" className="w-full" loading={loading}>
+              {loading ? "Signing in..." : "Sign in"}
+            </Button>
           </form>
 
-          <p className="mt-8 text-center text-xs text-text-muted">
-            Don&apos;t have an account?{" "}
-            <Link href="/signup" className="text-accent-glow hover:text-accent font-medium transition-colors">
-              Create account
+          <div className="border-t border-default pt-5 text-center text-sm text-text-muted">
+            New to Numeriqu?{" "}
+            <Link href="/signup" className="font-medium text-accent-blue hover:underline">
+              Create a free account
             </Link>
-          </p>
-        </div>
+          </div>
+        </Surface>
+
+        <p className="mt-6 text-center text-xs text-text-muted">
+          By continuing you agree to Numeriqu&apos;s{" "}
+          <a href="#trust" className="underline hover:text-text-primary">
+            terms and privacy
+          </a>
+          .
+        </p>
       </div>
-    </div>
+    </main>
   );
 }

@@ -11,5 +11,8 @@ export class AnalyticsApi {
   dashboard() {
     return this.request<DashboardResponse>("/analytics/dashboard");
   }
-}
 
+  insights() {
+    return this.request<unknown>("/analytics/insights");
+  }
+}

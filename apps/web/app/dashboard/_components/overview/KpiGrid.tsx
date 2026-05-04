@@ -1,17 +1,119 @@
 "use client";
 
 import type { DashboardResponse } from "../../../../lib/api";
-import { formatMoney, formatNumber } from "./format";
+import { formatMoney, formatNumber, formatPercentDelta } from "./format";
 import { StatCard } from "./StatCard";
 
-export function KpiGrid({ kpis, venture }: { kpis: DashboardResponse["kpis"]; venture: DashboardResponse["venture"] }) {
+type Tone = "neutral" | "positive" | "negative";
+
+function trendDelta(current: number, previous: number): { value: string; tone: Tone } | null {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
+  if (previous === 0) {
+    if (current === 0) return null;
+    return { value: "new", tone: current > 0 ? "positive" : "negative" };
+  }
+  const ratio = (current - previous) / Math.abs(previous);
+  return {
+    value: formatPercentDelta(ratio),
+    tone: ratio > 0 ? "positive" : ratio < 0 ? "negative" : "neutral",
+  };
+}
+
+type Props = {
+  kpis: DashboardResponse["kpis"];
+  venture: DashboardResponse["venture"];
+  charts: DashboardResponse["charts"];
+};
+
+export function KpiGrid({ kpis, venture, charts }: Props) {
+  const trend = charts.monthlyTrend ?? [];
+  const last = trend[trend.length - 1];
+  const prev = trend[trend.length - 2];
+
+  const revenueDelta = last && prev ? trendDelta(last.revenue, prev.revenue) : null;
+  const expensesDelta = last && prev ? trendDelta(last.expenses, prev.expenses) : null;
+  const invoicesDelta = last && prev ? trendDelta(last.invoices, prev.invoices) : null;
+
+  const overdueTone: Tone =
+    kpis.overdueAmount > 0 ? "negative" : "neutral";
+
   return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <StatCard label="Revenue" value={formatMoney(kpis.totalRevenue)} detail={`${formatNumber(kpis.totalInvoices)} invoices`} />
-      <StatCard label="Net Profit" value={formatMoney(kpis.netProfit)} detail={`${kpis.profitMargin.toFixed(1)}% margin`} />
-      <StatCard label="Runway" value={`${venture.runwayMonths.toFixed(1)} mo`} detail={`${formatMoney(venture.burnRate)} burn`} />
-      <StatCard label="Connections" value={String(kpis.orgCount)} detail={`${kpis.providerCount} providers online`} />
+    <section
+      aria-label="Key performance indicators"
+      className="grid gap-4 lg:grid-cols-12"
+    >
+      <StatCard
+        className="lg:col-span-6"
+        label="Total Revenue"
+        value={formatMoney(kpis.totalRevenue)}
+        detail={`${formatNumber(kpis.totalInvoices)} invoices · avg ${formatMoney(
+          kpis.avgInvoiceValue,
+        )}`}
+        delta={revenueDelta}
+        emphasis="primary"
+      />
+
+      <StatCard
+        className="lg:col-span-3"
+        label="Net Profit"
+        value={formatMoney(kpis.netProfit)}
+        detail={`${kpis.profitMargin.toFixed(1)}% margin`}
+        delta={
+          kpis.netProfit === 0
+            ? null
+            : { value: kpis.netProfit > 0 ? "profitable" : "loss", tone: kpis.netProfit > 0 ? "positive" : "negative" }
+        }
+      />
+
+      <StatCard
+        className="lg:col-span-3"
+        label="Cash Runway"
+        value={`${venture.runwayMonths.toFixed(1)} mo`}
+        detail={`${formatMoney(venture.burnRate)} monthly burn`}
+        delta={
+          venture.runwayMonths === 0
+            ? null
+            : {
+                value: venture.runwayMonths >= 12 ? "healthy" : venture.runwayMonths >= 6 ? "watch" : "tight",
+                tone: venture.runwayMonths >= 12 ? "positive" : venture.runwayMonths >= 6 ? "neutral" : "negative",
+              }
+        }
+      />
+
+      <StatCard
+        className="lg:col-span-3"
+        label="Cash on Hand"
+        value={formatMoney(venture.cashOnHand)}
+        detail={`${kpis.orgCount} connected entities`}
+      />
+
+      <StatCard
+        className="lg:col-span-3"
+        label="Overdue"
+        value={formatMoney(kpis.overdueAmount)}
+        detail={`${formatNumber(kpis.overdueCount)} invoices past due`}
+        delta={
+          kpis.overdueAmount > 0
+            ? { value: "needs follow-up", tone: overdueTone }
+            : { value: "clean", tone: "positive" }
+        }
+      />
+
+      <StatCard
+        className="lg:col-span-3"
+        label="Monthly Spend"
+        value={formatMoney(kpis.totalExpenses)}
+        detail="Across connected entities"
+        delta={expensesDelta}
+      />
+
+      <StatCard
+        className="lg:col-span-3"
+        label="Invoices This Month"
+        value={formatNumber(last?.invoices ?? kpis.totalInvoices)}
+        detail={`${kpis.providerCount} providers online`}
+        delta={invoicesDelta}
+      />
     </section>
   );
 }
-

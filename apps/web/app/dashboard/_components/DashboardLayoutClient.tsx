@@ -1,56 +1,93 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { DashboardShell } from "./DashboardShell";
-import { AuthPanel } from "./AuthPanel";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ApiError } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
+import { Skeleton } from "../../../components/ui/Skeleton";
+import { ErrorBanner } from "../../../components/ui/ErrorBanner";
+import { AuthPanel } from "./AuthPanel";
+import { DashboardShell } from "./DashboardShell";
 
 type Toast = { kind: "success" | "error" | "info"; text: string } | null;
 
+function formatBusMessage(value: string) {
+  const cleaned = value.replaceAll("_", " ");
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="min-h-screen bg-bg-base p-6 text-text-primary">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <Skeleton height={48} width="40%" rounded="xl" />
+        <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, idx) => (
+              <Skeleton key={idx} height={64} rounded="xl" />
+            ))}
+          </div>
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, idx) => (
+                <Skeleton key={idx} height={140} rounded="xl" />
+              ))}
+            </div>
+            <Skeleton height={320} rounded="xl" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardLayoutClient({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { auth, isAuthenticated, signOut, useDevToken, loading } = useNumeriquApi();
-  const [tenantLabel, setTenantLabel] = useState<string>("Provisioning tenant...");
+  const [tenantLabel, setTenantLabel] = useState<string>("Loading workspace...");
   const [toast, setToast] = useState<Toast>(null);
 
   const success = searchParams.get("success");
   const error = searchParams.get("error");
 
   useEffect(() => {
-    if (success) setToast({ kind: "success", text: success.replaceAll("_", " ") });
-    if (error) setToast({ kind: "error", text: error.replaceAll("_", " ") });
+    if (success) setToast({ kind: "success", text: formatBusMessage(success) });
+    else if (error) setToast({ kind: "error", text: formatBusMessage(error) });
+    else setToast(null);
   }, [success, error]);
 
   useEffect(() => {
     if (loading || !isAuthenticated) return;
     auth
       .me()
-      .then((payload) => setTenantLabel(`${payload.tenant.name} · ${payload.user.email ?? payload.user.id}`))
-      .catch(() => setTenantLabel("Tenant context unavailable"));
-  }, [auth, isAuthenticated, loading]);
+      .then((payload) => {
+        const tenantName = payload.tenant?.name ?? "Workspace";
+        const userIdent = payload.user?.email ?? payload.user?.id ?? "";
+        setTenantLabel(userIdent ? `${tenantName} · ${userIdent}` : tenantName);
+      })
+      .catch((caught) => {
+        if (caught instanceof ApiError && caught.status === 401) {
+          router.push("/login");
+        } else {
+          setTenantLabel("Workspace context unavailable");
+        }
+      });
+  }, [auth, isAuthenticated, loading, router]);
 
-  const toastClasses = useMemo(() => {
-    if (!toast) return "";
-    if (toast.kind === "error") return "border-rose-400/30 bg-rose-400/10 text-rose-100";
-    if (toast.kind === "success") return "border-cyan-400/30 bg-cyan-400/10 text-cyan-100";
-    return "border-white/10 bg-white/5 text-slate-100";
-  }, [toast]);
-
-  if (loading) return null;
+  if (loading) return <DashboardSkeleton />;
   if (!isAuthenticated) return <AuthPanel onDevToken={useDevToken} />;
 
   return (
     <DashboardShell tenantLabel={tenantLabel} onSignOut={signOut}>
       {toast ? (
-        <div className={`mb-6 rounded-2xl border p-4 text-sm ${toastClasses}`}>
-          <div className="flex items-center justify-between gap-4">
-            <span>{toast.text}</span>
-            <button onClick={() => setToast(null)} className="text-white/70 hover:text-white">
-              Dismiss
-            </button>
-          </div>
-        </div>
+        <ErrorBanner
+          tone={toast.kind === "error" ? "danger" : toast.kind === "success" ? "info" : "info"}
+          onDismiss={() => setToast(null)}
+          className="mb-6"
+        >
+          {toast.text}
+        </ErrorBanner>
       ) : null}
       {children}
     </DashboardShell>

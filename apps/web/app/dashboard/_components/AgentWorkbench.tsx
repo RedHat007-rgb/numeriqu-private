@@ -1,17 +1,28 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
-import { GlassCard, GlowButton } from "@repo/ui";
-import { useNumeriquApi } from "../../../lib/useNumeriquApi";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
+import { ApiError } from "../../../lib/api";
+import { useNumeriquApi } from "../../../lib/useNumeriquApi";
+import { Button } from "../../../components/ui/Button";
+import { ErrorBanner } from "../../../components/ui/ErrorBanner";
+import { EmptyState } from "../../../components/ui/EmptyState";
+import { StatusPill } from "../../../components/ui/StatusPill";
+import { cn } from "../../../components/ui/cn";
 import { DashboardPreview } from "./DashboardPreview";
 
-interface Message {
+type Message = {
   role: "user" | "assistant" | "system";
   content: string;
-}
+};
+
+const SAMPLE_PROMPTS = [
+  "Generate a CFO-friendly board pack from the last 90 days.",
+  "Find anomalies in expenses this quarter.",
+  "Compare margin between connected entities.",
+];
 
 export function AgentWorkbench() {
   const { agent, loading } = useNumeriquApi();
@@ -20,46 +31,48 @@ export function AgentWorkbench() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [syncTrigger, setSyncTrigger] = useState(0);
-  
+  const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load mission history on mount
   useEffect(() => {
     if (loading) return;
-    
     const fetchHistory = async () => {
       try {
         const sessions = await agent.sessions();
-        if (sessions.length > 0) {
-          const detailed = await agent.session(sessions[0].id);
-          setMessages(detailed.messages);
+        const first = sessions[0];
+        if (first) {
+          const detailed = await agent.session(first.id);
+          setMessages((detailed.messages as Message[]) ?? []);
           setSessionId(detailed.id);
         }
-      } catch (err) {
-        console.error("Agent history recovery failed", err);
+      } catch {
+        /* non-fatal */
       }
     };
-
-    fetchHistory();
+    void fetchHistory();
   }, [agent, loading]);
 
-  // Auto-scroll
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  async function execute() {
-    const q = input.trim();
-    if (!q || isStreaming) return;
+  async function execute(prompt: string) {
+    const query = prompt.trim();
+    if (!query || isStreaming) return;
 
+    setError(null);
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: q }, { role: "assistant", content: "" }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: query },
+      { role: "assistant", content: "" },
+    ]);
     setIsStreaming(true);
 
     let fullResponse = "";
     try {
       await agent.streamQuery({
-        query: q,
+        query,
         sessionId,
         onDelta: (delta) => {
           fullResponse += delta;
@@ -74,94 +87,144 @@ export function AgentWorkbench() {
           if (msg.type === "done" && msg.metrics?.sessionId) {
             setSessionId(msg.metrics.sessionId);
           }
+          if (msg.type === "system" && msg.action === "DASHBOARD_REFRESH") {
+            setSyncTrigger((prev) => prev + 1);
+            toast.success("Dashboard refreshed", {
+              description: "Live charts have been refreshed from the latest mission output.",
+            });
+          }
         },
       });
 
-      // Synchronize dashboard if orchestration command emitted
       if (fullResponse.includes("[COMMAND: GENERATE_DASHBOARD")) {
         setSyncTrigger((prev) => prev + 1);
-        toast.success("Strategic Dashboard Updated", {
-          description: "Live charts have been refreshed from your latest mission instructions."
-        });
       }
-    } catch (err: any) {
-      toast.error("Orchestration faulty", { description: err.message });
+    } catch (caught) {
+      const message =
+        caught instanceof ApiError
+          ? caught.toUserMessage("The agent stream was interrupted. Please retry.")
+          : caught instanceof Error
+            ? caught.message
+            : "The agent stream was interrupted. Please retry.";
+      setError(message);
+      setMessages((prev) => {
+        const copy = [...prev];
+        copy[copy.length - 1] = {
+          role: "assistant",
+          content: `_The agent couldn't finish this mission._\n\n${message}`,
+        };
+        return copy;
+      });
     } finally {
       setIsStreaming(false);
     }
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-10rem)] space-y-6">
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[400px_1fr] gap-6 overflow-hidden">
-        
-        {/* Left: Strategic Mission Chat */}
-        <section className="flex flex-col h-full overflow-hidden">
-          <div className="mb-2 flex items-center justify-between px-1">
-            <div className="flex items-center gap-2">
-              <div className="h-1.5 w-1.5 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(124,58,237,0.5)]"></div>
-              <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-violet-400">Mission History</span>
-            </div>
-          </div>
-          
-          <GlassCard className="flex-1 flex flex-col overflow-hidden border-violet-500/10">
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin" ref={scrollRef}>
-              {messages.length === 0 && (
-                <div className="h-full flex items-center justify-center text-slate-500 italic text-sm text-center px-4">
-                  Deploy a mission to begin strategic analysis.
-                </div>
-              )}
-              {messages.map((m, i) => (
-                <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[90%] p-3 rounded-lg text-sm ${m.role === "user" ? "bg-violet-600/10 border border-violet-500/20 text-violet-100" : "bg-white/[0.03] border border-white/5"}`}>
-                    <div className="prose prose-invert prose-sm max-w-none leading-relaxed prose-headings:text-slate-100 prose-p:text-slate-200 prose-strong:text-white prose-a:text-violet-300">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {m.content}
-                      </ReactMarkdown>
+    <div className="flex h-[calc(100vh-12rem)] flex-col space-y-4">
+      <header className="surface-card flex items-center justify-between p-5">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-violet">
+            Agent workbench
+          </p>
+          <h2 className="mt-1 font-display text-xl font-bold text-text-primary md:text-2xl">
+            Autonomous analysis missions
+          </h2>
+        </div>
+        <StatusPill tone={isStreaming ? "info" : "neutral"}>
+          {isStreaming ? "running" : "ready"}
+        </StatusPill>
+      </header>
+
+      {error ? (
+        <ErrorBanner title="Mission interrupted" tone="danger" onDismiss={() => setError(null)}>
+          {error}
+        </ErrorBanner>
+      ) : null}
+
+      <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[420px_1fr]">
+        <section className="surface-card flex h-full flex-col overflow-hidden p-4">
+          <p className="px-1 pb-3 text-[10px] font-bold uppercase tracking-[0.25em] text-accent-violet">
+            Mission History
+          </p>
+
+          <div className="flex-1 space-y-3 overflow-y-auto rounded-xl border border-default bg-bg-elevated/40 p-3" ref={scrollRef}>
+            {messages.length === 0 ? (
+              <EmptyState
+                title="Ready for a mission"
+                detail="Send the agent a goal and it will plan, query, and synthesize."
+                action={
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {SAMPLE_PROMPTS.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() => void execute(prompt)}
+                        className="rounded-full border border-default px-3 py-1.5 text-xs text-text-secondary hover:border-accent-violet/50 hover:text-text-primary"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                }
+              />
+            ) : (
+              messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={cn("flex", message.role === "user" ? "justify-end" : "justify-start")}
+                >
+                  <div
+                    className={cn(
+                      "max-w-[92%] rounded-2xl p-3 text-sm ring-1",
+                      message.role === "user"
+                        ? "bg-accent-violet/15 text-text-primary ring-accent-violet/25"
+                        : "bg-surface-card/60 text-text-primary ring-default",
+                    )}
+                  >
+                    <div className="prose prose-sm max-w-none leading-relaxed text-text-primary prose-headings:text-text-primary prose-strong:text-text-primary prose-a:text-accent-violet prose-code:text-accent-cyan">
+                      {message.content ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                      ) : isStreaming && index === messages.length - 1 ? (
+                        <span className="text-text-muted italic">Planning…</span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
+              ))
+            )}
+          </div>
 
-            <div className="p-4 border-t border-white/5">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && execute()}
-                  disabled={isStreaming}
-                  placeholder="Deploy command..."
-                  className="flex-1 bg-slate-900/50 border border-white/10 rounded-full px-4 py-2 text-sm text-white outline-none focus:border-violet-500/50"
-                />
-                <button
-                  onClick={execute}
-                  disabled={isStreaming}
-                  className="rounded-full bg-violet-500 p-2 text-white hover:bg-violet-400 disabled:opacity-50"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </GlassCard>
+          <form
+            className="mt-3 flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void execute(input);
+            }}
+          >
+            <input
+              type="text"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              disabled={isStreaming}
+              placeholder="Deploy a mission..."
+              aria-label="Mission prompt"
+              className="flex-1 rounded-full border border-default bg-surface-card/70 px-4 py-2 text-sm text-text-primary outline-none focus:border-accent-violet/50 disabled:opacity-60"
+            />
+            <Button type="submit" loading={isStreaming} disabled={!input.trim() || isStreaming}>
+              Send
+            </Button>
+          </form>
         </section>
 
-        {/* Right: Live Dynamic Insight View */}
-        <section className="flex flex-col h-full overflow-hidden">
-          <div className="mb-2 flex items-center justify-between px-1">
-            <div className="flex items-center gap-2">
-              <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-              <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-emerald-400">Strategic Dashboard Sync</span>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin">
+        <section className="flex h-full flex-col overflow-hidden">
+          <p className="px-1 pb-3 text-[10px] font-bold uppercase tracking-[0.25em] text-feedback-success">
+            Strategic dashboard sync
+          </p>
+          <div className="flex-1 overflow-y-auto pr-1">
             <DashboardPreview triggerSync={syncTrigger} />
           </div>
         </section>
-
       </div>
     </div>
   );

@@ -1,7 +1,10 @@
 "use client";
 
-import { IntegrationsHeader } from "../_components/integrations/IntegrationsHeader";
+import { Button } from "../../../components/ui/Button";
+import { ErrorBanner } from "../../../components/ui/ErrorBanner";
+import { Skeleton } from "../../../components/ui/Skeleton";
 import { ConnectionsPanel } from "../_components/integrations/ConnectionsPanel";
+import { IntegrationsHeader } from "../_components/integrations/IntegrationsHeader";
 import { SyncJobsPanel } from "../_components/integrations/SyncJobsPanel";
 import { useIntegrations } from "../_hooks/useIntegrations";
 
@@ -17,65 +20,56 @@ export function IntegrationsPage() {
     runSyncAll,
     deleteConnection,
     setError,
+    pendingActionId,
+    actionInFlight,
+    hasLoadedOnce,
   } = useIntegrations();
 
-  async function safeConnect(provider: "xero" | "quickbooks") {
-    try {
-      await connectProvider(provider);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Connection failed.");
-    }
-  }
-
-  async function safeSync(id: string) {
-    try {
-      await runSync(id);
-      setTimeout(() => void refresh(), 1200);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Sync failed.");
-    }
-  }
-
-  async function safeSyncAll() {
-    try {
-      await runSyncAll();
-      setTimeout(() => void refresh(), 1200);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Sync failed.");
-    }
-  }
-
-  async function safeDelete(id: string) {
-    try {
-      await deleteConnection(id);
-      await refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Disconnect failed.");
-    }
-  }
+  const initialLoading = state === "loading" && !hasLoadedOnce;
 
   return (
     <div className="space-y-6">
-      {state === "error" && error ? (
-        <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-amber-100">{error}</div>
-      ) : null}
-
       <IntegrationsHeader
         isLoading={state === "loading"}
-        onConnectXero={() => void safeConnect("xero")}
-        onConnectQuickbooks={() => void safeConnect("quickbooks")}
-        onSyncAll={() => void safeSyncAll()}
+        actionInFlight={actionInFlight}
+        hasConnections={connections.length > 0}
+        onConnectXero={() => void connectProvider("xero")}
+        onConnectQuickbooks={() => void connectProvider("quickbooks")}
+        onSyncAll={() => void runSyncAll()}
         onRefresh={() => void refresh()}
       />
 
-      <section className="grid gap-6 lg:grid-cols-2">
-        <ConnectionsPanel
-          connections={connections}
-          onSync={(id) => void safeSync(id)}
-          onDelete={(id) => void safeDelete(id)}
-        />
-        <SyncJobsPanel jobs={jobs} />
-      </section>
+      {error ? (
+        <ErrorBanner
+          title={state === "error" ? "We couldn't load your integrations" : "Action failed"}
+          tone="danger"
+          onDismiss={() => setError(null)}
+          action={
+            <Button variant="secondary" size="sm" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      ) : null}
+
+      {initialLoading ? (
+        <section className="grid gap-6 lg:grid-cols-2">
+          <Skeleton height={280} rounded="xl" />
+          <Skeleton height={280} rounded="xl" />
+        </section>
+      ) : (
+        <section className="grid gap-6 lg:grid-cols-2">
+          <ConnectionsPanel
+            connections={connections}
+            pendingActionId={pendingActionId}
+            onSync={(id) => void runSync(id)}
+            onDelete={(id) => void deleteConnection(id)}
+          />
+          <SyncJobsPanel jobs={jobs} />
+        </section>
+      )}
     </div>
   );
 }

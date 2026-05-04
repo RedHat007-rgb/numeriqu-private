@@ -1,28 +1,54 @@
 "use client";
 
 import type { SyncJob } from "../../../../lib/api";
-import { cardClass, EmptyState } from "../ui";
+import { EmptyState } from "../../../../components/ui/EmptyState";
+import { StatusPill } from "../../../../components/ui/StatusPill";
+import { formatRelativeTime } from "../overview/format";
+
+function statusTone(status: string) {
+  const lower = status.toLowerCase();
+  if (lower === "completed" || lower === "success") return "success" as const;
+  if (lower === "failed" || lower === "error") return "danger" as const;
+  if (lower === "running" || lower === "queued" || lower === "pending") return "info" as const;
+  return "neutral" as const;
+}
 
 export function SyncJobsPanel({ jobs }: { jobs: SyncJob[] }) {
+  const visible = jobs.slice(0, 12);
   return (
-    <div className={cardClass()}>
-      <p className="text-sm font-semibold text-slate-200">Latest sync jobs</p>
-      <div className="mt-4 space-y-3">
-        {jobs.length === 0 ? (
-          <EmptyState title="No sync jobs yet" detail="Jobs appear here after OAuth connect or manual sync." />
+    <div className="surface-card p-6">
+      <p className="text-sm font-semibold text-text-secondary">Latest sync jobs</p>
+      <div className="mt-4 space-y-2">
+        {visible.length === 0 ? (
+          <EmptyState
+            title="No sync jobs yet"
+            detail="Jobs appear here after OAuth connect or a manual sync."
+          />
         ) : (
-          jobs.slice(0, 10).map((job) => (
+          visible.map((job) => (
             <div
               key={job.id}
-              className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-900/50 p-4 text-sm"
+              className="flex items-center justify-between rounded-xl border border-default bg-surface-card/40 p-4 text-sm"
             >
               <div className="min-w-0">
-                <p className="truncate font-medium text-white">{job.orgName ?? job.provider}</p>
-                <p className="text-slate-400">
-                  {job.provider} · {job.recordsProcessed ?? 0} records
+                <p className="truncate font-medium text-text-primary">
+                  {job.orgName ?? job.provider}
                 </p>
+                <p className="mt-1 text-xs text-text-muted">
+                  {job.provider} · {job.recordsProcessed ?? 0} records ·{" "}
+                  {job.completedAt
+                    ? `finished ${formatRelativeTime(job.completedAt)}`
+                    : job.startedAt
+                      ? `started ${formatRelativeTime(job.startedAt)}`
+                      : "queued"}
+                </p>
+                {job.errorDetails ? (
+                  <p className="mt-1 truncate text-xs text-feedback-danger">
+                    {job.errorDetails}
+                  </p>
+                ) : null}
               </div>
-              <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200">{job.status}</span>
+              <StatusPill tone={statusTone(job.status)}>{job.status}</StatusPill>
             </div>
           ))
         )}
@@ -30,4 +56,3 @@ export function SyncJobsPanel({ jobs }: { jobs: SyncJob[] }) {
     </div>
   );
 }
-

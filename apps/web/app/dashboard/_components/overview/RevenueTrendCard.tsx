@@ -2,59 +2,133 @@
 
 import { useMemo } from "react";
 import type { DashboardResponse } from "../../../../lib/api";
-import { cardClass } from "../ui";
+import { formatMoney, formatRelativeTime } from "./format";
 
-function MiniLineChart({ data }: { data: number[] }) {
-  const width = 520;
-  const height = 180;
-  const safeData = data.length > 0 ? data : [0, 0, 0, 0];
-  const min = Math.min(...safeData);
-  const max = Math.max(...safeData);
+function MiniTrendChart({
+  series,
+}: {
+  series: Array<{ label: string; revenue: number; expenses: number }>;
+}) {
+  const width = 540;
+  const height = 200;
+
+  const safe = series.length > 0 ? series : [{ label: "—", revenue: 0, expenses: 0 }];
+  const allValues = safe.flatMap((row) => [row.revenue, row.expenses]);
+  const min = Math.min(...allValues, 0);
+  const max = Math.max(...allValues, 1);
   const range = max - min || 1;
-  const points = safeData.map((value, index) => {
-    const denominator = Math.max(safeData.length - 1, 1);
-    return {
-      x: (index / denominator) * width,
-      y: height - ((value - min) / range) * (height - 20) - 10,
-    };
-  });
 
-  const line = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-  const area = `${line} L ${width} ${height} L 0 ${height} Z`;
+  function project(values: number[]) {
+    if (values.length === 0) return [];
+    const denominator = Math.max(values.length - 1, 1);
+    return values.map((value, index) => ({
+      x: (index / denominator) * width,
+      y: height - ((value - min) / range) * (height - 24) - 12,
+    }));
+  }
+
+  const revPoints = project(safe.map((row) => row.revenue));
+  const expPoints = project(safe.map((row) => row.expenses));
+
+  function buildPath(points: { x: number; y: number }[]) {
+    if (points.length === 0) return "";
+    return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  }
+
+  function buildArea(points: { x: number; y: number }[]) {
+    if (points.length === 0) return "";
+    return `${buildPath(points)} L ${width} ${height} L 0 ${height} Z`;
+  }
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-48 w-full overflow-visible">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="h-56 w-full overflow-visible"
+      role="img"
+      aria-label="Revenue and expense trend"
+    >
       <defs>
-        <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="#7c3aed" stopOpacity="0.02" />
+        <linearGradient id="revArea" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgb(var(--color-accent-blue))" stopOpacity="0.32" />
+          <stop offset="100%" stopColor="rgb(var(--color-accent-blue))" stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={area} fill="url(#trendFill)" />
-      <path d={line} fill="none" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round" />
-      {points.map((point) => (
-        <circle key={`${point.x}-${point.y}`} cx={point.x} cy={point.y} r="4" fill="#e0f2fe" />
+      <path d={buildArea(revPoints)} fill="url(#revArea)" />
+      <path
+        d={buildPath(expPoints)}
+        fill="none"
+        stroke="rgb(var(--color-accent-violet) / 0.7)"
+        strokeWidth="2"
+        strokeDasharray="4 4"
+      />
+      <path
+        d={buildPath(revPoints)}
+        fill="none"
+        stroke="rgb(var(--color-accent-blue))"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+      {revPoints.map((point) => (
+        <circle key={`r-${point.x}-${point.y}`} cx={point.x} cy={point.y} r="3.5" fill="rgb(var(--color-accent-blue))" />
       ))}
     </svg>
   );
 }
 
 export function RevenueTrendCard({ dashboard }: { dashboard: DashboardResponse }) {
-  const trendData = useMemo(() => dashboard.charts.monthlyTrend.map((item) => item.revenue), [dashboard]);
+  const series = useMemo(
+    () =>
+      dashboard.charts.monthlyTrend.map((row) => ({
+        label: row.month ?? row.name,
+        revenue: row.revenue,
+        expenses: row.expenses,
+      })),
+    [dashboard],
+  );
+
+  const latest = series[series.length - 1];
+  const computedAt = formatRelativeTime(dashboard.meta.computedAt);
 
   return (
-    <div className={cardClass()}>
-      <div className="flex items-center justify-between">
+    <div className="surface-card p-6">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-300">Revenue Trend</p>
-          <h2 className="mt-2 font-display text-2xl font-bold">Monthly performance</h2>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">
+            Revenue & expenses
+          </p>
+          <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
+            Monthly performance
+          </h2>
         </div>
-        <p className="text-sm text-slate-400">API latency {dashboard.meta.latencyMs}ms</p>
+        <p className="text-xs text-text-muted">Last computed {computedAt}</p>
       </div>
-      <div className="mt-6">
-        <MiniLineChart data={trendData} />
+
+      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-text-muted">
+        <span className="inline-flex items-center gap-2">
+          <span className="h-1.5 w-4 rounded bg-accent-blue" /> Revenue
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="h-1.5 w-4 rounded bg-accent-violet/70" /> Expenses
+        </span>
+        {latest ? (
+          <span>
+            Latest month:{" "}
+            <span className="font-semibold text-text-primary">{formatMoney(latest.revenue)}</span>{" "}
+            revenue / {formatMoney(latest.expenses)} expenses
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-4">
+        {series.length === 0 ? (
+          <div className="flex h-56 flex-col items-center justify-center rounded-2xl border border-dashed border-default text-sm text-text-muted">
+            <p className="font-medium text-text-secondary">No trend yet</p>
+            <p>Connect a finance source and run a sync to see your trend.</p>
+          </div>
+        ) : (
+          <MiniTrendChart series={series} />
+        )}
       </div>
     </div>
   );
 }
-

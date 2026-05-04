@@ -4,7 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, type Connection, type SyncJob } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 
-type LoadState = "idle" | "loading" | "ready" | "error";
+export type LoadState = "idle" | "loading" | "ready" | "error";
+
+function toUserError(caught: unknown, fallback: string) {
+  if (caught instanceof ApiError) return caught.toUserMessage(fallback);
+  if (caught instanceof Error) return caught.message || fallback;
+  return fallback;
+}
 
 export function useIntegrations() {
   const { integrations, loading } = useNumeriquApi();
@@ -12,6 +18,9 @@ export function useIntegrations() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [jobs, setJobs] = useState<SyncJob[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  const [actionInFlight, setActionInFlight] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   const refresh = useCallback(async () => {
     setState("loading");
@@ -24,10 +33,11 @@ export function useIntegrations() {
       setJobs(jobsPayload);
       setError(null);
       setState("ready");
+      setHasLoadedOnce(true);
     } catch (caught) {
       setConnections([]);
       setJobs([]);
-      setError(caught instanceof ApiError ? caught.message : "Could not load integrations.");
+      setError(toUserError(caught, "We could not load your integrations."));
       setState("error");
     }
   }, [integrations]);
@@ -38,20 +48,75 @@ export function useIntegrations() {
   }, [refresh, loading]);
 
   async function connectProvider(provider: "xero" | "quickbooks") {
-    const { url } = await integrations.connectProvider(provider);
-    window.location.assign(url);
+    setActionInFlight(true);
+    try {
+      const { url } = await integrations.connectProvider(provider);
+      window.location.assign(url);
+    } catch (caught) {
+      setError(toUserError(caught, "Connection failed. Please try again."));
+    } finally {
+      setActionInFlight(false);
+    }
   }
 
   async function runSync(id: string) {
-    await integrations.syncConnection(id);
+    setPendingActionId(id);
+    try {
+      await integrations.syncConnection(id);
+      await pollUntilJobSettles(id);
+    } catch (caught) {
+      setError(toUserError(caught, "Sync failed. Please retry."));
+    } finally {
+      setPendingActionId(null);
+    }
   }
 
   async function runSyncAll() {
-    await integrations.syncAllConnections();
+    setActionInFlight(true);
+    try {
+      await integrations.syncAllConnections();
+      await refresh();
+    } catch (caught) {
+      setError(toUserError(caught, "Sync failed. Please retry."));
+    } finally {
+      setActionInFlight(false);
+    }
   }
 
   async function deleteConnection(id: string) {
-    await integrations.deleteConnection(id);
+    setPendingActionId(id);
+    try {
+      await integrations.deleteConnection(id);
+      await refresh();
+    } catch (caught) {
+      setError(toUserError(caught, "Could not disconnect that integration."));
+    } finally {
+      setPendingActionId(null);
+    }
+  }
+
+  /**
+   * Poll the jobs endpoint a small number of times until the most recent job
+   * for this connection finishes (or fails). Avoids an arbitrary setTimeout.
+   */
+  async function pollUntilJobSettles(connectionId: string) {
+    const start = Date.now();
+    const timeoutMs = 12_000;
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const next = await integrations.syncJobs();
+        setJobs(next);
+        const latest = next.find((job) => job.connectionId === connectionId);
+        if (latest && (latest.status === "completed" || latest.status === "failed")) {
+          await refresh();
+          return;
+        }
+      } catch {
+        // suppress — refresh() will surface persistent issues if any
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+    await refresh();
   }
 
   return {
@@ -65,5 +130,8 @@ export function useIntegrations() {
     runSyncAll,
     deleteConnection,
     setError,
+    pendingActionId,
+    actionInFlight,
+    hasLoadedOnce,
   };
 }

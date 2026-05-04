@@ -62,14 +62,46 @@ export class AppController {
    */
   @Post('auth/verify-otp')
   async verifyOtp(
-    @Body() body: { email: string; code: string; password: string; name?: string },
+    @Body() body: {
+      email: string;
+      code: string;
+      password: string;
+      name?: string;
+      accountType?: 'solo' | 'organization';
+      orgName?: string;
+    },
   ) {
     if (!body?.email || !body?.code || !body?.password) {
       throw new BadRequestException('email, code, and password are required.');
     }
     await this.otpService.verify(body.email, body.code);
     await this.otpService.createVerifiedUser(body.email, body.password, body.name);
-    return { message: 'Email verified. You can now sign in.' };
+    return {
+      message: 'Email verified. You can now sign in.',
+      accountType: body.accountType ?? 'solo',
+      orgName: body.orgName,
+    };
+  }
+
+  @Get('auth/me/full')
+  @UseGuards(SupabaseAuthGuard)
+  async getMeFull(@CurrentUser() user: AuthUser) {
+    const { prisma: db } = await import('@repo/db');
+    const dbUser = await db.user.findUnique({
+      where: { id: user.id },
+      include: {
+        tenant: true,
+      },
+    });
+    if (!dbUser) {
+      return this.provisioning.ensureProvisioned(user.id, user.email);
+    }
+    return {
+      user: { id: dbUser.id, email: dbUser.email, name: dbUser.name, role: dbUser.role, avatarUrl: dbUser.avatarUrl },
+      tenant: dbUser.tenant
+        ? { id: dbUser.tenant.id, name: dbUser.tenant.name, accountType: dbUser.tenant.accountType, slug: dbUser.tenant.slug }
+        : null,
+    };
   }
 
   // --- TEST ENDPOINTS (backward compat) ---

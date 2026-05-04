@@ -1,30 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { prisma } from '@repo/db';
 
-/**
- * UserProvisioningService — Auto-creates user + tenant on first authenticated request.
- *
- * Pattern: "JIT (Just-In-Time) Provisioning"
- * - When a Supabase user logs in for the first time, this service
- *   auto-creates their User + Tenant records in PostgreSQL.
- * - Subsequent calls return the cached/existing records.
- */
 @Injectable()
 export class UserProvisioningService {
   private readonly logger = new Logger(UserProvisioningService.name);
 
-  /**
-   * Ensure a user + tenant exist for the given Supabase auth ID.
-   * Creates them if they don't exist (idempotent).
-   */
   async ensureProvisioned(
     supabaseUserId: string,
     email: string,
+    opts?: { name?: string; accountType?: 'solo' | 'organization'; role?: string },
   ): Promise<{
-    user: { id: string; email: string };
-    tenant: { id: string; name: string };
+    user: { id: string; email: string; role: string };
+    tenant: { id: string; name: string; accountType: string };
   }> {
-    // 1. Check if user already exists with an associated tenant
     let user = await prisma.user.findUnique({
       where: { id: supabaseUserId },
       include: { tenant: true },
@@ -32,55 +20,55 @@ export class UserProvisioningService {
 
     if (user?.tenant) {
       return {
-        user: { id: user.id, email: user.email },
-        tenant: { id: user.tenant.id, name: user.tenant.name },
+        user: { id: user.id, email: user.email, role: user.role },
+        tenant: { id: user.tenant.id, name: user.tenant.name, accountType: user.tenant.accountType },
       };
     }
 
-    // 2. JIT Provisioning Strategy
-    this.logger.log(`[JIT] Provisioning infrastructure for user: ${email}`);
+    this.logger.log(`[JIT] Provisioning user: ${email}`);
 
-    // If user exists but has no tenantId (legacy migration path)
+    const accountType = opts?.accountType ?? 'solo';
+    const role = opts?.role ?? 'owner';
+
     if (user && !user.tenantId) {
-      this.logger.warn(
-        `[JIT] User ${user.email} exists without tenant. Creating stable association...`,
-      );
       const tenant = await prisma.tenant.create({
-        data: { name: email.split('@')[0] + "'s Organization" },
+        data: { name: this.defaultOrgName(email), accountType },
       });
       user = await prisma.user.update({
         where: { id: user.id },
-        data: { tenantId: tenant.id },
+        data: { tenantId: tenant.id, role },
         include: { tenant: true },
       });
       return {
-        user: { id: user.id, email: user.email },
-        tenant: { id: tenant.id, name: tenant.name },
+        user: { id: user.id, email: user.email, role: user.role },
+        tenant: { id: tenant.id, name: tenant.name, accountType: tenant.accountType },
       };
     }
 
-    // 3. Complete new provisioning
     const tenant = await prisma.tenant.create({
-      data: { name: email.split('@')[0] + "'s Organization" },
+      data: { name: opts?.name ?? this.defaultOrgName(email), accountType },
     });
 
     user = await prisma.user.create({
       data: {
         id: supabaseUserId,
         email,
-        name: email.split('@')[0],
+        name: opts?.name ?? email.split('@')[0],
         tenantId: tenant.id,
+        role,
       },
       include: { tenant: true },
     });
 
-    this.logger.log(
-      `[JIT] Production environment ready: tenant=${tenant.id} for user=${user.id}`,
-    );
+    this.logger.log(`[JIT] Provisioned tenant=${tenant.id} user=${user.id} role=${role}`);
 
     return {
-      user: { id: user.id, email: user.email },
-      tenant: { id: tenant.id, name: tenant.name },
+      user: { id: user.id, email: user.email, role: user.role },
+      tenant: { id: tenant.id, name: tenant.name, accountType: tenant.accountType },
     };
+  }
+
+  private defaultOrgName(email: string): string {
+    return email.split('@')[0] + "'s Workspace";
   }
 }

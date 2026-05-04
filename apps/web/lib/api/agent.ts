@@ -23,10 +23,10 @@ export class AgentApi {
 
   async health(): Promise<HealthResponse> {
     const token = await this.getToken();
-    if (!token) throw new ApiError("Sign in before calling the backend.", 401);
 
     const response = await fetch(`${getApiBaseURL()}/agent/health`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      credentials: "include",
       cache: "no-store",
     });
     if (!response.ok) throw new ApiError("Agent health check failed.", response.status);
@@ -52,7 +52,6 @@ export class AgentApi {
 
   async streamQuery(params: StreamQueryParams) {
     const token = await this.getToken();
-    if (!token) throw new ApiError("Sign in before calling the backend.", 401);
 
     return streamJsonSseLines({
       path: "/agent/query",

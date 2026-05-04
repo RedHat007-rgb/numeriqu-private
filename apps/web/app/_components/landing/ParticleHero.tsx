@@ -10,7 +10,7 @@ export function ParticleHero() {
   const mountRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<number>(0);
   const mouseRef = useRef({ x: 0, y: 0 });
-  const clockRef = useRef(new THREE.Clock());
+  const timerRef = useRef(new THREE.Timer());
 
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
@@ -106,25 +106,34 @@ export function ParticleHero() {
 
     // Animate
     const posAttr = geometry.attributes["position"] as THREE.BufferAttribute;
+    const pos = posAttr.array as Float32Array;
 
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
-      const delta = clockRef.current.getDelta();
-      const elapsed = clockRef.current.getElapsedTime();
+      timerRef.current.update();
+      const elapsed = timerRef.current.getElapsed();
 
       for (let i = 0; i < count; i++) {
         const i3 = i * 3;
-        (posAttr.array as Float32Array)[i3]     += velocities[i3]!     + Math.sin(elapsed * 0.3 + i) * 0.0005;
-        (posAttr.array as Float32Array)[i3 + 1] += velocities[i3 + 1]! + Math.cos(elapsed * 0.2 + i) * 0.0003;
-        (posAttr.array as Float32Array)[i3 + 2] += velocities[i3 + 2]!;
+        const nextX =
+          (pos[i3] ?? 0) + (velocities[i3] ?? 0) + Math.sin(elapsed * 0.3 + i) * 0.0005;
+        const nextY =
+          (pos[i3 + 1] ?? 0) +
+          (velocities[i3 + 1] ?? 0) +
+          Math.cos(elapsed * 0.2 + i) * 0.0003;
+        const nextZ = (pos[i3 + 2] ?? 0) + (velocities[i3 + 2] ?? 0);
+
+        pos[i3] = nextX;
+        pos[i3 + 1] = nextY;
+        pos[i3 + 2] = nextZ;
 
         // Wrap particles
-        if ((posAttr.array as Float32Array)[i3]     >  7) (posAttr.array as Float32Array)[i3]     = -7;
-        if ((posAttr.array as Float32Array)[i3]     < -7) (posAttr.array as Float32Array)[i3]     =  7;
-        if ((posAttr.array as Float32Array)[i3 + 1] >  4.5) (posAttr.array as Float32Array)[i3 + 1] = -4.5;
-        if ((posAttr.array as Float32Array)[i3 + 1] < -4.5) (posAttr.array as Float32Array)[i3 + 1] =  4.5;
-        if ((posAttr.array as Float32Array)[i3 + 2] >  3) (posAttr.array as Float32Array)[i3 + 2] = -3;
-        if ((posAttr.array as Float32Array)[i3 + 2] < -3) (posAttr.array as Float32Array)[i3 + 2] =  3;
+        if ((pos[i3] ?? 0) > 7) pos[i3] = -7;
+        if ((pos[i3] ?? 0) < -7) pos[i3] = 7;
+        if ((pos[i3 + 1] ?? 0) > 4.5) pos[i3 + 1] = -4.5;
+        if ((pos[i3 + 1] ?? 0) < -4.5) pos[i3 + 1] = 4.5;
+        if ((pos[i3 + 2] ?? 0) > 3) pos[i3 + 2] = -3;
+        if ((pos[i3 + 2] ?? 0) < -3) pos[i3 + 2] = 3;
       }
       posAttr.needsUpdate = true;
 

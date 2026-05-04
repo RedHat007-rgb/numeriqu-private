@@ -1,6 +1,8 @@
 export type ApiErrorPayload = {
   statusCode?: number;
   message?: string | string[];
+  code?: string;
+  traceId?: string;
   error?: string;
 };
 
@@ -19,12 +21,19 @@ export class ApiError extends Error {
    * not leak technical details. Falls back to a safe generic if nothing fits.
    */
   toUserMessage(fallback = "Something went wrong. Please try again."): string {
+    const code = this.payload?.code;
+    if (code === "INVITE_EXPIRED") return "This invite has expired. Ask an admin to resend it.";
+    if (code === "EMAIL_MISMATCH") return "Use the same email address that received the invite.";
+    if (code === "ALREADY_MEMBER") return "This user is already a member of the organization.";
+    if (code === "VALIDATION_FAILED") return "Some details look incorrect. Please review and retry.";
+
     if (this.status === 401) return "Your session expired. Please sign in again.";
     if (this.status === 403) return "You do not have access to this resource.";
     if (this.status === 404) return "We could not find what you were looking for.";
+    if (this.status === 400) return fallback;
     if (this.status === 429) return "Too many requests. Wait a moment and retry.";
     if (this.status >= 500) return "Our service is having trouble right now. Please retry shortly.";
-    return this.message || fallback;
+    return fallback;
   }
 }
 
@@ -77,15 +86,17 @@ function normalizeMessage(payload: ApiErrorPayload | undefined, fallback: string
 export function createRequester(getToken: TokenProvider) {
   return async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = await getToken();
-    if (!token) throw new ApiError("Sign in before calling the backend.", 401);
 
     const headers = new Headers(init.headers);
-    headers.set("Authorization", `Bearer ${token}`);
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
     if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
     const response = await fetch(`${getApiBaseURL()}${path}`, {
       ...init,
       headers,
+      credentials: "include",
       cache: "no-store",
     });
 
@@ -121,18 +132,23 @@ export type StreamCallbacks = {
 
 export async function streamJsonSseLines(params: {
   path: string;
-  token: string;
+  token?: string | null;
   body: unknown;
   onDelta: (delta: string) => void;
   onMessage?: (msg: StreamMessage) => void;
 }) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (params.token) {
+    headers.Authorization = `Bearer ${params.token}`;
+  }
+
   const response = await fetch(`${getStreamApiBaseURL()}${params.path}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(params.body),
+    credentials: "include",
   });
 
   if (!response.ok || !response.body) {

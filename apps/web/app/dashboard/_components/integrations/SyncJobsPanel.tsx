@@ -13,6 +13,14 @@ function statusTone(status: string) {
   return "neutral" as const;
 }
 
+function summarizeError(status: string) {
+  const lower = status.toLowerCase();
+  if (lower === "failed" || lower === "error") {
+    return "Job failed. Open logs for technical details.";
+  }
+  return "Job encountered an issue. Retry once and check logs if it repeats.";
+}
+
 export function SyncJobsPanel({ jobs }: { jobs: SyncJob[] }) {
   const visible = jobs.slice(0, 12);
   return (
@@ -44,7 +52,7 @@ export function SyncJobsPanel({ jobs }: { jobs: SyncJob[] }) {
                 </p>
                 {job.errorDetails ? (
                   <p className="mt-1 truncate text-xs text-feedback-danger">
-                    {job.errorDetails}
+                    {summarizeError(job.status)}
                   </p>
                 ) : null}
               </div>

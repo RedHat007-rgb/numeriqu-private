@@ -6,7 +6,98 @@ export type AuthUser = {
 
 export type CurrentUserResponse = {
   user: AuthUser;
-  tenant: { id: string; name: string; createdAt?: string };
+  tenant: { id: string; name: string; accountType?: "SOLO" | "ORGANIZATION"; createdAt?: string };
+};
+
+export type OrganizationRole = "ADMIN" | "USER";
+export type PermissionCode = "VIEW_DASHBOARD" | "CREATE_DASHBOARD" | "SHARE_DASHBOARD";
+
+export type OrganizationContextResponse = {
+  organization: {
+    id: string;
+    name: string;
+    accountType?: string;
+    createdAt: string;
+    updatedAt?: string;
+  };
+  membership: {
+    id: string;
+    role: OrganizationRole;
+    canViewDashboard: boolean;
+    canCreateDashboard: boolean;
+    canShareDashboard: boolean;
+  };
+};
+
+export type OrganizationMember = {
+  id: string;
+  user: { id: string; email: string; fullName: string | null };
+  role: OrganizationRole;
+  permissions: {
+    canViewDashboard: boolean;
+    canCreateDashboard: boolean;
+    canShareDashboard: boolean;
+    grants: PermissionCode[];
+  };
+  joinedAt: string;
+};
+
+export type OrganizationInvite = {
+  id: string;
+  email: string;
+  role: OrganizationRole;
+  canViewDashboard: boolean;
+  canCreateDashboard: boolean;
+  canShareDashboard: boolean;
+  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+  expiresAt: string;
+  acceptedAt: string | null;
+  createdAt: string;
+};
+
+export type MessagingConversation = {
+  id: string;
+  type: "DM" | "GROUP";
+  createdAt: string;
+  updatedAt: string;
+  participants: Array<{
+    userId: string;
+    email: string;
+    fullName: string | null;
+  }>;
+  latestMessage: {
+    id: string;
+    content: string | null;
+    senderId: string;
+    createdAt: string;
+  } | null;
+};
+
+export type ConversationMessage = {
+  id: string;
+  senderId: string;
+  content: string | null;
+  createdAt: string;
+  editedAt: string | null;
+  deletedAt: string | null;
+  dashboardIds: string[];
+};
+
+export type WorkspaceDashboardSummary = {
+  id: string;
+  title: string;
+  description: string | null;
+  ownerId: string;
+  lastSyncedAt: string | null;
+  updatedAt: string;
+  charts: Array<{
+    id: string;
+    title: string;
+    type: string;
+    queryConfig: Record<string, unknown>;
+    chartConfig: Record<string, unknown>;
+    displayOrder: number;
+  }>;
 };
 
 export type DashboardResponse = {

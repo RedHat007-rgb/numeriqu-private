@@ -7,261 +7,811 @@ datasource db {
   provider = "postgresql"
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// USERS & TENANTS
-// accountType: "solo" | "organization"
-// role:        "owner" | "admin" | "member"
-// ─────────────────────────────────────────────────────────────────────────────
+enum AccountType {
+  SOLO
+  ORGANIZATION
+}
+
+enum OrganizationRole {
+  ADMIN
+  USER
+}
+
+enum PermissionCode {
+  VIEW_DASHBOARD
+  CREATE_DASHBOARD
+  SHARE_DASHBOARD
+}
+
+enum ErpProvider {
+  QUICKBOOKS
+  XERO
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  DISCONNECTED
+  ERROR
+}
+
+enum SyncTriggerType {
+  MANUAL
+  SCHEDULED
+}
+
+enum SyncStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  PARTIAL
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum VerificationPurpose {
+  SIGNUP_VERIFICATION
+  LOGIN_VERIFICATION
+}
+
+enum ConversationType {
+  DM
+  GROUP
+}
+
+enum RagMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum AgentRequestStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+enum AgentRunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
 
 model User {
-  id          String   @id
-  email       String   @unique
-  name        String?
-  tenantId    String?  @map("tenant_id")
-  role        String   @default("owner")   // owner | admin | member
-  avatarUrl   String?  @map("avatar_url")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id             String    @id @default(uuid()) @db.Uuid
+  supabaseUserId String    @unique @map("supabase_user_id") @db.Uuid
+  email          String    @unique
+  fullName       String?   @map("full_name")
+  isActive       Boolean   @default(true) @map("is_active")
+  isVerified     Boolean   @default(false) @map("is_verified")
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  tenant        Tenant?          @relation(fields: [tenantId], references: [id])
-  connections   Connection[]
-  chatSessions  ChatSession[]
-  dashboards    Dashboard[]
-  sharedWith    DashboardShare[] @relation("SharedWithUser")
-  memberships   OrgMembership[]
+  verificationTokens       VerificationToken[]
+  organizationMemberships  OrganizationMembership[]
+  sentInvites              OrganizationInvite[]        @relation("InviteSender")
+  connectedErpConnections  ErpConnection[]             @relation("ErpConnectionCreator")
+  requestedSyncJobs        SyncJob[]                   @relation("SyncJobRequester")
+  dashboards               Dashboard[]                 @relation("DashboardOwner")
+  dashboardSharesReceived  DashboardShare[]            @relation("DashboardSharedWith")
+  dashboardSharesGiven     DashboardShare[]            @relation("DashboardSharedBy")
+  permissionGrantsGiven    MembershipPermissionGrant[] @relation("PermissionGrantCreator")
+  conversationsCreated     Conversation[]              @relation("ConversationCreator")
+  conversationParticipants ConversationParticipant[]
+  messagesSent             Message[]                   @relation("MessageSender")
+  messageRevisions         MessageRevision[]           @relation("MessageRevisionEditor")
+  ragSessions              RagChatSession[]
+  agentSessions            AgentChatSession[]
+  agentRequests            AgentDashboardRequest[]     @relation("AgentRequestor")
+  otpCodes                 OtpCode[]
+  createdOrganizations     Organization[]              @relation("OrganizationCreator")
 
   @@map("users")
 }
 
-model Tenant {
-  id          String   @id @default(uuid())
-  name        String
-  accountType String   @default("solo") @map("account_type") // solo | organization
-  slug        String?  @unique                               // org short-name for URLs
-  logoUrl     String?  @map("logo_url")
-  createdAt   DateTime @default(now()) @map("created_at")
+model VerificationToken {
+  id         String              @id @default(uuid()) @db.Uuid
+  userId     String              @map("user_id") @db.Uuid
+  email      String
+  purpose    VerificationPurpose
+  tokenHash  String              @map("token_hash")
+  expiresAt  DateTime            @map("expires_at")
+  consumedAt DateTime?           @map("consumed_at")
+  createdAt  DateTime            @default(now()) @map("created_at")
 
-  users         User[]
-  connections   Connection[]
-  syncJobs      SyncJob[]
-  insights      Insight[]
-  chatSessions  ChatSession[]
-  dashboards    Dashboard[]
-  invites       OrgInvite[]
-  memberships   OrgMembership[]
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("tenants")
+  @@unique([purpose, tokenHash])
+  @@index([email, purpose])
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("verification_tokens")
 }
 
-// Maps users to specific Connections (orgs) — admin assigns members per integration
-model OrgMembership {
-  id           String   @id @default(uuid())
-  tenantId     String   @map("tenant_id")
-  userId       String   @map("user_id")
-  connectionId String?  @map("connection_id") // null = access to all connections
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connection Connection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-
-  @@unique([tenantId, userId, connectionId])
-  @@index([tenantId])
-  @@index([userId])
-  @@map("org_memberships")
-}
-
-// Pending email invitations for organization members
-model OrgInvite {
-  id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
+model OtpCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String?   @map("user_id") @db.Uuid
   email     String
-  role      String   @default("member")  // admin | member
-  token     String   @unique @default(uuid())
-  expiresAt DateTime @map("expires_at")
-  acceptedAt DateTime? @map("accepted_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  otpHash   String    @map("otp_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@index([tenantId])
   @@index([email])
-  @@map("org_invites")
+  @@index([expiresAt])
+  @@index([userId])
+  @@map("otp_codes")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INTEGRATIONS
-// ─────────────────────────────────────────────────────────────────────────────
+model Organization {
+  id          String      @id @default(uuid()) @db.Uuid
+  accountType AccountType @default(ORGANIZATION) @map("account_type")
+  name        String
+  slug        String      @unique
+  createdById String      @map("created_by_id") @db.Uuid
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
-model Connection {
-  id                String   @id @default(uuid())
-  tenantId          String   @map("tenant_id")
-  userId            String   @map("user_id")
-  provider          String
-  providerAccountId String   @map("provider_account_id")
-  accessToken       String   @map("access_token")
-  refreshToken      String?  @map("refresh_token")
-  metadata          Json?    @default("{}")
-  isActive          Boolean? @default(true) @map("is_active")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+  createdBy                  User                        @relation("OrganizationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships                OrganizationMembership[]
+  invites                    OrganizationInvite[]
+  erpConnections             ErpConnection[]
+  syncSchedules              SyncSchedule[]
+  syncJobs                   SyncJob[]
+  financialAccounts          FinancialAccount[]
+  financialCounterparties    FinancialCounterparty[]
+  financialInvoices          FinancialInvoice[]
+  financialInvoiceLines      FinancialInvoiceLine[]
+  financialJournalEntries    FinancialJournalEntry[]
+  financialJournalEntryLines FinancialJournalEntryLine[]
+  financialMetricSnapshots   FinancialMetricSnapshot[]
+  financialSourceMappings    FinancialSourceMapping[]
+  dashboards                 Dashboard[]
+  dashboardWidgets           DashboardWidget[]
+  dashboardShares            DashboardShare[]
+  conversations              Conversation[]
+  conversationParticipants   ConversationParticipant[]
+  messages                   Message[]
+  messageRevisions           MessageRevision[]
+  messageDashboardReferences MessageDashboardReference[]
+  ragChatSessions            RagChatSession[]
+  ragChatMessages            RagChatMessage[]
+  ragCitations               RagCitation[]
+  agentChatSessions          AgentChatSession[]
+  agentChatMessages          AgentChatMessage[]
+  agentDashboardRequests     AgentDashboardRequest[]
+  agentRuns                  AgentRun[]
+  agentRunEvents             AgentRunEvent[]
+  membershipPermissionGrants MembershipPermissionGrant[]
 
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  syncJobs    SyncJob[]
-  memberships OrgMembership[]
+  @@index([createdById])
+  @@map("organizations")
+}
 
-  @@unique([tenantId, provider, providerAccountId])
-  @@map("connections")
+model OrganizationMembership {
+  id                 String           @id @default(uuid()) @db.Uuid
+  organizationId     String           @map("organization_id") @db.Uuid
+  userId             String           @map("user_id") @db.Uuid
+  role               OrganizationRole
+  canViewDashboard   Boolean          @default(false) @map("can_view_dashboard")
+  canCreateDashboard Boolean          @default(false) @map("can_create_dashboard")
+  canShareDashboard  Boolean          @default(false) @map("can_share_dashboard")
+  joinedAt           DateTime         @default(now()) @map("joined_at")
+  leftAt             DateTime?        @map("left_at")
+
+  organization     Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissionGrants MembershipPermissionGrant[]
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([organizationId, role])
+  @@map("organization_memberships")
+}
+
+model MembershipPermissionGrant {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  membershipId   String         @map("membership_id") @db.Uuid
+  permission     PermissionCode
+  grantedById    String         @map("granted_by_id") @db.Uuid
+  grantedAt      DateTime       @default(now()) @map("granted_at")
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership   OrganizationMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  grantedBy    User                   @relation("PermissionGrantCreator", fields: [grantedById], references: [id], onDelete: Restrict)
+
+  @@unique([membershipId, permission])
+  @@index([organizationId, permission])
+  @@map("membership_permission_grants")
+}
+
+model OrganizationInvite {
+  id                 String           @id @default(uuid()) @db.Uuid
+  organizationId     String           @map("organization_id") @db.Uuid
+  invitedById        String           @map("invited_by_id") @db.Uuid
+  email              String
+  role               OrganizationRole @default(USER)
+  canViewDashboard   Boolean          @default(false) @map("can_view_dashboard")
+  canCreateDashboard Boolean          @default(false) @map("can_create_dashboard")
+  canShareDashboard  Boolean          @default(false) @map("can_share_dashboard")
+  tokenHash          String           @map("token_hash")
+  status             InviteStatus     @default(PENDING)
+  expiresAt          DateTime         @map("expires_at")
+  acceptedAt         DateTime?        @map("accepted_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InviteSender", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, email, status])
+  @@index([email])
+  @@index([expiresAt])
+  @@map("organization_invites")
+}
+
+model ErpConnection {
+  id                     String           @id @default(uuid()) @db.Uuid
+  organizationId         String           @map("organization_id") @db.Uuid
+  provider               ErpProvider
+  externalOrganizationId String           @map("external_organization_id")
+  displayName            String?          @map("display_name")
+  accessTokenEncrypted   String           @map("access_token_encrypted")
+  refreshTokenEncrypted  String?          @map("refresh_token_encrypted")
+  tokenExpiresAt         DateTime?        @map("token_expires_at")
+  status                 ConnectionStatus @default(ACTIVE)
+  createdById            String           @map("created_by_id") @db.Uuid
+  metadata               Json?
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+
+  organization             Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy                User                      @relation("ErpConnectionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  schedules                SyncSchedule[]
+  syncJobs                 SyncJob[]
+  financialAccounts        FinancialAccount[]
+  financialCounterparties  FinancialCounterparty[]
+  financialInvoices        FinancialInvoice[]
+  financialJournalEntries  FinancialJournalEntry[]
+  financialMetricSnapshots FinancialMetricSnapshot[]
+  financialSourceMappings  FinancialSourceMapping[]
+
+  @@unique([organizationId, provider, externalOrganizationId])
+  @@index([organizationId, provider])
+  @@map("erp_connections")
+}
+
+model SyncSchedule {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  connectionId   String    @map("connection_id") @db.Uuid
+  cronExpression String    @map("cron_expression")
+  isActive       Boolean   @default(true) @map("is_active")
+  lastRunAt      DateTime? @map("last_run_at")
+  nextRunAt      DateTime? @map("next_run_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   ErpConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId])
+  @@index([organizationId, isActive])
+  @@index([nextRunAt])
+  @@map("sync_schedules")
 }
 
 model SyncJob {
-  id               String    @id @default(uuid())
-  connectionId     String    @map("connection_id")
-  tenantId         String    @map("tenant_id")
-  provider         String
-  status           String
-  recordsProcessed Int?      @default(0) @map("records_processed")
-  errorDetails     String?   @map("error_details")
-  startedAt        DateTime? @default(now()) @map("started_at")
-  completedAt      DateTime? @map("completed_at")
-  syncWindowStart  DateTime? @map("sync_window_start")
-  syncWindowEnd    DateTime? @map("sync_window_end")
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  connectionId   String          @map("connection_id") @db.Uuid
+  triggerType    SyncTriggerType @map("trigger_type")
+  status         SyncStatus
+  requestedById  String?         @map("requested_by_id") @db.Uuid
+  recordsRead    Int             @default(0) @map("records_read")
+  recordsWritten Int             @default(0) @map("records_written")
+  errorCode      String?         @map("error_code")
+  errorMessage   String?         @map("error_message")
+  startedAt      DateTime?       @map("started_at")
+  completedAt    DateTime?       @map("completed_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
 
-  connection Connection @relation(fields: [connectionId], references: [id])
-  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection     ErpConnection            @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  requestedBy    User?                    @relation("SyncJobRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  sourceMappings FinancialSourceMapping[]
 
-  @@index([connectionId, status])
-  @@index([tenantId, provider])
+  @@index([organizationId, status, createdAt])
+  @@index([connectionId, createdAt])
   @@map("sync_jobs")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INSIGHTS (saved chart configs)
-// ─────────────────────────────────────────────────────────────────────────────
+model FinancialAccount {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  connectionId   String   @map("connection_id") @db.Uuid
+  accountCode    String   @map("account_code")
+  accountName    String   @map("account_name")
+  accountType    String   @map("account_type")
+  currencyCode   String?  @map("currency_code") @db.Char(3)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
-model Insight {
-  id          String   @id @default(uuid())
-  tenantId    String   @map("tenant_id")
-  title       String
-  description String?
-  type        String   // 'line', 'bar', 'pie', 'metric', 'table', 'dashboard'
-  config      Json
-  isFavorite  Boolean  @default(false) @map("is_favorite")
-  pinned      Boolean  @default(false)
-  category    String   @default("general")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+  organization      Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection        ErpConnection               @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  invoiceLines      FinancialInvoiceLine[]
+  journalEntryLines FinancialJournalEntryLine[]
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-
-  @@index([tenantId])
-  @@map("insights")
+  @@unique([organizationId, connectionId, accountCode])
+  @@index([organizationId, accountType])
+  @@map("financial_accounts")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CHAT — Agent + RAG sessions
-// ─────────────────────────────────────────────────────────────────────────────
+model FinancialCounterparty {
+  id                     String   @id @default(uuid()) @db.Uuid
+  organizationId         String   @map("organization_id") @db.Uuid
+  connectionId           String   @map("connection_id") @db.Uuid
+  externalCounterpartyId String   @map("external_counterparty_id")
+  name                   String
+  type                   String
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
 
-model ChatSession {
-  id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
-  userId    String   @map("user_id")
-  title     String   @default("New Session")
-  mode      String   @default("agent") // 'agent' | 'rag'
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   ErpConnection      @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  invoices     FinancialInvoice[]
 
-  tenant   Tenant        @relation(fields: [tenantId], references: [id])
-  user     User          @relation(fields: [userId], references: [id])
-  messages ChatMessage[]
-
-  @@index([tenantId, userId])
-  @@index([tenantId, mode])
-  @@map("chat_sessions")
+  @@unique([organizationId, connectionId, externalCounterpartyId])
+  @@index([organizationId, type])
+  @@map("financial_counterparties")
 }
 
-model ChatMessage {
-  id            String   @id @default(uuid())
-  chatSessionId String   @map("chat_session_id")
-  role          String   // 'user' | 'assistant' | 'system'
-  content       String   @db.Text
-  toolCalls     Json?    @map("tool_calls")
-  tokens        Int      @default(0)
-  latencyMs     Int      @default(0) @map("latency_ms")
-  createdAt     DateTime @default(now()) @map("created_at")
+model FinancialInvoice {
+  id              String    @id @default(uuid()) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  connectionId    String    @map("connection_id") @db.Uuid
+  counterpartyId  String?   @map("counterparty_id") @db.Uuid
+  invoiceNumber   String    @map("invoice_number")
+  invoiceType     String    @map("invoice_type")
+  status          String
+  currencyCode    String    @map("currency_code") @db.Char(3)
+  issueDate       DateTime  @map("issue_date") @db.Date
+  dueDate         DateTime? @map("due_date") @db.Date
+  subtotalAmount  Decimal   @map("subtotal_amount") @db.Decimal(18, 2)
+  taxAmount       Decimal   @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount     Decimal   @map("total_amount") @db.Decimal(18, 2)
+  amountPaid      Decimal   @default(0) @map("amount_paid") @db.Decimal(18, 2)
+  amountDue       Decimal   @default(0) @map("amount_due") @db.Decimal(18, 2)
+  sourceUpdatedAt DateTime? @map("source_updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  session ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   ErpConnection          @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  counterparty FinancialCounterparty? @relation(fields: [counterpartyId], references: [id], onDelete: SetNull)
+  lines        FinancialInvoiceLine[]
 
-  @@index([chatSessionId])
-  @@map("chat_messages")
+  @@unique([organizationId, connectionId, invoiceNumber])
+  @@index([organizationId, issueDate])
+  @@index([organizationId, status])
+  @@index([organizationId, dueDate])
+  @@map("financial_invoices")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARDS — admin creates, shares with members
-// ─────────────────────────────────────────────────────────────────────────────
+model FinancialInvoiceLine {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  invoiceId      String   @map("invoice_id") @db.Uuid
+  accountId      String?  @map("account_id") @db.Uuid
+  lineNumber     Int      @map("line_number")
+  description    String?
+  quantity       Decimal? @db.Decimal(18, 4)
+  unitPrice      Decimal? @map("unit_price") @db.Decimal(18, 4)
+  lineAmount     Decimal  @map("line_amount") @db.Decimal(18, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice      FinancialInvoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  account      FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@unique([invoiceId, lineNumber])
+  @@index([organizationId, accountId])
+  @@map("financial_invoice_lines")
+}
+
+model FinancialJournalEntry {
+  id              String    @id @default(uuid()) @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  connectionId    String    @map("connection_id") @db.Uuid
+  entryNumber     String    @map("entry_number")
+  entryDate       DateTime  @map("entry_date") @db.Date
+  memo            String?
+  currencyCode    String    @map("currency_code") @db.Char(3)
+  sourceUpdatedAt DateTime? @map("source_updated_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  organization Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   ErpConnection               @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  lines        FinancialJournalEntryLine[]
+
+  @@unique([organizationId, connectionId, entryNumber])
+  @@index([organizationId, entryDate])
+  @@map("financial_journal_entries")
+}
+
+model FinancialJournalEntryLine {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  journalEntryId String   @map("journal_entry_id") @db.Uuid
+  accountId      String?  @map("account_id") @db.Uuid
+  lineNumber     Int      @map("line_number")
+  description    String?
+  debitAmount    Decimal  @default(0) @map("debit_amount") @db.Decimal(18, 2)
+  creditAmount   Decimal  @default(0) @map("credit_amount") @db.Decimal(18, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  journalEntry FinancialJournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account      FinancialAccount?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@unique([journalEntryId, lineNumber])
+  @@index([organizationId, accountId])
+  @@map("financial_journal_entry_lines")
+}
+
+model FinancialMetricSnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  connectionId   String?  @map("connection_id") @db.Uuid
+  metricKey      String   @map("metric_key")
+  asOfDate       DateTime @map("as_of_date") @db.Date
+  metricValue    Decimal  @map("metric_value") @db.Decimal(24, 6)
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   ErpConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, metricKey, asOfDate])
+  @@index([organizationId, asOfDate])
+  @@map("financial_metric_snapshots")
+}
+
+model FinancialSourceMapping {
+  id                String   @id @default(uuid()) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  connectionId      String   @map("connection_id") @db.Uuid
+  normalizedTable   String   @map("normalized_table")
+  normalizedId      String   @map("normalized_id") @db.Uuid
+  sourceEntityType  String   @map("source_entity_type")
+  sourceRecordId    String   @map("source_record_id")
+  sourcePayloadHash String?  @map("source_payload_hash")
+  lastSeenSyncJobId String?  @map("last_seen_sync_job_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection      ErpConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  lastSeenSyncJob SyncJob?      @relation(fields: [lastSeenSyncJobId], references: [id], onDelete: SetNull)
+
+  @@unique([connectionId, sourceEntityType, sourceRecordId])
+  @@index([organizationId, normalizedTable, normalizedId])
+  @@map("financial_source_mappings")
+}
 
 model Dashboard {
-  id          String   @id @default(uuid())
-  tenantId    String   @map("tenant_id")
-  userId      String   @map("user_id")   // creator (must be admin/owner)
-  title       String
-  description String?  @db.Text
-  isPublished Boolean  @default(false) @map("is_published") // visible to members
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  ownerId        String    @map("owner_id") @db.Uuid
+  title          String
+  description    String?
+  config         Json
+  permissions    Json
+  lastSyncedAt   DateTime? @map("last_synced_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
 
-  tenant Tenant           @relation(fields: [tenantId], references: [id])
-  user   User             @relation(fields: [userId], references: [id])
-  charts Chart[]
-  shares DashboardShare[]
+  organization        Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner               User                        @relation("DashboardOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  widgets             DashboardWidget[]
+  shares              DashboardShare[]
+  messageReferences   MessageDashboardReference[]
+  generatedByRequests AgentDashboardRequest[]     @relation("GeneratedDashboard")
 
-  @@index([tenantId])
-  @@index([tenantId, isPublished])
+  @@index([organizationId, ownerId])
+  @@index([organizationId, createdAt])
   @@map("dashboards")
 }
 
-// Explicit share: admin shares a specific dashboard with a specific member
+model DashboardWidget {
+  id             String   @id @default(uuid()) @db.Uuid
+  dashboardId    String   @map("dashboard_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  title          String
+  chartType      String   @map("chart_type")
+  queryConfig    Json     @map("query_config")
+  chartConfig    Json     @map("chart_config")
+  displayOrder   Int      @map("display_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  dashboard    Dashboard    @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([dashboardId, displayOrder])
+  @@index([organizationId, dashboardId])
+  @@map("dashboard_widgets")
+}
+
 model DashboardShare {
-  id          String   @id @default(uuid())
-  dashboardId String   @map("dashboard_id")
-  userId      String   @map("user_id")      // the member receiving access
-  canEdit     Boolean  @default(false) @map("can_edit")
-  sharedAt    DateTime @default(now()) @map("shared_at")
+  id               String    @id @default(uuid()) @db.Uuid
+  dashboardId      String    @map("dashboard_id") @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  sharedWithUserId String    @map("shared_with_user_id") @db.Uuid
+  sharedByUserId   String    @map("shared_by_user_id") @db.Uuid
+  canEdit          Boolean   @default(false) @map("can_edit")
+  sharedAt         DateTime  @default(now()) @map("shared_at")
+  revokedAt        DateTime? @map("revoked_at")
 
-  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
-  user      User      @relation("SharedWithUser", fields: [userId], references: [id], onDelete: Cascade)
+  dashboard      Dashboard    @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sharedWithUser User         @relation("DashboardSharedWith", fields: [sharedWithUserId], references: [id], onDelete: Cascade)
+  sharedByUser   User         @relation("DashboardSharedBy", fields: [sharedByUserId], references: [id], onDelete: Restrict)
 
-  @@unique([dashboardId, userId])
+  @@unique([dashboardId, sharedWithUserId])
+  @@index([organizationId, sharedWithUserId])
   @@map("dashboard_shares")
 }
 
-model Chart {
-  id          String   @id @default(uuid())
-  dashboardId String   @map("dashboard_id")
-  title       String
-  description String?
-  type        String
-  config      Json
-  layoutIndex Int      @default(0) @map("layout_index")
+model Conversation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  type           ConversationType
+  dmKey          String?          @map("dm_key")
+  createdById    String           @map("created_by_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
 
-  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  organization Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User                      @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants ConversationParticipant[]
+  messages     Message[]
 
-  @@index([dashboardId])
-  @@map("charts")
+  @@unique([organizationId, dmKey])
+  @@index([organizationId, type])
+  @@map("conversations")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AUTH
-// ─────────────────────────────────────────────────────────────────────────────
+model ConversationParticipant {
+  id             String    @id @default(uuid()) @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  joinedAt       DateTime  @default(now()) @map("joined_at")
+  leftAt         DateTime? @map("left_at")
 
-model OtpCode {
-  id        String   @id @default(uuid())
-  email     String
-  code      String
-  expiresAt DateTime @map("expires_at")
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([email])
-  @@map("otp_codes")
+  @@unique([conversationId, userId])
+  @@index([organizationId, userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String    @id @default(uuid()) @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  senderId       String    @map("sender_id") @db.Uuid
+  content        String
+  createdAt      DateTime  @default(now()) @map("created_at")
+  editedAt       DateTime? @map("edited_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  conversation        Conversation                @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  organization        Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sender              User                        @relation("MessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+  revisions           MessageRevision[]
+  dashboardReferences MessageDashboardReference[]
+
+  @@index([conversationId, createdAt])
+  @@index([organizationId, senderId])
+  @@map("messages")
+}
+
+model MessageRevision {
+  id              String   @id @default(uuid()) @db.Uuid
+  messageId       String   @map("message_id") @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  editorId        String   @map("editor_id") @db.Uuid
+  previousContent String   @map("previous_content")
+  editedAt        DateTime @default(now()) @map("edited_at")
+
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  editor       User         @relation("MessageRevisionEditor", fields: [editorId], references: [id], onDelete: Restrict)
+
+  @@index([messageId, editedAt])
+  @@index([organizationId, editedAt])
+  @@map("message_revisions")
+}
+
+model MessageDashboardReference {
+  id             String   @id @default(uuid()) @db.Uuid
+  messageId      String   @map("message_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  dashboardId    String   @map("dashboard_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  dashboard    Dashboard    @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, dashboardId])
+  @@index([organizationId, dashboardId])
+  @@map("message_dashboard_references")
+}
+
+model RagChatSession {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  title          String
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  closedAt       DateTime? @map("closed_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  messages     RagChatMessage[]
+
+  @@index([organizationId, userId, createdAt])
+  @@map("rag_chat_sessions")
+}
+
+model RagChatMessage {
+  id              String         @id @default(uuid()) @db.Uuid
+  sessionId       String         @map("session_id") @db.Uuid
+  organizationId  String         @map("organization_id") @db.Uuid
+  role            RagMessageRole
+  content         String
+  contextSnapshot Json?          @map("context_snapshot")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  session      RagChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  citations    RagCitation[]
+
+  @@index([sessionId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("rag_chat_messages")
+}
+
+model RagCitation {
+  id             String   @id @default(uuid()) @db.Uuid
+  ragMessageId   String   @map("rag_message_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  sourceType     String   @map("source_type")
+  sourceId       String   @map("source_id")
+  excerpt        String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  ragMessage   RagChatMessage @relation(fields: [ragMessageId], references: [id], onDelete: Cascade)
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, sourceType, sourceId])
+  @@map("rag_citations")
+}
+
+model AgentChatSession {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  title          String
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  closedAt       DateTime? @map("closed_at")
+
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  messages               AgentChatMessage[]
+  agentDashboardRequests AgentDashboardRequest[]
+
+  @@index([organizationId, userId, createdAt])
+  @@map("agent_chat_sessions")
+}
+
+model AgentChatMessage {
+  id             String   @id @default(uuid()) @db.Uuid
+  sessionId      String   @map("session_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  role           String
+  content        String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  session      AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("agent_chat_messages")
+}
+
+model AgentDashboardRequest {
+  id                   String             @id @default(uuid()) @db.Uuid
+  organizationId       String             @map("organization_id") @db.Uuid
+  requestedById        String             @map("requested_by_id") @db.Uuid
+  agentSessionId       String?            @map("agent_session_id") @db.Uuid
+  prompt               String
+  status               AgentRequestStatus @default(QUEUED)
+  generatedDashboardId String?            @map("generated_dashboard_id") @db.Uuid
+  errorCode            String?            @map("error_code")
+  errorMessage         String?            @map("error_message")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+  completedAt          DateTime?          @map("completed_at")
+
+  organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy        User              @relation("AgentRequestor", fields: [requestedById], references: [id], onDelete: Restrict)
+  agentSession       AgentChatSession? @relation(fields: [agentSessionId], references: [id], onDelete: SetNull)
+  generatedDashboard Dashboard?        @relation("GeneratedDashboard", fields: [generatedDashboardId], references: [id], onDelete: SetNull)
+  runs               AgentRun[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([requestedById, createdAt])
+  @@map("agent_dashboard_requests")
+}
+
+model AgentRun {
+  id             String         @id @default(uuid()) @db.Uuid
+  requestId      String         @map("request_id") @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  status         AgentRunStatus @default(QUEUED)
+  inputTokens    Int            @default(0) @map("input_tokens")
+  outputTokens   Int            @default(0) @map("output_tokens")
+  latencyMs      Int            @default(0) @map("latency_ms")
+  startedAt      DateTime?      @map("started_at")
+  completedAt    DateTime?      @map("completed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  request      AgentDashboardRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  events       AgentRunEvent[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([requestId, createdAt])
+  @@map("agent_runs")
+}
+
+model AgentRunEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  runId          String   @map("run_id") @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  eventType      String   @map("event_type")
+  payload        Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  run          AgentRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("agent_run_events")
 }

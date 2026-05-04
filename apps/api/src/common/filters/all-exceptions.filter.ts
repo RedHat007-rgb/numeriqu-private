@@ -1,151 +1,86 @@
 import {
-  ExceptionFilter,
-  Catch,
   ArgumentsHost,
+  Catch,
+  ExceptionFilter,
   HttpException,
   HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { randomUUID } from 'crypto';
 
-/**
- * AllExceptionsFilter — Production-Grade Global Error Boundary
- *
- * DESIGN PRINCIPLE:
- * The user should NEVER see a stack trace, a DB error, or a raw Node exception.
- * Every technical error is mapped to a human-readable, actionable message.
- *
- * The raw error is logged server-side for engineering debugging.
- * The user gets a clean, professional response every time.
- */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  private readonly logger = new Logger('ExceptionFilter');
+  private readonly logger = new Logger(AllExceptionsFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
 
-    // Guard: If response is already sent (e.g., SSE stream ended), skip
     if (response.headersSent) return;
 
-    let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message =
-      'Something went wrong. Our team has been notified and is looking into it.';
+    const traceId = randomUUID();
 
     if (exception instanceof HttpException) {
-      status = exception.getStatus();
-      const responsePayload = exception.getResponse();
+      const status = exception.getStatus();
+      const payload = exception.getResponse();
 
-      if (typeof responsePayload === 'string') {
-        message = responsePayload;
-      } else if (
-        typeof responsePayload === 'object' &&
-        responsePayload !== null
-      ) {
-        const payload = responsePayload as any;
-        if (payload.message) {
-          message = Array.isArray(payload.message)
-            ? payload.message.join(', ')
-            : payload.message;
-        }
+      if (typeof payload === 'object' && payload !== null) {
+        const normalizedPayload = payload as Record<string, unknown>;
+        const message = this.extractMessage(normalizedPayload);
+        const code = this.extractCode(normalizedPayload, status);
+        this.logByStatus(status, `[${code}] ${message} traceId=${traceId}`);
+        response.status(status).json({ message, code, traceId });
+        return;
       }
 
-      // Log 4xx as warnings, not errors
-      if (status >= 400 && status < 500) {
-        this.logger.warn(`[${status}] ${message}`);
-      } else {
-        this.logger.error(`[${status}] ${message}`);
-      }
-    } else if (exception instanceof Error) {
-      // ── Domain-Specific Error Mapping ──────────────────────────────────
-      // Map technical errors to user-friendly messages
-      const raw = exception.message || '';
-      const stack = exception.stack || '';
-
-      this.logger.error(`Unhandled: ${raw}`, stack);
-
-      // ClickHouse errors
-      if (
-        raw.includes('ECONNREFUSED') &&
-        (raw.includes('8123') ||
-          raw.includes('9000') ||
-          raw.includes('clickhouse'))
-      ) {
-        message =
-          'Our analytics engine is temporarily unavailable. Your data is safe — please try again in a moment.';
-        status = HttpStatus.SERVICE_UNAVAILABLE;
-      }
-      // ClickHouse query errors
-      else if (
-        raw.includes('DB::Exception') ||
-        raw.includes('Code: 60') ||
-        raw.includes('UNKNOWN_TABLE')
-      ) {
-        message =
-          'Your financial data is being prepared. Please allow a few moments for the initial setup to complete.';
-        status = HttpStatus.SERVICE_UNAVAILABLE;
-      }
-      // Prisma / PostgreSQL errors
-      else if (
-        raw.includes('PrismaClientKnownRequestError') ||
-        raw.includes('P2002') ||
-        raw.includes('P2025')
-      ) {
-        message = 'A data conflict occurred. Please refresh and try again.';
-        status = HttpStatus.CONFLICT;
-      } else if (raw.includes('PrismaClient') || raw.includes('prisma')) {
-        message =
-          'We encountered a temporary issue accessing your account data. Please try again.';
-        status = HttpStatus.SERVICE_UNAVAILABLE;
-      }
-      // Ollama / AI engine errors
-      else if (
-        raw.includes('AI_ENGINE_OFFLINE') ||
-        (raw.includes('ECONNREFUSED') && raw.includes('11434'))
-      ) {
-        message =
-          'The AI reasoning engine is warming up. Please try your query again in a moment.';
-        status = HttpStatus.SERVICE_UNAVAILABLE;
-      }
-      // Network / timeout errors
-      else if (
-        raw.includes('ETIMEDOUT') ||
-        raw.includes('ESOCKETTIMEDOUT') ||
-        raw.includes('timeout')
-      ) {
-        message =
-          'The request took too long to complete. Please try again with a simpler query.';
-        status = HttpStatus.GATEWAY_TIMEOUT;
-      }
-      // OAuth errors
-      else if (
-        raw.includes('OAuth') ||
-        raw.includes('oauth') ||
-        raw.includes('token')
-      ) {
-        message =
-          'Your authorization session has expired. Please reconnect your provider.';
-        status = HttpStatus.UNAUTHORIZED;
-      }
-      // Generic connection errors
-      else if (
-        raw.includes('ECONNREFUSED') ||
-        raw.includes('ENOTFOUND') ||
-        raw.includes('fetch failed')
-      ) {
-        message =
-          'A required service is temporarily unavailable. Please try again in a moment.';
-        status = HttpStatus.SERVICE_UNAVAILABLE;
-      }
-    } else {
-      this.logger.error(`Unknown exception type: ${JSON.stringify(exception)}`);
+      const message = typeof payload === 'string' ? payload : 'Request failed.';
+      const code = this.defaultCode(status);
+      this.logByStatus(status, `[${code}] ${message} traceId=${traceId}`);
+      response.status(status).json({ message, code, traceId });
+      return;
     }
 
-    response.status(status).json({
-      statusCode: status,
-      message,
-      timestamp: new Date().toISOString(),
-    });
+    const message = 'Something went wrong. Please try again.';
+    const code = 'INTERNAL_ERROR';
+
+    if (exception instanceof Error) {
+      this.logger.error(`[${code}] traceId=${traceId} ${exception.message}`, exception.stack);
+    } else {
+      this.logger.error(`[${code}] traceId=${traceId} ${JSON.stringify(exception)}`);
+    }
+
+    response
+      .status(HttpStatus.INTERNAL_SERVER_ERROR)
+      .json({ message, code, traceId });
+  }
+
+  private extractMessage(payload: Record<string, unknown>) {
+    const raw = payload.message;
+    if (Array.isArray(raw)) return raw.join(', ');
+    if (typeof raw === 'string') return raw;
+    return 'Request failed.';
+  }
+
+  private extractCode(payload: Record<string, unknown>, status: number) {
+    const raw = payload.code;
+    if (typeof raw === 'string' && raw) return raw;
+    return this.defaultCode(status);
+  }
+
+  private defaultCode(status: number) {
+    if (status === HttpStatus.BAD_REQUEST) return 'BAD_REQUEST';
+    if (status === HttpStatus.UNAUTHORIZED) return 'UNAUTHORIZED';
+    if (status === HttpStatus.FORBIDDEN) return 'FORBIDDEN';
+    if (status === HttpStatus.NOT_FOUND) return 'NOT_FOUND';
+    if (status === HttpStatus.CONFLICT) return 'CONFLICT';
+    if (status === HttpStatus.TOO_MANY_REQUESTS) return 'RATE_LIMITED';
+    if (status >= 500) return 'INTERNAL_ERROR';
+    return 'REQUEST_FAILED';
+  }
+
+  private logByStatus(status: number, text: string) {
+    if (status >= 500) this.logger.error(text);
+    else this.logger.warn(text);
   }
 }

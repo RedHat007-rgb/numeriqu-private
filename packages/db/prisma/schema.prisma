@@ -8,121 +8,188 @@ datasource db {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// USERS & TENANTS
-// accountType: "solo" | "organization"
-// role:        "owner" | "admin" | "member"
+// DOMAIN 1: IDENTITY
 // ─────────────────────────────────────────────────────────────────────────────
 
-model User {
-  id          String   @id
-  email       String   @unique
-  name        String?
-  tenantId    String?  @map("tenant_id")
-  role        String   @default("owner")   // owner | admin | member
-  avatarUrl   String?  @map("avatar_url")
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  tenant        Tenant?          @relation(fields: [tenantId], references: [id])
-  connections   Connection[]
-  chatSessions  ChatSession[]
-  dashboards    Dashboard[]
-  sharedWith    DashboardShare[] @relation("SharedWithUser")
-  memberships   OrgMembership[]
-
-  @@map("users")
-}
-
+/// An organization on the Numeriqu platform.
+/// Every piece of data is scoped to a tenant — this is the root of multi-tenancy.
 model Tenant {
   id          String   @id @default(uuid())
   name        String
-  accountType String   @default("solo") @map("account_type") // solo | organization
-  slug        String?  @unique                               // org short-name for URLs
+  accountType String   @default("organization") @map("account_type") // "organization"
+  slug        String?  @unique
   logoUrl     String?  @map("logo_url")
+  plan        String   @default("free") // "free" | "pro" | "enterprise"
   createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
-  users         User[]
-  connections   Connection[]
-  syncJobs      SyncJob[]
-  insights      Insight[]
-  chatSessions  ChatSession[]
-  dashboards    Dashboard[]
-  invites       OrgInvite[]
-  memberships   OrgMembership[]
+  users        User[]
+  connections  Connection[]
+  syncJobs     SyncJob[]
+  chatSessions ChatSession[]
+  dashboards   Dashboard[]
+  invites      OrgInvite[]
+  memberships  OrgMembership[]
+  auditLogs    AuditLog[]
 
   @@map("tenants")
 }
 
-// Maps users to specific Connections (orgs) — admin assigns members per integration
-model OrgMembership {
-  id           String   @id @default(uuid())
-  tenantId     String   @map("tenant_id")
-  userId       String   @map("user_id")
-  connectionId String?  @map("connection_id") // null = access to all connections
-  createdAt    DateTime @default(now()) @map("created_at")
+/// A human on the platform. Auth identity lives in Supabase (id = Supabase user UUID).
+/// role: "admin"  — org creator. Full access to all connections and dashboards.
+/// role: "member" — invited user. Access controlled by OrgMembership + UserPermission.
+model User {
+  id        String   @id
+  email     String   @unique
+  name      String?
+  tenantId  String?  @map("tenant_id")
+  role      String   @default("admin") // "admin" | "member"
+  avatarUrl String?  @map("avatar_url")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connection Connection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  connections      Connection[]
+  chatSessions     ChatSession[]
+  dashboards       Dashboard[]
+  sharedWith       DashboardShare[] @relation("SharedWithUser")
+  sharesGranted    DashboardShare[] @relation("SharedByUser")
+  memberships      OrgMembership[]
+  permission       UserPermission?
+  auditLogs        AuditLog[]
 
-  @@unique([tenantId, userId, connectionId])
   @@index([tenantId])
-  @@index([userId])
-  @@map("org_memberships")
+  @@map("users")
 }
 
-// Pending email invitations for organization members
+/// Granular permission flags for MEMBERS only.
+/// Admins always have full access — no record needed for them.
+/// One record per member user within a tenant.
+model UserPermission {
+  id                  String   @id @default(uuid())
+  userId              String   @unique @map("user_id")
+  tenantId            String   @map("tenant_id")
+  canCreateDashboard  Boolean  @default(false) @map("can_create_dashboard")
+  canShareDashboard   Boolean  @default(false) @map("can_share_dashboard")
+  canQueryRag         Boolean  @default(true)  @map("can_query_rag")
+  canUseAgent         Boolean  @default(false) @map("can_use_agent")
+  grantedBy           String?  @map("granted_by") // admin user ID
+  grantedAt           DateTime @default(now()) @map("granted_at")
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("user_permissions")
+}
+
+/// Pending email invitation to join an organization.
 model OrgInvite {
-  id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
-  email     String
-  role      String   @default("member")  // admin | member
-  token     String   @unique @default(uuid())
-  expiresAt DateTime @map("expires_at")
+  id         String    @id @default(uuid())
+  tenantId   String    @map("tenant_id")
+  email      String
+  role       String    @default("member") // "admin" | "member"
+  token      String    @unique @default(uuid())
+  expiresAt  DateTime  @map("expires_at")
   acceptedAt DateTime? @map("accepted_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([email])
+  @@index([token])
   @@map("org_invites")
 }
 
+/// Maps a MEMBER user to a specific ERP connection they are allowed to access.
+/// connectionId is NOT NULL — "access to all" is represented by having N rows (one per connection).
+/// Admins bypass this table entirely (role === "admin" → full access).
+model OrgMembership {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  userId       String   @map("user_id")
+  connectionId String   @map("connection_id") // no longer nullable — explicit grants only
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, connectionId])
+  @@index([tenantId, userId])
+  @@index([connectionId])
+  @@map("org_memberships")
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// INTEGRATIONS
+// DOMAIN 2: ERP INTEGRATION
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// One OAuth connection = one ERP organization (Xero tenant or QB realm).
+/// access_token and refresh_token MUST be encrypted at the application layer (AES-256-GCM).
 model Connection {
-  id                String   @id @default(uuid())
-  tenantId          String   @map("tenant_id")
-  userId            String   @map("user_id")
-  provider          String
-  providerAccountId String   @map("provider_account_id")
-  accessToken       String   @map("access_token")
-  refreshToken      String?  @map("refresh_token")
-  metadata          Json?    @default("{}")
-  isActive          Boolean? @default(true) @map("is_active")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+  id                String    @id @default(uuid())
+  tenantId          String    @map("tenant_id")
+  userId            String    @map("user_id")
+  provider          String    // "xero" | "quickbooks"
+  providerAccountId String    @map("provider_account_id") // Xero tenant UUID | QB realm ID
+  displayName       String    @default("") @map("display_name") // human label: "Acme Corp AU"
+  accessToken       String    @map("access_token")   // ENCRYPTED at rest
+  refreshToken      String?   @map("refresh_token")  // ENCRYPTED at rest
+  tokenExpiresAt    DateTime? @map("token_expires_at")
+  scopes            String?   // space-separated OAuth scopes granted
+  isActive          Boolean   @default(true) @map("is_active")
+  metadata          Json?     @default("{}") // provider-specific extras (currency, country, orgName)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  syncJobs    SyncJob[]
-  memberships OrgMembership[]
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syncJobs      SyncJob[]
+  memberships   OrgMembership[]
+  dashboards    Dashboard[]
+  chatSessions  ChatSession[]
+  syncSchedule  SyncSchedule?
 
   @@unique([tenantId, provider, providerAccountId])
+  @@index([tenantId])
+  @@index([tenantId, isActive])
   @@map("connections")
 }
 
+/// Configurable scheduled sync per ERP connection.
+/// One-to-one with Connection.
+model SyncSchedule {
+  id             String    @id @default(uuid())
+  connectionId   String    @unique @map("connection_id")
+  tenantId       String    @map("tenant_id")
+  cronExpression String    @default("0 2 * * *") @map("cron_expression") // daily 2am UTC
+  timezone       String    @default("UTC")
+  isEnabled      Boolean   @default(false) @map("is_enabled")
+  lastRunAt      DateTime? @map("last_run_at")
+  nextRunAt      DateTime? @map("next_run_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([isEnabled, nextRunAt])
+  @@index([tenantId])
+  @@map("sync_schedules")
+}
+
+/// History of every sync run. Append-only — never deleted.
 model SyncJob {
   id               String    @id @default(uuid())
   connectionId     String    @map("connection_id")
   tenantId         String    @map("tenant_id")
   provider         String
-  status           String
-  recordsProcessed Int?      @default(0) @map("records_processed")
+  type             String    @default("manual") // "manual" | "scheduled"
+  triggeredBy      String?   @map("triggered_by") // user ID if manual, null if scheduler
+  status           String    // "running" | "completed" | "failed" | "partial"
+  recordsProcessed Int       @default(0) @map("records_processed")
   errorDetails     String?   @map("error_details")
-  startedAt        DateTime? @default(now()) @map("started_at")
+  startedAt        DateTime  @default(now()) @map("started_at")
   completedAt      DateTime? @map("completed_at")
   syncWindowStart  DateTime? @map("sync_window_start")
   syncWindowEnd    DateTime? @map("sync_window_end")
@@ -132,117 +199,73 @@ model SyncJob {
 
   @@index([connectionId, status])
   @@index([tenantId, provider])
+  @@index([tenantId, startedAt(sort: Desc)])
   @@map("sync_jobs")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INSIGHTS (saved chart configs)
+// DOMAIN 3: DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 
-model Insight {
-  id          String   @id @default(uuid())
-  tenantId    String   @map("tenant_id")
-  title       String
-  description String?
-  type        String   // 'line', 'bar', 'pie', 'metric', 'table', 'dashboard'
-  config      Json
-  isFavorite  Boolean  @default(false) @map("is_favorite")
-  pinned      Boolean  @default(false)
-  category    String   @default("general")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-
-  @@index([tenantId])
-  @@map("insights")
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CHAT — Agent + RAG sessions
-// ─────────────────────────────────────────────────────────────────────────────
-
-model ChatSession {
-  id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
-  userId    String   @map("user_id")
-  title     String   @default("New Session")
-  mode      String   @default("agent") // 'agent' | 'rag'
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  tenant   Tenant        @relation(fields: [tenantId], references: [id])
-  user     User          @relation(fields: [userId], references: [id])
-  messages ChatMessage[]
-
-  @@index([tenantId, userId])
-  @@index([tenantId, mode])
-  @@map("chat_sessions")
-}
-
-model ChatMessage {
-  id            String   @id @default(uuid())
-  chatSessionId String   @map("chat_session_id")
-  role          String   // 'user' | 'assistant' | 'system'
-  content       String   @db.Text
-  toolCalls     Json?    @map("tool_calls")
-  tokens        Int      @default(0)
-  latencyMs     Int      @default(0) @map("latency_ms")
-  createdAt     DateTime @default(now()) @map("created_at")
-
-  session ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
-
-  @@index([chatSessionId])
-  @@map("chat_messages")
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARDS — admin creates, shares with members
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// A dashboard created by an admin (or a permitted member).
+/// connectionId: null = cross-org admin dashboard (can reference any org).
+/// connectionId: non-null = scoped to one ERP org's data.
 model Dashboard {
-  id          String   @id @default(uuid())
-  tenantId    String   @map("tenant_id")
-  userId      String   @map("user_id")   // creator (must be admin/owner)
-  title       String
-  description String?  @db.Text
-  isPublished Boolean  @default(false) @map("is_published") // visible to members
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id           String    @id @default(uuid())
+  tenantId     String    @map("tenant_id")
+  userId       String    @map("user_id")
+  connectionId String?   @map("connection_id") // which ERP org's data
+  title        String
+  description  String?   @db.Text
+  isPublished  Boolean   @default(false) @map("is_published")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  tenant Tenant           @relation(fields: [tenantId], references: [id])
-  user   User             @relation(fields: [userId], references: [id])
-  charts Chart[]
-  shares DashboardShare[]
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User             @relation(fields: [userId], references: [id])
+  connection Connection?      @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  charts     Chart[]
+  shares     DashboardShare[]
 
   @@index([tenantId])
   @@index([tenantId, isPublished])
+  @@index([tenantId, connectionId])
   @@map("dashboards")
 }
 
-// Explicit share: admin shares a specific dashboard with a specific member
+/// Explicit share: admin grants a member access to a specific dashboard.
 model DashboardShare {
   id          String   @id @default(uuid())
   dashboardId String   @map("dashboard_id")
-  userId      String   @map("user_id")      // the member receiving access
+  userId      String   @map("user_id")   // member receiving access
   canEdit     Boolean  @default(false) @map("can_edit")
+  sharedBy    String?  @map("shared_by") // admin who shared it
   sharedAt    DateTime @default(now()) @map("shared_at")
 
   dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
   user      User      @relation("SharedWithUser", fields: [userId], references: [id], onDelete: Cascade)
+  sharedByUser User?  @relation("SharedByUser", fields: [sharedBy], references: [id], onDelete: SetNull)
 
   @@unique([dashboardId, userId])
+  @@index([userId])
+  @@index([dashboardId])
   @@map("dashboard_shares")
 }
 
+/// Individual chart within a dashboard.
 model Chart {
-  id          String   @id @default(uuid())
-  dashboardId String   @map("dashboard_id")
-  title       String
-  description String?
-  type        String
-  config      Json
-  layoutIndex Int      @default(0) @map("layout_index")
+  id              String   @id @default(uuid())
+  dashboardId     String   @map("dashboard_id")
+  title           String
+  description     String?
+  type            String   // "line" | "bar" | "pie" | "metric" | "table" | "area"
+  queryDefinition Json     @default("{}") @map("query_definition") // { sql, params, metrics }
+  config          Json     @default("{}")  // chart rendering options (colors, axes, labels)
+  position        Json     @default("{}") // { x, y, w, h } for grid layout
+  layoutIndex     Int      @default(0) @map("layout_index") // kept for backward compat
+  refreshInterval Int?     @map("refresh_interval") // seconds, null = no auto-refresh
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
 
   dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
 
@@ -251,17 +274,88 @@ model Chart {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AUTH
+// DOMAIN 4: CHAT (RAG + AGENT — ISOLATED SYSTEMS)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// A conversation with either the RAG advisor or the Agent.
+/// connectionId scoping:
+///   null     = admin querying across all connected orgs
+///   non-null = user scoped to this specific org's data (enforced by service)
+model ChatSession {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  userId       String   @map("user_id")
+  connectionId String?  @map("connection_id") // null = cross-org (admin only)
+  mode         String   @default("rag") // "rag" | "agent"
+  title        String   @default("New Session")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection Connection?   @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  messages   ChatMessage[]
+
+  @@index([tenantId, userId])
+  @@index([tenantId, mode])
+  @@index([connectionId])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id            String   @id @default(uuid())
+  chatSessionId String   @map("chat_session_id")
+  role          String   // "user" | "assistant" | "system" | "tool"
+  content       String   @db.Text
+  toolCalls     Json?    @map("tool_calls")
+  toolCallId    String?  @map("tool_call_id") // references parent tool_call id
+  tokens        Int      @default(0)
+  latencyMs     Int      @default(0) @map("latency_ms")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  session ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+
+  @@index([chatSessionId, createdAt(sort: Asc)])
+  @@map("chat_messages")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOMAIN 5: SECURITY & AUDIT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Short-lived OTP codes for email verification.
+/// code stores SHA-256 hash of the 6-digit code — NEVER plaintext.
 model OtpCode {
   id        String   @id @default(uuid())
   email     String
-  code      String
+  code      String   // SHA-256 hash of the 6-digit code
   expiresAt DateTime @map("expires_at")
   used      Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([email])
   @@map("otp_codes")
+}
+
+/// Immutable security trail. No FK constraints — append-only, never deleted.
+/// tenantId and userId are denormalized (stored as plain strings, no FK).
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  userId     String?  @map("user_id")
+  action     String   // "user.login" | "dashboard.created" | "member.invited" | etc.
+  resource   String?  // "dashboard" | "connection" | "user" | "chat_session"
+  resourceId String?  @map("resource_id")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  metadata   Json     @default("{}") // before/after values, additional context
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
 }

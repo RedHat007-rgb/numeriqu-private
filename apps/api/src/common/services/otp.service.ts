@@ -2,10 +2,19 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { Resend } from 'resend';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { prisma } from '@repo/db';
-import { randomInt } from 'crypto';
+import { randomInt, createHash } from 'crypto';
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+/**
+ * OtpService — Secure email verification via Resend + Supabase Admin API.
+ *
+ * Security model:
+ *   - OTP codes are stored as SHA-256 hashes — plaintext never persists in the DB.
+ *   - Each send() invalidates all prior unused codes for the email address.
+ *   - Codes expire after 10 minutes and are single-use (marked used on verify).
+ *   - Supabase user is created with email_confirm: true — bypasses Supabase email.
+ */
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
@@ -21,6 +30,10 @@ export class OtpService {
     );
   }
 
+  private hashCode(code: string): string {
+    return createHash('sha256').update(code).digest('hex');
+  }
+
   async send(email: string): Promise<void> {
     // Invalidate all prior unused codes for this address
     await prisma.otpCode.updateMany({
@@ -28,12 +41,14 @@ export class OtpService {
       data: { used: true },
     });
 
+    // Generate 6-digit code (100000–999999 inclusive)
     const code = String(randomInt(100000, 999999));
+    const codeHash = this.hashCode(code);
 
     await prisma.otpCode.create({
       data: {
         email,
-        code,
+        code: codeHash, // store hash, never plaintext
         expiresAt: new Date(Date.now() + OTP_TTL_MS),
       },
     });
@@ -41,15 +56,20 @@ export class OtpService {
     const { error } = await this.resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL!,
       to: email,
-      subject: 'Your verification code',
+      subject: 'Your Numeriqu verification code',
       html: `
-        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #0f172a; color: #e2e8f0; border-radius: 12px;">
-          <h2 style="margin: 0 0 8px; font-size: 22px; color: #fff;">Verify your email</h2>
-          <p style="margin: 0 0 24px; color: #94a3b8;">Enter this code to complete your signup. It expires in 10 minutes.</p>
-          <div style="font-size: 40px; font-weight: 700; letter-spacing: 12px; color: #60a5fa; padding: 24px; background: #1e293b; border-radius: 8px; text-align: center;">
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 32px; background: #050508; color: #F8FAFC; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08);">
+          <div style="margin-bottom: 32px;">
+            <div style="width: 36px; height: 36px; background: #2563EB; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+            </div>
+            <h1 style="margin: 0 0 8px; font-size: 20px; font-weight: 700; color: #F8FAFC;">Verify your email</h1>
+            <p style="margin: 0; color: #94A3B8; font-size: 14px; line-height: 1.6;">Enter this code to complete your Numeriqu account setup. It expires in 10 minutes.</p>
+          </div>
+          <div style="font-size: 44px; font-weight: 800; letter-spacing: 16px; color: #3B82F6; padding: 28px 24px; background: #0F0F1A; border: 1px solid rgba(37,99,235,0.3); border-radius: 12px; text-align: center; font-family: 'JetBrains Mono', 'Menlo', monospace;">
             ${code}
           </div>
-          <p style="margin: 24px 0 0; font-size: 12px; color: #475569;">If you didn't request this, ignore this email.</p>
+          <p style="margin: 24px 0 0; font-size: 12px; color: #475569; line-height: 1.6;">If you didn't request this, you can safely ignore this email. This code will expire automatically.</p>
         </div>
       `,
     });
@@ -57,29 +77,34 @@ export class OtpService {
     if (error) {
       this.logger.error(`[OTP] Resend failed for ${email}: ${JSON.stringify(error)}`);
       throw new BadRequestException(
-        'Failed to send verification email. Check RESEND_API_KEY and RESEND_FROM_EMAIL.',
+        'Failed to send verification email. Please check your email address and try again.',
       );
     }
 
-    this.logger.log(`[OTP] Code dispatched to ${email}`);
+    this.logger.log(`[OTP] Verification code dispatched to ${email}`);
   }
 
   async verify(email: string, code: string): Promise<void> {
+    const codeHash = this.hashCode(code);
+
     const record = await prisma.otpCode.findFirst({
-      where: { email, code, used: false },
+      where: { email, code: codeHash, used: false },
       orderBy: { createdAt: 'desc' },
     });
 
     if (!record) {
-      throw new BadRequestException('Invalid verification code.');
+      throw new BadRequestException('Invalid verification code. Please check and try again.');
     }
 
     if (new Date() > record.expiresAt) {
       await prisma.otpCode.update({ where: { id: record.id }, data: { used: true } });
-      throw new BadRequestException('Code has expired. Request a new one.');
+      throw new BadRequestException('This code has expired. Request a new verification code.');
     }
 
+    // Mark as used — single-use enforcement
     await prisma.otpCode.update({ where: { id: record.id }, data: { used: true } });
+
+    this.logger.log(`[OTP] Verified successfully for ${email}`);
   }
 
   async createVerifiedUser(
@@ -90,18 +115,18 @@ export class OtpService {
     const { error } = await this.supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true,
+      email_confirm: true, // bypass Supabase email confirmation
       user_metadata: name ? { full_name: name } : {},
     });
 
     if (error) {
       if (error.message.toLowerCase().includes('already registered')) {
-        throw new BadRequestException('An account with this email already exists.');
+        throw new BadRequestException('An account with this email already exists. Please sign in.');
       }
       this.logger.error(`[OTP] Supabase createUser failed: ${error.message}`);
       throw new BadRequestException('Account creation failed. Please try again.');
     }
 
-    this.logger.log(`[OTP] Supabase user created and verified: ${email}`);
+    this.logger.log(`[OTP] Supabase user created (email confirmed): ${email}`);
   }
 }

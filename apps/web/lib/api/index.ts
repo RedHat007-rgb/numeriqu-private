@@ -28,6 +28,14 @@ export type {
   MetricsResponse,
   StreamQueryParams,
   StreamControlMessage,
+  OrganizationRole,
+  PermissionCode,
+  OrganizationContextResponse,
+  OrganizationMember,
+  OrganizationInvite,
+  MessagingConversation,
+  ConversationMessage,
+  WorkspaceDashboardSummary,
 } from "./types";
 
 export { AuthApi } from "./auth";
@@ -35,3 +43,6 @@ export { AnalyticsApi } from "./analytics";
 export { IntegrationsApi, getInviteDetails } from "./integrations";
 export { RagApi } from "./rag";
 export { AgentApi } from "./agent";
+export { OrganizationApi } from "./organization";
+export { MessagingApi } from "./messaging";
+export { DashboardsApi } from "./dashboards";

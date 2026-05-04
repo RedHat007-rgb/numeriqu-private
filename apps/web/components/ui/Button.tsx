@@ -11,17 +11,17 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const baseClasses =
-  "inline-flex items-center justify-center gap-2 rounded-full font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base";
+  "inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base";
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-gradient-to-r from-accent-blue to-accent-violet text-white shadow-lg shadow-accent-blue/30 hover:shadow-xl hover:shadow-accent-blue/40",
+    "bg-accent-blue text-white border border-accent-blue shadow-sm hover:-translate-y-0.5 hover:bg-accent-blue/90 hover:shadow-md",
   secondary:
-    "border border-default text-text-primary bg-surface-card/80 hover:border-strong",
+    "border border-default text-text-primary bg-bg-surface hover:border-strong hover:bg-bg-elevated",
   ghost:
     "text-text-primary hover:bg-text-primary/5",
   danger:
-    "bg-feedback-danger/15 text-feedback-danger border border-feedback-danger/30 hover:bg-feedback-danger/20",
+    "bg-feedback-danger/12 text-feedback-danger border border-feedback-danger/30 hover:bg-feedback-danger/20",
 };
 
 const sizes: Record<Size, string> = {

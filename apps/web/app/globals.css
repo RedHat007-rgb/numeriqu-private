@@ -12,15 +12,15 @@
  * ============================================================ */
 :root {
   /* Surfaces (dark default) */
-  --color-bg-base: 5 7 20;
-  --color-bg-surface: 9 13 31;
-  --color-bg-card: 13 18 48;
-  --color-bg-elevated: 17 24 64;
+  --color-bg-base: 8 13 26;
+  --color-bg-surface: 13 20 39;
+  --color-bg-card: 17 25 49;
+  --color-bg-elevated: 22 31 58;
 
   /* Foreground */
-  --color-text-primary: 240 244 255;
-  --color-text-secondary: 184 193 224;
-  --color-text-muted: 139 146 184;
+  --color-text-primary: 237 243 255;
+  --color-text-secondary: 182 194 224;
+  --color-text-muted: 133 147 182;
 
   /* Borders */
   --color-border-subtle: 255 255 255;
@@ -28,9 +28,9 @@
   --color-border-glow: 59 130 246;
 
   /* Accents */
-  --color-accent-blue: 59 130 246;
-  --color-accent-violet: 124 58 237;
-  --color-accent-cyan: 6 182 212;
+  --color-accent-blue: 71 138 255;
+  --color-accent-violet: 118 92 246;
+  --color-accent-cyan: 20 184 166;
   --color-accent-teal: 20 184 166;
 
   /* Semantic feedback */
@@ -45,13 +45,13 @@
   --border-strong: rgba(255, 255, 255, 0.2);
 
   /* Brand hex aliases (for non-tailwind consumers) */
-  --bg-base: #050714;
-  --bg-surface: #090d1f;
-  --bg-card: #0d1230;
-  --bg-elevated: #111840;
-  --accent-blue: #3b82f6;
-  --accent-violet: #7c3aed;
-  --accent-cyan: #06b6d4;
+  --bg-base: #080d1a;
+  --bg-surface: #0d1427;
+  --bg-card: #111931;
+  --bg-elevated: #161f3a;
+  --accent-blue: #478aff;
+  --accent-violet: #765cf6;
+  --accent-cyan: #14b8a6;
   --accent-teal: #14b8a6;
   --text-primary: #f0f4ff;
   --text-muted: #8b92b8;
@@ -122,9 +122,9 @@ body {
 body {
   position: relative;
   background-image:
-    radial-gradient(circle at 18% 18%, rgb(var(--color-accent-violet) / 0.16) 0%, transparent 24%),
-    radial-gradient(circle at 82% 0%, rgb(var(--color-accent-blue) / 0.14) 0%, transparent 22%),
-    radial-gradient(circle at 72% 78%, rgb(var(--color-accent-cyan) / 0.08) 0%, transparent 24%),
+    radial-gradient(circle at 18% 18%, rgb(var(--color-accent-violet) / 0.09) 0%, transparent 24%),
+    radial-gradient(circle at 82% 0%, rgb(var(--color-accent-blue) / 0.08) 0%, transparent 22%),
+    radial-gradient(circle at 72% 78%, rgb(var(--color-accent-cyan) / 0.06) 0%, transparent 24%),
     linear-gradient(
       180deg,
       rgb(var(--color-bg-surface)) 0%,
@@ -148,9 +148,9 @@ body::before {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 0%, rgb(var(--color-accent-blue) / 0.05), transparent 40%),
-    linear-gradient(120deg, transparent 0%, rgb(255 255 255 / 0.03) 48%, transparent 60%);
-  opacity: 0.55;
+    radial-gradient(circle at 50% 0%, rgb(var(--color-accent-blue) / 0.04), transparent 40%),
+    linear-gradient(120deg, transparent 0%, rgb(255 255 255 / 0.02) 48%, transparent 60%);
+  opacity: 0.5;
   mix-blend-mode: screen;
 }
 
@@ -163,7 +163,7 @@ body::after {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background-image: radial-gradient(rgb(var(--color-accent-blue) / 0.06) 1px, transparent 1px);
+  background-image: radial-gradient(rgb(var(--color-accent-blue) / 0.05) 1px, transparent 1px);
   background-size: 3px 3px;
   opacity: 0.03;
 }
@@ -207,14 +207,14 @@ h3 {
 
 /* Surface recipes — adapt to theme automatically. */
 .surface-card {
-  background: rgb(var(--color-bg-card) / 0.72);
+  background: rgb(var(--color-bg-card) / 0.78);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  border: 1px solid rgb(var(--color-border-subtle) / 0.1);
+  border: 1px solid rgb(var(--color-border-subtle) / 0.11);
   border-radius: 20px;
   box-shadow:
-    0 4px 24px rgb(0 0 0 / 0.4),
-    inset 0 1px 0 rgb(255 255 255 / 0.06);
+    0 10px 28px rgb(0 0 0 / 0.25),
+    inset 0 1px 0 rgb(255 255 255 / 0.04);
 }
 
 .light .surface-card {
@@ -494,14 +494,14 @@ h3 {
 
 .bg-hero-luxury {
   background:
-    radial-gradient(circle at 80% 8%, rgba(124, 58, 237, 0.24), transparent 30%),
-    radial-gradient(circle at 18% 18%, rgba(59, 130, 246, 0.16), transparent 25%),
-    radial-gradient(circle at 70% 82%, rgba(6, 182, 212, 0.09), transparent 24%),
+    radial-gradient(circle at 80% 8%, rgba(118, 92, 246, 0.18), transparent 34%),
+    radial-gradient(circle at 18% 18%, rgba(71, 138, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 70% 82%, rgba(20, 184, 166, 0.08), transparent 24%),
     linear-gradient(
       180deg,
-      rgba(7, 8, 24, 0.98) 0%,
-      rgba(5, 7, 20, 0.92) 44%,
-      rgba(3, 4, 11, 0.98) 100%
+      rgba(9, 14, 28, 0.98) 0%,
+      rgba(8, 13, 24, 0.92) 44%,
+      rgba(6, 10, 19, 0.98) 100%
     );
 }
 

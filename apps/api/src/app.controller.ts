@@ -1,30 +1,11 @@
-import {
-  Controller,
-  Post,
-  Req,
-  Get,
-  Body,
-  UseGuards,
-  InternalServerErrorException,
-  BadRequestException,
-} from '@nestjs/common';
-import { IntegrationsService } from './integrations/integrations.service';
-import { prisma } from '@repo/db';
-import { v4 as uuidv4 } from 'uuid';
-import { SupabaseAuthGuard } from './common/guards/supabase-auth.guard';
-import { CurrentUser } from './common/decorators/user.decorator';
-import type { AuthUser } from './common/decorators/user.decorator';
-import { UserProvisioningService } from './common/services/user-provisioning.service';
-import { OtpService } from './common/services/otp.service';
+import { Controller, Get } from '@nestjs/common';
+import { AppService } from './app.service';
 
 @Controller()
 export class AppController {
-  constructor(
-    private readonly integrations: IntegrationsService,
-    private readonly provisioning: UserProvisioningService,
-    private readonly otpService: OtpService,
-  ) {}
+  constructor(private readonly appService: AppService) {}
 
+<<<<<<< HEAD
   /**
    * GET /auth/me — Authenticated user profile + tenant
    *
@@ -216,5 +197,10 @@ export class AppController {
       const { connection: _connection, ...rest } = job;
       return { ...rest, orgName: orgName || null };
     });
+=======
+  @Get()
+  getRoot() {
+    return this.appService.getStatus();
+>>>>>>> eaaa37d75d30a98bb3c86fa7be02d7a7e7e7c104
   }
 }

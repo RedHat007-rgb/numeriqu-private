@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ApiError } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
@@ -44,7 +43,7 @@ function DashboardSkeleton() {
 export function DashboardLayoutClient({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { auth, isAuthenticated, signOut, useDevToken, loading } = useNumeriquApi();
+  const { isAuthenticated, signOut, useDevToken, loading, currentUser } = useNumeriquApi();
   const [tenantLabel, setTenantLabel] = useState<string>("Loading workspace...");
   const [toast, setToast] = useState<Toast>(null);
 
@@ -58,28 +57,25 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
   }, [success, error]);
 
   useEffect(() => {
-    if (loading || !isAuthenticated) return;
-    auth
-      .me()
-      .then((payload) => {
-        const tenantName = payload.tenant?.name ?? "Workspace";
-        const userIdent = payload.user?.email ?? payload.user?.id ?? "";
-        setTenantLabel(userIdent ? `${tenantName} · ${userIdent}` : tenantName);
-      })
-      .catch((caught) => {
-        if (caught instanceof ApiError && caught.status === 401) {
-          router.push("/login");
-        } else {
-          setTenantLabel("Workspace context unavailable");
-        }
-      });
-  }, [auth, isAuthenticated, loading, router]);
+    if (loading) return;
+    if (!isAuthenticated) {
+      router.push("/login");
+      return;
+    }
+    const tenantName = currentUser?.tenant?.name ?? "Workspace";
+    const userIdent = currentUser?.user?.email ?? currentUser?.user?.id ?? "";
+    setTenantLabel(userIdent ? `${tenantName} · ${userIdent}` : tenantName);
+  }, [currentUser, isAuthenticated, loading, router]);
 
   if (loading) return <DashboardSkeleton />;
   if (!isAuthenticated) return <AuthPanel onDevToken={useDevToken} />;
 
   return (
-    <DashboardShell tenantLabel={tenantLabel} onSignOut={signOut}>
+    <DashboardShell
+      tenantLabel={tenantLabel}
+      onSignOut={signOut}
+      accountType={currentUser?.tenant?.accountType ?? "ORGANIZATION"}
+    >
       {toast ? (
         <ErrorBanner
           tone={toast.kind === "error" ? "danger" : toast.kind === "success" ? "info" : "info"}

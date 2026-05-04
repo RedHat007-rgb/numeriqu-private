@@ -1,4 +1,16 @@
 {
   "extends": "./tsconfig.json",
+  "include": [
+    "src/main.ts",
+    "src/app.module.ts",
+    "src/app.controller.ts",
+    "src/app.service.ts",
+    "src/common/decorators/**/*.ts",
+    "src/common/filters/**/*.ts",
+    "src/common/guards/**/*.ts",
+    "src/database/**/*.ts",
+    "src/health/**/*.ts",
+    "src/modules/**/*.ts"
+  ],
   "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
 }

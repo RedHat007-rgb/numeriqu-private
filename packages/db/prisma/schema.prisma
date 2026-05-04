@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/prisma"
@@ -12,36 +7,90 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// USERS & TENANTS
+// accountType: "solo" | "organization"
+// role:        "owner" | "admin" | "member"
+// ─────────────────────────────────────────────────────────────────────────────
 
 model User {
-  id        String   @id 
-  email     String   @unique
-  name      String?
-  tenantId  String?  @map("tenant_id")
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String   @id
+  email       String   @unique
+  name        String?
+  tenantId    String?  @map("tenant_id")
+  role        String   @default("owner")   // owner | admin | member
+  avatarUrl   String?  @map("avatar_url")
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  tenant      Tenant?      @relation(fields: [tenantId], references: [id])
-  connections Connection[]
-  chatSessions ChatSession[]
-  dashboards  Dashboard[]
+  tenant        Tenant?          @relation(fields: [tenantId], references: [id])
+  connections   Connection[]
+  chatSessions  ChatSession[]
+  dashboards    Dashboard[]
+  sharedWith    DashboardShare[] @relation("SharedWithUser")
+  memberships   OrgMembership[]
 
   @@map("users")
 }
 
 model Tenant {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String   @id @default(uuid())
+  name        String
+  accountType String   @default("solo") @map("account_type") // solo | organization
+  slug        String?  @unique                               // org short-name for URLs
+  logoUrl     String?  @map("logo_url")
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  users       User[]
-  connections Connection[]
-  syncJobs    SyncJob[]
-  insights    Insight[]
-  chatSessions ChatSession[]
-  dashboards  Dashboard[]
+  users         User[]
+  connections   Connection[]
+  syncJobs      SyncJob[]
+  insights      Insight[]
+  chatSessions  ChatSession[]
+  dashboards    Dashboard[]
+  invites       OrgInvite[]
+  memberships   OrgMembership[]
 
   @@map("tenants")
 }
+
+// Maps users to specific Connections (orgs) — admin assigns members per integration
+model OrgMembership {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  userId       String   @map("user_id")
+  connectionId String?  @map("connection_id") // null = access to all connections
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection Connection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, connectionId])
+  @@index([tenantId])
+  @@index([userId])
+  @@map("org_memberships")
+}
+
+// Pending email invitations for organization members
+model OrgInvite {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  email     String
+  role      String   @default("member")  // admin | member
+  token     String   @unique @default(uuid())
+  expiresAt DateTime @map("expires_at")
+  acceptedAt DateTime? @map("accepted_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([email])
+  @@map("org_invites")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTEGRATIONS
+// ─────────────────────────────────────────────────────────────────────────────
 
 model Connection {
   id                String   @id @default(uuid())
@@ -56,26 +105,27 @@ model Connection {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  syncJobs SyncJob[]
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syncJobs    SyncJob[]
+  memberships OrgMembership[]
 
   @@unique([tenantId, provider, providerAccountId])
   @@map("connections")
 }
 
 model SyncJob {
-  id              String    @id @default(uuid())
-  connectionId    String    @map("connection_id")
-  tenantId        String    @map("tenant_id")
-  provider        String
-  status          String
-  recordsProcessed Int?     @default(0) @map("records_processed")
-  errorDetails    String?   @map("error_details")
-  startedAt       DateTime? @default(now()) @map("started_at")
-  completedAt     DateTime? @map("completed_at")
-  syncWindowStart DateTime? @map("sync_window_start")
-  syncWindowEnd   DateTime? @map("sync_window_end")
+  id               String    @id @default(uuid())
+  connectionId     String    @map("connection_id")
+  tenantId         String    @map("tenant_id")
+  provider         String
+  status           String
+  recordsProcessed Int?      @default(0) @map("records_processed")
+  errorDetails     String?   @map("error_details")
+  startedAt        DateTime? @default(now()) @map("started_at")
+  completedAt      DateTime? @map("completed_at")
+  syncWindowStart  DateTime? @map("sync_window_start")
+  syncWindowEnd    DateTime? @map("sync_window_end")
 
   connection Connection @relation(fields: [connectionId], references: [id])
   tenant     Tenant     @relation(fields: [tenantId], references: [id])
@@ -85,36 +135,39 @@ model SyncJob {
   @@map("sync_jobs")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// INSIGHTS (saved chart configs)
+// ─────────────────────────────────────────────────────────────────────────────
+
 model Insight {
   id          String   @id @default(uuid())
   tenantId    String   @map("tenant_id")
   title       String
   description String?
   type        String   // 'line', 'bar', 'pie', 'metric', 'table', 'dashboard'
-  config      Json     // The logic/parameters for the chart
+  config      Json
   isFavorite  Boolean  @default(false) @map("is_favorite")
   pinned      Boolean  @default(false)
   category    String   @default("general")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@map("insights")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PLATFORM PERSISTENCE LAYER: CHATS, DASHBOARDS & CHARTS
-// durable history, enabling long-lived analytical sessions.
+// CHAT — Agent + RAG sessions
 // ─────────────────────────────────────────────────────────────────────────────
 
 model ChatSession {
   id        String   @id @default(uuid())
   tenantId  String   @map("tenant_id")
   userId    String   @map("user_id")
-  title     String   @default("Strategic Orchestration Mission")
-  mode      String   @default("agent") // 'agent' vs 'advisor'
+  title     String   @default("New Session")
+  mode      String   @default("agent") // 'agent' | 'rag'
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -123,15 +176,16 @@ model ChatSession {
   messages ChatMessage[]
 
   @@index([tenantId, userId])
+  @@index([tenantId, mode])
   @@map("chat_sessions")
 }
 
 model ChatMessage {
   id            String   @id @default(uuid())
   chatSessionId String   @map("chat_session_id")
-  role          String   // 'user', 'assistant', 'system'
+  role          String   // 'user' | 'assistant' | 'system'
   content       String   @db.Text
-  toolCalls     Json?    @map("tool_calls") // Records emitted JSON dashboard payloads
+  toolCalls     Json?    @map("tool_calls")
   tokens        Int      @default(0)
   latencyMs     Int      @default(0) @map("latency_ms")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -142,21 +196,43 @@ model ChatMessage {
   @@map("chat_messages")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DASHBOARDS — admin creates, shares with members
+// ─────────────────────────────────────────────────────────────────────────────
+
 model Dashboard {
   id          String   @id @default(uuid())
   tenantId    String   @map("tenant_id")
-  userId      String   @map("user_id")
+  userId      String   @map("user_id")   // creator (must be admin/owner)
   title       String
   description String?  @db.Text
+  isPublished Boolean  @default(false) @map("is_published") // visible to members
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  tenant Tenant  @relation(fields: [tenantId], references: [id])
-  user   User    @relation(fields: [userId], references: [id])
+  tenant Tenant           @relation(fields: [tenantId], references: [id])
+  user   User             @relation(fields: [userId], references: [id])
   charts Chart[]
+  shares DashboardShare[]
 
   @@index([tenantId])
+  @@index([tenantId, isPublished])
   @@map("dashboards")
+}
+
+// Explicit share: admin shares a specific dashboard with a specific member
+model DashboardShare {
+  id          String   @id @default(uuid())
+  dashboardId String   @map("dashboard_id")
+  userId      String   @map("user_id")      // the member receiving access
+  canEdit     Boolean  @default(false) @map("can_edit")
+  sharedAt    DateTime @default(now()) @map("shared_at")
+
+  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  user      User      @relation("SharedWithUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([dashboardId, userId])
+  @@map("dashboard_shares")
 }
 
 model Chart {
@@ -173,6 +249,10 @@ model Chart {
   @@index([dashboardId])
   @@map("charts")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────────────────────────────────────
 
 model OtpCode {
   id        String   @id @default(uuid())

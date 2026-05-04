@@ -3,8 +3,10 @@ import {
   Post,
   Req,
   Get,
+  Body,
   UseGuards,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { IntegrationsService } from './integrations/integrations.service';
 import { prisma } from '@repo/db';
@@ -13,12 +15,14 @@ import { SupabaseAuthGuard } from './common/guards/supabase-auth.guard';
 import { CurrentUser } from './common/decorators/user.decorator';
 import type { AuthUser } from './common/decorators/user.decorator';
 import { UserProvisioningService } from './common/services/user-provisioning.service';
+import { OtpService } from './common/services/otp.service';
 
 @Controller()
 export class AppController {
   constructor(
     private readonly integrations: IntegrationsService,
     private readonly provisioning: UserProvisioningService,
+    private readonly otpService: OtpService,
   ) {}
 
   /**
@@ -35,6 +39,37 @@ export class AppController {
       user.email,
     );
     return result;
+  }
+
+  // --- OTP ENDPOINTS (public — no auth guard) ---
+
+  /**
+   * POST /auth/send-otp
+   * Generates a 6-digit code, stores it in otp_codes, and sends it via Resend.
+   * Called before signup — user does not exist in Supabase yet.
+   */
+  @Post('auth/send-otp')
+  async sendOtp(@Body() body: { email: string }) {
+    if (!body?.email) throw new BadRequestException('Email is required.');
+    await this.otpService.send(body.email);
+    return { message: 'Verification code sent to your email.' };
+  }
+
+  /**
+   * POST /auth/verify-otp
+   * Verifies the OTP then creates the Supabase user with email_confirm: true.
+   * After this returns 200, the frontend calls supabase.auth.signInWithPassword().
+   */
+  @Post('auth/verify-otp')
+  async verifyOtp(
+    @Body() body: { email: string; code: string; password: string; name?: string },
+  ) {
+    if (!body?.email || !body?.code || !body?.password) {
+      throw new BadRequestException('email, code, and password are required.');
+    }
+    await this.otpService.verify(body.email, body.code);
+    await this.otpService.createVerifiedUser(body.email, body.password, body.name);
+    return { message: 'Email verified. You can now sign in.' };
   }
 
   // --- TEST ENDPOINTS (backward compat) ---

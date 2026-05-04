@@ -37,6 +37,7 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
     return "border-white/10 bg-white/5 text-slate-100";
   }, [toast]);
 
+  if (loading) return null;
   if (!isAuthenticated) return <AuthPanel onDevToken={useDevToken} />;
 
   return (

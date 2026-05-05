@@ -9,6 +9,9 @@
 -- DropForeignKey
 ALTER TABLE "connections" DROP CONSTRAINT "connections_tenant_id_fkey";
 
+-- DropForeignKey (sync_jobs → connections must be removed before connections is dropped)
+ALTER TABLE "sync_jobs" DROP CONSTRAINT IF EXISTS "sync_jobs_connection_id_fkey";
+
 -- DropForeignKey
 ALTER TABLE "insights" DROP CONSTRAINT "insights_tenant_id_fkey";
 

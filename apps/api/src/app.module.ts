@@ -14,46 +14,14 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { HealthModule } from './health/health.module';
-<<<<<<< HEAD
-import { CommonModule } from './common/common.module';
-
-// ── NEW ARCHITECTURE: Separated Layers ──────────────────────────────────────
-import { FinancialDataModule } from './financial-data/financial-data.module';
-import { RagModule } from './rag/rag.module';
-import { AgentModule } from './agent/agent.module';
-import { AnalyticsModule } from './analytics/analytics.module';
-
-// ── LEGACY: Kept for backward compat — will be removed after frontend migration
-import { IntelligenceModule } from './intelligence/intelligence.module';
 import { OrgModule } from './org/org.module';
-=======
->>>>>>> eaaa37d75d30a98bb3c86fa7be02d7a7e7e7c104
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-<<<<<<< HEAD
-    CommonModule, // Auth, provisioning (global)
-    DatabaseModule, // Prisma, ClickHouse (global)
-
-    // ── Shared Data Layer ──
-    FinancialDataModule,
-
-    // ── Independent Intelligence Layers ──
-    RagModule, // POST /rag/query — RAG advisor (INDEPENDENT)
-    AgentModule, // POST /agent/query — Strategic agent (INDEPENDENT)
-    AnalyticsModule, // GET /analytics/insights — Chart gallery
-
-    // ── Organization & Membership ──
-    OrgModule,
-
-    // ── Data Pipeline ──
-    SyncModule,
-=======
     DatabaseModule,
     OrganizationContextModule,
     AuthModule,
->>>>>>> eaaa37d75d30a98bb3c86fa7be02d7a7e7e7c104
     IntegrationsModule,
     AnalyticsModule,
     OrganizationModule,
@@ -63,6 +31,7 @@ import { OrgModule } from './org/org.module';
     RagModule,
     AgentModule,
     HealthModule,
+    OrgModule,
   ],
   controllers: [AppController],
   providers: [AppService],

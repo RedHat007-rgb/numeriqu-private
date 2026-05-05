@@ -81,15 +81,9 @@ export class RagService {
           ) AS open_amount
         FROM ${this.analyticsDb}.fact_accounting_invoices
         WHERE connection_id IN ({connectionIds:Array(String)})
-          AND (
-            tenant_id = {organizationId:String}
-            OR org_id IN ({externalOrgIds:Array(String)})
-          )
       `,
       query_params: {
         connectionIds: scope.connectionIds,
-        organizationId,
-        externalOrgIds: scope.externalOrgIds,
       },
       format: 'JSONEachRow',
       clickhouse_settings: SAFE_QUERY_SETTINGS,
@@ -112,14 +106,11 @@ export class RagService {
       query: `
         SELECT text_content
         FROM ${this.analyticsDb}.rag_context_invoices
-        WHERE
-          tenant_id = {organizationId:String}
-          OR org_id IN ({externalOrgIds:Array(String)})
+        WHERE org_id IN ({externalOrgIds:Array(String)})
         ORDER BY issued_at DESC
         LIMIT 3
       `,
       query_params: {
-        organizationId,
         externalOrgIds: scope.externalOrgIds,
       },
       format: 'JSONEachRow',

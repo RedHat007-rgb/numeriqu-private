@@ -184,15 +184,9 @@ export class AgentService {
             ) AS open_amount
           FROM ${this.analyticsDb}.fact_accounting_invoices
           WHERE connection_id IN ({connectionIds:Array(String)})
-            AND (
-              tenant_id = {organizationId:String}
-              OR org_id IN ({externalOrgIds:Array(String)})
-            )
         `,
         {
           connectionIds: scope.connectionIds,
-          organizationId,
-          externalOrgIds: scope.externalOrgIds,
         },
       );
 
@@ -221,16 +215,10 @@ export class AgentService {
             count() AS total_count
           FROM ${this.analyticsDb}.fact_accounting_invoices
           WHERE connection_id IN ({connectionIds:Array(String)})
-            AND (
-              tenant_id = {organizationId:String}
-              OR org_id IN ({externalOrgIds:Array(String)})
-            )
           GROUP BY status
         `,
         {
           connectionIds: scope.connectionIds,
-          organizationId,
-          externalOrgIds: scope.externalOrgIds,
         },
       );
       return {
@@ -249,14 +237,11 @@ export class AgentService {
             org_name,
             coalesce(sum(total_revenue), 0) AS total_revenue
           FROM ${this.analyticsDb}.revenue_by_month
-          WHERE
-            tenant_id = {organizationId:String}
-            OR org_id IN ({externalOrgIds:Array(String)})
+          WHERE org_id IN ({externalOrgIds:Array(String)})
           GROUP BY org_name
           ORDER BY total_revenue DESC
         `,
         {
-          organizationId,
           externalOrgIds: scope.externalOrgIds,
         },
       );
@@ -275,15 +260,12 @@ export class AgentService {
           month,
           coalesce(sum(total_revenue), 0) AS total_revenue
         FROM ${this.analyticsDb}.revenue_by_month
-        WHERE
-          tenant_id = {organizationId:String}
-          OR org_id IN ({externalOrgIds:Array(String)})
+        WHERE org_id IN ({externalOrgIds:Array(String)})
         GROUP BY month
         ORDER BY month ASC
         LIMIT 24
       `,
       {
-        organizationId,
         externalOrgIds: scope.externalOrgIds,
       },
     );

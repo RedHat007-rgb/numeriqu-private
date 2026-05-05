@@ -21,5 +21,20 @@
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/analytics",
+    "src/intelligence",
+    "src/agent",
+    "src/integrations",
+    "src/financial-data",
+    "src/sync",
+    "src/quickbooks",
+    "src/rag",
+    "src/metrics",
+    "src/common/common.module.ts",
+    "src/common/services"
+  ]
 }

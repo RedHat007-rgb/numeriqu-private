@@ -11,7 +11,7 @@ import {
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
-import { UserProvisioningService } from '../common/services/user-provisioning.service';
+import { OrganizationContextService } from '../modules/org-context/org-context.service';
 import { IntegrationsService } from './integrations.service';
 import { prisma } from '@repo/db';
 
@@ -19,20 +19,19 @@ import { prisma } from '@repo/db';
 @UseGuards(SupabaseAuthGuard)
 export class ConnectionsController {
   constructor(
-    private readonly provisioning: UserProvisioningService,
+    private readonly orgContext: OrganizationContextService,
     private readonly integrations: IntegrationsService,
   ) {}
 
   @Get()
   async getConnections(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
     );
 
     const connections = await prisma.erpConnection.findMany({
       where: {
-        organizationId: tenant.id,
+        organizationId: organization.id,
       },
       select: {
         id: true,
@@ -65,14 +64,13 @@ export class ConnectionsController {
 
   @Get('jobs')
   async getSyncJobs(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
     );
 
     const jobs = await prisma.syncJob.findMany({
       where: {
-        organizationId: tenant.id,
+        organizationId: organization.id,
       },
       orderBy: { startedAt: 'desc' },
       take: 20,
@@ -101,9 +99,8 @@ export class ConnectionsController {
     @CurrentUser() user: AuthUser,
     @Param('id') connectionId: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
     );
 
     const connection = await prisma.erpConnection.findUnique({
@@ -114,7 +111,7 @@ export class ConnectionsController {
       throw new HttpException('Connection not found', HttpStatus.NOT_FOUND);
     }
 
-    if (connection.organizationId !== tenant.id) {
+    if (connection.organizationId !== organization.id) {
       throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
     }
 
@@ -139,14 +136,13 @@ export class ConnectionsController {
 
   @Post('sync-all')
   async syncAllConnections(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
     );
 
     const connections = await prisma.erpConnection.findMany({
       where: {
-        organizationId: tenant.id,
+        organizationId: organization.id,
         status: 'ACTIVE',
       },
     });
@@ -177,9 +173,8 @@ export class ConnectionsController {
     @CurrentUser() user: AuthUser,
     @Param('id') connectionId: string,
   ) {
-    const { tenant, user: dbUser } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
+    const { organization, membership } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
     );
 
     const connection = await prisma.erpConnection.findUnique({
@@ -190,12 +185,12 @@ export class ConnectionsController {
       throw new HttpException('Connection not found', HttpStatus.NOT_FOUND);
     }
 
-    if (connection.organizationId !== tenant.id) {
+    if (connection.organizationId !== organization.id) {
       throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
     }
 
     // Only owner/admin can delete connections
-    if (dbUser.role === 'member') {
+    if (membership.role !== 'ADMIN') {
       throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
     }
 

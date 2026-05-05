@@ -21,7 +21,7 @@ import { CryptoService } from '../common/crypto.service';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
-import { UserProvisioningService } from '../common/services/user-provisioning.service';
+import { OrganizationContextService } from '../modules/org-context/org-context.service';
 
 const DEFAULT_XERO_START_DATE =
   process.env.DEFAULT_XERO_START_DATE || '2020-01-01T00:00:00Z';
@@ -35,7 +35,7 @@ export class AuthController {
   constructor(
     private readonly integrationsService: IntegrationsService,
     private readonly crypto: CryptoService,
-    private readonly provisioning: UserProvisioningService,
+    private readonly orgContext: OrganizationContextService,
   ) {}
 
   private normalizeStartDateInput(value?: string | string[]): string {
@@ -167,10 +167,7 @@ export class AuthController {
   @Post('xero/connect')
   @UseGuards(SupabaseAuthGuard)
   async connectXero(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
+    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
     const requestedStartDate = this.normalizeStartDateInput(body.startDate);
 
     try {
@@ -184,7 +181,7 @@ export class AuthController {
       // Store our context keyed by the same state token
       this.persistOAuthState(
         {
-          tenantId: tenant.id,
+          tenantId: organization.id,
           userId: user.id,
           startDate: requestedStartDate,
         },
@@ -201,14 +198,11 @@ export class AuthController {
   @Post('quickbooks/connect')
   @UseGuards(SupabaseAuthGuard)
   async connectQuickBooks(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
+    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
 
     // Persist state server-side
     const stateToken = this.persistOAuthState({
-      tenantId: tenant.id,
+      tenantId: organization.id,
       userId: user.id,
     });
 
@@ -420,15 +414,12 @@ export class AuthController {
   @Post('workday/setup')
   @UseGuards(SupabaseAuthGuard)
   async setupWorkday(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
+    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
 
     const connection = await prisma.erpConnection.upsert({
       where: {
         organizationId_provider_externalOrganizationId: {
-          organizationId: tenant.id,
+          organizationId: organization.id,
           provider: 'WORKDAY',
           externalOrganizationId: body.workdayTenantId,
         },
@@ -440,7 +431,7 @@ export class AuthController {
         metadata: this.crypto.encryptJson({ host: body.workdayHost }),
       },
       create: {
-        organizationId: tenant.id,
+        organizationId: organization.id,
         createdById: user.id,
         provider: 'WORKDAY',
         externalOrganizationId: body.workdayTenantId,
@@ -454,7 +445,7 @@ export class AuthController {
     // Background sync
     this.integrationsService
       .startIntegrationSync(
-        tenant.id,
+        organization.id,
         user.id,
         connection.id,
         'workday',
@@ -478,17 +469,14 @@ export class AuthController {
       companyId: string;
     },
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    this.logger.log(`Setting up Dynamics 365 for internal tenant ${tenant.id}`);
+    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    this.logger.log(`Setting up Dynamics 365 for organization ${organization.id}`);
 
     // 1. Persist the connection with encrypted Client Secret
     const connection = await prisma.erpConnection.upsert({
       where: {
         organizationId_provider_externalOrganizationId: {
-          organizationId: tenant.id,
+          organizationId: organization.id,
           provider: 'DYNAMICS365',
           externalOrganizationId: body.companyId,
         },
@@ -505,7 +493,7 @@ export class AuthController {
         }),
       },
       create: {
-        organizationId: tenant.id,
+        organizationId: organization.id,
         createdById: user.id,
         provider: 'DYNAMICS365',
         externalOrganizationId: body.companyId,
@@ -524,7 +512,7 @@ export class AuthController {
     // 2. Trigger sync in background
     this.integrationsService
       .startIntegrationSync(
-        tenant.id,
+        organization.id,
         user.id,
         connection.id,
         'dynamics365',

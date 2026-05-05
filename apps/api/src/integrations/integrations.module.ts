@@ -10,9 +10,10 @@ import { SyncModule } from '../sync/sync.module';
 import { AuthController } from './auth.controller';
 import { ConnectionsController } from './connections.controller';
 import { CryptoService } from '../common/crypto.service';
+import { OrganizationContextModule } from '../modules/org-context/org-context.module';
 
 @Module({
-  imports: [QuickbooksModule, SyncModule],
+  imports: [QuickbooksModule, SyncModule, OrganizationContextModule],
   controllers: [AuthController, ConnectionsController],
   providers: [
     IntegrationsService,

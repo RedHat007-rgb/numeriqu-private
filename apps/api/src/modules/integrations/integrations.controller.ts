@@ -15,6 +15,7 @@ import { SupabaseAuthGuard } from '../../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../../common/decorators/user.decorator';
 import type { AuthUser } from '../../common/decorators/user.decorator';
 import { OrganizationContextService } from '../org-context/org-context.service';
+import { IntegrationsService } from '../../integrations/integrations.service';
 
 @Controller('integrations/connections')
 @UseGuards(SupabaseAuthGuard)
@@ -22,6 +23,7 @@ export class IntegrationsController {
   constructor(
     @Inject(PRISMA_TOKEN) private readonly prisma: PrismaClient,
     private readonly organizationContext: OrganizationContextService,
+    private readonly integrationsService: IntegrationsService,
   ) {}
 
   @Get()
@@ -85,24 +87,23 @@ export class IntegrationsController {
 
     const connection = await this.prisma.erpConnection.findFirst({
       where: { id, organizationId: context.organization.id },
-      select: { id: true },
     });
 
     if (!connection) {
       throw new HttpException('Connection not found.', HttpStatus.NOT_FOUND);
     }
 
-    await this.prisma.syncJob.create({
-      data: {
-        organizationId: context.organization.id,
-        connectionId: id,
-        triggerType: 'MANUAL',
-        status: 'QUEUED',
-        requestedById: context.user.id,
-      },
-    });
+    this.integrationsService
+      .startIntegrationSync(
+        connection.organizationId,
+        connection.createdById,
+        connection.id,
+        connection.provider,
+        connection.externalOrganizationId,
+      )
+      .catch(() => {});
 
-    return { status: 'accepted', message: 'Sync queued.' };
+    return { status: 'accepted', message: 'Sync started.' };
   }
 
   @Post('sync-all')
@@ -114,24 +115,25 @@ export class IntegrationsController {
 
     const connections = await this.prisma.erpConnection.findMany({
       where: { organizationId: context.organization.id, status: 'ACTIVE' },
-      select: { id: true },
     });
 
     if (connections.length === 0) {
       return { status: 'accepted', message: 'No active connections found.' };
     }
 
-    await this.prisma.syncJob.createMany({
-      data: connections.map((conn) => ({
-        organizationId: context.organization.id,
-        connectionId: conn.id,
-        triggerType: 'MANUAL',
-        status: 'QUEUED',
-        requestedById: context.user.id,
-      })),
-    });
+    for (const connection of connections) {
+      this.integrationsService
+        .startIntegrationSync(
+          connection.organizationId,
+          connection.createdById,
+          connection.id,
+          connection.provider,
+          connection.externalOrganizationId,
+        )
+        .catch(() => {});
+    }
 
-    return { status: 'accepted', message: `Queued ${connections.length} sync jobs.` };
+    return { status: 'accepted', message: `Started ${connections.length} syncs.` };
   }
 
   @Delete(':id')

@@ -10,6 +10,8 @@ const NAV_ITEMS: Array<{ href: string; label: string; description: string }> = [
   { href: "/dashboard", label: "Overview", description: "What changed, at a glance" },
   { href: "/dashboard/intelligence", label: "Ask NumeriQ", description: "Advisor + agent, side-by-side" },
   { href: "/dashboard#dashboards", label: "Dashboards", description: "Saved decision surfaces" },
+  { href: "/dashboard/rag", label: "RAG Advisor", description: "Ask questions, get cited answers" },
+  { href: "/dashboard/agent", label: "Agent", description: "Autonomous finance tasks" },
   { href: "/dashboard/integrations", label: "Integrations", description: "Connect systems and sync" },
   { href: "/dashboard/messages", label: "Messages", description: "Decisions, captured in context" },
   { href: "/dashboard/team", label: "Team", description: "Members, roles, access" },

@@ -26,6 +26,8 @@ enum PermissionCode {
 enum ErpProvider {
   QUICKBOOKS
   XERO
+  WORKDAY
+  DYNAMICS365
 }
 
 enum ConnectionStatus {

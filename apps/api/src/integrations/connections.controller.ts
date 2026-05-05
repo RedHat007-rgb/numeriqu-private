@@ -75,21 +75,21 @@ export class ConnectionsController {
       orderBy: { startedAt: 'desc' },
       take: 20,
       include: {
-        erpConnection: {
+        connection: {
           select: { metadata: true, externalOrganizationId: true },
         },
       },
     });
 
     return jobs.map((job) => {
-      const meta = job.erpConnection?.metadata as Record<string, unknown> | null;
-      const { erpConnection, ...rest } = job;
+      const meta = job.connection?.metadata as Record<string, unknown> | null;
+      const { connection, ...rest } = job;
       return {
         ...rest,
         orgName:
           typeof meta?.orgName === 'string'
             ? meta.orgName
-            : (erpConnection?.externalOrganizationId ?? null),
+            : (connection?.externalOrganizationId ?? null),
       };
     });
   }

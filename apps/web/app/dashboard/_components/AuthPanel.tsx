@@ -7,7 +7,6 @@ import { Button } from "../../../components/ui/Button";
 import { Surface } from "../../../components/ui/Surface";
 import { Field } from "../../../components/ui/Field";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
-import { ThemeToggle } from "../../../components/ui/ThemeToggle";
 
 export function AuthPanel({ onDevToken }: { onDevToken: (token: string) => void }) {
   const router = useRouter();
@@ -15,11 +14,11 @@ export function AuthPanel({ onDevToken }: { onDevToken: (token: string) => void 
   const [status, setStatus] = useState<{ tone: "info" | "danger"; text: string } | null>(null);
 
   return (
-    <main className="relative min-h-screen bg-hero-luxury px-6 py-16 text-text-primary">
-      <div className="absolute right-6 top-6">
-        <ThemeToggle />
-      </div>
-      <div className="mx-auto max-w-2xl">
+    <main className="relative min-h-screen bg-bg-base px-6 py-16 text-text-primary">
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grid opacity-25" />
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
+
+      <div className="relative mx-auto max-w-2xl">
         <Link href="/" className="text-xs text-text-muted hover:text-text-primary">
           ← Back to landing
         </Link>
@@ -31,7 +30,7 @@ export function AuthPanel({ onDevToken }: { onDevToken: (token: string) => void 
             </p>
             <h1 className="text-3xl font-bold text-text-primary">Sign in to your workspace</h1>
             <p className="text-sm text-text-muted">
-              Numeriqu uses backend-managed session tokens with OTP verification.
+              NumeriQ uses backend-managed session tokens with OTP verification.
             </p>
           </header>
 

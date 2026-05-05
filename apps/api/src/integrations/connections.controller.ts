@@ -23,56 +23,23 @@ export class ConnectionsController {
     private readonly integrations: IntegrationsService,
   ) {}
 
-  /**
-   * Resolve which connectionIds a user is allowed to see.
-   * - owner / admin → all connections for the tenant
-   * - member with no OrgMembership rows → all (backward compat for existing members)
-   * - member with OrgMembership rows → only the scoped connection ids
-   */
-  private async getAllowedConnectionIds(
-    tenantId: string,
-    userId: string,
-    role: string,
-  ): Promise<string[] | null> {
-    if (role === 'owner' || role === 'admin') return null; // null = unrestricted
-
-    const memberships = await prisma.orgMembership.findMany({
-      where: { tenantId, userId },
-      select: { connectionId: true },
-    });
-
-    if (memberships.length === 0) return null; // no explicit scoping → all
-
-    // null connectionId on a membership row = access to all
-    if (memberships.some((m) => m.connectionId === null)) return null;
-
-    return memberships.map((m) => m.connectionId as string);
-  }
-
   @Get()
   async getConnections(@CurrentUser() user: AuthUser) {
-    const { tenant, user: dbUser } = await this.provisioning.ensureProvisioned(
+    const { tenant } = await this.provisioning.ensureProvisioned(
       user.id,
       user.email,
     );
 
-    const allowedIds = await this.getAllowedConnectionIds(
-      tenant.id,
-      user.id,
-      dbUser.role,
-    );
-
-    const connections = await prisma.connection.findMany({
+    const connections = await prisma.erpConnection.findMany({
       where: {
-        tenantId: tenant.id,
-        ...(allowedIds ? { id: { in: allowedIds } } : {}),
+        organizationId: tenant.id,
       },
       select: {
         id: true,
         provider: true,
-        providerAccountId: true,
+        externalOrganizationId: true,
         metadata: true,
-        isActive: true,
+        status: true,
         updatedAt: true,
       },
       orderBy: { updatedAt: 'desc' },
@@ -83,14 +50,14 @@ export class ConnectionsController {
       return {
         id: conn.id,
         provider: conn.provider,
-        providerAccountId: conn.providerAccountId,
+        providerAccountId: conn.externalOrganizationId,
         orgName:
           typeof meta?.orgName === 'string'
             ? meta.orgName
             : typeof meta?.companyId === 'string'
               ? meta.companyId
-              : conn.providerAccountId,
-        isActive: conn.isActive,
+              : conn.externalOrganizationId,
+        isActive: conn.status === 'ACTIVE',
         updatedAt: conn.updatedAt,
       };
     });
@@ -98,40 +65,33 @@ export class ConnectionsController {
 
   @Get('jobs')
   async getSyncJobs(@CurrentUser() user: AuthUser) {
-    const { tenant, user: dbUser } = await this.provisioning.ensureProvisioned(
+    const { tenant } = await this.provisioning.ensureProvisioned(
       user.id,
       user.email,
     );
 
-    const allowedIds = await this.getAllowedConnectionIds(
-      tenant.id,
-      user.id,
-      dbUser.role,
-    );
-
     const jobs = await prisma.syncJob.findMany({
       where: {
-        tenantId: tenant.id,
-        ...(allowedIds ? { connectionId: { in: allowedIds } } : {}),
+        organizationId: tenant.id,
       },
       orderBy: { startedAt: 'desc' },
       take: 20,
       include: {
-        connection: {
-          select: { metadata: true, providerAccountId: true },
+        erpConnection: {
+          select: { metadata: true, externalOrganizationId: true },
         },
       },
     });
 
     return jobs.map((job) => {
-      const meta = job.connection?.metadata as Record<string, unknown> | null;
-      const { connection, ...rest } = job;
+      const meta = job.erpConnection?.metadata as Record<string, unknown> | null;
+      const { erpConnection, ...rest } = job;
       return {
         ...rest,
         orgName:
           typeof meta?.orgName === 'string'
             ? meta.orgName
-            : (connection?.providerAccountId ?? null),
+            : (erpConnection?.externalOrganizationId ?? null),
       };
     });
   }
@@ -141,12 +101,12 @@ export class ConnectionsController {
     @CurrentUser() user: AuthUser,
     @Param('id') connectionId: string,
   ) {
-    const { tenant, user: dbUser } = await this.provisioning.ensureProvisioned(
+    const { tenant } = await this.provisioning.ensureProvisioned(
       user.id,
       user.email,
     );
 
-    const connection = await prisma.connection.findUnique({
+    const connection = await prisma.erpConnection.findUnique({
       where: { id: connectionId },
     });
 
@@ -154,27 +114,17 @@ export class ConnectionsController {
       throw new HttpException('Connection not found', HttpStatus.NOT_FOUND);
     }
 
-    if (connection.tenantId !== tenant.id) {
-      throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
-    }
-
-    // Members can only sync their scoped connections
-    const allowedIds = await this.getAllowedConnectionIds(
-      tenant.id,
-      user.id,
-      dbUser.role,
-    );
-    if (allowedIds && !allowedIds.includes(connectionId)) {
+    if (connection.organizationId !== tenant.id) {
       throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
     }
 
     this.integrations
       .startIntegrationSync(
-        connection.tenantId,
-        connection.userId,
+        connection.organizationId,
+        connection.createdById,
         connection.id,
         connection.provider,
-        connection.providerAccountId,
+        connection.externalOrganizationId,
       )
       .catch((error: unknown) => {
         console.error(`Sync failed for ${connection.provider}:`, error);
@@ -189,33 +139,26 @@ export class ConnectionsController {
 
   @Post('sync-all')
   async syncAllConnections(@CurrentUser() user: AuthUser) {
-    const { tenant, user: dbUser } = await this.provisioning.ensureProvisioned(
+    const { tenant } = await this.provisioning.ensureProvisioned(
       user.id,
       user.email,
     );
 
-    const allowedIds = await this.getAllowedConnectionIds(
-      tenant.id,
-      user.id,
-      dbUser.role,
-    );
-
-    const connections = await prisma.connection.findMany({
+    const connections = await prisma.erpConnection.findMany({
       where: {
-        tenantId: tenant.id,
-        isActive: true,
-        ...(allowedIds ? { id: { in: allowedIds } } : {}),
+        organizationId: tenant.id,
+        status: 'ACTIVE',
       },
     });
 
     for (const connection of connections) {
       this.integrations
         .startIntegrationSync(
-          connection.tenantId,
-          connection.userId,
+          connection.organizationId,
+          connection.createdById,
           connection.id,
           connection.provider,
-          connection.providerAccountId,
+          connection.externalOrganizationId,
         )
         .catch((error: unknown) => {
           console.error(`Sync failed for ${connection.provider}:`, error);
@@ -239,7 +182,7 @@ export class ConnectionsController {
       user.email,
     );
 
-    const connection = await prisma.connection.findUnique({
+    const connection = await prisma.erpConnection.findUnique({
       where: { id: connectionId },
     });
 
@@ -247,7 +190,7 @@ export class ConnectionsController {
       throw new HttpException('Connection not found', HttpStatus.NOT_FOUND);
     }
 
-    if (connection.tenantId !== tenant.id) {
+    if (connection.organizationId !== tenant.id) {
       throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
     }
 
@@ -257,9 +200,8 @@ export class ConnectionsController {
     }
 
     await prisma.$transaction([
-      prisma.orgMembership.deleteMany({ where: { connectionId } }),
       prisma.syncJob.deleteMany({ where: { connectionId } }),
-      prisma.connection.delete({ where: { id: connectionId } }),
+      prisma.erpConnection.delete({ where: { id: connectionId } }),
     ]);
 
     return { status: 'success', message: 'Connection removed successfully' };

@@ -148,7 +148,7 @@ export function OverviewPage() {
         <ConnectedEntitiesCard orgs={dashboard.connectedOrgs} />
       </section>
 
-      <section className="surface-card p-6">
+      <section id="dashboards" className="surface-card scroll-mt-28 p-6">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">Dashboards</p>

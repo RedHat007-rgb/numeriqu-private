@@ -34,11 +34,11 @@ export class WorkdayProvider implements IntegrationProvider {
       `[Workday] Starting WQL extraction job: ${jobDetails.syncJobId}`,
     );
 
-    const connection = await this.prisma.connection.findUnique({
+    const connection = await this.prisma.erpConnection.findUnique({
       where: { id: connectionId },
     });
 
-    if (!connection || !connection.refreshToken) {
+    if (!connection || !connection.refreshTokenEncrypted) {
       throw new Error(
         `Workday connection ${connectionId} is missing valid credentials.`,
       );
@@ -46,7 +46,7 @@ export class WorkdayProvider implements IntegrationProvider {
 
     try {
       const decryptedRefreshToken = this.crypto.decrypt(
-        connection.refreshToken,
+        connection.refreshTokenEncrypted,
       );
       const accessToken = await this.getAccessToken(decryptedRefreshToken);
 
@@ -57,7 +57,7 @@ export class WorkdayProvider implements IntegrationProvider {
         // Decrypt metadata if stored as encrypted string
         const meta = this.crypto.decryptJson(connection.metadata);
         host = meta.host;
-        workdayTenantId = connection.providerAccountId;
+        workdayTenantId = connection.externalOrganizationId;
       } else {
         host = process.env.WORKDAY_HOST!;
         workdayTenantId = process.env.WORKDAY_TENANT_ID!;
@@ -85,7 +85,7 @@ export class WorkdayProvider implements IntegrationProvider {
         );
 
         // Stream to ClickHouse raw tables
-        await this.streamToClickHouse(connection.tenantId, entity, data);
+        await this.streamToClickHouse(connection.organizationId, entity, data);
         totalRecords += data.length;
       }
 

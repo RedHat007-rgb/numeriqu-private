@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { OrganizationContextModule } from './modules/org-context/org-context.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
+import { IntegrationsModule as CoreIntegrationsModule } from './integrations/integrations.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { RagModule } from './modules/rag/rag.module';
 import { AgentModule } from './modules/agent/agent.module';
@@ -23,6 +24,7 @@ import { OrgModule } from './org/org.module';
     OrganizationContextModule,
     AuthModule,
     IntegrationsModule,
+    CoreIntegrationsModule,
     AnalyticsModule,
     OrganizationModule,
     DashboardModule,

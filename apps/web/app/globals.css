@@ -1,37 +1,48 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/GeistVF.woff") format("woff");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMonoVF.woff") format("woff");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ============================================================
- * Numeriqu design tokens — dual-theme, finance-grade.
+ * NumeriQ design tokens — dual-theme, finance-grade.
  * Tokens are exposed as `rgb` triples so Tailwind can use
  * <alpha-value> with arbitrary opacity, e.g. bg-surface/60.
  * Hex aliases stay around for raw CSS usage.
  * ============================================================ */
 :root {
-  /* Surfaces (dark default) */
-  --color-bg-base: 8 13 26;
-  --color-bg-surface: 13 20 39;
-  --color-bg-card: 17 25 49;
-  --color-bg-elevated: 22 31 58;
+  /* Editorial paper theme (global) */
+  --color-bg-base: 246 240 230;
+  --color-bg-surface: 255 252 246;
+  --color-bg-card: 255 255 255;
+  --color-bg-elevated: 255 255 255;
 
-  /* Foreground */
-  --color-text-primary: 237 243 255;
-  --color-text-secondary: 182 194 224;
-  --color-text-muted: 133 147 182;
+  --color-text-primary: 28 36 48;
+  --color-text-secondary: 55 65 81;
+  --color-text-muted: 107 114 128;
 
-  /* Borders */
-  --color-border-subtle: 255 255 255;
-  --color-border-default: 255 255 255;
-  --color-border-glow: 59 130 246;
+  --color-border-subtle: 28 36 48;
+  --color-border-default: 28 36 48;
+  --color-border-glow: 31 106 91;
 
-  /* Accents */
-  --color-accent-blue: 71 138 255;
-  --color-accent-violet: 118 92 246;
-  --color-accent-cyan: 20 184 166;
-  --color-accent-teal: 20 184 166;
+  --color-accent-blue: 31 106 91;
+  --color-accent-violet: 77 95 140;
+  --color-accent-cyan: 31 106 91;
+  --color-accent-teal: 31 106 91;
 
   /* Semantic feedback */
   --color-success: 16 185 129;
@@ -39,69 +50,60 @@
   --color-danger: 244 63 94;
   --color-info: 56 189 248;
 
-  /* Token alphas (used in raw CSS rules) */
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-default: rgba(255, 255, 255, 0.12);
-  --border-strong: rgba(255, 255, 255, 0.2);
+  --border-subtle: rgba(28, 36, 48, 0.06);
+  --border-default: rgba(28, 36, 48, 0.1);
+  --border-strong: rgba(28, 36, 48, 0.16);
 
   /* Brand hex aliases (for non-tailwind consumers) */
-  --bg-base: #080d1a;
-  --bg-surface: #0d1427;
-  --bg-card: #111931;
-  --bg-elevated: #161f3a;
-  --accent-blue: #478aff;
-  --accent-violet: #765cf6;
-  --accent-cyan: #14b8a6;
-  --accent-teal: #14b8a6;
-  --text-primary: #f0f4ff;
-  --text-muted: #8b92b8;
-  --glow-blue: rgba(59, 130, 246, 0.25);
-  --glow-violet: rgba(124, 58, 237, 0.2);
+  --bg-base: #f6f0e6;
+  --bg-surface: #fffaf6;
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --accent-blue: #1f6a5b;
+  --accent-violet: #4d5f8c;
+  --accent-cyan: #1f6a5b;
+  --accent-teal: #1f6a5b;
+  --text-primary: #1c2430;
+  --text-muted: #6b7280;
+  --glow-blue: rgba(31, 106, 91, 0.22);
+  --glow-violet: rgba(77, 95, 140, 0.18);
 
-  --font-space-grotesk: "Space Grotesk", sans-serif;
-  --font-jetbrains-mono: "JetBrains Mono", monospace;
-  --font-inter: "Inter", sans-serif;
+  --font-space-grotesk: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-jetbrains-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  --font-inter: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* v0 / shadcn-style tokens (used by landing + some components) */
+  --background: 0.97 0.014 85;
+  --foreground: 0.18 0.018 220;
+  --card: 0.99 0.008 85;
+  --card-foreground: 0.18 0.018 220;
+  --popover: 0.99 0.008 85;
+  --popover-foreground: 0.18 0.018 220;
+  --primary: 0.36 0.07 175;
+  --primary-foreground: 0.98 0.008 85;
+  --secondary: 0.93 0.014 85;
+  --secondary-foreground: 0.22 0.018 220;
+  --muted: 0.93 0.014 85;
+  --muted-foreground: 0.46 0.018 220;
+  --accent: 0.70 0.15 55;
+  --accent-foreground: 0.18 0.018 220;
+  --destructive: 0.55 0.20 25;
+  --destructive-foreground: 0.98 0.008 85;
+  --border: 0.86 0.012 85;
+  --input: 0.86 0.012 85;
+  --ring: 0.36 0.07 175;
+  --chart-1: 0.36 0.07 175;
+  --chart-2: 0.70 0.15 55;
+  --chart-3: 0.42 0.06 230;
+  --chart-4: 0.58 0.08 165;
+  --chart-5: 0.55 0.02 80;
+  --radius: 0.625rem;
 }
 
 /* Light-theme overrides — finance-credible navy/teal on neutral surfaces. */
 .light {
-  --color-bg-base: 247 248 252;
-  --color-bg-surface: 255 255 255;
-  --color-bg-card: 255 255 255;
-  --color-bg-elevated: 255 255 255;
-
-  --color-text-primary: 15 23 42;
-  --color-text-secondary: 51 65 85;
-  --color-text-muted: 100 116 139;
-
-  --color-border-subtle: 15 23 42;
-  --color-border-default: 15 23 42;
-  --color-border-glow: 37 99 235;
-
-  --color-accent-blue: 37 99 235;
-  --color-accent-violet: 109 40 217;
-  --color-accent-cyan: 8 145 178;
-  --color-accent-teal: 13 148 136;
-
-  --color-success: 5 150 105;
-  --color-warning: 217 119 6;
-  --color-danger: 220 38 38;
-  --color-info: 14 165 233;
-
-  --border-subtle: rgba(15, 23, 42, 0.06);
-  --border-default: rgba(15, 23, 42, 0.1);
-  --border-strong: rgba(15, 23, 42, 0.16);
-
-  --bg-base: #f7f8fc;
-  --bg-surface: #ffffff;
-  --bg-card: #ffffff;
-  --bg-elevated: #ffffff;
-  --accent-blue: #2563eb;
-  --accent-violet: #6d28d9;
-  --accent-cyan: #0891b2;
-  --accent-teal: #0d9488;
-  --text-primary: #0f172a;
-  --text-muted: #64748b;
+  /* single-theme app: `light` matches `:root` */
 }
 
 /* Reset & Base Styles */
@@ -179,8 +181,9 @@ h3,
 h4,
 h5,
 h6 {
-  font-family: var(--font-space-grotesk);
-  font-weight: 700;
+  font-family: ui-serif, "Iowan Old Style", "Palatino", "Palatino Linotype", "Georgia",
+    "Times New Roman", serif;
+  font-weight: 650;
   line-height: 1.2;
   color: rgb(var(--color-text-primary));
 }
@@ -202,7 +205,6 @@ h3 {
 .font-mono {
   font-family: var(--font-jetbrains-mono);
   font-weight: 600;
-  letter-spacing: 0.1em;
 }
 
 /* Surface recipes — adapt to theme automatically. */
@@ -698,5 +700,150 @@ textarea:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================
+ * Editorial utilities (used across the product)
+ * ============================================================ */
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+
+  @keyframes nq-marquee {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+  .animate-marquee {
+    animation: nq-marquee 40s linear infinite;
+  }
+
+  @keyframes nq-grid-pan {
+    0% {
+      background-position: 0 0;
+    }
+    100% {
+      background-position: 60px 60px;
+    }
+  }
+  .animate-grid-pan {
+    animation: nq-grid-pan 24s linear infinite;
+  }
+
+  @keyframes nq-pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(1.25);
+    }
+  }
+  .animate-pulse-dot {
+    animation: nq-pulse-dot 2.4s ease-in-out infinite;
+  }
+
+  @keyframes nq-float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-6px);
+    }
+  }
+  .animate-float {
+    animation: nq-float 6s ease-in-out infinite;
+  }
+
+  @keyframes nq-shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  .animate-shimmer {
+    background-size: 200% 100%;
+    animation: nq-shimmer 3s linear infinite;
+  }
+
+  @keyframes nq-rise {
+    0% {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-rise {
+    animation: nq-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes nq-bar-rise {
+    0% {
+      transform: scaleY(0.05);
+    }
+    100% {
+      transform: scaleY(1);
+    }
+  }
+  .animate-bar-rise {
+    transform-origin: bottom;
+    animation: nq-bar-rise 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes nq-draw {
+    0% {
+      stroke-dashoffset: 1000;
+    }
+    100% {
+      stroke-dashoffset: 0;
+    }
+  }
+  .animate-draw {
+    stroke-dasharray: 1000;
+    animation: nq-draw 2.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .nq-grain {
+    background-image: radial-gradient(oklch(0.18 0.018 220 / 0.05) 1px, transparent 1px);
+    background-size: 3px 3px;
+  }
+
+  .nq-grid {
+    background-image:
+      linear-gradient(to right, oklch(0.18 0.018 220 / 0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.18 0.018 220 / 0.06) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+
+  .nq-radial-fade {
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 30%, transparent 80%);
+  }
+
+  .nq-rule {
+    background-image: linear-gradient(
+      to right,
+      transparent,
+      oklch(0.18 0.018 220 / 0.18),
+      transparent
+    );
+    height: 1px;
   }
 }

@@ -33,11 +33,11 @@ export class Dynamics365Provider implements IntegrationProvider {
     ...extraArgs: any[]
   ): Promise<void> {
     const connectionId = jobDetails.connectionId;
-    const connection = await this.prisma.connection.findUnique({
+    const connection = await this.prisma.erpConnection.findUnique({
       where: { id: connectionId },
     });
 
-    if (!connection || !connection.refreshToken) {
+    if (!connection || !connection.refreshTokenEncrypted) {
       throw new Error(
         `Dynamics 365 connection ${connectionId} is missing Client Secret / Credentials.`,
       );
@@ -45,7 +45,7 @@ export class Dynamics365Provider implements IntegrationProvider {
 
     try {
       // 1. Get Decrypted Credentials
-      const clientSecret = this.crypto.decrypt(connection.refreshToken);
+      const clientSecret = this.crypto.decrypt(connection.refreshTokenEncrypted);
       const metadata =
         typeof connection.metadata === 'string'
           ? this.crypto.decryptJson(connection.metadata)
@@ -82,7 +82,7 @@ export class Dynamics365Provider implements IntegrationProvider {
         );
 
         // 3. Robust Medallion Streaming to ClickHouse
-        await this.streamToClickHouse(connection.tenantId, entity, data);
+        await this.streamToClickHouse(connection.organizationId, entity, data);
       }
     } catch (error: any) {
       this.logger.error(`Dynamics 365 Sync Failed: ${error.message}`);

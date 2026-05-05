@@ -16,9 +16,9 @@ import { DashboardPreview } from "./_components/DashboardPreview";
 type Message = { role: "user" | "assistant" | "system"; content: string };
 
 const SUGGESTED_PROMPTS = [
-  "What are the top 3 anomalies in this month's expenses?",
-  "Summarize last quarter's revenue by entity.",
-  "Build a CFO board pack for Q3 close.",
+  "What changed since last month? Top 5 drivers and why.",
+  "Where are we off-plan this quarter? Call out the 3 biggest gaps.",
+  "Build a board-ready dashboard for the last close.",
 ];
 
 export default function IntelligenceHub() {
@@ -231,14 +231,17 @@ export default function IntelligenceHub() {
       <header className="surface-card flex items-center justify-between p-5">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">
-            Intelligence hub
+            Ask
           </p>
           <h2 className="mt-1 font-display text-xl font-bold text-text-primary md:text-2xl">
-            Compare advisor and agent in one frame
+            One question. Two ways to answer.
           </h2>
+          <p className="mt-1 text-sm text-text-muted">
+            The advisor cites sources. The agent turns answers into dashboards.
+          </p>
         </div>
         <StatusPill tone={isStreaming ? "info" : "neutral"}>
-          {isStreaming ? "synthesizing" : "ready"}
+          {isStreaming ? "thinking" : "ready"}
         </StatusPill>
       </header>
 
@@ -249,8 +252,8 @@ export default function IntelligenceHub() {
       ) : null}
 
       <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[1fr_1fr_1.5fr]">
-        <MessageList title="Personal advisor (RAG)" tone="blue" messages={ragMessages} scrollRef={ragScrollRef} />
-        <MessageList title="Mission agent (CFO)" tone="violet" messages={agentMessages} scrollRef={agentScrollRef} />
+        <MessageList title="Advisor" tone="blue" messages={ragMessages} scrollRef={ragScrollRef} />
+        <MessageList title="Agent" tone="violet" messages={agentMessages} scrollRef={agentScrollRef} />
 
         <section className="flex h-full flex-col overflow-hidden">
           <div className="mb-2 flex items-center gap-2 px-1">
@@ -259,7 +262,7 @@ export default function IntelligenceHub() {
               className="h-1.5 w-1.5 rounded-full bg-feedback-success shadow-[0_0_8px_rgba(16,185,129,0.5)]"
             />
             <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-feedback-success">
-              Strategic performance sync
+              Live dashboard
             </span>
           </div>
           <div className="flex-1 overflow-y-auto pr-1">
@@ -281,12 +284,12 @@ export default function IntelligenceHub() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             disabled={isStreaming}
-            placeholder="Ask both surfaces in parallel..."
-            aria-label="Intelligence hub query"
+            placeholder="Ask a finance question (runs advisor + agent in parallel)…"
+            aria-label="Ask NumeriQ"
             className="flex-1 rounded-full border border-default bg-surface-card/60 px-4 py-2 text-base text-text-primary outline-none placeholder:text-text-muted focus:border-accent-blue/50 disabled:opacity-60"
           />
           <Button type="submit" loading={isStreaming} disabled={!query.trim() || isStreaming}>
-            {isStreaming ? "Synthesizing..." : "Execute"}
+            {isStreaming ? "Working…" : "Ask"}
           </Button>
         </div>
         <div className="mt-2 flex flex-wrap gap-2 px-2">

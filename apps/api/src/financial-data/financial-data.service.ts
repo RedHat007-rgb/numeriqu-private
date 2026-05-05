@@ -42,9 +42,9 @@ export class FinancialDataService {
     );
 
     // SECURE ISOLATION: Fetch strictly verified and active orchestration pipelines.
-    const activeConns = await prisma.connection.findMany({
-      where: { tenantId, isActive: true },
-      select: { providerAccountId: true, provider: true, metadata: true },
+    const activeConns = await prisma.erpConnection.findMany({
+      where: { organizationId: tenantId, status: 'ACTIVE' },
+      select: { externalOrganizationId: true, provider: true, metadata: true },
     });
 
     if (activeConns.length === 0) {
@@ -83,7 +83,7 @@ export class FinancialDataService {
       };
     }
 
-    const activeOrgIds = activeConns.map((c) => c.providerAccountId);
+    const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
 
     const [
       revenue,
@@ -197,17 +197,17 @@ export class FinancialDataService {
     tenantId: string,
     activeConns: any[],
   ): Promise<ConnectedOrg[]> {
-    const activeOrgIds = activeConns.map((c) => c.providerAccountId);
+    const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
     if (activeOrgIds.length === 0) return [];
 
     // Seed from Prisma connection metadata (always available, even if Gold is empty)
     const orgMap = new Map<string, ConnectedOrg>();
     for (const conn of activeConns) {
       const meta = (conn.metadata as Record<string, any>) || {};
-      orgMap.set(conn.providerAccountId, {
+      orgMap.set(conn.externalOrganizationId, {
         provider: conn.provider,
-        orgId: conn.providerAccountId,
-        orgName: meta.orgName || meta.companyId || conn.providerAccountId,
+        orgId: conn.externalOrganizationId,
+        orgName: meta.orgName || meta.companyId || conn.externalOrganizationId,
         invoiceCount: 0,
         totalRevenue: 0,
         currency: 'USD',
@@ -500,11 +500,11 @@ export class FinancialDataService {
     }
 
     try {
-      const activeConns = await prisma.connection.findMany({
-        where: { tenantId, isActive: true },
-        select: { providerAccountId: true },
+      const activeConns = await prisma.erpConnection.findMany({
+        where: { organizationId: tenantId, status: 'ACTIVE' },
+        select: { externalOrganizationId: true },
       });
-      const activeOrgIds = activeConns.map((c) => c.providerAccountId);
+      const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
       if (activeOrgIds.length > 0) {
         if (finalQuery.includes('WHERE')) {
           finalQuery = finalQuery.replace(
@@ -536,11 +536,11 @@ export class FinancialDataService {
    */
   async searchSemanticContext(tenantId: string, terms: string): Promise<any[]> {
     try {
-      const activeConns = await prisma.connection.findMany({
-        where: { tenantId, isActive: true },
-        select: { providerAccountId: true },
+      const activeConns = await prisma.erpConnection.findMany({
+        where: { organizationId: tenantId, status: 'ACTIVE' },
+        select: { externalOrganizationId: true },
       });
-      const activeOrgIds = activeConns.map((c) => c.providerAccountId);
+      const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
       if (activeOrgIds.length === 0) return [];
 
       const result = await this.clickhouse.query({
@@ -567,11 +567,11 @@ export class FinancialDataService {
    */
   async getMonthlyRevenueTrend(tenantId: string): Promise<any[]> {
     try {
-      const activeConns = await prisma.connection.findMany({
-        where: { tenantId, isActive: true },
-        select: { providerAccountId: true },
+      const activeConns = await prisma.erpConnection.findMany({
+        where: { organizationId: tenantId, status: 'ACTIVE' },
+        select: { externalOrganizationId: true },
       });
-      const activeOrgIds = activeConns.map((c) => c.providerAccountId);
+      const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
       if (activeOrgIds.length === 0) return [];
 
       const result = await this.clickhouse.query({
@@ -608,11 +608,11 @@ export class FinancialDataService {
    */
   async getInvoicesList(tenantId: string): Promise<any[]> {
     try {
-      const activeConns = await prisma.connection.findMany({
-        where: { tenantId, isActive: true },
-        select: { providerAccountId: true },
+      const activeConns = await prisma.erpConnection.findMany({
+        where: { organizationId: tenantId, status: 'ACTIVE' },
+        select: { externalOrganizationId: true },
       });
-      const activeOrgIds = activeConns.map((c) => c.providerAccountId);
+      const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
       if (activeOrgIds.length === 0) return [];
 
       const result = await this.clickhouse.query({

@@ -11,6 +11,43 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Shadcn-style tokens (used by v0 landing page; scoped via CSS variables)
+        background: "oklch(var(--background) / <alpha-value>)",
+        foreground: "oklch(var(--foreground) / <alpha-value>)",
+        card: {
+          DEFAULT: "oklch(var(--card) / <alpha-value>)",
+          foreground: "oklch(var(--card-foreground) / <alpha-value>)",
+        },
+        popover: {
+          DEFAULT: "oklch(var(--popover) / <alpha-value>)",
+          foreground: "oklch(var(--popover-foreground) / <alpha-value>)",
+        },
+        primary: {
+          DEFAULT: "oklch(var(--primary) / <alpha-value>)",
+          foreground: "oklch(var(--primary-foreground) / <alpha-value>)",
+        },
+        secondary: {
+          DEFAULT: "oklch(var(--secondary) / <alpha-value>)",
+          foreground: "oklch(var(--secondary-foreground) / <alpha-value>)",
+        },
+        muted: {
+          DEFAULT: "oklch(var(--muted) / <alpha-value>)",
+          foreground: "oklch(var(--muted-foreground) / <alpha-value>)",
+        },
+        destructive: {
+          DEFAULT: "oklch(var(--destructive) / <alpha-value>)",
+          foreground: "oklch(var(--destructive-foreground) / <alpha-value>)",
+        },
+        border: "oklch(var(--border) / <alpha-value>)",
+        input: "oklch(var(--input) / <alpha-value>)",
+        ring: "oklch(var(--ring) / <alpha-value>)",
+        chart: {
+          1: "oklch(var(--chart-1) / <alpha-value>)",
+          2: "oklch(var(--chart-2) / <alpha-value>)",
+          3: "oklch(var(--chart-3) / <alpha-value>)",
+          4: "oklch(var(--chart-4) / <alpha-value>)",
+          5: "oklch(var(--chart-5) / <alpha-value>)",
+        },
         // Surfaces — semantic
         bg: {
           base: "rgb(var(--color-bg-base) / <alpha-value>)",
@@ -26,6 +63,8 @@ const config: Config = {
         },
         // Accents
         accent: {
+          DEFAULT: "oklch(var(--accent) / <alpha-value>)",
+          foreground: "oklch(var(--accent-foreground) / <alpha-value>)",
           blue: "rgb(var(--color-accent-blue) / <alpha-value>)",
           violet: "rgb(var(--color-accent-violet) / <alpha-value>)",
           cyan: "rgb(var(--color-accent-cyan) / <alpha-value>)",
@@ -52,7 +91,15 @@ const config: Config = {
         glow: "rgb(var(--color-border-glow) / 0.4)",
       },
       fontFamily: {
-        display: ["var(--font-space-grotesk)", "sans-serif"],
+        display: [
+          "ui-serif",
+          "Iowan Old Style",
+          "Palatino",
+          "Palatino Linotype",
+          "Georgia",
+          "Times New Roman",
+          "serif",
+        ],
         mono: ["var(--font-jetbrains-mono)", "monospace"],
         body: ["var(--font-inter)", "sans-serif"],
       },

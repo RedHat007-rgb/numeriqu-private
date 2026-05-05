@@ -40,20 +40,20 @@ export class XeroProvider implements IntegrationProvider {
 
     const refreshPromise = (async () => {
       try {
-        const connection = await this.prisma.connection.findUnique({
+        const connection = await this.prisma.erpConnection.findUnique({
           where: { id: connectionId },
         });
 
-        if (!connection || !connection.refreshToken) {
+        if (!connection || !connection.refreshTokenEncrypted) {
           throw new Error(
             `Cannot refresh Xero token: Connection or Refresh Token missing for ${connectionId}`,
           );
         }
 
         const effectiveProviderAccountId =
-          providerAccountId || connection.providerAccountId;
+          providerAccountId || connection.externalOrganizationId;
         const decryptedRefreshToken = this.crypto.decrypt(
-          connection.refreshToken,
+          connection.refreshTokenEncrypted,
         );
 
         this.logger.log(
@@ -82,16 +82,16 @@ export class XeroProvider implements IntegrationProvider {
 
         // Atomic update for ALL connections sharing the same Xero Org ID
         const updateData: any = {
-          accessToken: this.crypto.encrypt(access_token),
+          accessTokenEncrypted: this.crypto.encrypt(access_token),
         };
         if (refresh_token) {
-          updateData.refreshToken = this.crypto.encrypt(refresh_token);
+          updateData.refreshTokenEncrypted = this.crypto.encrypt(refresh_token);
         }
 
-        await this.prisma.connection.updateMany({
+        await this.prisma.erpConnection.updateMany({
           where: {
-            provider: 'xero',
-            providerAccountId: effectiveProviderAccountId,
+            provider: 'XERO',
+            externalOrganizationId: effectiveProviderAccountId,
           },
           data: updateData,
         });

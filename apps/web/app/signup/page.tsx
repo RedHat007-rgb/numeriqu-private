@@ -10,7 +10,6 @@ import { Surface } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
 import { Field } from "../../components/ui/Field";
 import { ErrorBanner } from "../../components/ui/ErrorBanner";
-import { ThemeToggle } from "../../components/ui/ThemeToggle";
 
 type Step = "email" | "otp";
 type AccountType = "SOLO" | "ORGANIZATION";
@@ -217,15 +216,17 @@ export default function SignupPage() {
   };
 
   return (
-    <main className="relative min-h-screen bg-hero-luxury px-6 py-10 text-text-primary">
-      <div className="mx-auto flex max-w-6xl items-center justify-between pb-10">
-        <Link href="/" className="font-display text-xl font-bold text-text-primary">
-          Numeriqu
+    <main className="relative min-h-screen bg-bg-base px-6 py-10 text-text-primary">
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grid opacity-25" />
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
+
+      <div className="relative mx-auto flex max-w-6xl items-center justify-between pb-10">
+        <Link href="/" className="font-serif text-xl font-semibold tracking-tight text-text-primary">
+          NumeriQ
         </Link>
-        <ThemeToggle />
       </div>
 
-      <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1fr_460px]">
+      <div className="relative mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1fr_460px]">
         <Surface className="space-y-5 p-8">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">Create account</p>
           <h1 className="text-4xl font-bold leading-tight text-text-primary md:text-5xl">

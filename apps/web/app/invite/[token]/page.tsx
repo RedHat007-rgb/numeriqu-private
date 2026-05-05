@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { Surface } from "../../../components/ui/Surface";
 import { Button } from "../../../components/ui/Button";
-import { ThemeToggle } from "../../../components/ui/ThemeToggle";
 import { useAuth } from "../../providers";
 import { getInviteDetails } from "../../../lib/api/integrations";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
@@ -63,12 +62,11 @@ export default function InvitePage() {
   };
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center bg-hero-luxury px-6 py-16">
-      <div className="absolute right-6 top-6">
-        <ThemeToggle />
-      </div>
+    <main className="relative flex min-h-screen items-center justify-center bg-bg-base px-6 py-16 text-text-primary">
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grid opacity-25" />
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
 
-      <div className="w-full max-w-md">
+      <div className="relative w-full max-w-md">
         <div className="mb-6 flex items-center justify-between text-xs">
           <Link href="/" className="text-text-muted transition-colors hover:text-text-primary">
             ← Home
@@ -133,7 +131,7 @@ export default function InvitePage() {
                 <h1 className="text-2xl font-bold text-text-primary">You're invited</h1>
                 <p className="text-sm text-text-muted">
                   You've been invited to join{" "}
-                  <strong className="text-text-primary">{invite.orgName}</strong> on Numeriqu as a{" "}
+                  <strong className="text-text-primary">{invite.orgName}</strong> on NumeriQ as a{" "}
                   <span className="capitalize text-text-primary">{invite.role}</span>.
                 </p>
               </header>

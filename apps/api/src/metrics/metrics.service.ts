@@ -93,7 +93,7 @@ export class MetricsService {
   async getXeroExport(tenantId: string, resource?: string): Promise<string> {
     // Export is the ONE place where raw is acceptable — it's an explicit user action
     // to export their raw ingested data, not an analytics query.
-    const dbName = process.env.CLICKHOUSE_XERO_DB || 'default';
+    const dbName = process.env.CLICKHOUSE_XERO_DB || 'xero_custom';
     const resourceFilter = resource ? `AND resource = {resource:String}` : '';
 
     try {

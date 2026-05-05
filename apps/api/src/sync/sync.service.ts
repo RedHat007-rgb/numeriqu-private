@@ -169,6 +169,18 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS invoice_count UInt64 DEFAULT 0`,
         `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS updated_at DateTime DEFAULT now()`,
         `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS currency String DEFAULT ''`,
+        // ═══════════════════════════════════════════════════════════════════
+        // Schema rename migration: tables were originally created with
+        // `organization_id` but all code now uses `tenant_id`.
+        // ORDER BY key columns cannot be renamed, so we add tenant_id as a
+        // new column and backfill from organization_id via a background mutation.
+        // ═══════════════════════════════════════════════════════════════════
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT ''`,
+        `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT ''`,
+        `ALTER TABLE ${db}.dim_accounting_accounts ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT ''`,
+        `ALTER TABLE ${db}.fact_accounting_invoices UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+        `ALTER TABLE ${db}.revenue_by_month UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+        `ALTER TABLE ${db}.dim_accounting_accounts UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
       ];
       for (const migration of migrations) {
         try {
@@ -206,7 +218,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   private async recoverOrphanedJobs() {
     try {
       const orphaned = await this.prisma.syncJob.findMany({
-        where: { status: 'running' },
+        where: { status: 'RUNNING' },
       });
 
       if (orphaned.length > 0) {
@@ -214,10 +226,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           `[Recovery] Found ${orphaned.length} orphaned sync jobs. Marking as failed.`,
         );
         await this.prisma.syncJob.updateMany({
-          where: { status: 'running' },
+          where: { status: 'RUNNING' },
           data: {
-            status: 'failed',
-            errorDetails: 'Terminated during process restart. Please re-sync.',
+            status: 'FAILED',
+            errorMessage: 'Terminated during restart.',
             completedAt: new Date(),
           },
         });
@@ -254,20 +266,19 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       const newJob = await this.prisma.syncJob.create({
         data: {
           connectionId: config.connectionId,
-          tenantId: config.tenantId,
-          provider: config.provider,
-          status: 'running',
+          organizationId: config.tenantId,
+          triggerType: 'MANUAL',
+          status: 'RUNNING',
           startedAt: new Date(),
-          syncWindowStart: syncWindowStart,
         },
       });
 
       return {
         syncJobId: newJob.id,
-        tenantId: newJob.tenantId,
+        tenantId: newJob.organizationId,
         userId: config.userId,
         connectionId: newJob.connectionId,
-        syncWindowStart: newJob.syncWindowStart!,
+        syncWindowStart: syncWindowStart,
         orgId: config.orgId,
         orgName: config.orgName,
         metadata: config.metadata,
@@ -292,9 +303,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.syncJob.update({
         where: { id: jobId },
         data: {
-          status: 'completed',
+          status: 'SUCCEEDED',
           completedAt: new Date(),
-          recordsProcessed: recordsProcessed,
+          recordsWritten: recordsProcessed,
         },
       });
 
@@ -328,8 +339,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.syncJob.update({
         where: { id: jobId },
         data: {
-          status: 'failed',
-          errorDetails: errorDetails,
+          status: 'FAILED',
+          errorMessage: errorDetails,
           completedAt: new Date(),
         },
       });

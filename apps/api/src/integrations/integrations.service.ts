@@ -82,12 +82,13 @@ export class IntegrationsService {
       let orgName: string = orgId; // sensible fallback
 
       try {
-        const conn = await this.prisma.connection.findUnique({
+        const conn = await this.prisma.erpConnection.findUnique({
           where: { id: connectionId },
-          select: { metadata: true },
+          select: { metadata: true, displayName: true },
         });
         const meta = conn?.metadata as Record<string, any> | null;
-        if (meta?.orgName) orgName = meta.orgName as string;
+        if (conn?.displayName) orgName = conn.displayName;
+        else if (meta?.orgName) orgName = meta.orgName as string;
       } catch {
         // Non-fatal — fall back to orgId as name
       }

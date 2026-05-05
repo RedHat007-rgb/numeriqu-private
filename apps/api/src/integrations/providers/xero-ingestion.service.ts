@@ -442,13 +442,32 @@ export class XeroIngestionService {
       qualifiedTable,
       `ALTER TABLE ${qualifiedTable} ADD COLUMN IF NOT EXISTS org_name String DEFAULT ''`,
     );
+    // Schema rename migration: tables created before this version used
+    // `organization_id` as the column name; all code now uses `tenant_id`.
+    // The ORDER BY key column cannot be renamed in ClickHouse, so we ADD the
+    // new column and backfill from the old one.
+    //
+    // These two statements are intentionally wrapped in their own try/catch so
+    // that on a FRESH install (where `organization_id` never existed) the error
+    // is silently ignored and startup is not blocked.
+    try {
+      await this.clickhouse.command({
+        query: `ALTER TABLE ${qualifiedTable} ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT ''`,
+      });
+    } catch { /* non-fatal: column may already exist */ }
+
+    try {
+      await this.clickhouse.command({
+        query: `ALTER TABLE ${qualifiedTable} UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+      });
+    } catch { /* non-fatal: organization_id may not exist on fresh installs */ }
   }
 
   private getXeroDatabase(): string {
     return (
       process.env.CLICKHOUSE_XERO_DB ||
       process.env.CLICKHOUSE_DB ||
-      'default'
+      'xero_custom'
     ).trim();
   }
 

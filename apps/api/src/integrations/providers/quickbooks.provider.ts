@@ -39,7 +39,7 @@ export class QuickBooksProvider implements IntegrationProvider {
     const realmId = extraArgs[0];
     const internalTenantId = jobDetails.tenantId;
 
-    const connection = await this.prisma.connection.findUnique({
+    const connection = await this.prisma.erpConnection.findUnique({
       where: { id: jobDetails.connectionId },
     });
 
@@ -55,11 +55,11 @@ export class QuickBooksProvider implements IntegrationProvider {
     }
 
     // Native custom ingestion flow: Proactive Refresh ensures zero 401s during the loop
-    let accessToken = connection.accessToken
-      ? this.crypto.decrypt(connection.accessToken)
+    let accessToken = connection.accessTokenEncrypted
+      ? this.crypto.decrypt(connection.accessTokenEncrypted)
       : extraArgs[1];
-    let refreshToken = connection.refreshToken
-      ? this.crypto.decrypt(connection.refreshToken)
+    let refreshToken = connection.refreshTokenEncrypted
+      ? this.crypto.decrypt(connection.refreshTokenEncrypted)
       : extraArgs[2];
 
     this.logger.log(
@@ -122,11 +122,11 @@ export class QuickBooksProvider implements IntegrationProvider {
       });
 
       // Securely store the newly rotated tokens (encrypted)
-      await this.prisma.connection.update({
+      await this.prisma.erpConnection.update({
         where: { id: connectionId },
         data: {
-          accessToken: this.crypto.encrypt(refreshed.accessToken),
-          refreshToken: this.crypto.encrypt(refreshed.refreshToken),
+          accessTokenEncrypted: this.crypto.encrypt(refreshed.accessToken),
+          refreshTokenEncrypted: this.crypto.encrypt(refreshed.refreshToken),
         },
       });
 

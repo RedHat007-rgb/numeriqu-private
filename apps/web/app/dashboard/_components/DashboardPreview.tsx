@@ -288,7 +288,7 @@ export function DashboardPreview({ triggerSync }: { triggerSync: number }) {
 
               <div className="mt-8 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted">
                 <span>Mission intelligence unit</span>
-                <span>Numeriqu strategic layer</span>
+                <span>NumeriQ strategic layer</span>
               </div>
             </motion.div>
           </div>

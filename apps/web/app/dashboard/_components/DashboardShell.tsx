@@ -3,19 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Settings } from "lucide-react";
-import { ThemeToggle } from "../../../components/ui/ThemeToggle";
 import { Button } from "../../../components/ui/Button";
 import { cn } from "../../../components/ui/cn";
 
 const NAV_ITEMS: Array<{ href: string; label: string; description: string }> = [
-  { href: "/dashboard", label: "Overview", description: "North-star financial performance" },
-  { href: "/dashboard/intelligence", label: "Intelligence Hub", description: "Advisor + agent canvas" },
-  { href: "/dashboard/integrations", label: "Integrations", description: "Connections and sync operations" },
-  { href: "/dashboard/messages", label: "Messages", description: "Organization conversations" },
-  { href: "/dashboard/team", label: "Team & Access", description: "Members, invites, permissions" },
-  { href: "/dashboard/chat/rag", label: "RAG Advisor", description: "Source-cited answers" },
-  { href: "/dashboard/chat/agent", label: "Agent Workbench", description: "Dashboard generation missions" },
-  { href: "/dashboard/settings", label: "Settings", description: "Workspace and session preferences" },
+  { href: "/dashboard", label: "Overview", description: "What changed, at a glance" },
+  { href: "/dashboard/intelligence", label: "Ask NumeriQ", description: "Advisor + agent, side-by-side" },
+  { href: "/dashboard#dashboards", label: "Dashboards", description: "Saved decision surfaces" },
+  { href: "/dashboard/integrations", label: "Integrations", description: "Connect systems and sync" },
+  { href: "/dashboard/messages", label: "Messages", description: "Decisions, captured in context" },
+  { href: "/dashboard/team", label: "Team", description: "Members, roles, access" },
+  { href: "/dashboard/settings", label: "Settings", description: "Workspace and session" },
 ];
 
 function NavLink({
@@ -28,7 +26,9 @@ function NavLink({
   description: string;
 }) {
   const pathname = usePathname();
-  const active = href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+  const normalizedHref = href.split("#")[0] ?? href;
+  const active =
+    normalizedHref === "/dashboard" ? pathname === normalizedHref : pathname.startsWith(normalizedHref);
 
   return (
     <Link
@@ -73,55 +73,59 @@ export function DashboardShell({
       : NAV_ITEMS;
 
   return (
-    <div className="min-h-screen bg-bg-base text-text-primary">
-      <header className="sticky top-0 z-40 border-b border-default bg-bg-base/85 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-1">
-            <Link href="/" className="text-xs text-text-muted hover:text-text-primary">
-              ← Back to landing
-            </Link>
-            <h1 className="font-display text-2xl font-bold text-text-primary md:text-3xl">
-              Numeriqu Workspace
-            </h1>
-            <p className="text-xs text-text-muted">{tenantLabel}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <ThemeToggle />
-            <Link href="/dashboard/settings">
-              <Button variant="secondary" size="sm">
-                <Settings className="size-4" /> Settings
+    <div className="relative min-h-screen bg-bg-base text-text-primary">
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grid opacity-25" />
+      <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
+
+      <div className="relative">
+        <header className="sticky top-0 z-40 border-b border-default bg-bg-base/80 backdrop-blur">
+          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-4 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-1">
+              <Link href="/" className="text-xs text-text-muted hover:text-text-primary">
+                ← Back to landing
+              </Link>
+              <h1 className="font-serif text-2xl font-semibold tracking-tight text-text-primary md:text-3xl">
+                Workspace
+              </h1>
+              <p className="text-xs text-text-muted">{tenantLabel}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link href="/dashboard/settings">
+                <Button variant="secondary" size="sm">
+                  <Settings className="size-4" /> Settings
+                </Button>
+              </Link>
+              <Button variant="secondary" size="sm" onClick={() => void onSignOut()}>
+                Sign out
               </Button>
-            </Link>
-            <Button variant="secondary" size="sm" onClick={() => void onSignOut()}>
-              Sign out
-            </Button>
+            </div>
           </div>
+        </header>
+
+        <div className="mx-auto grid max-w-7xl gap-6 px-6 py-8 lg:grid-cols-[300px_1fr]">
+          <aside className="space-y-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-text-muted">
+                Navigate
+              </p>
+              <nav className="mt-2 space-y-2" aria-label="Primary">
+                {visibleNavItems.map((item) => (
+                  <NavLink key={item.href} {...item} />
+                ))}
+              </nav>
+            </div>
+
+            <div className="rounded-xl border border-default bg-bg-surface/70 p-4 text-xs text-text-muted backdrop-blur">
+              Scope guarantee: all views are organization-isolated. RAG, Agent, Messaging, and Dashboards
+              run on separate backend domains with independent histories.
+              {accountType === "SOLO" ? " Solo mode disables invites and messaging by design." : ""}
+            </div>
+          </aside>
+
+          <main id="main-content" className="min-w-0">
+            {children}
+          </main>
         </div>
-      </header>
-
-      <div className="mx-auto grid max-w-7xl gap-6 px-6 py-8 lg:grid-cols-[300px_1fr]">
-        <aside className="space-y-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-text-muted">
-              Navigation
-            </p>
-            <nav className="mt-2 space-y-2" aria-label="Primary">
-              {visibleNavItems.map((item) => (
-                <NavLink key={item.href} {...item} />
-              ))}
-            </nav>
-          </div>
-
-          <div className="rounded-xl border border-default bg-bg-surface p-4 text-xs text-text-muted">
-            Scope guarantee: all views are organization-isolated. RAG, Agent, Messaging, and Dashboards
-            run on separate backend domains with independent histories.
-            {accountType === "SOLO" ? " Solo mode disables invites and messaging by design." : ""}
-          </div>
-        </aside>
-
-        <main id="main-content" className="min-w-0">
-          {children}
-        </main>
       </div>
     </div>
   );

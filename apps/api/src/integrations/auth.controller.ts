@@ -283,28 +283,30 @@ export class AuthController {
       }
 
       // 1. Persist the connection with encrypted tokens + org name in metadata
-      const connection = await prisma.connection.upsert({
+      const connection = await prisma.erpConnection.upsert({
         where: {
-          tenantId_provider_providerAccountId: {
-            tenantId,
-            provider: 'quickbooks',
-            providerAccountId: realmId,
+          organizationId_provider_externalOrganizationId: {
+            organizationId: tenantId,
+            provider: 'QUICKBOOKS',
+            externalOrganizationId: realmId,
           },
         },
         update: {
-          accessToken: this.crypto.encrypt(tokenRes.data.access_token),
-          refreshToken: this.crypto.encrypt(tokenRes.data.refresh_token),
-          isActive: true,
+          accessTokenEncrypted: this.crypto.encrypt(tokenRes.data.access_token),
+          refreshTokenEncrypted: this.crypto.encrypt(tokenRes.data.refresh_token),
+          status: 'ACTIVE',
+          displayName: orgName,
           metadata: { orgName },
         },
         create: {
-          tenantId,
-          userId,
-          provider: 'quickbooks',
-          providerAccountId: realmId,
-          accessToken: this.crypto.encrypt(tokenRes.data.access_token),
-          refreshToken: this.crypto.encrypt(tokenRes.data.refresh_token),
-          isActive: true,
+          organizationId: tenantId,
+          createdById: userId,
+          provider: 'QUICKBOOKS',
+          externalOrganizationId: realmId,
+          accessTokenEncrypted: this.crypto.encrypt(tokenRes.data.access_token),
+          refreshTokenEncrypted: this.crypto.encrypt(tokenRes.data.refresh_token),
+          status: 'ACTIVE',
+          displayName: orgName,
           metadata: { orgName },
         },
       });
@@ -358,31 +360,34 @@ export class AuthController {
           `[Xero] Processing tenant: ${xtenant.tenantId} (${xtenant.tenantName})`,
         );
 
-        const connection = await prisma.connection.upsert({
+        const connection = await prisma.erpConnection.upsert({
           where: {
-            tenantId_provider_providerAccountId: {
-              tenantId: internalTenantId,
-              provider: 'xero',
-              providerAccountId: xtenant.tenantId,
+            organizationId_provider_externalOrganizationId: {
+              organizationId: internalTenantId,
+              provider: 'XERO',
+              externalOrganizationId: xtenant.tenantId,
             },
           },
           update: {
-            accessToken: this.crypto.encrypt(tokenSet.access_token!),
-            refreshToken: tokenSet.refresh_token
+            accessTokenEncrypted: this.crypto.encrypt(tokenSet.access_token!),
+            refreshTokenEncrypted: tokenSet.refresh_token
               ? this.crypto.encrypt(tokenSet.refresh_token)
               : null,
-            isActive: true,
+            status: 'ACTIVE',
+            displayName: xtenant.tenantName,
             metadata: { orgName: xtenant.tenantName },
           },
           create: {
-            tenantId: internalTenantId,
-            userId,
-            provider: 'xero',
-            providerAccountId: xtenant.tenantId,
-            accessToken: this.crypto.encrypt(tokenSet.access_token!),
-            refreshToken: tokenSet.refresh_token
+            organizationId: internalTenantId,
+            createdById: userId,
+            provider: 'XERO',
+            externalOrganizationId: xtenant.tenantId,
+            accessTokenEncrypted: this.crypto.encrypt(tokenSet.access_token!),
+            refreshTokenEncrypted: tokenSet.refresh_token
               ? this.crypto.encrypt(tokenSet.refresh_token)
               : null,
+            status: 'ACTIVE',
+            displayName: xtenant.tenantName,
             metadata: { orgName: xtenant.tenantName },
           },
         });
@@ -420,26 +425,28 @@ export class AuthController {
       user.email,
     );
 
-    const connection = await prisma.connection.upsert({
+    const connection = await prisma.erpConnection.upsert({
       where: {
-        tenantId_provider_providerAccountId: {
-          tenantId: tenant.id,
-          provider: 'workday',
-          providerAccountId: body.workdayTenantId,
+        organizationId_provider_externalOrganizationId: {
+          organizationId: tenant.id,
+          provider: 'WORKDAY',
+          externalOrganizationId: body.workdayTenantId,
         },
       },
       update: {
-        accessToken: 'N/A',
-        refreshToken: this.crypto.encrypt(body.refreshToken),
+        accessTokenEncrypted: 'N/A',
+        refreshTokenEncrypted: this.crypto.encrypt(body.refreshToken),
+        status: 'ACTIVE',
         metadata: this.crypto.encryptJson({ host: body.workdayHost }),
       },
       create: {
-        tenantId: tenant.id,
-        userId: user.id,
-        provider: 'workday',
-        providerAccountId: body.workdayTenantId,
-        accessToken: 'N/A',
-        refreshToken: this.crypto.encrypt(body.refreshToken),
+        organizationId: tenant.id,
+        createdById: user.id,
+        provider: 'WORKDAY',
+        externalOrganizationId: body.workdayTenantId,
+        accessTokenEncrypted: 'N/A',
+        refreshTokenEncrypted: this.crypto.encrypt(body.refreshToken),
+        status: 'ACTIVE',
         metadata: this.crypto.encryptJson({ host: body.workdayHost }),
       },
     });
@@ -478,17 +485,18 @@ export class AuthController {
     this.logger.log(`Setting up Dynamics 365 for internal tenant ${tenant.id}`);
 
     // 1. Persist the connection with encrypted Client Secret
-    const connection = await prisma.connection.upsert({
+    const connection = await prisma.erpConnection.upsert({
       where: {
-        tenantId_provider_providerAccountId: {
-          tenantId: tenant.id,
-          provider: 'dynamics365',
-          providerAccountId: body.companyId,
+        organizationId_provider_externalOrganizationId: {
+          organizationId: tenant.id,
+          provider: 'DYNAMICS365',
+          externalOrganizationId: body.companyId,
         },
       },
       update: {
-        accessToken: 'N/A', // Client credentials flow
-        refreshToken: this.crypto.encrypt(body.clientSecret),
+        accessTokenEncrypted: 'N/A', // Client credentials flow
+        refreshTokenEncrypted: this.crypto.encrypt(body.clientSecret),
+        status: 'ACTIVE',
         metadata: this.crypto.encryptJson({
           tenantId: body.microsoftTenantId,
           clientId: body.clientId,
@@ -497,12 +505,13 @@ export class AuthController {
         }),
       },
       create: {
-        tenantId: tenant.id,
-        userId: user.id,
-        provider: 'dynamics365',
-        providerAccountId: body.companyId,
-        accessToken: 'N/A',
-        refreshToken: this.crypto.encrypt(body.clientSecret),
+        organizationId: tenant.id,
+        createdById: user.id,
+        provider: 'DYNAMICS365',
+        externalOrganizationId: body.companyId,
+        accessTokenEncrypted: 'N/A',
+        refreshTokenEncrypted: this.crypto.encrypt(body.clientSecret),
+        status: 'ACTIVE',
         metadata: this.crypto.encryptJson({
           tenantId: body.microsoftTenantId,
           clientId: body.clientId,

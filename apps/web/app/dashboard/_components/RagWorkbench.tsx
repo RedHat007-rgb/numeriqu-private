@@ -12,9 +12,11 @@ import { StatusPill } from "../../../components/ui/StatusPill";
 import { cn } from "../../../components/ui/cn";
 
 const SAMPLE_PROMPTS = [
-  "What changed in revenue this month?",
-  "Summarize last week's sync activity.",
-  "Which entities had the largest expense swings?",
+  "Analyze my revenue concentration risk and flag any single-entity dependency.",
+  "What is my cash conversion cycle and how can I improve it?",
+  "Compare profitability across all connected entities and rank them.",
+  "Identify overdue receivables and model the impact on cash runway.",
+  "What's my burn rate trajectory and how many months of runway do I have?",
 ];
 
 export function RagWorkbench() {
@@ -120,10 +122,10 @@ export function RagWorkbench() {
               AI Workbench
             </p>
             <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
-              RAG advisor
+              Financial Intelligence Advisor
             </h2>
             <p className="mt-2 text-sm text-text-muted">
-              Source-cited answers grounded in your synced finance data.
+              Goldman Sachs-grade analysis grounded in your live accounting data. Ask anything about revenue, cash flow, burn, or entity performance.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -148,8 +150,8 @@ export function RagWorkbench() {
         >
           {messages.length === 0 ? (
             <EmptyState
-              title="Ready to ask"
-              detail="Try one of these to get started, or type any CFO-grade question."
+              title="Ready to analyze"
+              detail="Ask anything about your finances — revenue, cash flow, burn rate, entity comparisons, or anomalies."
               action={
                 <div className="flex flex-wrap justify-center gap-2">
                   {SAMPLE_PROMPTS.map((prompt) => (
@@ -204,7 +206,7 @@ export function RagWorkbench() {
             onChange={(event) => setInput(event.target.value)}
             aria-label="Ask the advisor"
             className="min-h-12 flex-1 rounded-full border border-default bg-surface-card/70 px-5 text-text-primary outline-none focus:border-accent-violet"
-            placeholder="Ask a CFO-grade question..."
+            placeholder="Ask about revenue, cash flow, burn rate, anomalies..."
           />
           <Button type="submit" loading={isStreaming} disabled={!input.trim() || isStreaming}>
             {isStreaming ? "Streaming" : "Ask"}

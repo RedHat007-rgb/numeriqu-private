@@ -652,38 +652,47 @@ export class FinancialDataService {
     activeOrgIds: string[],
   ): Promise<VentureMetrics> {
     try {
-      const result = await this.clickhouse.query({
-        query: `
-          WITH 
-            monthly_outflow AS (
-              SELECT 
+      const [burnResult, cashResult] = await Promise.all([
+        this.clickhouse.query({
+          query: `
+            SELECT coalesce(avg(outflow), 0) as avg_burn_rate
+            FROM (
+              SELECT
                 toStartOfMonth(issued_at) as month,
-                sum(total_amount) as outflow
+                sum(abs(total_amount)) as outflow
               FROM ${this.dbName}.fact_accounting_invoices
               WHERE tenant_id = {tenantId:String}
                 AND org_id IN ({activeOrgIds:Array(String)})
                 AND status IN ('PAID', 'AUTHORISED', 'Paid', 'Closed')
-                AND total_amount < 0 -- Outflows stored as negative in Gold Layer
+                AND total_amount < 0
               GROUP BY month
               ORDER BY month DESC
               LIMIT 3
-            ),
-            current_account_balance AS (
-              SELECT coalesce(sum(JSONExtractFloat(raw_data, 'amount')), 0) as balance
-              FROM ${process.env.CLICKHOUSE_XERO_DB || 'xero_custom'}.xero_raw
-              WHERE tenant_id = {tenantId:String}
-                AND resource = 'BankTransfers'
             )
-          SELECT 
-            coalesce(avg(abs(outflow)), 0) as avg_burn_rate,
-            any(balance) as current_cash
-          FROM monthly_outflow, current_account_balance
-        `,
-        query_params: { tenantId, activeOrgIds },
-        format: 'JSONEachRow',
-      });
-      const rows: any[] = await result.json();
-      const r = rows[0] || { avg_burn_rate: 0, current_cash: 0 };
+          `,
+          query_params: { tenantId, activeOrgIds },
+          format: 'JSONEachRow',
+          clickhouse_settings: SAFE_QUERY_SETTINGS,
+        }),
+        this.clickhouse.query({
+          query: `
+            SELECT coalesce(sum(JSONExtractFloat(raw_data, 'amount')), 0) as current_cash
+            FROM ${process.env.CLICKHOUSE_XERO_DB || 'xero_custom'}.xero_raw
+            WHERE tenant_id = {tenantId:String}
+              AND resource = 'BankTransfers'
+          `,
+          query_params: { tenantId },
+          format: 'JSONEachRow',
+          clickhouse_settings: SAFE_QUERY_SETTINGS,
+        }),
+      ]);
+
+      const burnRows: any[] = await burnResult.json();
+      const cashRows: any[] = await cashResult.json();
+      const r = {
+        avg_burn_rate: burnRows[0]?.avg_burn_rate ?? 0,
+        current_cash: cashRows[0]?.current_cash ?? 0,
+      };
 
       const burnRate = parseFloat(r.avg_burn_rate);
       const cash = parseFloat(r.current_cash);

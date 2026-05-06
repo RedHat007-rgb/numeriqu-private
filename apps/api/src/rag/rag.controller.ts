@@ -18,15 +18,9 @@ import { FinancialDataService } from '../financial-data/financial-data.service';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
-import { UserProvisioningService } from '../common/services/user-provisioning.service';
+import { OrganizationContextService } from '../modules/org-context/org-context.service';
 import { PersistenceService } from '../common/services/persistence.service';
 
-/**
- * RagController — SSE Streaming Endpoint for Personal Advisor
- *
- * ISOLATION: This controller ONLY handles RAG queries.
- * Agent queries go to /agent/query via AgentController.
- */
 @Controller('rag')
 export class RagController {
   private readonly logger = new Logger(RagController.name);
@@ -34,36 +28,30 @@ export class RagController {
   constructor(
     private readonly ragService: RagService,
     private readonly financialData: FinancialDataService,
-    private readonly provisioning: UserProvisioningService,
+    private readonly orgContext: OrganizationContextService,
     private readonly contextCache: RagContextCacheService,
     private readonly persistence: PersistenceService,
   ) {}
 
-  /**
-   * POST /rag/query — Zero-latency SSE streaming for RAG advisor mode
-   */
   @Post('query')
   @UseGuards(SupabaseAuthGuard)
   async streamQuery(
     @CurrentUser() user: AuthUser,
-    @Body()
-    body: { query: string; history?: { role: string; content: string }[] },
+    @Body() body: { query: string; sessionId?: string },
     @Res() res: Response,
   ) {
-    const { query, history = [] } = body;
+    const { query } = body;
     if (!query?.trim()) {
       throw new HttpException('Query is required.', HttpStatus.BAD_REQUEST);
     }
 
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    this.logger.log(
-      `[RAG:SSE] Stream for tenant=${tenant.id}: "${query.slice(0, 60)}"`,
-    );
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
 
-    // SSE headers
+    this.logger.log(`[RAG:SSE] tenant=${organization.id}: "${query.slice(0, 60)}"`);
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -71,12 +59,11 @@ export class RagController {
     res.flushHeaders();
 
     try {
-      const sessionId = (body as any).sessionId;
       for await (const chunk of this.ragService.query(
-        tenant.id,
+        organization.id,
         user.id,
         query,
-        sessionId,
+        body.sessionId,
       )) {
         res.write(`data: ${chunk}\n`);
         (res as any).flush?.();
@@ -87,50 +74,39 @@ export class RagController {
         res.write(
           `data: ${JSON.stringify({ type: 'error', message: 'Stream interrupted.' })}\n\n`,
         );
-      } catch {
-        /* client already gone */
-      }
+      } catch { /* client already gone */ }
     } finally {
       res.end();
     }
   }
 
-  /**
-   * GET /rag/profile — Raw financial profile
-   */
   @Get('profile')
   @UseGuards(SupabaseAuthGuard)
   async getProfile(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    return this.financialData.getFinancialProfile(tenant.id);
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
+    return this.financialData.getFinancialProfile(organization.id);
   }
 
-  /**
-   * DELETE /rag/cache/:tenantId — Invalidate the RAG context cache
-   */
   @Delete('cache/:tenantId')
   @UseGuards(SupabaseAuthGuard)
   async invalidateCache(
     @CurrentUser() user: AuthUser,
     @Param('tenantId') tenantId: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    if (tenantId !== tenant.id) {
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
+    if (tenantId !== organization.id) {
       throw new HttpException('Forbidden.', HttpStatus.FORBIDDEN);
     }
     this.contextCache.invalidate(tenantId);
     return { invalidated: true, tenantId };
   }
 
-  /**
-   * GET /rag/health — RAG layer health check
-   */
   @Get('health')
   async healthCheck() {
     const health = await this.ragService.healthCheck();
@@ -138,39 +114,33 @@ export class RagController {
       ...health,
       status: health.ollama ? 'operational' : 'degraded',
       advisory: health.ollama
-        ? `RAG Advisor is ready. Mode: ${health.mode}`
-        : 'Ollama offline — start with: ollama serve && ollama pull llama3.2:3b',
+        ? `RAG Advisor ready. Model: ${health.engine}`
+        : 'Ollama offline — check your Azure VM at ' + (process.env.OLLAMA_URL || 'http://localhost:11434'),
     };
   }
 
-  /**
-   * GET /rag/sessions — List historical RAG sessions
-   */
   @Get('sessions')
   @UseGuards(SupabaseAuthGuard)
   async listSessions(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    return this.persistence.listSessions(tenant.id, user.id, 'rag');
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
+    return this.persistence.listSessions(organization.id, user.id, 'rag');
   }
 
-  /**
-   * GET /rag/sessions/:id — Retrieve a specific RAG session
-   */
   @Get('sessions/:id')
   @UseGuards(SupabaseAuthGuard)
   async getSession(
     @CurrentUser() user: AuthUser,
     @Param('id') sessionId: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
     return this.persistence.getOrCreateSession({
-      tenantId: tenant.id,
+      tenantId: organization.id,
       userId: user.id,
       sessionId,
       mode: 'rag',

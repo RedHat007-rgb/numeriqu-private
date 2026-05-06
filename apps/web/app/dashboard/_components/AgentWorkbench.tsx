@@ -19,9 +19,11 @@ type Message = {
 };
 
 const SAMPLE_PROMPTS = [
-  "Generate a CFO-friendly board pack from the last 90 days.",
-  "Find anomalies in expenses this quarter.",
-  "Compare margin between connected entities.",
+  "Build a full CFO board pack with revenue trend, entity breakdown, and burn analysis.",
+  "Run a forensic expense audit — find anomalies, concentrations, and unusual patterns.",
+  "Model three cash runway scenarios: base case, upside, and risk case.",
+  "Generate an investor-ready P&L summary with entity-by-entity margin comparison.",
+  "Identify our top revenue risks and create an action dashboard.",
 ];
 
 export function AgentWorkbench() {
@@ -128,7 +130,7 @@ export function AgentWorkbench() {
             Agent workbench
           </p>
           <h2 className="mt-1 font-display text-xl font-bold text-text-primary md:text-2xl">
-            Autonomous analysis missions
+            Autonomous CFO Intelligence
           </h2>
         </div>
         <StatusPill tone={isStreaming ? "info" : "neutral"}>
@@ -152,7 +154,7 @@ export function AgentWorkbench() {
             {messages.length === 0 ? (
               <EmptyState
                 title="Ready for a mission"
-                detail="Send the agent a goal and it will plan, query, and synthesize."
+                detail="Deploy the agent on any financial objective — board packs, anomaly detection, scenario modeling, or deep entity analysis."
                 action={
                   <div className="flex flex-wrap justify-center gap-2">
                     {SAMPLE_PROMPTS.map((prompt) => (

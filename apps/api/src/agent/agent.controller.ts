@@ -18,15 +18,9 @@ import { FinancialDataService } from '../financial-data/financial-data.service';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
-import { UserProvisioningService } from '../common/services/user-provisioning.service';
+import { OrganizationContextService } from '../modules/org-context/org-context.service';
 import { PersistenceService } from '../common/services/persistence.service';
 
-/**
- * AgentController — SSE Streaming Endpoint for Strategic Agent
- *
- * ISOLATION: This controller ONLY handles Agent (strategic) queries.
- * RAG queries go to /rag/query via RagController.
- */
 @Controller('agent')
 export class AgentController {
   private readonly logger = new Logger(AgentController.name);
@@ -34,37 +28,29 @@ export class AgentController {
   constructor(
     private readonly agentService: AgentService,
     private readonly financialData: FinancialDataService,
-    private readonly provisioning: UserProvisioningService,
+    private readonly orgContext: OrganizationContextService,
     private readonly persistence: PersistenceService,
-  ) {
-    this.logger.log('AgentController initialized with Strategist V2 routes');
-  }
+  ) {}
 
-  /**
-   * POST /agent/query — SSE streaming for Agent strategic mode
-   */
   @Post('query')
   @UseGuards(SupabaseAuthGuard)
   async streamQuery(
     @CurrentUser() user: AuthUser,
-    @Body()
-    body: { query: string; history?: { role: string; content: string }[] },
+    @Body() body: { query: string; sessionId?: string },
     @Res() res: Response,
   ) {
-    const { query, history = [] } = body;
+    const { query } = body;
     if (!query?.trim()) {
       throw new HttpException('Query is required.', HttpStatus.BAD_REQUEST);
     }
 
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    this.logger.log(
-      `[Agent:SSE] Stream for tenant=${tenant.id}: "${query.slice(0, 60)}"`,
-    );
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
 
-    // SSE headers
+    this.logger.log(`[Agent:SSE] tenant=${organization.id}: "${query.slice(0, 60)}"`);
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -72,40 +58,27 @@ export class AgentController {
     res.flushHeaders();
 
     try {
-      const sessionId = (body as any).sessionId;
       for await (const chunk of this.agentService.query(
-        tenant.id,
+        organization.id,
         user.id,
         query,
-        sessionId,
+        body.sessionId,
       )) {
         res.write(`data: ${chunk}\n`);
         (res as any).flush?.();
       }
     } catch (error: any) {
-      this.logger.error(
-        `[Agent:SSE:Fatal] Stream crashed: ${error.message}`,
-        error.stack,
-      );
+      this.logger.error(`[Agent:SSE:Fatal] Stream crashed: ${error.message}`, error.stack);
       try {
         res.write(
-          `data: ${JSON.stringify({
-            type: 'error',
-            message:
-              'Analysis stream was interrupted due to technical turbulence.',
-          })}\n\n`,
+          `data: ${JSON.stringify({ type: 'error', message: 'Analysis stream interrupted.' })}\n\n`,
         );
-      } catch {
-        /* connection dead */
-      }
+      } catch { /* connection dead */ }
     } finally {
       res.end();
     }
   }
 
-  /**
-   * GET /agent/metrics — Chart-ready analytics data
-   */
   @Get('metrics')
   @UseGuards(SupabaseAuthGuard)
   async getChartData(
@@ -113,32 +86,32 @@ export class AgentController {
     @Query('metric') metric: string,
     @Query('grouping') grouping: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
 
     if (metric === 'venture') {
-      const profile = await this.financialData.getFinancialProfile(tenant.id);
+      const profile = await this.financialData.getFinancialProfile(organization.id);
       return { data: profile.ventureMetrics };
     }
 
     if (metric === 'revenue' && grouping === 'org') {
-      const profile = await this.financialData.getFinancialProfile(tenant.id);
-      const data = profile.connectedOrgs.map((org) => ({
-        name: org.orgName,
-        value: Math.round(org.totalRevenue),
-      }));
-      return { data };
+      const profile = await this.financialData.getFinancialProfile(organization.id);
+      return {
+        data: profile.connectedOrgs.map((org) => ({
+          name: org.orgName,
+          value: Math.round(org.totalRevenue),
+        })),
+      };
     }
 
     if (metric === 'invoices') {
       if (grouping === 'status') {
-        const profile = await this.financialData.getFinancialProfile(tenant.id);
-        const map = new Map();
+        const profile = await this.financialData.getFinancialProfile(organization.id);
+        const map = new Map<string, number>();
         for (const stat of profile.invoiceStats.byStatusAndOrg) {
-          const existing = map.get(stat.status) || 0;
-          map.set(stat.status, existing + Math.abs(stat.totalAmount));
+          map.set(stat.status, (map.get(stat.status) ?? 0) + Math.abs(stat.totalAmount));
         }
         return {
           data: Array.from(map.entries()).map(([name, value]) => ({
@@ -147,14 +120,13 @@ export class AgentController {
           })),
         };
       }
-      return { data: await this.financialData.getInvoicesList(tenant.id) };
+      return { data: await this.financialData.getInvoicesList(organization.id) };
     }
 
-    const trend = await this.financialData.getMonthlyRevenueTrend(tenant.id);
+    const trend = await this.financialData.getMonthlyRevenueTrend(organization.id);
     const periods = new Map<string, any>();
     for (const t of trend) {
-      const monthLabel =
-        t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2);
+      const monthLabel = t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2);
       const existing = periods.get(monthLabel) || { name: monthLabel, value: 0 };
       if (grouping === 'org') {
         existing[t.org_name] = Math.abs(parseFloat(t.revenue) || 0);
@@ -166,9 +138,6 @@ export class AgentController {
     return { data: Array.from(periods.values()) };
   }
 
-  /**
-   * GET /agent/health — Agent layer health check
-   */
   @Get('health')
   async healthCheck() {
     const health = await this.agentService.healthCheck();
@@ -176,70 +145,58 @@ export class AgentController {
       ...health,
       status: health.ollama ? 'operational' : 'degraded',
       advisory: health.ollama
-        ? `Strategic Agent is ready. Mode: ${health.mode}`
-        : 'Ollama offline — start with: ollama serve && ollama pull llama3.2:3b',
+        ? `Agent ready. Model: ${health.engine}`
+        : 'Ollama offline — check your Azure VM at ' + (process.env.OLLAMA_URL || 'http://localhost:11434'),
     };
   }
 
-  /**
-   * GET /agent/sessions — List historical Agent sessions
-   */
   @Get('sessions')
   @UseGuards(SupabaseAuthGuard)
   async listSessions(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    return this.persistence.listSessions(tenant.id, user.id, 'agent');
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
+    return this.persistence.listSessions(organization.id, user.id, 'agent');
   }
 
-  /**
-   * GET /agent/sessions/:id — Retrieve a specific Agent session
-   */
   @Get('sessions/:id')
   @UseGuards(SupabaseAuthGuard)
   async getSession(
     @CurrentUser() user: AuthUser,
     @Param('id') sessionId: string,
   ) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
     return this.persistence.getOrCreateSession({
-      tenantId: tenant.id,
+      tenantId: organization.id,
       userId: user.id,
       sessionId,
       mode: 'agent',
     });
   }
 
-  /**
-   * GET /agent/dashboards — List available dashboards
-   */
   @Get('dashboards')
   @UseGuards(SupabaseAuthGuard)
   async listDashboards(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    return this.persistence.listDashboards(tenant.id, user.id);
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
+    return this.persistence.listDashboards(organization.id, user.id);
   }
 
-  /**
-   * GET /agent/dashboards/latest — Get the current operational dashboard for sync
-   */
   @Get('dashboards/latest')
   @UseGuards(SupabaseAuthGuard)
   async getLatestDashboard(@CurrentUser() user: AuthUser) {
-    const { tenant } = await this.provisioning.ensureProvisioned(
-      user.id,
-      user.email,
-    );
-    const list = await this.persistence.listDashboards(tenant.id, user.id);
+    const { organization } = await this.orgContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    });
+    const list = await this.persistence.listDashboards(organization.id, user.id);
     if (list.length === 0) return null;
-    return this.persistence.getDashboard(list[0].id, tenant.id);
+    return this.persistence.getDashboard(list[0].id, organization.id);
   }
 }

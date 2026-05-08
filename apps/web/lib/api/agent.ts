@@ -45,6 +45,12 @@ export class AgentApi {
     return this.request<GeneratedDashboard | null>("/agent/dashboards/latest");
   }
 
+  getDashboardSession(dashboardId: string) {
+    return this.request<{ sessionId: string; sessionTitle: string } | null>(
+      `/agent/dashboards/${dashboardId}/session`,
+    );
+  }
+
   getMetrics(metric: string, grouping: string) {
     const params = new URLSearchParams({ metric, grouping });
     return this.request<MetricsResponse>(`/agent/metrics?${params.toString()}`);

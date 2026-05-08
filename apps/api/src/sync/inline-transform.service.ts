@@ -57,6 +57,7 @@ export class InlineTransformService {
       await this.upsertFactInvoices(tenantId, orgId, provider);
       await this.upsertDimAccounts(tenantId, orgId, provider);
       await this.refreshRevenueByMonth(tenantId, orgId, provider);
+      await this.upsertDimClients(tenantId, orgId, provider);
 
       const elapsed = Date.now() - start;
       this.logger.log(
@@ -95,7 +96,8 @@ export class InlineTransformService {
     const COLS = `(
       invoice_id, tenant_id, user_id, connection_id, provider,
       org_id, org_name, invoice_external_id, invoice_number,
-      total_amount, currency, issued_at, due_at, status, updated_at, synced_at
+      total_amount, currency, issued_at, due_at, status,
+      contact_id, contact_name, updated_at, synced_at
     )`;
 
     let sql: string;
@@ -120,6 +122,8 @@ export class InlineTransformService {
           parseDateTimeBestEffortOrNull(
             JSONExtractString(raw_data, 'dueDate'))               AS due_at,
           JSONExtractString(raw_data, 'status')                   AS status,
+          JSONExtractString(raw_data, 'contact', 'contactID') AS contact_id,
+          JSONExtractString(raw_data, 'contact', 'name')       AS contact_name,
           updated_at,
           synced_at
         FROM ${this.xeroDb}.xero_raw
@@ -148,6 +152,8 @@ export class InlineTransformService {
           parseDateTimeBestEffortOrNull(
             JSONExtractString(raw_data, 'DueDate'))                   AS due_at,
           JSONExtractString(raw_data, 'EmailStatus')                  AS status,
+          JSONExtractString(raw_data, 'CustomerRef', 'value')  AS contact_id,
+          JSONExtractString(raw_data, 'CustomerRef', 'name')   AS contact_name,
           updated_at,
           synced_at
         FROM ${this.qbDb}.quickbooks_raw
@@ -267,6 +273,96 @@ export class InlineTransformService {
     await this.chAnalytics.command({ query });
     this.logger.debug(
       `[Transform] revenue_by_month refreshed for ${provider}/${orgId.slice(0, 8)}`,
+    );
+  }
+
+  /**
+   * Materialise dim_clients from fact_accounting_invoices.
+   *
+   * One row per (tenant_id, org_id, provider, contact_id).
+   * ReplacingMergeTree(_version) ensures each sync fully overwrites the
+   * previous snapshot — no stale rows accumulate.
+   *
+   * Status classification (matches both Xero and QuickBooks statuses):
+   *   PAID / closed   → counts as revenue (cash collected)
+   *   AUTHORISED / SENT / NEEDTOSEND + not past due_at → outstanding (healthy AR)
+   *   AUTHORISED / SENT / NEEDTOSEND + past due_at     → overdue (collection risk)
+   *   DRAFT           → pipeline (not yet committed)
+   */
+  private async upsertDimClients(
+    tenantId: string,
+    orgId: string,
+    provider: string,
+  ): Promise<void> {
+    const dest = `${this.analyticsDb}.dim_clients`;
+    const src  = `${this.analyticsDb}.fact_accounting_invoices`;
+
+    const syncedAt = new Date()
+      .toISOString()
+      .replace('T', ' ')
+      .substring(0, 19);
+
+    const query = `
+      INSERT INTO ${dest} (
+        client_id, client_name, provider, tenant_id, org_id, org_name, currency,
+        total_invoiced, total_revenue, total_outstanding, total_overdue,
+        invoice_count, paid_count, outstanding_count, overdue_count, draft_count,
+        avg_invoice_amount, first_invoice_date, last_invoice_date, updated_at
+      )
+      SELECT
+        contact_id                                                                   AS client_id,
+        any(contact_name)                                                            AS client_name,
+        provider,
+        tenant_id,
+        org_id,
+        any(org_name)                                                                AS org_name,
+        any(currency)                                                                AS currency,
+
+        /* ── Lifetime billing ────────────────────────────────────────────── */
+        coalesce(sum(total_amount), 0)                                               AS total_invoiced,
+
+        /* Revenue = cash already collected */
+        coalesce(sumIf(total_amount,
+          lowerUTF8(status) IN ('paid', 'voided', 'closed', 'active', 'open')), 0)  AS total_revenue,
+
+        /* Outstanding = authorised/sent but not yet past the due date */
+        coalesce(sumIf(total_amount,
+          lowerUTF8(status) IN ('authorised', 'sent', 'needtosend', 'notset')
+          AND (due_at IS NULL OR due_at >= now())), 0)                               AS total_outstanding,
+
+        /* Overdue = authorised/sent AND past the due date */
+        coalesce(sumIf(total_amount,
+          lowerUTF8(status) IN ('authorised', 'sent', 'needtosend', 'notset')
+          AND due_at IS NOT NULL AND due_at < now()), 0)                             AS total_overdue,
+
+        /* ── Volume counts ───────────────────────────────────────────────── */
+        count(*)                                                                     AS invoice_count,
+        countIf(lowerUTF8(status) IN ('paid', 'voided', 'closed', 'active', 'open')) AS paid_count,
+        countIf(lowerUTF8(status) IN ('authorised', 'sent', 'needtosend', 'notset')
+          AND (due_at IS NULL OR due_at >= now()))                                   AS outstanding_count,
+        countIf(lowerUTF8(status) IN ('authorised', 'sent', 'needtosend', 'notset')
+          AND due_at IS NOT NULL AND due_at < now())                                 AS overdue_count,
+        countIf(lowerUTF8(status) = 'draft')                                        AS draft_count,
+
+        /* ── Averages ────────────────────────────────────────────────────── */
+        coalesce(avg(total_amount), 0)                                               AS avg_invoice_amount,
+
+        /* ── Activity window ─────────────────────────────────────────────── */
+        min(toDate(issued_at))                                                       AS first_invoice_date,
+        max(toDate(issued_at))                                                       AS last_invoice_date,
+
+        '${syncedAt}'                                                                AS updated_at
+
+      FROM ${src}
+      WHERE tenant_id = '${this.escape(tenantId)}'
+        AND org_id    = '${this.escape(orgId)}'
+        AND contact_id != ''
+      GROUP BY contact_id, provider, tenant_id, org_id
+    `;
+
+    await this.chAnalytics.command({ query });
+    this.logger.debug(
+      `[Transform] dim_clients materialised for ${provider}/${orgId.slice(0, 8)}`,
     );
   }
 

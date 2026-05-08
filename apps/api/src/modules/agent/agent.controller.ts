@@ -76,6 +76,27 @@ export class AgentController {
     return this.agentService.latestDashboard(context.organization.id, context.user.id);
   }
 
+  @Get('dashboards/:id/session')
+  async dashboardSession(
+    @CurrentUser() user: AuthUser,
+    @Param('id') dashboardId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    }, { organizationId });
+    const result = await this.agentService.getDashboardSession(
+      dashboardId,
+      context.organization.id,
+      context.user.id,
+    );
+    if (!result) {
+      throw new HttpException('Session not found for this dashboard.', HttpStatus.NOT_FOUND);
+    }
+    return result;
+  }
+
   @Get('metrics')
   async metrics(
     @CurrentUser() user: AuthUser,

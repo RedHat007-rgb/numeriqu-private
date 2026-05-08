@@ -178,15 +178,84 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT ''`,
         `ALTER TABLE ${db}.revenue_by_month ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT ''`,
         `ALTER TABLE ${db}.dim_accounting_accounts ADD COLUMN IF NOT EXISTS tenant_id String DEFAULT ''`,
-        `ALTER TABLE ${db}.fact_accounting_invoices UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
-        `ALTER TABLE ${db}.revenue_by_month UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
-        `ALTER TABLE ${db}.dim_accounting_accounts UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+        // Contact / client columns for client revenue analysis
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS contact_id String DEFAULT ''`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS contact_name String DEFAULT ''`,
       ];
+
+      // ── dim_clients: one materialised row per client per entity ─────────────
+      // Populated by InlineTransformService.upsertDimClients() on every sync.
+      // ReplacingMergeTree(_version) allows idempotent upserts: each sync
+      // overwrites the previous row for the same (tenant_id, org_id, provider,
+      // client_id) via monotonically increasing _version.
+      await safeQuery(`
+        CREATE TABLE IF NOT EXISTS ${db}.dim_clients (
+          client_id            String,
+          client_name          String         DEFAULT '',
+          provider             LowCardinality(String) DEFAULT '',
+          tenant_id            String,
+          org_id               String         DEFAULT '',
+          org_name             String         DEFAULT '',
+          currency             String         DEFAULT '',
+          -- Lifetime billing across all invoice statuses
+          total_invoiced       Float64        DEFAULT 0,
+          -- Revenue = PAID / VOIDED / CLOSED invoices only
+          total_revenue        Float64        DEFAULT 0,
+          -- Outstanding = AUTHORISED/SENT not yet past due
+          total_outstanding    Float64        DEFAULT 0,
+          -- Overdue = AUTHORISED/SENT past the due date
+          total_overdue        Float64        DEFAULT 0,
+          -- Volume counts
+          invoice_count        UInt32         DEFAULT 0,
+          paid_count           UInt32         DEFAULT 0,
+          outstanding_count    UInt32         DEFAULT 0,
+          overdue_count        UInt32         DEFAULT 0,
+          draft_count          UInt32         DEFAULT 0,
+          -- Averages
+          avg_invoice_amount   Float64        DEFAULT 0,
+          -- Activity window
+          first_invoice_date   Nullable(Date),
+          last_invoice_date    Nullable(Date),
+          -- Housekeeping
+          updated_at           DateTime       DEFAULT now(),
+          _version             UInt64         MATERIALIZED toUnixTimestamp64Milli(now64())
+        ) ENGINE = ReplacingMergeTree(_version)
+        ORDER BY (tenant_id, org_id, provider, client_id)
+        SETTINGS index_granularity = 8192
+      `);
       for (const migration of migrations) {
         try {
           await safeQuery(migration);
         } catch {
-          /* column may already exist — safe to ignore */
+          /* column may already exist or incompatible type — safe to ignore */
+        }
+      }
+
+      // Backfill tenant_id from organization_id only if the old column exists.
+      // On fresh installs organization_id never existed — skip silently.
+      const orgIdBackfills = [
+        `ALTER TABLE ${db}.fact_accounting_invoices UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+        `ALTER TABLE ${db}.revenue_by_month UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+        `ALTER TABLE ${db}.dim_accounting_accounts UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+      ];
+      for (const backfill of orgIdBackfills) {
+        try {
+          // Check if organization_id column exists before running the backfill mutation.
+          // On fresh installs this column does not exist and the UPDATE would log a
+          // misleading ClickHouseError — suppress it completely.
+          const table = backfill.match(/ALTER TABLE (\S+)/)?.[1] ?? '';
+          if (table) {
+            const colCheck = await this.chAnalytics.query({
+              query: `SELECT name FROM system.columns WHERE table = {table:String} AND name = 'organization_id' AND database = {db:String}`,
+              query_params: { table: table.replace(`${db}.`, ''), db },
+              format: 'JSONEachRow',
+            });
+            const cols: any[] = await colCheck.json();
+            if (cols.length === 0) continue; // column absent — skip silently
+          }
+          await safeQuery(backfill);
+        } catch {
+          /* non-fatal — organization_id may not exist on this install */
         }
       }
 

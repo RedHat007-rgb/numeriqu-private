@@ -76,6 +76,24 @@ function fmtNumber(value: number): string {
   return value.toFixed(0);
 }
 
+function formatValue(metric: string, grouping: string, value: number): string {
+  const isPercent = metric === "collection_rate" || metric === "overdue_rate";
+  if (isPercent) return `${value.toFixed(1)}%`;
+
+  const isCurrencyMetric =
+    metric === "revenue" ||
+    metric === "outstanding" ||
+    metric === "overdue" ||
+    metric === "paid" ||
+    metric === "total_invoiced" ||
+    metric === "avg_invoice" ||
+    (metric === "invoices" && grouping === "status");
+
+  if (isCurrencyMetric) return fmtCurrency(value);
+
+  return fmtNumber(value);
+}
+
 function formatWhen(value: string | null) {
   if (!value) return "not synced";
   return new Intl.DateTimeFormat(undefined, {
@@ -88,7 +106,7 @@ function formatWhen(value: string | null) {
 
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label, metric, grouping }: any) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-xl border border-default bg-bg-card/95 p-3 shadow-xl backdrop-blur-sm">
@@ -104,8 +122,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
             style={{ background: entry.color || entry.fill }}
           />
           <span className="text-xs font-semibold text-text-primary">
-            {typeof entry.value === "number" && entry.value > 100
-              ? fmtCurrency(entry.value)
+            {typeof entry.value === "number"
+              ? formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
               : entry.value}
           </span>
         </div>
@@ -149,10 +167,14 @@ function ChartRenderer({
   type,
   data,
   chartId,
+  metric,
+  grouping,
 }: {
   type: string;
   data: ChartData;
   chartId: string;
+  metric: string;
+  grouping: string;
 }) {
   const h = 200;
 
@@ -233,10 +255,12 @@ function ChartRenderer({
               tick={TICK}
               tickLine={false}
               axisLine={false}
-              tickFormatter={fmtNumber}
+              tickFormatter={(v: number) =>
+                formatValue(metric, grouping, Number(v) || 0)
+              }
               width={40}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
             <Area
               type="monotone"
               dataKey="value"
@@ -273,10 +297,12 @@ function ChartRenderer({
               tick={TICK}
               tickLine={false}
               axisLine={false}
-              tickFormatter={fmtNumber}
+              tickFormatter={(v: number) =>
+                formatValue(metric, grouping, Number(v) || 0)
+              }
               width={40}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
             <Bar
               dataKey="value"
               fill={`url(#grad-bar-${chartId})`}
@@ -310,7 +336,7 @@ function ChartRenderer({
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="none" />
               ))}
             </Pie>
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
             <Legend
               layout="vertical"
               align="right"
@@ -335,14 +361,63 @@ function ChartRenderer({
     );
   }
 
+  if (type === "table") {
+    const rows = data.slice(0, 10);
+    const cols = rows.length > 0 ? Object.keys(rows[0] ?? {}).slice(0, 6) : [];
+    return (
+      <div style={{ height: h }} className="overflow-hidden rounded-xl border border-default bg-bg-elevated/30">
+        <div className="h-full overflow-auto">
+          <table className="w-full text-left text-[11px]">
+            <thead className="sticky top-0 bg-bg-elevated/80 backdrop-blur">
+              <tr>
+                {cols.map((c) => (
+                  <th
+                    key={c}
+                    className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted"
+                  >
+                    {c.replaceAll("_", " ")}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => (
+                <tr key={idx} className="border-t border-default/50">
+                  {cols.map((c) => (
+                    <td key={c} className="px-3 py-2 text-text-secondary">
+                      {String((r as any)?.[c] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td className="px-3 py-3 text-text-muted" colSpan={cols.length || 1}>
+                    No rows
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ height: h }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data}>
           <CartesianGrid {...GRID} />
           <XAxis dataKey="name" tick={TICK} />
-          <YAxis tick={TICK} tickFormatter={fmtNumber} width={40} />
-          <Tooltip content={<CustomTooltip />} />
+          <YAxis
+            tick={TICK}
+            tickFormatter={(v: number) =>
+              formatValue(metric, grouping, Number(v) || 0)
+            }
+            width={40}
+          />
+          <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
           <Line
             type="monotone"
             dataKey="value"
@@ -420,7 +495,13 @@ function ExpandedDashboard({
                   <p className="text-xs text-text-muted">No data available</p>
                 </div>
               ) : (
-                <ChartRenderer type={chart.type} data={data} chartId={chart.id} />
+                <ChartRenderer
+                  type={chart.type}
+                  data={data}
+                  chartId={chart.id}
+                  metric={String((chart.queryConfig as any)?.metric ?? "")}
+                  grouping={String((chart.queryConfig as any)?.grouping ?? "")}
+                />
               )}
             </div>
             <div className="mt-2">

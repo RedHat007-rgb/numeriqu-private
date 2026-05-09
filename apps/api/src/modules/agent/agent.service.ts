@@ -29,7 +29,7 @@ interface AgentPlan {
     widgets: Array<{
       title: string;
       description: string;
-      type: 'line' | 'bar' | 'pie' | 'metric';
+      type: 'line' | 'bar' | 'pie' | 'metric' | 'table';
       metric: string;
       grouping: string;
       display_order: number;
@@ -43,7 +43,7 @@ interface DashboardEditPlan {
   add: Array<{
     title: string;
     description: string;
-    type: 'line' | 'bar' | 'pie' | 'metric';
+    type: 'line' | 'bar' | 'pie' | 'metric' | 'table';
     metric: string;
     grouping: string;
   }>;
@@ -51,7 +51,7 @@ interface DashboardEditPlan {
   modify: Array<{
     index: number;
     title?: string;
-    type?: 'line' | 'bar' | 'pie' | 'metric';
+    type?: 'line' | 'bar' | 'pie' | 'metric' | 'table';
     description?: string;
   }>;
 }
@@ -85,6 +85,7 @@ const VALID_WIDGETS = [
   { type: 'line', metric: 'invoice_count',   grouping: 'month'   },
   { type: 'line', metric: 'overdue',         grouping: 'month'   },
   { type: 'line', metric: 'revenue',         grouping: 'quarter' },
+  { type: 'line', metric: 'avg_invoice',     grouping: 'month'   },
   // ── Comparison bars — entity / period
   { type: 'bar',  metric: 'revenue',         grouping: 'org'     },
   { type: 'bar',  metric: 'revenue',         grouping: 'quarter' },
@@ -99,11 +100,17 @@ const VALID_WIDGETS = [
   { type: 'bar',  metric: 'invoices',        grouping: 'client'  },
   { type: 'bar',  metric: 'avg_invoice',     grouping: 'client'  },
   { type: 'bar',  metric: 'paid',            grouping: 'client'  },
+  { type: 'bar',  metric: 'collection_rate', grouping: 'client'  },
+  { type: 'bar',  metric: 'overdue_rate',    grouping: 'client'  },
   // ── Proportional pies
   { type: 'pie',  metric: 'revenue',         grouping: 'client'  },
   { type: 'pie',  metric: 'revenue',         grouping: 'provider'},
   { type: 'pie',  metric: 'invoices',        grouping: 'status'  },
   { type: 'pie',  metric: 'outstanding',     grouping: 'client'  },
+  // ── Metric tiles
+  { type: 'metric', metric: 'venture',       grouping: 'summary' },
+  // ── Tables
+  { type: 'table', metric: 'invoices',       grouping: 'list'    },
 ] as const;
 
 // ─── Planning Prompt — minimal for fast Ollama inference ─────────────────────
@@ -124,6 +131,7 @@ LINE (trends over time):
   line/invoice_count/month  — monthly invoice volume trend
   line/overdue/month        — monthly overdue AR accumulation
   line/revenue/quarter      — quarterly revenue as trend line
+  line/avg_invoice/month    — average invoice size trend
 
 BAR (ranked comparisons):
   bar/revenue/org           — total revenue per entity
@@ -138,12 +146,20 @@ BAR (ranked comparisons):
   bar/invoices/client       — invoice count per client
   bar/avg_invoice/client    — average invoice size per client
   bar/paid/client           — cash collected per client
+  bar/collection_rate/client — % collected (paid / invoiced) per client
+  bar/overdue_rate/client    — % overdue (overdue / invoiced) per client
 
 PIE (proportional breakdowns):
   pie/revenue/client        — revenue share by client
   pie/revenue/provider      — revenue split by ERP system
   pie/invoices/status       — invoice count by status
   pie/outstanding/client    — outstanding concentration by client
+
+METRIC (tiles):
+  metric/venture/summary    — burn, runway, cash, efficiency
+
+TABLE (rows):
+  table/invoices/list       — recent invoices (audit view)
 
 TOOLS:
   revenue_trend             — monthly/quarterly revenue data
@@ -156,16 +172,21 @@ TOOLS:
 
 RULES:
 1. Read the LIVE DATA CONTEXT carefully — base your chart choices on the actual numbers
-2. Pick 2-5 charts that tell the most useful story for this specific query
+2. Pick 4-6 charts that tell the most useful story for this specific query (minimum 4)
 3. NEVER repeat the same metric+grouping twice
 4. Title the dashboard and each chart specifically — not generic names
 5. For client queries: always include client_financial_profile tool + at least 2 client-grouping charts
 6. For trend queries: favour line charts; for comparisons: favour bar; for distribution: include a pie
 7. If the data shows high overdue amounts, include an overdue chart even if not explicitly asked
-8. Match chart count to complexity: simple query = 2-3 charts, comprehensive = 4-5
+8. Prefer diversity: include (at least) 1 trend line, 1 comparison bar, and 1 distribution pie unless clearly irrelevant.
 
 OUTPUT FORMAT (JSON only, no markdown):
-{"title":"Dashboard title specific to this query","tools":["tool1","tool2"],"widgets":[{"type":"bar","metric":"revenue","grouping":"client","title":"Specific chart title"},{"type":"line","metric":"overdue","grouping":"month","title":"Another specific title"}]}
+Return EITHER:
+1) Single plan:
+{"title":"Dashboard title","tools":["tool1"],"widgets":[{"type":"bar","metric":"revenue","grouping":"client","title":"Specific title"}]}
+OR (preferred)
+2) Candidates (you must provide 2-3 candidates):
+{"candidates":[{"title":"Candidate A","tools":["tool1"],"widgets":[...]},{"title":"Candidate B","tools":[...],"widgets":[...]}]}
 
 EXAMPLES:
 Q: "who are my top clients" + 12 clients, $4.2M revenue, $45K overdue → {"title":"Top Client Revenue & Collection Intelligence","tools":["client_financial_profile","client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Total Revenue Collected"},{"type":"bar","metric":"outstanding","grouping":"client","title":"Outstanding Balance per Client"},{"type":"bar","metric":"overdue","grouping":"client","title":"Overdue Exposure per Client"},{"type":"pie","metric":"revenue","grouping":"client","title":"Revenue Concentration Risk"}]}
@@ -180,11 +201,13 @@ Q: "CFO board pack" + all data available → {"title":"Executive Financial Intel
 const EDITOR_SYSTEM = `You are a precise financial dashboard editor. Apply the minimal change to satisfy the user's request.
 
 AVAILABLE WIDGET TYPES (use ONLY these exact pairs):
-LINE: revenue/month | invoice_count/month | overdue/month
+LINE: revenue/month | outstanding/month | paid/month | invoice_count/month | overdue/month | revenue/quarter | avg_invoice/month
 BAR:  revenue/org | revenue/quarter | invoices/org | outstanding/org | overdue/org
       revenue/client | total_invoiced/client | outstanding/client | overdue/client | invoices/client | avg_invoice/client | paid/client
+      collection_rate/client | overdue_rate/client
 PIE:  invoices/status | revenue/provider | revenue/client | outstanding/client
 METRIC: venture/summary
+TABLE: invoices/list
 
 OUTPUT: Respond with ONLY valid JSON. Zero explanation. Zero markdown.
 
@@ -203,9 +226,9 @@ Rules:
 - "add": new widgets to insert. Use exact metric+grouping from the available list above.
 - "remove_indices": 0-based indices of widgets to delete from the current list.
 - "modify": change type, title, or description of an existing widget at that 0-based index.
-- Total widgets after edit MUST be between 1 and 4.
+- Total widgets after edit MUST be between 4 and 6.
 - If the request is ambiguous, add the most relevant widget without removing anything.
-- If asked to change a chart type, use "modify" with the correct "type" value.`;
+- If asked to change a chart type, use "modify" with the correct "type" value.`; 
 
 // ─── Synthesis Prompt ─────────────────────────────────────────────────────────
 
@@ -349,6 +372,25 @@ export class AgentService {
       };
     }
 
+    if (metric === 'avg_invoice' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
+           toStartOfMonth(issued_at) AS month_start,
+           coalesce(avg(abs(total_amount)), 0) AS avg_invoice
+         FROM ${this.analyticsDb}.fact_accounting_invoices
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+         GROUP BY month, month_start
+         ORDER BY month_start ASC
+         LIMIT 24`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return {
+        data: rows.map((r) => ({ name: r.month as string, value: this.num(r.avg_invoice) })),
+      };
+    }
+
     if (metric === 'invoices' && grouping === 'status') {
       const rows = await this.queryRows<any>(
         `SELECT status, coalesce(sum(total_amount), 0) AS total_amount, count() AS total_count
@@ -360,6 +402,27 @@ export class AgentService {
       return {
         data: rows.map((r) => ({ name: r.status as string, value: this.num(r.total_amount), count: this.num(r.total_count) })),
       };
+    }
+
+    if (metric === 'invoices' && grouping === 'list') {
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(issued_at, '%Y-%m-%d') AS issued_date,
+           formatDateTime(due_at,   '%Y-%m-%d') AS due_date,
+           invoice_number,
+           coalesce(nullIf(contact_name, ''), 'Unknown') AS contact_name,
+           status,
+           round(total_amount, 2) AS total_amount,
+           coalesce(nullIf(org_name, ''), org_id) AS org_name,
+           provider,
+           currency
+         FROM ${this.analyticsDb}.fact_accounting_invoices
+         WHERE connection_id IN ({connectionIds:Array(String)})
+         ORDER BY issued_at DESC
+         LIMIT 50`,
+        { connectionIds: scope.connectionIds },
+      );
+      return { data: rows };
     }
 
     if (metric === 'invoices' && grouping === 'org') {
@@ -627,6 +690,48 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds },
       );
       return { data: rows.map((r) => ({ name: r.client_name as string, value: this.num(r.paid_amount), paidCount: this.num(r.paid_count) })) };
+    }
+
+    // ── collection_rate/client ───────────────────────────────────────────────
+    if (metric === 'collection_rate' && grouping === 'client') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(client_name, ''), 'Unknown') AS client_name,
+           total_invoiced,
+           total_revenue
+         FROM ${this.analyticsDb}.dim_clients FINAL
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND client_name != '' AND total_invoiced > 0
+         ORDER BY total_invoiced DESC LIMIT 15`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: r.client_name as string,
+          value: Math.round(((this.num(r.total_revenue) / Math.max(1, this.num(r.total_invoiced))) * 100) * 10) / 10,
+        })),
+      };
+    }
+
+    // ── overdue_rate/client ──────────────────────────────────────────────────
+    if (metric === 'overdue_rate' && grouping === 'client') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(client_name, ''), 'Unknown') AS client_name,
+           total_invoiced,
+           total_overdue
+         FROM ${this.analyticsDb}.dim_clients FINAL
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND client_name != '' AND total_invoiced > 0
+         ORDER BY total_overdue DESC LIMIT 15`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: r.client_name as string,
+          value: Math.round(((this.num(r.total_overdue) / Math.max(1, this.num(r.total_invoiced))) * 100) * 10) / 10,
+        })),
+      };
     }
 
     // ── outstanding/client (pie variant — same data as bar) ──────────────────
@@ -1162,11 +1267,20 @@ export class AgentService {
     const mk = (
       title: string,
       description: string,
-      type: 'line' | 'bar' | 'pie' | 'metric',
+      type: 'line' | 'bar' | 'pie' | 'metric' | 'table',
       metric: string,
       grouping: string,
       order: number,
     ): W => ({ title, description, type, metric, grouping, display_order: order });
+
+    // ── 0. Audit / list / drilldown focus ────────────────────────────────────
+    if (has(/audit|list|show\b|detail|transaction|invoice\s+list|recent\s+invoice/)) {
+      return [
+        mk('Recent Invoices Ledger', 'Latest invoices for audit and drill-down', 'table', 'invoices', 'list', 0),
+        mk('Invoice Portfolio by Status', 'Paid vs open vs overdue — collection efficiency', 'pie', 'invoices', 'status', 1),
+        mk('Overdue AR Accumulation Trend', 'Monthly overdue build-up — collection velocity signal', 'line', 'overdue', 'month', 2),
+      ];
+    }
 
     // ── 0. Client / customer / contact focus ─────────────────────────────────
     if (has(/client|customer|contact|who.*paid|who.*bought|best.*client|top.*client|top.*customer/)) {
@@ -1176,6 +1290,7 @@ export class AgentService {
           mk('Overdue Exposure by Client', 'How much each client has past their due date — collection risk', 'bar', 'overdue', 'client', 0),
           mk('Outstanding Balance by Client', 'Unpaid invoices not yet overdue — near-term cash flow', 'bar', 'outstanding', 'client', 1),
           mk('Revenue vs Exposure', 'Total paid revenue per client for context', 'bar', 'revenue', 'client', 2),
+          mk('Overdue Rate by Client', 'Overdue as % of billed — worst offenders', 'bar', 'overdue_rate', 'client', 3),
         ];
       }
       // Compare / ranking query → show revenue + volume + overdue
@@ -1185,6 +1300,7 @@ export class AgentService {
           mk('Invoice Volume by Client', 'Transaction frequency — engagement depth per client', 'bar', 'invoices', 'client', 1),
           mk('Overdue Exposure by Client', 'Collection risk concentration across clients', 'bar', 'overdue', 'client', 2),
           mk('Revenue Concentration', 'Share of total revenue — single-client dependency risk', 'pie', 'revenue', 'client', 3),
+          mk('Collection Rate by Client', 'Paid as % of billed — collection efficiency', 'bar', 'collection_rate', 'client', 4),
         ];
       }
       // Default client intelligence dashboard
@@ -1193,6 +1309,7 @@ export class AgentService {
         mk('Outstanding Balance by Client', 'Unpaid AR not yet overdue — cash to collect', 'bar', 'outstanding', 'client', 1),
         mk('Overdue Exposure by Client', 'Past-due AR per client — collection risk signal', 'bar', 'overdue', 'client', 2),
         mk('Revenue Concentration', 'Share of total revenue — single-client dependency risk', 'pie', 'revenue', 'client', 3),
+        mk('Collection Rate by Client', 'Paid as % of billed — collection efficiency', 'bar', 'collection_rate', 'client', 4),
       ];
     }
 
@@ -1509,36 +1626,81 @@ export class AgentService {
 
       const body = await response.json() as { message?: { content?: string } };
       const raw = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(raw) as {
+      const parsed = JSON.parse(raw) as any;
+
+      const candidates: Array<{
         title?: string;
         tools?: string[];
         widgets?: Array<{ type: string; metric: string; grouping: string; title?: string }>;
+      }> = Array.isArray(parsed?.candidates)
+        ? parsed.candidates
+        : [{ title: parsed?.title, tools: parsed?.tools, widgets: parsed?.widgets }];
+
+      const buildCandidate = (cand: (typeof candidates)[number]) => {
+        const validWidgets = (cand.widgets ?? [])
+          .filter((w) =>
+            VALID_WIDGETS.some((v) => v.type === w.type && v.metric === w.metric && v.grouping === w.grouping),
+          )
+          .filter((w, i, arr) =>
+            // Enforce uniqueness: never repeat exact metric+grouping within a single dashboard.
+            arr.findIndex((x) => x.metric === w.metric && x.grouping === w.grouping) === i,
+          )
+          .slice(0, 6)
+          .map((w, i) => ({
+            title: w.title ?? `${w.metric} ${w.type}`,
+            description: '',
+            type: w.type as 'line' | 'bar' | 'pie' | 'metric' | 'table',
+            metric: w.metric,
+            grouping: w.grouping,
+            display_order: i,
+          }));
+
+        // Enforce minimum dashboard richness: if the model returns <4 valid widgets,
+        // top up deterministically (query-aware) to reach 4 without duplicates.
+        if (validWidgets.length < 4) {
+          const existing = new Set(validWidgets.map((w) => `${w.type}/${w.metric}/${w.grouping}`));
+          const filler = this.selectWidgetsForQuery(query, activeDashboard);
+          for (const f of filler) {
+            const key = `${f.type}/${f.metric}/${f.grouping}`;
+            if (existing.has(key)) continue;
+            if (!VALID_WIDGETS.some((v) => v.type === f.type && v.metric === f.metric && v.grouping === f.grouping)) continue;
+            validWidgets.push({ ...f, display_order: validWidgets.length });
+            existing.add(key);
+            if (validWidgets.length >= 4) break;
+          }
+        }
+
+        const validTools = (cand.tools ?? []).filter((t) =>
+          ['revenue_trend', 'entity_comparison', 'invoice_breakdown', 'venture_metrics', 'financial_summary', 'client_breakdown', 'client_financial_profile'].includes(t),
+        );
+
+        const inferredTools = validTools.length > 0
+          ? validTools
+          : this.deriveToolsFromWidgets(validWidgets, query);
+
+        return {
+          title: (cand.title?.trim() && cand.title.length > 5) ? cand.title.trim() : fallback.dashboard.title,
+          widgets: validWidgets,
+          tools: inferredTools,
+        };
       };
 
-      const validWidgets = (parsed.widgets ?? [])
-        .filter((w) => VALID_WIDGETS.some((v) => v.type === w.type && v.metric === w.metric && v.grouping === w.grouping))
-        .map((w, i) => ({
-          title: w.title ?? `${w.metric} ${w.type}`,
-          description: '',
-          type: w.type as 'line' | 'bar' | 'pie' | 'metric',
-          metric: w.metric,
-          grouping: w.grouping,
-          display_order: i,
-        }));
+      const scored = candidates
+        .map(buildCandidate)
+        .filter((c) => c.widgets.length >= 1)
+        .map((c) => ({ ...c, score: this.scorePlannedDashboard(query, c.widgets) }))
+        .sort((a, b) => b.score - a.score);
 
-      const validTools = (parsed.tools ?? []).filter((t) =>
-        ['revenue_trend', 'entity_comparison', 'invoice_breakdown', 'venture_metrics', 'financial_summary', 'client_breakdown', 'client_financial_profile'].includes(t),
-      );
-
-      if (validWidgets.length >= 1 && validTools.length >= 1) {
-        this.logger.log(`[Agent:Planner] Ollama succeeded — ${validWidgets.length} widgets, ${validTools.length} tools`);
+      const best = scored[0];
+      if (best) {
+        this.logger.log(`[Agent:Planner] Ollama succeeded — picked plan score=${best.score.toFixed(1)}, widgets=${best.widgets.length}, tools=${best.tools.length}`);
         return {
-          tools_to_execute: validTools,
+          tools_to_execute: best.tools,
           should_generate_dashboard: true,
           dashboard: {
-            title: (parsed.title?.trim() && parsed.title.length > 5) ? parsed.title : fallback.dashboard.title,
+            title: best.title,
             description: 'AI-generated financial intelligence dashboard',
-            widgets: validWidgets,
+            widgets: best.widgets,
           },
           analysis_focus: query,
         };
@@ -1550,6 +1712,69 @@ export class AgentService {
     }
 
     return fallback;
+  }
+
+  private deriveToolsFromWidgets(
+    widgets: Array<{ type: 'line' | 'bar' | 'pie' | 'metric' | 'table'; metric: string; grouping: string }>,
+    query: string,
+  ): string[] {
+    const tools = new Set<string>();
+
+    for (const w of widgets) {
+      if (w.metric === 'venture' || w.type === 'metric') tools.add('venture_metrics');
+      if (w.grouping === 'month' || w.grouping === 'quarter') tools.add('revenue_trend');
+      if (w.grouping === 'org' || w.grouping === 'provider') tools.add('entity_comparison');
+      if (w.metric === 'invoices' || w.grouping === 'status') tools.add('invoice_breakdown');
+      if (w.grouping === 'client') {
+        tools.add('client_financial_profile');
+        tools.add('client_breakdown');
+      }
+    }
+
+    // Always include a lightweight summary so synthesis can anchor quickly.
+    tools.add('financial_summary');
+
+    const inferred = Array.from(tools);
+    // If inference yields nothing (shouldn't), fall back to deterministic intent-based tool selection.
+    return inferred.length > 0 ? inferred : this.selectToolsForQuery(query);
+  }
+
+  private scorePlannedDashboard(
+    query: string,
+    widgets: Array<{ type: 'line' | 'bar' | 'pie' | 'metric' | 'table'; metric: string; grouping: string }>,
+  ): number {
+    const q = query.toLowerCase();
+    const has = (r: RegExp) => r.test(q);
+
+    let score = 0;
+
+    // Prefer 4-6 widgets (board-pack quality).
+    score += Math.min(widgets.length, 6) * 10;
+    if (widgets.length >= 4) score += 20;
+    if (widgets.length < 4) score -= (4 - widgets.length) * 15;
+
+    // Diversity across visualization types.
+    const types = new Set(widgets.map((w) => w.type));
+    if (types.has('line')) score += 8;
+    if (types.has('bar')) score += 8;
+    if (types.has('pie')) score += 6;
+    if (types.has('metric')) score += 4;
+    if (types.has('table')) score += 3;
+
+    // Query-intent alignment (cheap, deterministic heuristic scoring).
+    if (has(/client|customer|contact/)) score += widgets.filter((w) => w.grouping === 'client').length * 6;
+    if (has(/overdue|aging|ar\b|receivable|collect|past.?due/)) {
+      score += widgets.filter((w) => w.metric === 'overdue' || w.metric === 'overdue_rate').length * 8;
+      score += widgets.filter((w) => w.grouping === 'status').length * 3;
+    }
+    if (has(/trend|growth|momentum|mom\b|yoy|month/)) score += widgets.filter((w) => w.type === 'line').length * 5;
+    if (has(/quarter|q[1-4]\b|qoq|quarterly/)) score += widgets.filter((w) => w.grouping === 'quarter').length * 6;
+    if (has(/entity|org\b|entities|compare|versus|vs\b|concentration/)) score += widgets.filter((w) => w.grouping === 'org').length * 5;
+    if (has(/provider|erp|xero|quickbooks|qbo|netsuite|integration/)) score += widgets.filter((w) => w.grouping === 'provider').length * 7;
+    if (has(/audit|list|show|detail|transaction/)) score += widgets.filter((w) => w.type === 'table').length * 8;
+    if (has(/runway|burn|cash|venture|investor|fundraise/)) score += widgets.filter((w) => w.type === 'metric' || w.metric === 'venture').length * 6;
+
+    return score;
   }
 
   // ─── Edit Plan Generation ─────────────────────────────────────────────────
@@ -1618,9 +1843,9 @@ export class AgentService {
         parsed.add = [];
       }
 
-      // Clamp total widget count to 4
+      // Clamp total widget count to 6
       const afterRemoves = activeDashboard.widgets.length - (parsed.remove_indices?.length ?? 0);
-      const maxAdd = Math.max(0, 4 - afterRemoves);
+      const maxAdd = Math.max(0, 6 - afterRemoves);
       parsed.add = (parsed.add ?? []).slice(0, maxAdd);
       parsed.remove_indices = (parsed.remove_indices ?? []).filter((i) => i >= 0 && i < activeDashboard.widgets.length);
       parsed.modify = (parsed.modify ?? []).filter((m) => m.index >= 0 && m.index < activeDashboard.widgets.length);

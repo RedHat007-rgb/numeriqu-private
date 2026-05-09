@@ -93,9 +93,26 @@ function fmtNumber(value: number): string {
   return value.toFixed(0);
 }
 
+function formatValue(metric: string, grouping: string, value: number): string {
+  const isPercent = metric === "collection_rate" || metric === "overdue_rate";
+  if (isPercent) return `${value.toFixed(1)}%`;
+
+  const isCurrencyMetric =
+    metric === "revenue" ||
+    metric === "outstanding" ||
+    metric === "overdue" ||
+    metric === "paid" ||
+    metric === "total_invoiced" ||
+    metric === "avg_invoice" ||
+    (metric === "invoices" && grouping === "status");
+
+  if (isCurrencyMetric) return fmtCurrency(value);
+  return fmtNumber(value);
+}
+
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label, metric, grouping }: any) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-xl border border-default bg-bg-card/95 p-3 shadow-2xl backdrop-blur-sm">
@@ -111,8 +128,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
             style={{ background: entry.color || entry.fill }}
           />
           <span className="text-xs font-semibold text-text-primary">
-            {typeof entry.value === "number" && entry.value > 100
-              ? fmtCurrency(entry.value)
+            {typeof entry.value === "number"
+              ? formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
               : entry.value}
           </span>
           {entry.name && entry.name !== "value" && (
@@ -124,7 +141,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-const PieTooltip = ({ active, payload }: any) => {
+const PieTooltip = ({ active, payload, metric, grouping }: any) => {
   if (!active || !payload?.length) return null;
   const entry = payload[0];
   const total = entry?.payload?.total;
@@ -133,7 +150,9 @@ const PieTooltip = ({ active, payload }: any) => {
     <div className="rounded-xl border border-default bg-bg-card/95 p-3 shadow-2xl backdrop-blur-sm">
       <p className="text-xs font-bold text-text-primary">{entry.name}</p>
       <p className="text-xs text-text-secondary">
-        {fmtCurrency(entry.value)}
+        {typeof entry.value === "number"
+          ? formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
+          : entry.value}
         {pct ? ` · ${pct}%` : ""}
       </p>
     </div>
@@ -335,10 +354,16 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
-              tickFormatter={fmtNumber}
+              tickFormatter={(v: number) =>
+                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+              }
               width={42}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip
+              content={
+                <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
+              }
+            />
             {isExpanded && avg > 0 && (
               <ReferenceLine
                 y={avg}
@@ -434,10 +459,16 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
-              tickFormatter={fmtNumber}
+              tickFormatter={(v: number) =>
+                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+              }
               width={42}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip
+              content={
+                <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
+              }
+            />
             <Bar
               dataKey="value"
               fill={`url(#grad-bar-${chart.id})`}
@@ -501,7 +532,9 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="none" />
               ))}
             </Pie>
-            <Tooltip content={<PieTooltip />} />
+            <Tooltip
+              content={<PieTooltip metric={chart.config.metric} grouping={chart.config.grouping} />}
+            />
             <Legend
               layout="vertical"
               align="right"
@@ -526,14 +559,65 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     );
   }
 
+  if (chart.type === "table") {
+    const limit = isExpanded ? 25 : 10;
+    const rows = data.slice(0, limit);
+    const cols = rows.length > 0 ? Object.keys(rows[0] ?? {}).slice(0, 7) : [];
+    return (
+      <div style={{ height: h, width: "100%" }} className="overflow-hidden rounded-xl border border-default bg-bg-elevated/30">
+        <div className="h-full overflow-auto">
+          <table className="w-full text-left text-[11px]">
+            <thead className="sticky top-0 bg-bg-elevated/80 backdrop-blur">
+              <tr>
+                {cols.map((c) => (
+                  <th key={c} className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted">
+                    {c.replaceAll("_", " ")}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => (
+                <tr key={idx} className="border-t border-default/50">
+                  {cols.map((c) => (
+                    <td key={c} className="px-3 py-2 text-text-secondary whitespace-nowrap">
+                      {String((r as any)?.[c] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td className="px-3 py-3 text-text-muted" colSpan={cols.length || 1}>
+                    No rows
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ height: h, width: "100%" }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data}>
           <CartesianGrid {...gridStyle} />
           <XAxis dataKey="name" tick={tickStyle} />
-          <YAxis tick={tickStyle} tickFormatter={fmtNumber} width={42} />
-          <Tooltip content={<CustomTooltip />} />
+          <YAxis
+            tick={tickStyle}
+            tickFormatter={(v: number) =>
+              formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+            }
+            width={42}
+          />
+          <Tooltip
+            content={
+              <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
+            }
+          />
           <Line
             type="monotone"
             dataKey="value"

@@ -31,11 +31,12 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
   const prev = trend[trend.length - 2];
 
   const revenueDelta = last && prev ? trendDelta(last.revenue, prev.revenue) : null;
-  const expensesDelta = last && prev ? trendDelta(last.expenses, prev.expenses) : null;
   const invoicesDelta = last && prev ? trendDelta(last.invoices, prev.invoices) : null;
 
-  const overdueTone: Tone =
-    kpis.overdueAmount > 0 ? "negative" : "neutral";
+  const openInvoiceAmount = kpis.openInvoiceAmount ?? kpis.totalExpenses ?? 0;
+  const openInvoiceCount = kpis.openInvoiceCount ?? 0;
+  const openTone: Tone = openInvoiceAmount > 0 ? "neutral" : "positive";
+  const overdueTone: Tone = kpis.overdueAmount > 0 ? "negative" : "positive";
 
   return (
     <section
@@ -55,13 +56,11 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
 
       <StatCard
         className="lg:col-span-3"
-        label="Net Profit"
-        value={formatMoney(kpis.netProfit)}
-        detail={`${kpis.profitMargin.toFixed(1)}% margin`}
+        label="Open Invoices"
+        value={formatMoney(openInvoiceAmount)}
+        detail={`${formatNumber(openInvoiceCount)} open · ${formatMoney(kpis.overdueAmount)} overdue`}
         delta={
-          kpis.netProfit === 0
-            ? null
-            : { value: kpis.netProfit > 0 ? "profitable" : "loss", tone: kpis.netProfit > 0 ? "positive" : "negative" }
+          openInvoiceAmount === 0 ? { value: "clear", tone: "positive" } : { value: "monitor", tone: openTone }
         }
       />
 
@@ -101,18 +100,17 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
 
       <StatCard
         className="lg:col-span-3"
-        label="Monthly Spend"
-        value={formatMoney(kpis.totalExpenses)}
-        detail="Across connected entities"
-        delta={expensesDelta}
+        label="Invoices"
+        value={formatNumber(last?.invoices ?? kpis.totalInvoices)}
+        detail={`${kpis.providerCount} providers online`}
+        delta={invoicesDelta}
       />
 
       <StatCard
         className="lg:col-span-3"
-        label="Invoices This Month"
-        value={formatNumber(last?.invoices ?? kpis.totalInvoices)}
-        detail={`${kpis.providerCount} providers online`}
-        delta={invoicesDelta}
+        label="Avg invoice"
+        value={formatMoney(kpis.avgInvoiceValue)}
+        detail="Across the selected scope"
       />
     </section>
   );

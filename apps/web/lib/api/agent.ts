@@ -12,6 +12,8 @@ import type {
   HealthResponse,
   MetricsResponse,
   StreamQueryParams,
+  Breakdown,
+  TimeRange,
 } from "./types";
 
 export class AgentApi {
@@ -51,8 +53,58 @@ export class AgentApi {
     );
   }
 
-  getMetrics(metric: string, grouping: string) {
+  getMetrics(
+    metric: string,
+    grouping: string,
+    timeRange?: TimeRange | null,
+    providerHint?: string | null,
+    clientName?: string | null,
+    clientNames?: string[] | null,
+    orgId?: string | null,
+    breakdown?: Breakdown | null,
+    topN?: number | null,
+  ) {
     const params = new URLSearchParams({ metric, grouping });
+    if (providerHint) params.set("providerHint", providerHint);
+    if (clientName) params.set("clientName", clientName);
+    if (Array.isArray(clientNames) && clientNames.length > 0) {
+      params.set("clientNames", JSON.stringify(clientNames.slice(0, 5)));
+    }
+    if (orgId) params.set("orgId", orgId);
+    if (breakdown) params.set("breakdown", breakdown);
+    if (typeof topN === "number" && Number.isFinite(topN)) {
+      params.set("topN", String(topN));
+    }
+    if (timeRange?.kind) {
+      params.set("rangeKind", String(timeRange.kind));
+      if (timeRange.kind === "SINCE_DATE") {
+        params.set("rangeStart", timeRange.start);
+      }
+      if (timeRange.kind === "BETWEEN_DATES") {
+        params.set("rangeStart", timeRange.start);
+        params.set("rangeEnd", timeRange.end);
+      }
+
+      const value = (() => {
+        switch (timeRange.kind) {
+          case "LAST_N_DAYS":
+            return timeRange.days;
+          case "LAST_N_WEEKS":
+            return timeRange.weeks;
+          case "LAST_N_MONTHS":
+            return timeRange.months;
+          case "LAST_N_QUARTERS":
+            return timeRange.quarters;
+          case "LAST_N_YEARS":
+            return timeRange.years;
+          default:
+            return null;
+        }
+      })();
+      if (typeof value === "number" && Number.isFinite(value)) {
+        params.set("rangeValue", String(value));
+      }
+    }
     return this.request<MetricsResponse>(`/agent/metrics?${params.toString()}`);
   }
 

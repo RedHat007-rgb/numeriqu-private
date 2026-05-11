@@ -32,6 +32,10 @@ const DEFAULT_LOOKBACK_DAYS = Number(
   process.env.DEFAULT_SYNC_LOOKBACK_DAYS || '30',
 );
 
+const INCREMENTAL_SAFETY_LOOKBACK_HOURS = Number(
+  process.env.SYNC_SAFETY_LOOKBACK_HOURS || '48',
+);
+
 const DBT_DEBOUNCE_MS = 5_000;
 
 @Injectable()
@@ -101,14 +105,41 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           invoice_external_id  String         DEFAULT '',
           invoice_number       String         DEFAULT '',
           total_amount         Decimal(18,4)  DEFAULT 0,
+          amount_due           Decimal(18,4)  DEFAULT 0,
+          amount_paid          Decimal(18,4)  DEFAULT 0,
+          amount_credited      Decimal(18,4)  DEFAULT 0,
           currency             String         DEFAULT '',
           issued_at            Nullable(DateTime),
           due_at               Nullable(DateTime),
+          paid_at              Nullable(DateTime),
           status               String         DEFAULT '',
+          invoice_type         String         DEFAULT '',
+          contact_id           String         DEFAULT '',
+          contact_name         String         DEFAULT '',
           updated_at           DateTime       DEFAULT now(),
           synced_at            DateTime       DEFAULT now()
         ) ENGINE = ReplacingMergeTree()
         ORDER BY (tenant_id, org_id, invoice_id)
+      `);
+
+      // 3b. Payment applications fact table — needed for accurate collections + as-of balances
+      await safeQuery(`
+        CREATE TABLE IF NOT EXISTS ${db}.fact_accounting_payment_applications (
+          payment_id     String,
+          tenant_id      String,
+          user_id        String         DEFAULT '',
+          connection_id  String         DEFAULT '',
+          provider       String         DEFAULT '',
+          org_id         String         DEFAULT '',
+          org_name       String         DEFAULT '',
+          invoice_external_id String     DEFAULT '',
+          payment_at     Nullable(DateTime),
+          amount         Decimal(18,4)  DEFAULT 0,
+          currency       String         DEFAULT '',
+          updated_at     DateTime       DEFAULT now(),
+          synced_at      DateTime       DEFAULT now()
+        ) ENGINE = ReplacingMergeTree()
+        ORDER BY (tenant_id, org_id, provider, invoice_external_id, payment_id)
       `);
 
       // 4. Ensure Dimension Table (Chart of Accounts) — org-aware
@@ -181,6 +212,14 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         // Contact / client columns for client revenue analysis
         `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS contact_id String DEFAULT ''`,
         `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS contact_name String DEFAULT ''`,
+        // Payment-derived fields for collections + as-of balances
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS amount_due Decimal(18,4) DEFAULT 0`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS amount_paid Decimal(18,4) DEFAULT 0`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS amount_credited Decimal(18,4) DEFAULT 0`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS paid_at Nullable(DateTime)`,
+        `ALTER TABLE ${db}.fact_accounting_invoices ADD COLUMN IF NOT EXISTS invoice_type String DEFAULT ''`,
+        // Payment applications join key (provider invoice id)
+        `ALTER TABLE ${db}.fact_accounting_payment_applications ADD COLUMN IF NOT EXISTS invoice_external_id String DEFAULT ''`,
       ];
 
       // ── dim_clients: one materialised row per client per entity ─────────────
@@ -318,6 +357,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     },
   ): Promise<SyncJobConfig> {
     try {
+      const fullSync =
+        config.metadata?.fullSync === true ||
+        config.metadata?.mode === 'FULL' ||
+        config.metadata?.syncMode === 'FULL';
       const overrideWindow = config.metadata?.syncWindowStart
         ? new Date(config.metadata.syncWindowStart)
         : null;
@@ -325,12 +368,40 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         typeof config.metadata?.lookbackDays === 'number'
           ? config.metadata.lookbackDays
           : DEFAULT_LOOKBACK_DAYS;
-      const fullSync = !overrideWindow;
       const defaultWindow = new Date(
         Date.now() - lookbackDays * 24 * 60 * 60 * 1000,
       );
-      const syncWindowStart =
-        overrideWindow || (fullSync ? new Date(0) : defaultWindow);
+      const lastSuccessful = await this.prisma.syncJob.findFirst({
+        where: {
+          connectionId: config.connectionId,
+          status: 'SUCCEEDED',
+          completedAt: { not: null },
+        },
+        orderBy: { completedAt: 'desc' },
+        select: { completedAt: true },
+      });
+
+      const safetyLookbackHours =
+        typeof config.metadata?.safetyLookbackHours === 'number'
+          ? config.metadata.safetyLookbackHours
+          : INCREMENTAL_SAFETY_LOOKBACK_HOURS;
+
+      const incrementalWindow = lastSuccessful?.completedAt
+        ? new Date(
+            lastSuccessful.completedAt.getTime() -
+              Math.max(0, safetyLookbackHours) * 60 * 60 * 1000,
+          )
+        : null;
+
+      const syncWindowStart = fullSync
+        ? new Date(0)
+        : overrideWindow ||
+          // Prefer last-successful sync for true incremental behavior.
+          // Still clamp to defaultWindow so we don't accidentally request *too much* history
+          // if completedAt is missing or far in the past.
+          (incrementalWindow && incrementalWindow > defaultWindow
+            ? incrementalWindow
+            : defaultWindow);
 
       const newJob = await this.prisma.syncJob.create({
         data: {

@@ -617,17 +617,14 @@ function SecurityTab({
           <div className="rounded-xl border border-default bg-bg-elevated/40 px-4 py-3">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-text-muted">Data isolation</p>
             <p className="mt-1 text-sm text-text-primary">
-              Strict tenant isolation — all queries are scoped to org ID{" "}
-              <code className="rounded bg-bg-base px-1 py-0.5 text-xs text-accent-cyan">
-                {context?.organization.id?.slice(0, 8) ?? "—"}…
-              </code>
+              Tenant isolation is enforced — every query and dashboard is scoped to your workspace.
             </p>
           </div>
 
           <div className="rounded-xl border border-default bg-bg-elevated/40 px-4 py-3">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-text-muted">Connected providers</p>
             <p className="mt-1 text-sm text-text-primary">
-              OAuth tokens are AES-encrypted at rest. Token refresh happens server-side — your credentials never touch the browser.
+              OAuth tokens are encrypted at rest. Refresh happens server-side — credentials never touch the browser.
             </p>
           </div>
         </div>

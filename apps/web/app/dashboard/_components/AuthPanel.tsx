@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "../../../components/ui/Button";
@@ -19,11 +18,7 @@ export function AuthPanel({ onDevToken }: { onDevToken: (token: string) => void 
       <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
 
       <div className="relative mx-auto max-w-2xl">
-        <Link href="/" className="text-xs text-text-muted hover:text-text-primary">
-          ← Back to landing
-        </Link>
-
-        <Surface className="mt-8 space-y-6 p-8">
+        <Surface className="space-y-6 p-8">
           <header className="space-y-2">
             <p className="font-mono text-xs uppercase tracking-[0.28em] text-accent-blue">
               Secure gateway

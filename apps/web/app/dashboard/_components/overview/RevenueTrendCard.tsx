@@ -7,13 +7,13 @@ import { formatMoney, formatRelativeTime } from "./format";
 function MiniTrendChart({
   series,
 }: {
-  series: Array<{ label: string; revenue: number; expenses: number }>;
+  series: Array<{ label: string; revenue: number }>;
 }) {
   const width = 540;
   const height = 200;
 
-  const safe = series.length > 0 ? series : [{ label: "—", revenue: 0, expenses: 0 }];
-  const allValues = safe.flatMap((row) => [row.revenue, row.expenses]);
+  const safe = series.length > 0 ? series : [{ label: "—", revenue: 0 }];
+  const allValues = safe.flatMap((row) => [row.revenue]);
   const min = Math.min(...allValues, 0);
   const max = Math.max(...allValues, 1);
   const range = max - min || 1;
@@ -28,7 +28,6 @@ function MiniTrendChart({
   }
 
   const revPoints = project(safe.map((row) => row.revenue));
-  const expPoints = project(safe.map((row) => row.expenses));
 
   function buildPath(points: { x: number; y: number }[]) {
     if (points.length === 0) return "";
@@ -45,7 +44,7 @@ function MiniTrendChart({
       viewBox={`0 0 ${width} ${height}`}
       className="h-56 w-full overflow-visible"
       role="img"
-      aria-label="Revenue and expense trend"
+      aria-label="Revenue trend"
     >
       <defs>
         <linearGradient id="revArea" x1="0" y1="0" x2="0" y2="1">
@@ -54,13 +53,6 @@ function MiniTrendChart({
         </linearGradient>
       </defs>
       <path d={buildArea(revPoints)} fill="url(#revArea)" />
-      <path
-        d={buildPath(expPoints)}
-        fill="none"
-        stroke="rgb(var(--color-accent-violet) / 0.7)"
-        strokeWidth="2"
-        strokeDasharray="4 4"
-      />
       <path
         d={buildPath(revPoints)}
         fill="none"
@@ -81,7 +73,6 @@ export function RevenueTrendCard({ dashboard }: { dashboard: DashboardResponse }
       dashboard.charts.monthlyTrend.map((row) => ({
         label: row.month ?? row.name,
         revenue: row.revenue,
-        expenses: row.expenses,
       })),
     [dashboard],
   );
@@ -94,7 +85,7 @@ export function RevenueTrendCard({ dashboard }: { dashboard: DashboardResponse }
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">
-            Revenue & expenses
+            Revenue
           </p>
           <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
             Monthly performance
@@ -107,14 +98,11 @@ export function RevenueTrendCard({ dashboard }: { dashboard: DashboardResponse }
         <span className="inline-flex items-center gap-2">
           <span className="h-1.5 w-4 rounded bg-accent-blue" /> Revenue
         </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-1.5 w-4 rounded bg-accent-violet/70" /> Expenses
-        </span>
         {latest ? (
           <span>
             Latest month:{" "}
             <span className="font-semibold text-text-primary">{formatMoney(latest.revenue)}</span>{" "}
-            revenue / {formatMoney(latest.expenses)} expenses
+            revenue
           </span>
         ) : null}
       </div>

@@ -116,10 +116,10 @@ export class DashboardService {
       'CREATE_DASHBOARD',
     );
 
-    if (params.charts.length < 4) {
+    if (params.charts.length < 1) {
       throw new HttpException(
         {
-          message: 'A dashboard must contain at least 4 charts.',
+          message: 'A dashboard must contain at least 1 chart.',
           code: 'VALIDATION_FAILED',
         },
         HttpStatus.BAD_REQUEST,

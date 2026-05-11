@@ -39,6 +39,14 @@ export class InlineTransformService {
     private readonly chQb: ClickHouseClient,
   ) {}
 
+  private async wipeSnapshot(table: string, whereClause: string): Promise<void> {
+    // ClickHouse mutations are async by default; for sync we wait for completion so inserts
+    // don't interleave with old rows and cause visible duplicates.
+    await this.chAnalytics.command({
+      query: `ALTER TABLE ${table} DELETE WHERE ${whereClause} SETTINGS mutations_sync = 1`,
+    });
+  }
+
   /**
    * Run end-to-end transformation for a single tenant + provider sync.
    * Called directly after ingestion completes — no debounce, no subprocess.
@@ -55,6 +63,7 @@ export class InlineTransformService {
 
     try {
       await this.upsertFactInvoices(tenantId, orgId, provider);
+      await this.upsertFactPaymentApplications(tenantId, orgId, provider);
       await this.upsertDimAccounts(tenantId, orgId, provider);
       await this.refreshRevenueByMonth(tenantId, orgId, provider);
       await this.upsertDimClients(tenantId, orgId, provider);
@@ -91,12 +100,17 @@ export class InlineTransformService {
     provider: 'xero' | 'quickbooks',
   ): Promise<void> {
     const dest = `${this.analyticsDb}.fact_accounting_invoices`;
+    await this.wipeSnapshot(
+      dest,
+      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = '${provider}'`,
+    );
 
     // Explicit column list — position-safe regardless of table column order
     const COLS = `(
       invoice_id, tenant_id, user_id, connection_id, provider,
       org_id, org_name, invoice_external_id, invoice_number,
-      total_amount, currency, issued_at, due_at, status,
+      total_amount, amount_due, amount_paid, amount_credited,
+      currency, issued_at, due_at, paid_at, status, invoice_type,
       contact_id, contact_name, updated_at, synced_at
     )`;
 
@@ -116,20 +130,50 @@ export class InlineTransformService {
           source_id                                               AS invoice_external_id,
           JSONExtractString(raw_data, 'invoiceNumber')            AS invoice_number,
           JSONExtractFloat(raw_data, 'total')                     AS total_amount,
+          JSONExtractFloat(raw_data, 'amountDue')                 AS amount_due,
+          JSONExtractFloat(raw_data, 'amountPaid')                AS amount_paid,
+          JSONExtractFloat(raw_data, 'amountCredited')            AS amount_credited,
           JSONExtractString(raw_data, 'currencyCode')             AS currency,
           parseDateTimeBestEffortOrNull(
             JSONExtractString(raw_data, 'date'))                  AS issued_at,
           parseDateTimeBestEffortOrNull(
             JSONExtractString(raw_data, 'dueDate'))               AS due_at,
+          parseDateTimeBestEffortOrNull(
+            JSONExtractString(raw_data, 'fullyPaidOnDate'))       AS paid_at,
           JSONExtractString(raw_data, 'status')                   AS status,
-          JSONExtractString(raw_data, 'contact', 'contactID') AS contact_id,
-          JSONExtractString(raw_data, 'contact', 'name')       AS contact_name,
+          JSONExtractString(raw_data, 'type')                     AS invoice_type,
+	          coalesce(
+	            nullIf(JSONExtractString(raw_data, 'contact', 'contactID'), ''),
+	            nullIf(JSONExtractString(raw_data, 'contact', 'contactId'), ''),
+	            nullIf(JSONExtractString(raw_data, 'Contact', 'ContactID'), ''),
+	            nullIf(JSONExtractString(raw_data, 'Contact', 'contactID'), ''),
+	            nullIf(JSONExtractString(raw_data, 'Contact', 'contactId'), '')
+	          )                                                     AS contact_id,
+	          coalesce(
+	            nullIf(JSONExtractString(raw_data, 'contact', 'name'), ''),
+	            nullIf(JSONExtractString(raw_data, 'contact', 'Name'), ''),
+	            nullIf(JSONExtractString(raw_data, 'Contact', 'Name'), ''),
+	            nullIf(JSONExtractString(raw_data, 'Contact', 'name'), '')
+	          )                                                     AS contact_name,
           updated_at,
           synced_at
-        FROM ${this.xeroDb}.xero_raw
-        WHERE resource = 'Invoices'
-          AND tenant_id = '${this.escape(tenantId)}'
-          AND org_id    = '${this.escape(orgId)}'
+        FROM (
+          SELECT
+            source_id,
+            any(tenant_id) AS tenant_id,
+            any(user_id) AS user_id,
+            any(connection_id) AS connection_id,
+            any(org_id) AS org_id,
+            any(org_name) AS org_name,
+            argMax(raw_data, updated_at) AS raw_data,
+            max(updated_at) AS updated_at,
+            max(synced_at) AS synced_at
+          FROM ${this.xeroDb}.xero_raw
+          WHERE resource = 'Invoices'
+            AND tenant_id = '${this.escape(tenantId)}'
+            AND org_id    = '${this.escape(orgId)}'
+          GROUP BY source_id
+        )
       `;
     } else {
       // QuickBooks: QBO REST API JSON is PascalCase — no SDK re-serialization
@@ -146,26 +190,115 @@ export class InlineTransformService {
           source_id                                                   AS invoice_external_id,
           JSONExtractString(raw_data, 'DocNumber')                    AS invoice_number,
           JSONExtractFloat(raw_data, 'TotalAmt')                      AS total_amount,
+          JSONExtractFloat(raw_data, 'Balance')                       AS amount_due,
+          (JSONExtractFloat(raw_data, 'TotalAmt') -
+            JSONExtractFloat(raw_data, 'Balance'))                    AS amount_paid,
+          0                                                           AS amount_credited,
           JSONExtractString(raw_data, 'CurrencyRef', 'value')         AS currency,
           parseDateTimeBestEffortOrNull(
             JSONExtractString(raw_data, 'TxnDate'))                   AS issued_at,
           parseDateTimeBestEffortOrNull(
             JSONExtractString(raw_data, 'DueDate'))                   AS due_at,
-          JSONExtractString(raw_data, 'EmailStatus')                  AS status,
+          NULL                                                        AS paid_at,
+          if(JSONExtractFloat(raw_data, 'Balance') <= 0, 'paid', 'authorised') AS status,
+          ''                                                          AS invoice_type,
           JSONExtractString(raw_data, 'CustomerRef', 'value')  AS contact_id,
           JSONExtractString(raw_data, 'CustomerRef', 'name')   AS contact_name,
           updated_at,
           synced_at
-        FROM ${this.qbDb}.quickbooks_raw
-        WHERE resource = 'Invoice'
-          AND tenant_id = '${this.escape(tenantId)}'
-          AND org_id    = '${this.escape(orgId)}'
+        FROM (
+          SELECT
+            source_id,
+            any(tenant_id) AS tenant_id,
+            any(user_id) AS user_id,
+            any(connection_id) AS connection_id,
+            any(org_id) AS org_id,
+            any(org_name) AS org_name,
+            argMax(raw_data, updated_at) AS raw_data,
+            max(updated_at) AS updated_at,
+            max(synced_at) AS synced_at
+          FROM ${this.qbDb}.quickbooks_raw
+          WHERE resource = 'Invoice'
+            AND tenant_id = '${this.escape(tenantId)}'
+            AND org_id    = '${this.escape(orgId)}'
+          GROUP BY source_id
+        )
       `;
     }
 
     await this.chAnalytics.command({ query: sql });
     this.logger.debug(
       `[Transform] fact_accounting_invoices upserted for ${provider}`,
+    );
+  }
+
+  /**
+   * Upsert payment applications (invoice-level allocations) for collections + as-of balances.
+   *
+   * For Xero Payments, raw_data contains:
+   *   invoice.invoiceID, paymentID, date, amount, currencyRate, etc (camelCase keys via xero-node).
+   *
+   * For QuickBooks, payments require allocation expansion (not implemented yet).
+   */
+  private async upsertFactPaymentApplications(
+    tenantId: string,
+    orgId: string,
+    provider: 'xero' | 'quickbooks',
+  ): Promise<void> {
+    if (provider !== 'xero') return;
+
+    const dest = `${this.analyticsDb}.fact_accounting_payment_applications`;
+    await this.wipeSnapshot(
+      dest,
+      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = 'xero'`,
+    );
+
+    const COLS = `(
+      payment_id, tenant_id, user_id, connection_id, provider,
+      org_id, org_name, invoice_external_id, payment_at, amount, currency,
+      updated_at, synced_at
+    )`;
+
+    const sql = `
+      INSERT INTO ${dest} ${COLS}
+      SELECT
+        source_id                                             AS payment_id,
+        tenant_id,
+        user_id,
+        connection_id,
+        'xero'                                                AS provider,
+        org_id,
+        org_name,
+        JSONExtractString(raw_data, 'invoice', 'invoiceID')    AS invoice_external_id,
+        parseDateTimeBestEffortOrNull(
+          JSONExtractString(raw_data, 'date'))                 AS payment_at,
+        JSONExtractFloat(raw_data, 'amount')                   AS amount,
+        ''                                                     AS currency,
+        updated_at,
+        synced_at
+      FROM (
+        SELECT
+          source_id,
+          any(tenant_id) AS tenant_id,
+          any(user_id) AS user_id,
+          any(connection_id) AS connection_id,
+          any(org_id) AS org_id,
+          any(org_name) AS org_name,
+          argMax(raw_data, updated_at) AS raw_data,
+          max(updated_at) AS updated_at,
+          max(synced_at) AS synced_at
+        FROM ${this.xeroDb}.xero_raw
+        WHERE resource = 'Payments'
+          AND tenant_id = '${this.escape(tenantId)}'
+          AND org_id    = '${this.escape(orgId)}'
+          AND JSONExtractString(raw_data, 'invoice', 'invoiceID') != ''
+        GROUP BY source_id
+      )
+    `;
+
+    await this.chAnalytics.command({ query: sql });
+    this.logger.debug(
+      `[Transform] fact_accounting_payment_applications upserted for ${provider}`,
     );
   }
 
@@ -178,6 +311,10 @@ export class InlineTransformService {
     provider: 'xero' | 'quickbooks',
   ): Promise<void> {
     const dest = `${this.analyticsDb}.dim_accounting_accounts`;
+    await this.wipeSnapshot(
+      dest,
+      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = '${provider}'`,
+    );
 
     const COLS = `(
       account_id, account_name, account_type, classification,
@@ -198,10 +335,19 @@ export class InlineTransformService {
           org_id,
           org_name,
           toBool(1)                                               AS is_active
-        FROM ${this.xeroDb}.xero_raw
-        WHERE resource = 'Accounts'
-          AND tenant_id = '${this.escape(tenantId)}'
-          AND org_id    = '${this.escape(orgId)}'
+        FROM (
+          SELECT
+            source_id,
+            any(tenant_id) AS tenant_id,
+            any(org_id) AS org_id,
+            any(org_name) AS org_name,
+            argMax(raw_data, updated_at) AS raw_data
+          FROM ${this.xeroDb}.xero_raw
+          WHERE resource = 'Accounts'
+            AND tenant_id = '${this.escape(tenantId)}'
+            AND org_id    = '${this.escape(orgId)}'
+          GROUP BY source_id
+        )
       `;
     } else {
       sql = `
@@ -216,10 +362,19 @@ export class InlineTransformService {
           org_id,
           org_name,
           toBool(1)                                               AS is_active
-        FROM ${this.qbDb}.quickbooks_raw
-        WHERE resource = 'Account'
-          AND tenant_id = '${this.escape(tenantId)}'
-          AND org_id    = '${this.escape(orgId)}'
+        FROM (
+          SELECT
+            source_id,
+            any(tenant_id) AS tenant_id,
+            any(org_id) AS org_id,
+            any(org_name) AS org_name,
+            argMax(raw_data, updated_at) AS raw_data
+          FROM ${this.qbDb}.quickbooks_raw
+          WHERE resource = 'Account'
+            AND tenant_id = '${this.escape(tenantId)}'
+            AND org_id    = '${this.escape(orgId)}'
+          GROUP BY source_id
+        )
       `;
     }
 
@@ -240,6 +395,10 @@ export class InlineTransformService {
   ): Promise<void> {
     const dest = `${this.analyticsDb}.revenue_by_month`;
     const src = `${this.analyticsDb}.fact_accounting_invoices`;
+    await this.wipeSnapshot(
+      dest,
+      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = '${provider}'`,
+    );
     const syncedAt = new Date()
       .toISOString()
       .replace('T', ' ')
@@ -296,6 +455,10 @@ export class InlineTransformService {
   ): Promise<void> {
     const dest = `${this.analyticsDb}.dim_clients`;
     const src  = `${this.analyticsDb}.fact_accounting_invoices`;
+    await this.wipeSnapshot(
+      dest,
+      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = '${provider}'`,
+    );
 
     const syncedAt = new Date()
       .toISOString()

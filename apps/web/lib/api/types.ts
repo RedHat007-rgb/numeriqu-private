@@ -108,6 +108,8 @@ export type DashboardResponse = {
     profitMargin: number;
     totalInvoices: number;
     avgInvoiceValue: number;
+    openInvoiceAmount?: number;
+    openInvoiceCount?: number;
     overdueAmount: number;
     overdueCount: number;
     orgCount: number;
@@ -151,7 +153,7 @@ export type DashboardResponse = {
     type: string;
     createdAt: string;
   }>;
-  meta: { computedAt: string; latencyMs: number; error?: string };
+  meta: { computedAt: string; latencyMs: number; error?: string; range?: TimeRange };
 };
 
 export type Connection = {
@@ -205,7 +207,30 @@ export type ChatSessionDetail = {
 export type ChartConfig = {
   metric: string;
   grouping: string;
+  timeRange?: TimeRange | null;
+  providerHint?: string | null;
+  clientName?: string | null;
+  clientNames?: string[] | null;
+  orgId?: string | null;
+  orgName?: string | null;
+  breakdown?: Breakdown | null;
+  topN?: number | null;
 };
+
+export type TimeRange =
+  | { kind: "ALL_TIME" }
+  | { kind: "MTD" }
+  | { kind: "QTD" }
+  | { kind: "YTD" }
+  | { kind: "SINCE_DATE"; start: string } // YYYY-MM-DD
+  | { kind: "BETWEEN_DATES"; start: string; end: string } // YYYY-MM-DD
+  | { kind: "LAST_N_DAYS"; days: number }
+  | { kind: "LAST_N_WEEKS"; weeks: number }
+  | { kind: "LAST_N_MONTHS"; months: number }
+  | { kind: "LAST_N_QUARTERS"; quarters: number }
+  | { kind: "LAST_N_YEARS"; years: number };
+
+export type Breakdown = "client";
 
 export type DashboardChart = {
   id: string;

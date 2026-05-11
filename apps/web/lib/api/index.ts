@@ -23,6 +23,7 @@ export type {
   ChatSessionSummary,
   ChatSessionDetail,
   ChartConfig,
+  TimeRange,
   DashboardChart,
   GeneratedDashboard,
   MetricsResponse,

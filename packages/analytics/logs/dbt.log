@@ -49256,3 +49256,3932 @@ drop table if exists `analytics`.`revenue_by_month__dbt_backup`
 [0m09:51:26.883182 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109fab9e0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10bd12120>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109d1efc0>]}
 [0m09:51:26.883434 [debug] [MainThread]: Flushing usage events
 [0m09:51:28.296210 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m05:54:57.511911 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108e28f20>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1087a0710>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1087a0620>]}
+
+
+============================== 05:54:57.516455 | 078e1d10-baf4-4d99-8792-f7c2f4838b63 ==============================
+[0m05:54:57.516455 [info ] [MainThread]: Running with dbt=1.11.7
+[0m05:54:57.517034 [debug] [MainThread]: running dbt with arguments {'write_json': 'True', 'log_path': '/Users/basanireddy/Desktop/test-1234/packages/analytics/logs', 'indirect_selection': 'eager', 'fail_fast': 'False', 'log_cache_events': 'False', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'use_experimental_parser': 'False', 'partial_parse': 'True', 'debug': 'False', 'version_check': 'True', 'printer_width': '80', 'send_anonymous_usage_stats': 'True', 'empty': 'False', 'quiet': 'False', 'cache_selected_only': 'False', 'target_path': 'None', 'introspect': 'True', 'use_colors': 'True', 'invocation_command': 'dbt run --profiles-dir .', 'no_print': 'None', 'profiles_dir': '.', 'warn_error': 'None', 'log_format': 'default', 'static_parser': 'True'}
+[0m05:54:57.662636 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'project_id', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109651bb0>]}
+[0m05:54:57.709106 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'adapter_info', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109518680>]}
+[0m05:54:57.710146 [info ] [MainThread]: Registered adapter: clickhouse=1.10.0
+[0m05:54:57.844930 [debug] [MainThread]: checksum: b80718358155fc17c3559352095564dd56ada1cc1a1c0ef2e62c857e71583775, vars: {}, profile: , target: , version: 1.11.7
+[0m05:54:57.956904 [debug] [MainThread]: Partial parsing enabled: 0 files deleted, 0 files added, 3 files changed.
+[0m05:54:57.957512 [debug] [MainThread]: Partial parsing: updated file: analytics://models/staging/stg_qb_invoices.sql
+[0m05:54:57.957915 [debug] [MainThread]: Partial parsing: updated file: analytics://models/staging/stg_xero_invoices.sql
+[0m05:54:57.958340 [debug] [MainThread]: Partial parsing: updated file: analytics://models/marts/fact_accounting_invoices.sql
+[0m05:54:58.299262 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'load_project', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1096e59a0>]}
+[0m05:54:58.427856 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m05:54:58.430286 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m05:54:58.448388 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'resource_counts', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109d8b260>]}
+[0m05:54:58.448896 [info ] [MainThread]: Found 8 models, 5 data tests, 2 sources, 524 macros
+[0m05:54:58.449252 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109cad280>]}
+[0m05:54:58.450936 [info ] [MainThread]: 
+[0m05:54:58.451296 [info ] [MainThread]: Concurrency: 1 threads (target='dev')
+[0m05:54:58.451584 [info ] [MainThread]: 
+[0m05:54:58.452002 [debug] [MainThread]: Acquiring new clickhouse connection 'master'
+[0m05:54:58.456754 [debug] [ThreadPool]: Acquiring new clickhouse connection 'list_'
+[0m05:54:58.464289 [debug] [ThreadPool]: Opening a new connection, currently in state init
+[0m05:55:02.852253 [debug] [ThreadPool]: dbt_clickhouse adapter: On list_: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list_"} */
+
+    select name from system.databases
+  ...
+[0m05:55:03.535640 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.68 seconds
+[0m05:55:03.564789 [debug] [ThreadPool]: Re-using an available connection from the pool (formerly list_, now list__analytics)
+[0m05:55:03.572857 [debug] [ThreadPool]: dbt_clickhouse adapter: On list__analytics: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list__analytics"} */
+with mv_sources as (
+      -- Find all MVs and their target tables (database and name of the MV, plus the SELECT SQL)
+      select
+        name as mv_name,
+        database as mv_database,
+        any(as_select) as mv_sql,
+        any(replaceRegexpOne(create_table_query, '.*TO\\s+`?([^`\\s(]+)`?\\.`?([^`\\s(]+)`?.*', '\\1.\\2')) as target_fqn
+      
+      from system.tables
+      
+      where engine = 'MaterializedView'
+        and create_table_query like '%TO %'
+      group by mv_name, mv_database
+    )
+    select
+      t.name as name,
+      t.database as schema,
+      multiIf(
+        t.engine = 'MaterializedView', 'materialized_view',
+        t.engine = 'View', 'view',
+        t.engine = 'Dictionary', 'dictionary',
+        'table'
+      ) as type,
+      db.engine as db_engine,
+      groupArrayIf(
+        map('schema', mv_sources.mv_database, 'name', mv_sources.mv_name, 'sql', mv_sources.mv_sql),
+        mv_sources.mv_name != ''
+      ) as mvs_pointing_to_it,0 as is_on_cluster
+        from system.tables as t
+      
+        join system.databases as db on t.database = db.name
+        left join mv_sources on mv_sources.target_fqn = concat(t.database, '.', t.name)
+      where schema = 'analytics'
+      group by name, schema, type, db_engine
+
+  ...
+[0m05:55:03.842962 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m05:55:03.847384 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109cac0b0>]}
+[0m05:55:03.850907 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_accounts
+[0m05:55:03.851818 [info ] [Thread-1 (]: 1 of 8 START sql view model `analytics`.`stg_qb_accounts` ...................... [RUN]
+[0m05:55:03.852531 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly list__analytics, now model.analytics.stg_qb_accounts)
+[0m05:55:03.853114 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_accounts
+[0m05:55:03.861424 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_accounts"
+[0m05:55:03.862489 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_accounts
+[0m05:55:03.874655 [debug] [Thread-1 (]: Relation stg_qb_accounts already exists, replacing it
+[0m05:55:03.882629 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_accounts_mv']
+[0m05:55:03.884457 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_accounts'
+  
+  ...
+[0m05:55:04.130932 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m05:55:04.158106 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_accounts"
+[0m05:55:04.159361 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+
+  create or replace view `analytics`.`stg_qb_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Account'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'Name') AS account_name,
+    JSONExtractString(raw_data, 'AccountType') AS account_type,
+    JSONExtractString(raw_data, 'AccountSubType') AS account_sub_type,
+    
+    -- Classification
+    JSONExtractString(raw_data, 'Classification') AS classification,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Status
+    JSONExtractBool(raw_data, 'Active') AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m05:55:04.390930 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m05:55:04.418430 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a2ce990>]}
+[0m05:55:04.419150 [info ] [Thread-1 (]: 1 of 8 OK created sql view model `analytics`.`stg_qb_accounts` ................. [[32mOK[0m in 0.57s]
+[0m05:55:04.419713 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_accounts
+[0m05:55:04.420106 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_invoices
+[0m05:55:04.420635 [info ] [Thread-1 (]: 2 of 8 START sql view model `analytics`.`stg_qb_invoices` ...................... [RUN]
+[0m05:55:04.421094 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_accounts, now model.analytics.stg_qb_invoices)
+[0m05:55:04.421460 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_invoices
+[0m05:55:04.423996 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_invoices"
+[0m05:55:04.424672 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_invoices
+[0m05:55:04.426485 [debug] [Thread-1 (]: Relation stg_qb_invoices already exists, replacing it
+[0m05:55:04.426897 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_invoices_mv']
+[0m05:55:04.427342 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_invoices'
+  
+  ...
+[0m05:55:05.133500 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.71 seconds
+[0m05:55:05.136708 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_invoices"
+[0m05:55:05.138145 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+
+  create or replace view `analytics`.`stg_qb_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Invoice'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'DocNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'TotalAmt') AS total_amount,
+    JSONExtractFloat(raw_data, 'Balance') AS amount_due,
+    (JSONExtractFloat(raw_data, 'TotalAmt') - JSONExtractFloat(raw_data, 'Balance')) AS amount_paid,
+    0 AS amount_credited,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'TxnDate')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'DueDate')) AS due_at,
+    NULL AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'EmailStatus') AS status,
+    '' AS invoice_type,
+
+    -- Client / contact
+    JSONExtractString(raw_data, 'CustomerRef', 'value') AS contact_id,
+    JSONExtractString(raw_data, 'CustomerRef', 'name') AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m05:55:05.412304 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m05:55:05.418642 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a2ce1e0>]}
+[0m05:55:05.419957 [info ] [Thread-1 (]: 2 of 8 OK created sql view model `analytics`.`stg_qb_invoices` ................. [[32mOK[0m in 1.00s]
+[0m05:55:05.420868 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_invoices
+[0m05:55:05.421520 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_accounts
+[0m05:55:05.422371 [info ] [Thread-1 (]: 3 of 8 START sql view model `analytics`.`stg_xero_accounts` .................... [RUN]
+[0m05:55:05.423218 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_invoices, now model.analytics.stg_xero_accounts)
+[0m05:55:05.423846 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_accounts
+[0m05:55:05.427669 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_accounts"
+[0m05:55:05.429661 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_accounts
+[0m05:55:05.432158 [debug] [Thread-1 (]: Relation stg_xero_accounts already exists, replacing it
+[0m05:55:05.432639 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_accounts_mv']
+[0m05:55:05.433165 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_accounts'
+  
+  ...
+[0m05:55:05.943050 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.51 seconds
+[0m05:55:05.947204 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_accounts"
+[0m05:55:05.949925 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+
+  create or replace view `analytics`.`stg_xero_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Accounts'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'name') AS account_name,
+    JSONExtractString(raw_data, 'type') AS account_type,
+    JSONExtractString(raw_data, '_class') AS account_sub_type,
+    
+    -- Classification
+    CASE 
+        WHEN JSONExtractString(raw_data, '_class') IN ('ASSET', 'LIABILITY', 'EQUITY', 'Asset', 'Liability', 'Equity') THEN 'BalanceSheet'
+        ELSE 'ProfitAndLoss'
+    END AS classification,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Status
+    CASE WHEN JSONExtractString(raw_data, 'status') IN ('ACTIVE', 'Active') THEN true ELSE false END AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m05:55:06.181290 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m05:55:06.184728 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a2ce1e0>]}
+[0m05:55:06.185625 [info ] [Thread-1 (]: 3 of 8 OK created sql view model `analytics`.`stg_xero_accounts` ............... [[32mOK[0m in 0.76s]
+[0m05:55:06.186550 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_accounts
+[0m05:55:06.187319 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_invoices
+[0m05:55:06.188294 [info ] [Thread-1 (]: 4 of 8 START sql view model `analytics`.`stg_xero_invoices` .................... [RUN]
+[0m05:55:06.189209 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_accounts, now model.analytics.stg_xero_invoices)
+[0m05:55:06.192282 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_invoices
+[0m05:55:06.196266 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_invoices"
+[0m05:55:06.197001 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_invoices
+[0m05:55:06.198854 [debug] [Thread-1 (]: Relation stg_xero_invoices already exists, replacing it
+[0m05:55:06.199409 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_invoices_mv']
+[0m05:55:06.199904 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_invoices'
+  
+  ...
+[0m05:55:06.460035 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m05:55:06.464538 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_invoices"
+[0m05:55:06.467236 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+
+  create or replace view `analytics`.`stg_xero_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Invoices'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'invoiceNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'total') AS total_amount,
+    JSONExtractFloat(raw_data, 'amountDue') AS amount_due,
+    JSONExtractFloat(raw_data, 'amountPaid') AS amount_paid,
+    JSONExtractFloat(raw_data, 'amountCredited') AS amount_credited,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'date')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'dueDate')) AS due_at,
+    parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'fullyPaidOnDate')) AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'status') AS status,
+    JSONExtractString(raw_data, 'type') AS invoice_type,
+
+    -- Client / contact (robust to casing / SDK variations)
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactId'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'ContactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactId'), '')
+    ) AS contact_id,
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'name'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'name'), '')
+    ) AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m05:55:07.121409 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.65 seconds
+[0m05:55:07.123957 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109c16c60>]}
+[0m05:55:07.125031 [info ] [Thread-1 (]: 4 of 8 OK created sql view model `analytics`.`stg_xero_invoices` ............... [[32mOK[0m in 0.93s]
+[0m05:55:07.125991 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_invoices
+[0m05:55:07.126699 [debug] [Thread-1 (]: Began running node model.analytics.dim_accounting_accounts
+[0m05:55:07.127476 [info ] [Thread-1 (]: 5 of 8 START sql table model `analytics`.`dim_accounting_accounts` ............. [RUN]
+[0m05:55:07.128266 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_invoices, now model.analytics.dim_accounting_accounts)
+[0m05:55:07.128841 [debug] [Thread-1 (]: Began compiling node model.analytics.dim_accounting_accounts
+[0m05:55:07.133360 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.dim_accounting_accounts"
+[0m05:55:07.134497 [debug] [Thread-1 (]: Began executing node model.analytics.dim_accounting_accounts
+[0m05:55:07.186483 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+            
+
+    
+        create table `analytics`.`dim_accounting_accounts__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,account_type,account_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m05:55:07.422535 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m05:55:07.451253 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+    select name, type from system.columns where table = 'dim_accounting_accounts__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m05:55:08.039170 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.59 seconds
+[0m05:55:08.044509 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.dim_accounting_accounts"
+[0m05:55:08.045920 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`dim_accounting_accounts__dbt_backup`
+        ("account_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "account_external_id", "account_name", "account_type", "account_sub_type", "classification", "currency", "is_active", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+  ...
+[0m05:55:08.294137 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m05:55:08.303952 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+EXCHANGE TABLES `analytics`.`dim_accounting_accounts__dbt_backup` AND `analytics`.`dim_accounting_accounts` 
+  
+  ...
+[0m05:55:08.557016 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m05:55:08.570383 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+drop table if exists `analytics`.`dim_accounting_accounts__dbt_backup` 
+  ...
+[0m05:55:09.335399 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.76 seconds
+[0m05:55:09.337281 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a39f560>]}
+[0m05:55:09.338041 [info ] [Thread-1 (]: 5 of 8 OK created sql table model `analytics`.`dim_accounting_accounts` ........ [[32mOK[0m in 2.21s]
+[0m05:55:09.338655 [debug] [Thread-1 (]: Finished running node model.analytics.dim_accounting_accounts
+[0m05:55:09.339096 [debug] [Thread-1 (]: Began running node model.analytics.fact_accounting_invoices
+[0m05:55:09.339659 [info ] [Thread-1 (]: 6 of 8 START sql table model `analytics`.`fact_accounting_invoices` ............ [RUN]
+[0m05:55:09.340229 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.dim_accounting_accounts, now model.analytics.fact_accounting_invoices)
+[0m05:55:09.340658 [debug] [Thread-1 (]: Began compiling node model.analytics.fact_accounting_invoices
+[0m05:55:09.345671 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.fact_accounting_invoices"
+[0m05:55:09.346455 [debug] [Thread-1 (]: Began executing node model.analytics.fact_accounting_invoices
+[0m05:55:09.349183 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+            
+
+    
+        create table `analytics`.`fact_accounting_invoices__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,issued_at,invoice_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m05:55:09.609713 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m05:55:09.612222 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+    select name, type from system.columns where table = 'fact_accounting_invoices__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m05:55:10.403434 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.79 seconds
+[0m05:55:10.405924 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.fact_accounting_invoices"
+[0m05:55:10.407359 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`fact_accounting_invoices__dbt_backup`
+        ("invoice_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "invoice_external_id", "invoice_number", "total_amount", "amount_due", "amount_paid", "amount_credited", "currency", "issued_at", "due_at", "paid_at", "status", "invoice_type", "contact_id", "contact_name", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+  ...
+[0m05:55:10.671938 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m05:55:10.673236 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+EXCHANGE TABLES `analytics`.`fact_accounting_invoices__dbt_backup` AND `analytics`.`fact_accounting_invoices` 
+  
+  ...
+[0m05:55:11.477166 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.80 seconds
+[0m05:55:11.485660 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+drop table if exists `analytics`.`fact_accounting_invoices__dbt_backup` 
+  ...
+[0m05:55:11.709125 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m05:55:11.713414 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a3a9550>]}
+[0m05:55:11.714581 [info ] [Thread-1 (]: 6 of 8 OK created sql table model `analytics`.`fact_accounting_invoices` ....... [[32mOK[0m in 2.37s]
+[0m05:55:11.715471 [debug] [Thread-1 (]: Finished running node model.analytics.fact_accounting_invoices
+[0m05:55:11.716662 [debug] [Thread-1 (]: Began running node model.analytics.rag_context_invoices
+[0m05:55:11.717385 [info ] [Thread-1 (]: 7 of 8 START sql view model `analytics`.`rag_context_invoices` ................. [RUN]
+[0m05:55:11.718058 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.fact_accounting_invoices, now model.analytics.rag_context_invoices)
+[0m05:55:11.718575 [debug] [Thread-1 (]: Began compiling node model.analytics.rag_context_invoices
+[0m05:55:11.722511 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.rag_context_invoices"
+[0m05:55:11.724542 [debug] [Thread-1 (]: Began executing node model.analytics.rag_context_invoices
+[0m05:55:11.726968 [debug] [Thread-1 (]: Relation rag_context_invoices already exists, replacing it
+[0m05:55:11.727448 [debug] [Thread-1 (]: Model mvs to replace ['rag_context_invoices_mv']
+[0m05:55:11.727983 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.rag_context_invoices'
+  
+  ...
+[0m05:55:12.233483 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.50 seconds
+[0m05:55:12.236207 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.rag_context_invoices"
+[0m05:55:12.237407 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+
+  create or replace view `analytics`.`rag_context_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    
+
+WITH invoices AS (
+    SELECT * FROM `analytics`.`fact_accounting_invoices`
+)
+
+SELECT
+    invoice_id,
+    user_id,
+    tenant_id,
+    provider,
+    org_id,
+    org_name,
+    -- This is the "Gold" for RAG. A pre-built context string.
+    -- Example: "Invoice #INV-100 from Xero for $1,250.00 USD is currently OVERDUE. Issued on 2023-01-01, due on 2023-01-15."
+    concat(
+        'Invoice #', invoice_number, 
+        ' for ', org_name, ' (', upper(substring(provider, 1, 1)), substring(provider, 2), ')',
+        ' for ', toString(total_amount), ' ', currency, 
+        ' is currently ', IF(status = '', 'UNKNOWN', status),
+        '. Issued on ', toString(toDate(issued_at)), 
+        ', due on ', toString(toDate(due_at)), '.'
+    ) AS text_content,
+    
+    -- Original fields for metadata filtering in Vector Stores
+    total_amount,
+    currency,
+    status,
+    issued_at,
+    due_at
+FROM invoices
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m05:55:12.471201 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m05:55:12.475497 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a3a3a40>]}
+[0m05:55:12.476629 [info ] [Thread-1 (]: 7 of 8 OK created sql view model `analytics`.`rag_context_invoices` ............ [[32mOK[0m in 0.76s]
+[0m05:55:12.477705 [debug] [Thread-1 (]: Finished running node model.analytics.rag_context_invoices
+[0m05:55:12.478424 [debug] [Thread-1 (]: Began running node model.analytics.revenue_by_month
+[0m05:55:12.479297 [info ] [Thread-1 (]: 8 of 8 START sql table model `analytics`.`revenue_by_month` .................... [RUN]
+[0m05:55:12.480096 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.rag_context_invoices, now model.analytics.revenue_by_month)
+[0m05:55:12.480648 [debug] [Thread-1 (]: Began compiling node model.analytics.revenue_by_month
+[0m05:55:12.484374 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.revenue_by_month"
+[0m05:55:12.485649 [debug] [Thread-1 (]: Began executing node model.analytics.revenue_by_month
+[0m05:55:12.488621 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+            
+
+    
+        create table `analytics`.`revenue_by_month__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        
+      order by (tuple())
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+          )
+        
+        ...
+[0m05:55:12.751976 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m05:55:12.760886 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+    select name, type from system.columns where table = 'revenue_by_month__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m05:55:13.421272 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.66 seconds
+[0m05:55:13.424566 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.revenue_by_month"
+[0m05:55:13.426480 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`revenue_by_month__dbt_backup`
+        ("month", "currency", "total_revenue", "tenant_id", "provider", "org_id", "org_name")
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+  ...
+[0m05:55:13.656193 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m05:55:13.661049 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+EXCHANGE TABLES `analytics`.`revenue_by_month__dbt_backup` AND `analytics`.`revenue_by_month` 
+  
+  ...
+[0m05:55:13.886987 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m05:55:13.897759 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+drop table if exists `analytics`.`revenue_by_month__dbt_backup` 
+  ...
+[0m05:55:14.215024 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.32 seconds
+[0m05:55:14.217252 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '078e1d10-baf4-4d99-8792-f7c2f4838b63', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a3c51c0>]}
+[0m05:55:14.218711 [info ] [Thread-1 (]: 8 of 8 OK created sql table model `analytics`.`revenue_by_month` ............... [[32mOK[0m in 1.74s]
+[0m05:55:14.219910 [debug] [Thread-1 (]: Finished running node model.analytics.revenue_by_month
+[0m05:55:14.221500 [debug] [MainThread]: Connection 'master' was properly closed.
+[0m05:55:14.222023 [debug] [MainThread]: Connection 'model.analytics.revenue_by_month' was left open.
+[0m05:55:14.222811 [debug] [MainThread]: On model.analytics.revenue_by_month: Close
+[0m05:55:14.223683 [info ] [MainThread]: 
+[0m05:55:14.224340 [info ] [MainThread]: Finished running 3 table models, 5 view models in 0 hours 0 minutes and 15.77 seconds (15.77s).
+[0m05:55:14.226643 [debug] [MainThread]: Command end result
+[0m05:55:14.257845 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m05:55:14.260347 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m05:55:14.265696 [debug] [MainThread]: Wrote artifact RunExecutionResult to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/run_results.json
+[0m05:55:14.266091 [info ] [MainThread]: 
+[0m05:55:14.266463 [info ] [MainThread]: [32mCompleted successfully[0m
+[0m05:55:14.266764 [info ] [MainThread]: 
+[0m05:55:14.267092 [info ] [MainThread]: Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=8
+[0m05:55:14.303243 [debug] [MainThread]: Resource report: {"command_name": "run", "command_success": true, "command_wall_clock_time": 16.864109, "process_in_blocks": "0", "process_kernel_time": 0.438984, "process_mem_max_rss": "133300224", "process_out_blocks": "0", "process_user_time": 2.477842}
+[0m05:55:14.303794 [debug] [MainThread]: Command `dbt run` succeeded at 05:55:14.303717 after 16.86 seconds
+[0m05:55:14.304194 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1087430b0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x106c74680>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x106bf3320>]}
+[0m05:55:14.304565 [debug] [MainThread]: Flushing usage events
+[0m05:55:15.903195 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m06:30:09.715126 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1061d3530>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1061f86e0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1061f8650>]}
+
+
+============================== 06:30:09.719853 | be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0 ==============================
+[0m06:30:09.719853 [info ] [MainThread]: Running with dbt=1.11.7
+[0m06:30:09.720508 [debug] [MainThread]: running dbt with arguments {'use_experimental_parser': 'False', 'debug': 'False', 'version_check': 'True', 'target_path': 'None', 'indirect_selection': 'eager', 'printer_width': '80', 'warn_error': 'None', 'profiles_dir': '.', 'partial_parse': 'True', 'static_parser': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'cache_selected_only': 'False', 'log_path': '/Users/basanireddy/Desktop/test-1234/packages/analytics/logs', 'introspect': 'True', 'invocation_command': 'dbt run --profiles-dir .', 'quiet': 'False', 'log_format': 'default', 'no_print': 'None', 'send_anonymous_usage_stats': 'True', 'use_colors': 'True', 'empty': 'False', 'log_cache_events': 'False', 'write_json': 'True', 'fail_fast': 'False'}
+[0m06:30:09.868422 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'project_id', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x106f8c4a0>]}
+[0m06:30:09.915468 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'adapter_info', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1069f9760>]}
+[0m06:30:09.916449 [info ] [MainThread]: Registered adapter: clickhouse=1.10.0
+[0m06:30:10.017208 [debug] [MainThread]: checksum: b80718358155fc17c3559352095564dd56ada1cc1a1c0ef2e62c857e71583775, vars: {}, profile: , target: , version: 1.11.7
+[0m06:30:10.132204 [debug] [MainThread]: Partial parsing enabled: 0 files deleted, 0 files added, 0 files changed.
+[0m06:30:10.132642 [debug] [MainThread]: Nothing changed, skipping partial parsing.
+[0m06:30:10.132959 [debug] [MainThread]: Partial parsing enabled, no changes found, skipping parsing
+[0m06:30:10.168860 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'load_project', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107197bf0>]}
+[0m06:30:10.247837 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m06:30:10.249764 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m06:30:10.267792 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'resource_counts', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1076a9130>]}
+[0m06:30:10.268344 [info ] [MainThread]: Found 8 models, 5 data tests, 2 sources, 524 macros
+[0m06:30:10.269029 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107063830>]}
+[0m06:30:10.270871 [info ] [MainThread]: 
+[0m06:30:10.271259 [info ] [MainThread]: Concurrency: 1 threads (target='dev')
+[0m06:30:10.271560 [info ] [MainThread]: 
+[0m06:30:10.271997 [debug] [MainThread]: Acquiring new clickhouse connection 'master'
+[0m06:30:10.278072 [debug] [ThreadPool]: Acquiring new clickhouse connection 'list_'
+[0m06:30:10.286830 [debug] [ThreadPool]: Opening a new connection, currently in state init
+[0m06:30:13.732110 [debug] [ThreadPool]: dbt_clickhouse adapter: On list_: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list_"} */
+
+    select name from system.databases
+  ...
+[0m06:30:14.020745 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.29 seconds
+[0m06:30:14.049245 [debug] [ThreadPool]: Re-using an available connection from the pool (formerly list_, now list__analytics)
+[0m06:30:14.055789 [debug] [ThreadPool]: dbt_clickhouse adapter: On list__analytics: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list__analytics"} */
+with mv_sources as (
+      -- Find all MVs and their target tables (database and name of the MV, plus the SELECT SQL)
+      select
+        name as mv_name,
+        database as mv_database,
+        any(as_select) as mv_sql,
+        any(replaceRegexpOne(create_table_query, '.*TO\\s+`?([^`\\s(]+)`?\\.`?([^`\\s(]+)`?.*', '\\1.\\2')) as target_fqn
+      
+      from system.tables
+      
+      where engine = 'MaterializedView'
+        and create_table_query like '%TO %'
+      group by mv_name, mv_database
+    )
+    select
+      t.name as name,
+      t.database as schema,
+      multiIf(
+        t.engine = 'MaterializedView', 'materialized_view',
+        t.engine = 'View', 'view',
+        t.engine = 'Dictionary', 'dictionary',
+        'table'
+      ) as type,
+      db.engine as db_engine,
+      groupArrayIf(
+        map('schema', mv_sources.mv_database, 'name', mv_sources.mv_name, 'sql', mv_sources.mv_sql),
+        mv_sources.mv_name != ''
+      ) as mvs_pointing_to_it,0 as is_on_cluster
+        from system.tables as t
+      
+        join system.databases as db on t.database = db.name
+        left join mv_sources on mv_sources.target_fqn = concat(t.database, '.', t.name)
+      where schema = 'analytics'
+      group by name, schema, type, db_engine
+
+  ...
+[0m06:30:14.290331 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:30:14.297815 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1068b29c0>]}
+[0m06:30:14.303480 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_accounts
+[0m06:30:14.304649 [info ] [Thread-1 (]: 1 of 8 START sql view model `analytics`.`stg_qb_accounts` ...................... [RUN]
+[0m06:30:14.305474 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly list__analytics, now model.analytics.stg_qb_accounts)
+[0m06:30:14.306074 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_accounts
+[0m06:30:14.315272 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_accounts"
+[0m06:30:14.316520 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_accounts
+[0m06:30:14.329197 [debug] [Thread-1 (]: Relation stg_qb_accounts already exists, replacing it
+[0m06:30:14.337239 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_accounts_mv']
+[0m06:30:14.339071 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_accounts'
+  
+  ...
+[0m06:30:14.561978 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:14.585450 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_accounts"
+[0m06:30:14.587002 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+
+  create or replace view `analytics`.`stg_qb_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Account'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'Name') AS account_name,
+    JSONExtractString(raw_data, 'AccountType') AS account_type,
+    JSONExtractString(raw_data, 'AccountSubType') AS account_sub_type,
+    
+    -- Classification
+    JSONExtractString(raw_data, 'Classification') AS classification,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Status
+    JSONExtractBool(raw_data, 'Active') AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:30:14.814000 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:30:14.845401 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1045553d0>]}
+[0m06:30:14.846381 [info ] [Thread-1 (]: 1 of 8 OK created sql view model `analytics`.`stg_qb_accounts` ................. [[32mOK[0m in 0.54s]
+[0m06:30:14.847098 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_accounts
+[0m06:30:14.847594 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_invoices
+[0m06:30:14.848200 [info ] [Thread-1 (]: 2 of 8 START sql view model `analytics`.`stg_qb_invoices` ...................... [RUN]
+[0m06:30:14.848730 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_accounts, now model.analytics.stg_qb_invoices)
+[0m06:30:14.849128 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_invoices
+[0m06:30:14.852040 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_invoices"
+[0m06:30:14.853007 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_invoices
+[0m06:30:14.855005 [debug] [Thread-1 (]: Relation stg_qb_invoices already exists, replacing it
+[0m06:30:14.855468 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_invoices_mv']
+[0m06:30:14.855957 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_invoices'
+  
+  ...
+[0m06:30:15.076640 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:15.080129 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_invoices"
+[0m06:30:15.081639 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+
+  create or replace view `analytics`.`stg_qb_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Invoice'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'DocNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'TotalAmt') AS total_amount,
+    JSONExtractFloat(raw_data, 'Balance') AS amount_due,
+    (JSONExtractFloat(raw_data, 'TotalAmt') - JSONExtractFloat(raw_data, 'Balance')) AS amount_paid,
+    0 AS amount_credited,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'TxnDate')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'DueDate')) AS due_at,
+    NULL AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'EmailStatus') AS status,
+    '' AS invoice_type,
+
+    -- Client / contact
+    JSONExtractString(raw_data, 'CustomerRef', 'value') AS contact_id,
+    JSONExtractString(raw_data, 'CustomerRef', 'name') AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:30:15.308750 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:30:15.312650 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107de4ce0>]}
+[0m06:30:15.314008 [info ] [Thread-1 (]: 2 of 8 OK created sql view model `analytics`.`stg_qb_invoices` ................. [[32mOK[0m in 0.46s]
+[0m06:30:15.315345 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_invoices
+[0m06:30:15.316127 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_accounts
+[0m06:30:15.317132 [info ] [Thread-1 (]: 3 of 8 START sql view model `analytics`.`stg_xero_accounts` .................... [RUN]
+[0m06:30:15.317935 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_invoices, now model.analytics.stg_xero_accounts)
+[0m06:30:15.318551 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_accounts
+[0m06:30:15.323227 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_accounts"
+[0m06:30:15.324419 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_accounts
+[0m06:30:15.326845 [debug] [Thread-1 (]: Relation stg_xero_accounts already exists, replacing it
+[0m06:30:15.327359 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_accounts_mv']
+[0m06:30:15.327896 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_accounts'
+  
+  ...
+[0m06:30:15.589766 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m06:30:15.593943 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_accounts"
+[0m06:30:15.595548 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+
+  create or replace view `analytics`.`stg_xero_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Accounts'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'name') AS account_name,
+    JSONExtractString(raw_data, 'type') AS account_type,
+    JSONExtractString(raw_data, '_class') AS account_sub_type,
+    
+    -- Classification
+    CASE 
+        WHEN JSONExtractString(raw_data, '_class') IN ('ASSET', 'LIABILITY', 'EQUITY', 'Asset', 'Liability', 'Equity') THEN 'BalanceSheet'
+        ELSE 'ProfitAndLoss'
+    END AS classification,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Status
+    CASE WHEN JSONExtractString(raw_data, 'status') IN ('ACTIVE', 'Active') THEN true ELSE false END AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:30:15.822240 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:30:15.826803 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107d539e0>]}
+[0m06:30:15.828231 [info ] [Thread-1 (]: 3 of 8 OK created sql view model `analytics`.`stg_xero_accounts` ............... [[32mOK[0m in 0.51s]
+[0m06:30:15.829275 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_accounts
+[0m06:30:15.830036 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_invoices
+[0m06:30:15.830928 [info ] [Thread-1 (]: 4 of 8 START sql view model `analytics`.`stg_xero_invoices` .................... [RUN]
+[0m06:30:15.831839 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_accounts, now model.analytics.stg_xero_invoices)
+[0m06:30:15.832385 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_invoices
+[0m06:30:15.836486 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_invoices"
+[0m06:30:15.837866 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_invoices
+[0m06:30:15.840039 [debug] [Thread-1 (]: Relation stg_xero_invoices already exists, replacing it
+[0m06:30:15.840900 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_invoices_mv']
+[0m06:30:15.841901 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_invoices'
+  
+  ...
+[0m06:30:16.115963 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m06:30:16.119515 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_invoices"
+[0m06:30:16.120770 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+
+  create or replace view `analytics`.`stg_xero_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Invoices'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'invoiceNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'total') AS total_amount,
+    JSONExtractFloat(raw_data, 'amountDue') AS amount_due,
+    JSONExtractFloat(raw_data, 'amountPaid') AS amount_paid,
+    JSONExtractFloat(raw_data, 'amountCredited') AS amount_credited,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'date')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'dueDate')) AS due_at,
+    parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'fullyPaidOnDate')) AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'status') AS status,
+    JSONExtractString(raw_data, 'type') AS invoice_type,
+
+    -- Client / contact (robust to casing / SDK variations)
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactId'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'ContactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactId'), '')
+    ) AS contact_id,
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'name'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'name'), '')
+    ) AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:30:16.364967 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:30:16.370344 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107e3f080>]}
+[0m06:30:16.371921 [info ] [Thread-1 (]: 4 of 8 OK created sql view model `analytics`.`stg_xero_invoices` ............... [[32mOK[0m in 0.54s]
+[0m06:30:16.373344 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_invoices
+[0m06:30:16.374217 [debug] [Thread-1 (]: Began running node model.analytics.dim_accounting_accounts
+[0m06:30:16.375233 [info ] [Thread-1 (]: 5 of 8 START sql table model `analytics`.`dim_accounting_accounts` ............. [RUN]
+[0m06:30:16.376234 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_invoices, now model.analytics.dim_accounting_accounts)
+[0m06:30:16.376961 [debug] [Thread-1 (]: Began compiling node model.analytics.dim_accounting_accounts
+[0m06:30:16.383367 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.dim_accounting_accounts"
+[0m06:30:16.384612 [debug] [Thread-1 (]: Began executing node model.analytics.dim_accounting_accounts
+[0m06:30:16.479073 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+            
+
+    
+        create table `analytics`.`dim_accounting_accounts__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,account_type,account_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m06:30:16.709850 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:30:16.734988 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+    select name, type from system.columns where table = 'dim_accounting_accounts__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:30:16.954928 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:16.964923 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.dim_accounting_accounts"
+[0m06:30:16.966594 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`dim_accounting_accounts__dbt_backup`
+        ("account_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "account_external_id", "account_name", "account_type", "account_sub_type", "classification", "currency", "is_active", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+  ...
+[0m06:30:17.208429 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:30:17.217293 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+EXCHANGE TABLES `analytics`.`dim_accounting_accounts__dbt_backup` AND `analytics`.`dim_accounting_accounts` 
+  
+  ...
+[0m06:30:17.436459 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:17.445714 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+drop table if exists `analytics`.`dim_accounting_accounts__dbt_backup` 
+  ...
+[0m06:30:17.685901 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:30:17.689482 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x106ea5220>]}
+[0m06:30:17.690764 [info ] [Thread-1 (]: 5 of 8 OK created sql table model `analytics`.`dim_accounting_accounts` ........ [[32mOK[0m in 1.31s]
+[0m06:30:17.692054 [debug] [Thread-1 (]: Finished running node model.analytics.dim_accounting_accounts
+[0m06:30:17.693068 [debug] [Thread-1 (]: Began running node model.analytics.fact_accounting_invoices
+[0m06:30:17.694198 [info ] [Thread-1 (]: 6 of 8 START sql table model `analytics`.`fact_accounting_invoices` ............ [RUN]
+[0m06:30:17.695234 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.dim_accounting_accounts, now model.analytics.fact_accounting_invoices)
+[0m06:30:17.696098 [debug] [Thread-1 (]: Began compiling node model.analytics.fact_accounting_invoices
+[0m06:30:17.701712 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.fact_accounting_invoices"
+[0m06:30:17.702440 [debug] [Thread-1 (]: Began executing node model.analytics.fact_accounting_invoices
+[0m06:30:17.705365 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+            
+
+    
+        create table `analytics`.`fact_accounting_invoices__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,issued_at,invoice_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m06:30:17.935727 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:30:17.941354 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+    select name, type from system.columns where table = 'fact_accounting_invoices__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:30:18.209350 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m06:30:18.212880 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.fact_accounting_invoices"
+[0m06:30:18.214053 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`fact_accounting_invoices__dbt_backup`
+        ("invoice_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "invoice_external_id", "invoice_number", "total_amount", "amount_due", "amount_paid", "amount_credited", "currency", "issued_at", "due_at", "paid_at", "status", "invoice_type", "contact_id", "contact_name", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+  ...
+[0m06:30:18.515593 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.30 seconds
+[0m06:30:18.517572 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+EXCHANGE TABLES `analytics`.`fact_accounting_invoices__dbt_backup` AND `analytics`.`fact_accounting_invoices` 
+  
+  ...
+[0m06:30:18.736191 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:18.742798 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+drop table if exists `analytics`.`fact_accounting_invoices__dbt_backup` 
+  ...
+[0m06:30:19.026017 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:30:19.028355 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107d405f0>]}
+[0m06:30:19.029455 [info ] [Thread-1 (]: 6 of 8 OK created sql table model `analytics`.`fact_accounting_invoices` ....... [[32mOK[0m in 1.33s]
+[0m06:30:19.030458 [debug] [Thread-1 (]: Finished running node model.analytics.fact_accounting_invoices
+[0m06:30:19.031743 [debug] [Thread-1 (]: Began running node model.analytics.rag_context_invoices
+[0m06:30:19.032836 [info ] [Thread-1 (]: 7 of 8 START sql view model `analytics`.`rag_context_invoices` ................. [RUN]
+[0m06:30:19.033656 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.fact_accounting_invoices, now model.analytics.rag_context_invoices)
+[0m06:30:19.034292 [debug] [Thread-1 (]: Began compiling node model.analytics.rag_context_invoices
+[0m06:30:19.038567 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.rag_context_invoices"
+[0m06:30:19.039587 [debug] [Thread-1 (]: Began executing node model.analytics.rag_context_invoices
+[0m06:30:19.043085 [debug] [Thread-1 (]: Relation rag_context_invoices already exists, replacing it
+[0m06:30:19.043556 [debug] [Thread-1 (]: Model mvs to replace ['rag_context_invoices_mv']
+[0m06:30:19.044027 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.rag_context_invoices'
+  
+  ...
+[0m06:30:19.264236 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:19.268503 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.rag_context_invoices"
+[0m06:30:19.270207 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+
+  create or replace view `analytics`.`rag_context_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    
+
+WITH invoices AS (
+    SELECT * FROM `analytics`.`fact_accounting_invoices`
+)
+
+SELECT
+    invoice_id,
+    user_id,
+    tenant_id,
+    provider,
+    org_id,
+    org_name,
+    -- This is the "Gold" for RAG. A pre-built context string.
+    -- Example: "Invoice #INV-100 from Xero for $1,250.00 USD is currently OVERDUE. Issued on 2023-01-01, due on 2023-01-15."
+    concat(
+        'Invoice #', invoice_number, 
+        ' for ', org_name, ' (', upper(substring(provider, 1, 1)), substring(provider, 2), ')',
+        ' for ', toString(total_amount), ' ', currency, 
+        ' is currently ', IF(status = '', 'UNKNOWN', status),
+        '. Issued on ', toString(toDate(issued_at)), 
+        ', due on ', toString(toDate(due_at)), '.'
+    ) AS text_content,
+    
+    -- Original fields for metadata filtering in Vector Stores
+    total_amount,
+    currency,
+    status,
+    issued_at,
+    due_at
+FROM invoices
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:30:19.496496 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:30:19.500651 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107d24fb0>]}
+[0m06:30:19.501900 [info ] [Thread-1 (]: 7 of 8 OK created sql view model `analytics`.`rag_context_invoices` ............ [[32mOK[0m in 0.47s]
+[0m06:30:19.503052 [debug] [Thread-1 (]: Finished running node model.analytics.rag_context_invoices
+[0m06:30:19.503873 [debug] [Thread-1 (]: Began running node model.analytics.revenue_by_month
+[0m06:30:19.504794 [info ] [Thread-1 (]: 8 of 8 START sql table model `analytics`.`revenue_by_month` .................... [RUN]
+[0m06:30:19.505639 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.rag_context_invoices, now model.analytics.revenue_by_month)
+[0m06:30:19.506249 [debug] [Thread-1 (]: Began compiling node model.analytics.revenue_by_month
+[0m06:30:19.511190 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.revenue_by_month"
+[0m06:30:19.512815 [debug] [Thread-1 (]: Began executing node model.analytics.revenue_by_month
+[0m06:30:19.517389 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+            
+
+    
+        create table `analytics`.`revenue_by_month__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        
+      order by (tuple())
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+          )
+        
+        ...
+[0m06:30:19.785238 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m06:30:19.792197 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+    select name, type from system.columns where table = 'revenue_by_month__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:30:20.014268 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:20.017963 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.revenue_by_month"
+[0m06:30:20.019301 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`revenue_by_month__dbt_backup`
+        ("month", "currency", "total_revenue", "tenant_id", "provider", "org_id", "org_name")
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+  ...
+[0m06:30:20.306973 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.29 seconds
+[0m06:30:20.308890 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+EXCHANGE TABLES `analytics`.`revenue_by_month__dbt_backup` AND `analytics`.`revenue_by_month` 
+  
+  ...
+[0m06:30:20.527949 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.22 seconds
+[0m06:30:20.534699 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+drop table if exists `analytics`.`revenue_by_month__dbt_backup` 
+  ...
+[0m06:30:20.831430 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.30 seconds
+[0m06:30:20.834027 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': 'be064d93-a0c5-40dd-bb8c-fbb58b6b9eb0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107dfd310>]}
+[0m06:30:20.835180 [info ] [Thread-1 (]: 8 of 8 OK created sql table model `analytics`.`revenue_by_month` ............... [[32mOK[0m in 1.33s]
+[0m06:30:20.836013 [debug] [Thread-1 (]: Finished running node model.analytics.revenue_by_month
+[0m06:30:20.838023 [debug] [MainThread]: Connection 'master' was properly closed.
+[0m06:30:20.838731 [debug] [MainThread]: Connection 'model.analytics.revenue_by_month' was left open.
+[0m06:30:20.839372 [debug] [MainThread]: On model.analytics.revenue_by_month: Close
+[0m06:30:20.840474 [info ] [MainThread]: 
+[0m06:30:20.841235 [info ] [MainThread]: Finished running 3 table models, 5 view models in 0 hours 0 minutes and 10.57 seconds (10.57s).
+[0m06:30:20.842822 [debug] [MainThread]: Command end result
+[0m06:30:20.876244 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m06:30:20.879120 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m06:30:20.887802 [debug] [MainThread]: Wrote artifact RunExecutionResult to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/run_results.json
+[0m06:30:20.888237 [info ] [MainThread]: 
+[0m06:30:20.888672 [info ] [MainThread]: [32mCompleted successfully[0m
+[0m06:30:20.889214 [info ] [MainThread]: 
+[0m06:30:20.889750 [info ] [MainThread]: Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=8
+[0m06:30:20.895607 [debug] [MainThread]: Resource report: {"command_name": "run", "command_success": true, "command_wall_clock_time": 11.260131, "process_in_blocks": "0", "process_kernel_time": 0.402249, "process_mem_max_rss": "126238720", "process_out_blocks": "0", "process_user_time": 2.148602}
+[0m06:30:20.896903 [debug] [MainThread]: Command `dbt run` succeeded at 06:30:20.896786 after 11.26 seconds
+[0m06:30:20.897511 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x106c98c80>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10619b080>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x106fcc7a0>]}
+[0m06:30:20.898087 [debug] [MainThread]: Flushing usage events
+[0m06:30:22.110349 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m06:38:50.492078 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a7a3560>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108d7c620>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108d7c5f0>]}
+
+
+============================== 06:38:50.496512 | 917597d5-bc64-4c30-aafb-4bc65f5d7ff0 ==============================
+[0m06:38:50.496512 [info ] [MainThread]: Running with dbt=1.11.7
+[0m06:38:50.497116 [debug] [MainThread]: running dbt with arguments {'static_parser': 'True', 'target_path': 'None', 'profiles_dir': '.', 'log_path': '/Users/basanireddy/Desktop/test-1234/packages/analytics/logs', 'indirect_selection': 'eager', 'send_anonymous_usage_stats': 'True', 'invocation_command': 'dbt run --profiles-dir .', 'printer_width': '80', 'use_experimental_parser': 'False', 'no_print': 'None', 'version_check': 'True', 'partial_parse': 'True', 'debug': 'False', 'cache_selected_only': 'False', 'write_json': 'True', 'use_colors': 'True', 'log_cache_events': 'False', 'fail_fast': 'False', 'log_format': 'default', 'introspect': 'True', 'warn_error': 'None', 'quiet': 'False', 'empty': 'False', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])'}
+[0m06:38:50.647432 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'project_id', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10c3e6300>]}
+[0m06:38:50.695976 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'adapter_info', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108d550d0>]}
+[0m06:38:50.697117 [info ] [MainThread]: Registered adapter: clickhouse=1.10.0
+[0m06:38:50.799346 [debug] [MainThread]: checksum: b80718358155fc17c3559352095564dd56ada1cc1a1c0ef2e62c857e71583775, vars: {}, profile: , target: , version: 1.11.7
+[0m06:38:50.915794 [debug] [MainThread]: Partial parsing enabled: 0 files deleted, 0 files added, 0 files changed.
+[0m06:38:50.916238 [debug] [MainThread]: Nothing changed, skipping partial parsing.
+[0m06:38:50.916552 [debug] [MainThread]: Partial parsing enabled, no changes found, skipping parsing
+[0m06:38:50.953578 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'load_project', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10c61fd70>]}
+[0m06:38:51.026316 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m06:38:51.028311 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m06:38:51.046762 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'resource_counts', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d1bf680>]}
+[0m06:38:51.047237 [info ] [MainThread]: Found 8 models, 5 data tests, 2 sources, 524 macros
+[0m06:38:51.047602 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10c3e79e0>]}
+[0m06:38:51.049273 [info ] [MainThread]: 
+[0m06:38:51.049625 [info ] [MainThread]: Concurrency: 1 threads (target='dev')
+[0m06:38:51.049913 [info ] [MainThread]: 
+[0m06:38:51.050338 [debug] [MainThread]: Acquiring new clickhouse connection 'master'
+[0m06:38:51.055541 [debug] [ThreadPool]: Acquiring new clickhouse connection 'list_'
+[0m06:38:51.064314 [debug] [ThreadPool]: Opening a new connection, currently in state init
+[0m06:38:54.640443 [debug] [ThreadPool]: dbt_clickhouse adapter: On list_: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list_"} */
+
+    select name from system.databases
+  ...
+[0m06:38:54.922335 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:38:54.947812 [debug] [ThreadPool]: Re-using an available connection from the pool (formerly list_, now list__analytics)
+[0m06:38:54.954953 [debug] [ThreadPool]: dbt_clickhouse adapter: On list__analytics: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list__analytics"} */
+with mv_sources as (
+      -- Find all MVs and their target tables (database and name of the MV, plus the SELECT SQL)
+      select
+        name as mv_name,
+        database as mv_database,
+        any(as_select) as mv_sql,
+        any(replaceRegexpOne(create_table_query, '.*TO\\s+`?([^`\\s(]+)`?\\.`?([^`\\s(]+)`?.*', '\\1.\\2')) as target_fqn
+      
+      from system.tables
+      
+      where engine = 'MaterializedView'
+        and create_table_query like '%TO %'
+      group by mv_name, mv_database
+    )
+    select
+      t.name as name,
+      t.database as schema,
+      multiIf(
+        t.engine = 'MaterializedView', 'materialized_view',
+        t.engine = 'View', 'view',
+        t.engine = 'Dictionary', 'dictionary',
+        'table'
+      ) as type,
+      db.engine as db_engine,
+      groupArrayIf(
+        map('schema', mv_sources.mv_database, 'name', mv_sources.mv_name, 'sql', mv_sources.mv_sql),
+        mv_sources.mv_name != ''
+      ) as mvs_pointing_to_it,0 as is_on_cluster
+        from system.tables as t
+      
+        join system.databases as db on t.database = db.name
+        left join mv_sources on mv_sources.target_fqn = concat(t.database, '.', t.name)
+      where schema = 'analytics'
+      group by name, schema, type, db_engine
+
+  ...
+[0m06:38:55.201238 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m06:38:55.207844 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d285c10>]}
+[0m06:38:55.212927 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_accounts
+[0m06:38:55.213800 [info ] [Thread-1 (]: 1 of 8 START sql view model `analytics`.`stg_qb_accounts` ...................... [RUN]
+[0m06:38:55.214512 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly list__analytics, now model.analytics.stg_qb_accounts)
+[0m06:38:55.215083 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_accounts
+[0m06:38:55.224449 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_accounts"
+[0m06:38:55.225398 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_accounts
+[0m06:38:55.239066 [debug] [Thread-1 (]: Relation stg_qb_accounts already exists, replacing it
+[0m06:38:55.247311 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_accounts_mv']
+[0m06:38:55.249176 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_accounts'
+  
+  ...
+[0m06:38:55.536871 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.29 seconds
+[0m06:38:55.564209 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_accounts"
+[0m06:38:55.565394 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+
+  create or replace view `analytics`.`stg_qb_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Account'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'Name') AS account_name,
+    JSONExtractString(raw_data, 'AccountType') AS account_type,
+    JSONExtractString(raw_data, 'AccountSubType') AS account_sub_type,
+    
+    -- Classification
+    JSONExtractString(raw_data, 'Classification') AS classification,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Status
+    JSONExtractBool(raw_data, 'Active') AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:38:55.843707 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:38:55.869226 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1068215b0>]}
+[0m06:38:55.869959 [info ] [Thread-1 (]: 1 of 8 OK created sql view model `analytics`.`stg_qb_accounts` ................. [[32mOK[0m in 0.65s]
+[0m06:38:55.870500 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_accounts
+[0m06:38:55.870895 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_invoices
+[0m06:38:55.871421 [info ] [Thread-1 (]: 2 of 8 START sql view model `analytics`.`stg_qb_invoices` ...................... [RUN]
+[0m06:38:55.871872 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_accounts, now model.analytics.stg_qb_invoices)
+[0m06:38:55.872228 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_invoices
+[0m06:38:55.874793 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_invoices"
+[0m06:38:55.875456 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_invoices
+[0m06:38:55.877263 [debug] [Thread-1 (]: Relation stg_qb_invoices already exists, replacing it
+[0m06:38:55.877678 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_invoices_mv']
+[0m06:38:55.878119 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_invoices'
+  
+  ...
+[0m06:38:56.253397 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.37 seconds
+[0m06:38:56.259018 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_invoices"
+[0m06:38:56.260136 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+
+  create or replace view `analytics`.`stg_qb_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Invoice'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'DocNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'TotalAmt') AS total_amount,
+    JSONExtractFloat(raw_data, 'Balance') AS amount_due,
+    (JSONExtractFloat(raw_data, 'TotalAmt') - JSONExtractFloat(raw_data, 'Balance')) AS amount_paid,
+    0 AS amount_credited,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'TxnDate')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'DueDate')) AS due_at,
+    NULL AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'EmailStatus') AS status,
+    '' AS invoice_type,
+
+    -- Client / contact
+    JSONExtractString(raw_data, 'CustomerRef', 'value') AS contact_id,
+    JSONExtractString(raw_data, 'CustomerRef', 'name') AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:38:56.501205 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:38:56.507751 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9ca360>]}
+[0m06:38:56.509202 [info ] [Thread-1 (]: 2 of 8 OK created sql view model `analytics`.`stg_qb_invoices` ................. [[32mOK[0m in 0.64s]
+[0m06:38:56.510621 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_invoices
+[0m06:38:56.511438 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_accounts
+[0m06:38:56.512476 [info ] [Thread-1 (]: 3 of 8 START sql view model `analytics`.`stg_xero_accounts` .................... [RUN]
+[0m06:38:56.513385 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_invoices, now model.analytics.stg_xero_accounts)
+[0m06:38:56.514157 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_accounts
+[0m06:38:56.519890 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_accounts"
+[0m06:38:56.521019 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_accounts
+[0m06:38:56.524306 [debug] [Thread-1 (]: Relation stg_xero_accounts already exists, replacing it
+[0m06:38:56.524996 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_accounts_mv']
+[0m06:38:56.525616 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_accounts'
+  
+  ...
+[0m06:38:56.761507 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:38:56.766738 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_accounts"
+[0m06:38:56.768571 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+
+  create or replace view `analytics`.`stg_xero_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Accounts'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'name') AS account_name,
+    JSONExtractString(raw_data, 'type') AS account_type,
+    JSONExtractString(raw_data, '_class') AS account_sub_type,
+    
+    -- Classification
+    CASE 
+        WHEN JSONExtractString(raw_data, '_class') IN ('ASSET', 'LIABILITY', 'EQUITY', 'Asset', 'Liability', 'Equity') THEN 'BalanceSheet'
+        ELSE 'ProfitAndLoss'
+    END AS classification,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Status
+    CASE WHEN JSONExtractString(raw_data, 'status') IN ('ACTIVE', 'Active') THEN true ELSE false END AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:38:57.073891 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.30 seconds
+[0m06:38:57.080934 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9cc050>]}
+[0m06:38:57.082195 [info ] [Thread-1 (]: 3 of 8 OK created sql view model `analytics`.`stg_xero_accounts` ............... [[32mOK[0m in 0.57s]
+[0m06:38:57.083068 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_accounts
+[0m06:38:57.083754 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_invoices
+[0m06:38:57.084662 [info ] [Thread-1 (]: 4 of 8 START sql view model `analytics`.`stg_xero_invoices` .................... [RUN]
+[0m06:38:57.085381 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_accounts, now model.analytics.stg_xero_invoices)
+[0m06:38:57.085967 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_invoices
+[0m06:38:57.089976 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_invoices"
+[0m06:38:57.090856 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_invoices
+[0m06:38:57.093125 [debug] [Thread-1 (]: Relation stg_xero_invoices already exists, replacing it
+[0m06:38:57.093600 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_invoices_mv']
+[0m06:38:57.094138 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_invoices'
+  
+  ...
+[0m06:38:57.330017 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:38:57.334836 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_invoices"
+[0m06:38:57.336108 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+
+  create or replace view `analytics`.`stg_xero_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Invoices'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'invoiceNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'total') AS total_amount,
+    JSONExtractFloat(raw_data, 'amountDue') AS amount_due,
+    JSONExtractFloat(raw_data, 'amountPaid') AS amount_paid,
+    JSONExtractFloat(raw_data, 'amountCredited') AS amount_credited,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'date')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'dueDate')) AS due_at,
+    parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'fullyPaidOnDate')) AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'status') AS status,
+    JSONExtractString(raw_data, 'type') AS invoice_type,
+
+    -- Client / contact (robust to casing / SDK variations)
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactId'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'ContactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactId'), '')
+    ) AS contact_id,
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'name'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'name'), '')
+    ) AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:38:57.579741 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:38:57.585026 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d8bae10>]}
+[0m06:38:57.586087 [info ] [Thread-1 (]: 4 of 8 OK created sql view model `analytics`.`stg_xero_invoices` ............... [[32mOK[0m in 0.50s]
+[0m06:38:57.586971 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_invoices
+[0m06:38:57.587595 [debug] [Thread-1 (]: Began running node model.analytics.dim_accounting_accounts
+[0m06:38:57.588366 [info ] [Thread-1 (]: 5 of 8 START sql table model `analytics`.`dim_accounting_accounts` ............. [RUN]
+[0m06:38:57.589168 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_invoices, now model.analytics.dim_accounting_accounts)
+[0m06:38:57.589738 [debug] [Thread-1 (]: Began compiling node model.analytics.dim_accounting_accounts
+[0m06:38:57.594589 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.dim_accounting_accounts"
+[0m06:38:57.595420 [debug] [Thread-1 (]: Began executing node model.analytics.dim_accounting_accounts
+[0m06:38:57.696831 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+            
+
+    
+        create table `analytics`.`dim_accounting_accounts__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,account_type,account_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m06:38:58.096665 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.40 seconds
+[0m06:38:58.122008 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+    select name, type from system.columns where table = 'dim_accounting_accounts__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:38:58.357400 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:38:58.361735 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.dim_accounting_accounts"
+[0m06:38:58.362691 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`dim_accounting_accounts__dbt_backup`
+        ("account_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "account_external_id", "account_name", "account_type", "account_sub_type", "classification", "currency", "is_active", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+  ...
+[0m06:38:58.620651 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m06:38:58.630267 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+EXCHANGE TABLES `analytics`.`dim_accounting_accounts__dbt_backup` AND `analytics`.`dim_accounting_accounts` 
+  
+  ...
+[0m06:38:58.863509 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:38:58.873903 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+drop table if exists `analytics`.`dim_accounting_accounts__dbt_backup` 
+  ...
+[0m06:38:59.106887 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:38:59.109324 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1069384d0>]}
+[0m06:38:59.110327 [info ] [Thread-1 (]: 5 of 8 OK created sql table model `analytics`.`dim_accounting_accounts` ........ [[32mOK[0m in 1.52s]
+[0m06:38:59.111119 [debug] [Thread-1 (]: Finished running node model.analytics.dim_accounting_accounts
+[0m06:38:59.111681 [debug] [Thread-1 (]: Began running node model.analytics.fact_accounting_invoices
+[0m06:38:59.112409 [info ] [Thread-1 (]: 6 of 8 START sql table model `analytics`.`fact_accounting_invoices` ............ [RUN]
+[0m06:38:59.112992 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.dim_accounting_accounts, now model.analytics.fact_accounting_invoices)
+[0m06:38:59.113389 [debug] [Thread-1 (]: Began compiling node model.analytics.fact_accounting_invoices
+[0m06:38:59.116556 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.fact_accounting_invoices"
+[0m06:38:59.117408 [debug] [Thread-1 (]: Began executing node model.analytics.fact_accounting_invoices
+[0m06:38:59.120493 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+            
+
+    
+        create table `analytics`.`fact_accounting_invoices__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,issued_at,invoice_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m06:38:59.365179 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:38:59.370511 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+    select name, type from system.columns where table = 'fact_accounting_invoices__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:38:59.605387 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:38:59.610854 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.fact_accounting_invoices"
+[0m06:38:59.612694 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`fact_accounting_invoices__dbt_backup`
+        ("invoice_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "invoice_external_id", "invoice_number", "total_amount", "amount_due", "amount_paid", "amount_credited", "currency", "issued_at", "due_at", "paid_at", "status", "invoice_type", "contact_id", "contact_name", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+  ...
+[0m06:38:59.895010 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:38:59.896549 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+EXCHANGE TABLES `analytics`.`fact_accounting_invoices__dbt_backup` AND `analytics`.`fact_accounting_invoices` 
+  
+  ...
+[0m06:39:00.143198 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m06:39:00.146456 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+drop table if exists `analytics`.`fact_accounting_invoices__dbt_backup` 
+  ...
+[0m06:39:00.380550 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:39:00.381965 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d83f4d0>]}
+[0m06:39:00.382560 [info ] [Thread-1 (]: 6 of 8 OK created sql table model `analytics`.`fact_accounting_invoices` ....... [[32mOK[0m in 1.27s]
+[0m06:39:00.383066 [debug] [Thread-1 (]: Finished running node model.analytics.fact_accounting_invoices
+[0m06:39:00.383782 [debug] [Thread-1 (]: Began running node model.analytics.rag_context_invoices
+[0m06:39:00.384384 [info ] [Thread-1 (]: 7 of 8 START sql view model `analytics`.`rag_context_invoices` ................. [RUN]
+[0m06:39:00.384829 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.fact_accounting_invoices, now model.analytics.rag_context_invoices)
+[0m06:39:00.385187 [debug] [Thread-1 (]: Began compiling node model.analytics.rag_context_invoices
+[0m06:39:00.389234 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.rag_context_invoices"
+[0m06:39:00.390005 [debug] [Thread-1 (]: Began executing node model.analytics.rag_context_invoices
+[0m06:39:00.391888 [debug] [Thread-1 (]: Relation rag_context_invoices already exists, replacing it
+[0m06:39:00.392387 [debug] [Thread-1 (]: Model mvs to replace ['rag_context_invoices_mv']
+[0m06:39:00.392836 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.rag_context_invoices'
+  
+  ...
+[0m06:39:00.655513 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m06:39:00.657358 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.rag_context_invoices"
+[0m06:39:00.658227 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+
+  create or replace view `analytics`.`rag_context_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    
+
+WITH invoices AS (
+    SELECT * FROM `analytics`.`fact_accounting_invoices`
+)
+
+SELECT
+    invoice_id,
+    user_id,
+    tenant_id,
+    provider,
+    org_id,
+    org_name,
+    -- This is the "Gold" for RAG. A pre-built context string.
+    -- Example: "Invoice #INV-100 from Xero for $1,250.00 USD is currently OVERDUE. Issued on 2023-01-01, due on 2023-01-15."
+    concat(
+        'Invoice #', invoice_number, 
+        ' for ', org_name, ' (', upper(substring(provider, 1, 1)), substring(provider, 2), ')',
+        ' for ', toString(total_amount), ' ', currency, 
+        ' is currently ', IF(status = '', 'UNKNOWN', status),
+        '. Issued on ', toString(toDate(issued_at)), 
+        ', due on ', toString(toDate(due_at)), '.'
+    ) AS text_content,
+    
+    -- Original fields for metadata filtering in Vector Stores
+    total_amount,
+    currency,
+    status,
+    issued_at,
+    due_at
+FROM invoices
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:39:00.906323 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m06:39:00.908321 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d977f80>]}
+[0m06:39:00.908968 [info ] [Thread-1 (]: 7 of 8 OK created sql view model `analytics`.`rag_context_invoices` ............ [[32mOK[0m in 0.52s]
+[0m06:39:00.909481 [debug] [Thread-1 (]: Finished running node model.analytics.rag_context_invoices
+[0m06:39:00.909861 [debug] [Thread-1 (]: Began running node model.analytics.revenue_by_month
+[0m06:39:00.910372 [info ] [Thread-1 (]: 8 of 8 START sql table model `analytics`.`revenue_by_month` .................... [RUN]
+[0m06:39:00.910853 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.rag_context_invoices, now model.analytics.revenue_by_month)
+[0m06:39:00.911216 [debug] [Thread-1 (]: Began compiling node model.analytics.revenue_by_month
+[0m06:39:00.913766 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.revenue_by_month"
+[0m06:39:00.914424 [debug] [Thread-1 (]: Began executing node model.analytics.revenue_by_month
+[0m06:39:00.916996 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+            
+
+    
+        create table `analytics`.`revenue_by_month__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        
+      order by (tuple())
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+          )
+        
+        ...
+[0m06:39:01.157719 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:39:01.160201 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+    select name, type from system.columns where table = 'revenue_by_month__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:39:01.430099 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m06:39:01.431797 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.revenue_by_month"
+[0m06:39:01.432567 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`revenue_by_month__dbt_backup`
+        ("month", "currency", "total_revenue", "tenant_id", "provider", "org_id", "org_name")
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+  ...
+[0m06:39:01.671403 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:39:01.673802 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+EXCHANGE TABLES `analytics`.`revenue_by_month__dbt_backup` AND `analytics`.`revenue_by_month` 
+  
+  ...
+[0m06:39:01.954837 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:39:01.961807 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+drop table if exists `analytics`.`revenue_by_month__dbt_backup` 
+  ...
+[0m06:39:02.293754 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.33 seconds
+[0m06:39:02.298261 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '917597d5-bc64-4c30-aafb-4bc65f5d7ff0', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9fd610>]}
+[0m06:39:02.299367 [info ] [Thread-1 (]: 8 of 8 OK created sql table model `analytics`.`revenue_by_month` ............... [[32mOK[0m in 1.39s]
+[0m06:39:02.300217 [debug] [Thread-1 (]: Finished running node model.analytics.revenue_by_month
+[0m06:39:02.301684 [debug] [MainThread]: Connection 'master' was properly closed.
+[0m06:39:02.302144 [debug] [MainThread]: Connection 'model.analytics.revenue_by_month' was left open.
+[0m06:39:02.302579 [debug] [MainThread]: On model.analytics.revenue_by_month: Close
+[0m06:39:02.303351 [info ] [MainThread]: 
+[0m06:39:02.304164 [info ] [MainThread]: Finished running 3 table models, 5 view models in 0 hours 0 minutes and 11.25 seconds (11.25s).
+[0m06:39:02.306216 [debug] [MainThread]: Command end result
+[0m06:39:02.335464 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m06:39:02.337431 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m06:39:02.342352 [debug] [MainThread]: Wrote artifact RunExecutionResult to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/run_results.json
+[0m06:39:02.342702 [info ] [MainThread]: 
+[0m06:39:02.343048 [info ] [MainThread]: [32mCompleted successfully[0m
+[0m06:39:02.343353 [info ] [MainThread]: 
+[0m06:39:02.343679 [info ] [MainThread]: Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=8
+[0m06:39:02.347544 [debug] [MainThread]: Resource report: {"command_name": "run", "command_success": true, "command_wall_clock_time": 11.927676, "process_in_blocks": "0", "process_kernel_time": 0.391939, "process_mem_max_rss": "131923968", "process_out_blocks": "0", "process_user_time": 2.14032}
+[0m06:39:02.348019 [debug] [MainThread]: Command `dbt run` succeeded at 06:39:02.347951 after 11.93 seconds
+[0m06:39:02.348396 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1069b10d0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108d7c620>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108d7c5f0>]}
+[0m06:39:02.348759 [debug] [MainThread]: Flushing usage events
+[0m06:39:03.754682 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m06:41:00.142109 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1082fa780>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107f04650>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107f045c0>]}
+
+
+============================== 06:41:00.149736 | 53ec8b05-ea77-4e17-88e3-6b7f01e32138 ==============================
+[0m06:41:00.149736 [info ] [MainThread]: Running with dbt=1.11.7
+[0m06:41:00.150853 [debug] [MainThread]: running dbt with arguments {'invocation_command': 'dbt run --profiles-dir .', 'target_path': 'None', 'empty': 'False', 'quiet': 'False', 'warn_error': 'None', 'introspect': 'True', 'log_cache_events': 'False', 'use_colors': 'True', 'use_experimental_parser': 'False', 'cache_selected_only': 'False', 'debug': 'False', 'fail_fast': 'False', 'printer_width': '80', 'profiles_dir': '.', 'write_json': 'True', 'version_check': 'True', 'log_format': 'default', 'partial_parse': 'True', 'static_parser': 'True', 'indirect_selection': 'eager', 'no_print': 'None', 'log_path': '/Users/basanireddy/Desktop/test-1234/packages/analytics/logs', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'send_anonymous_usage_stats': 'True'}
+[0m06:41:00.308886 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'project_id', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107edce00>]}
+[0m06:41:00.355375 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'adapter_info', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108abde20>]}
+[0m06:41:00.356341 [info ] [MainThread]: Registered adapter: clickhouse=1.10.0
+[0m06:41:00.455381 [debug] [MainThread]: checksum: b80718358155fc17c3559352095564dd56ada1cc1a1c0ef2e62c857e71583775, vars: {}, profile: , target: , version: 1.11.7
+[0m06:41:00.566833 [debug] [MainThread]: Partial parsing enabled: 0 files deleted, 0 files added, 0 files changed.
+[0m06:41:00.567256 [debug] [MainThread]: Nothing changed, skipping partial parsing.
+[0m06:41:00.567556 [debug] [MainThread]: Partial parsing enabled, no changes found, skipping parsing
+[0m06:41:00.604018 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'load_project', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108ea3da0>]}
+[0m06:41:00.676966 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m06:41:00.679005 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m06:41:00.696942 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'resource_counts', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1092443b0>]}
+[0m06:41:00.697404 [info ] [MainThread]: Found 8 models, 5 data tests, 2 sources, 524 macros
+[0m06:41:00.697753 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108b9b950>]}
+[0m06:41:00.699385 [info ] [MainThread]: 
+[0m06:41:00.699735 [info ] [MainThread]: Concurrency: 1 threads (target='dev')
+[0m06:41:00.700017 [info ] [MainThread]: 
+[0m06:41:00.700451 [debug] [MainThread]: Acquiring new clickhouse connection 'master'
+[0m06:41:00.705254 [debug] [ThreadPool]: Acquiring new clickhouse connection 'list_'
+[0m06:41:00.713861 [debug] [ThreadPool]: Opening a new connection, currently in state init
+[0m06:41:04.110347 [debug] [ThreadPool]: dbt_clickhouse adapter: On list_: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list_"} */
+
+    select name from system.databases
+  ...
+[0m06:41:04.356136 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:41:04.381035 [debug] [ThreadPool]: Re-using an available connection from the pool (formerly list_, now list__analytics)
+[0m06:41:04.387237 [debug] [ThreadPool]: dbt_clickhouse adapter: On list__analytics: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "connection_name": "list__analytics"} */
+with mv_sources as (
+      -- Find all MVs and their target tables (database and name of the MV, plus the SELECT SQL)
+      select
+        name as mv_name,
+        database as mv_database,
+        any(as_select) as mv_sql,
+        any(replaceRegexpOne(create_table_query, '.*TO\\s+`?([^`\\s(]+)`?\\.`?([^`\\s(]+)`?.*', '\\1.\\2')) as target_fqn
+      
+      from system.tables
+      
+      where engine = 'MaterializedView'
+        and create_table_query like '%TO %'
+      group by mv_name, mv_database
+    )
+    select
+      t.name as name,
+      t.database as schema,
+      multiIf(
+        t.engine = 'MaterializedView', 'materialized_view',
+        t.engine = 'View', 'view',
+        t.engine = 'Dictionary', 'dictionary',
+        'table'
+      ) as type,
+      db.engine as db_engine,
+      groupArrayIf(
+        map('schema', mv_sources.mv_database, 'name', mv_sources.mv_name, 'sql', mv_sources.mv_sql),
+        mv_sources.mv_name != ''
+      ) as mvs_pointing_to_it,0 as is_on_cluster
+        from system.tables as t
+      
+        join system.databases as db on t.database = db.name
+        left join mv_sources on mv_sources.target_fqn = concat(t.database, '.', t.name)
+      where schema = 'analytics'
+      group by name, schema, type, db_engine
+
+  ...
+[0m06:41:04.633429 [debug] [ThreadPool]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m06:41:04.639774 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1091ed1c0>]}
+[0m06:41:04.643658 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_accounts
+[0m06:41:04.644528 [info ] [Thread-1 (]: 1 of 8 START sql view model `analytics`.`stg_qb_accounts` ...................... [RUN]
+[0m06:41:04.645227 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly list__analytics, now model.analytics.stg_qb_accounts)
+[0m06:41:04.645793 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_accounts
+[0m06:41:04.654215 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_accounts"
+[0m06:41:04.655135 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_accounts
+[0m06:41:04.668571 [debug] [Thread-1 (]: Relation stg_qb_accounts already exists, replacing it
+[0m06:41:04.676616 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_accounts_mv']
+[0m06:41:04.678469 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_accounts'
+  
+  ...
+[0m06:41:04.909748 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:04.928741 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_accounts"
+[0m06:41:04.929699 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_accounts"} */
+
+
+  create or replace view `analytics`.`stg_qb_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Account'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'Name') AS account_name,
+    JSONExtractString(raw_data, 'AccountType') AS account_type,
+    JSONExtractString(raw_data, 'AccountSubType') AS account_sub_type,
+    
+    -- Classification
+    JSONExtractString(raw_data, 'Classification') AS classification,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Status
+    JSONExtractBool(raw_data, 'Active') AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:41:05.164219 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:05.191438 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x107ea4230>]}
+[0m06:41:05.192115 [info ] [Thread-1 (]: 1 of 8 OK created sql view model `analytics`.`stg_qb_accounts` ................. [[32mOK[0m in 0.55s]
+[0m06:41:05.192648 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_accounts
+[0m06:41:05.193042 [debug] [Thread-1 (]: Began running node model.analytics.stg_qb_invoices
+[0m06:41:05.193558 [info ] [Thread-1 (]: 2 of 8 START sql view model `analytics`.`stg_qb_invoices` ...................... [RUN]
+[0m06:41:05.194028 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_accounts, now model.analytics.stg_qb_invoices)
+[0m06:41:05.194392 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_qb_invoices
+[0m06:41:05.196996 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_qb_invoices"
+[0m06:41:05.197649 [debug] [Thread-1 (]: Began executing node model.analytics.stg_qb_invoices
+[0m06:41:05.199473 [debug] [Thread-1 (]: Relation stg_qb_invoices already exists, replacing it
+[0m06:41:05.199876 [debug] [Thread-1 (]: Model mvs to replace ['stg_qb_invoices_mv']
+[0m06:41:05.200358 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_qb_invoices'
+  
+  ...
+[0m06:41:05.430254 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:05.432943 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_qb_invoices"
+[0m06:41:05.434194 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_qb_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_qb_invoices"} */
+
+
+  create or replace view `analytics`.`stg_qb_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `quickbooks`.`quickbooks_raw`
+    WHERE resource = 'Invoice'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'quickbooks' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'DocNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'TotalAmt') AS total_amount,
+    JSONExtractFloat(raw_data, 'Balance') AS amount_due,
+    (JSONExtractFloat(raw_data, 'TotalAmt') - JSONExtractFloat(raw_data, 'Balance')) AS amount_paid,
+    0 AS amount_credited,
+    JSONExtractString(raw_data, 'CurrencyRef', 'value') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'TxnDate')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'DueDate')) AS due_at,
+    NULL AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'EmailStatus') AS status,
+    '' AS invoice_type,
+
+    -- Client / contact
+    JSONExtractString(raw_data, 'CustomerRef', 'value') AS contact_id,
+    JSONExtractString(raw_data, 'CustomerRef', 'name') AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:41:05.681393 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m06:41:05.684339 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1099315b0>]}
+[0m06:41:05.685274 [info ] [Thread-1 (]: 2 of 8 OK created sql view model `analytics`.`stg_qb_invoices` ................. [[32mOK[0m in 0.49s]
+[0m06:41:05.686156 [debug] [Thread-1 (]: Finished running node model.analytics.stg_qb_invoices
+[0m06:41:05.686673 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_accounts
+[0m06:41:05.687376 [info ] [Thread-1 (]: 3 of 8 START sql view model `analytics`.`stg_xero_accounts` .................... [RUN]
+[0m06:41:05.688037 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_qb_invoices, now model.analytics.stg_xero_accounts)
+[0m06:41:05.688485 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_accounts
+[0m06:41:05.691757 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_accounts"
+[0m06:41:05.692659 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_accounts
+[0m06:41:05.694902 [debug] [Thread-1 (]: Relation stg_xero_accounts already exists, replacing it
+[0m06:41:05.695369 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_accounts_mv']
+[0m06:41:05.695890 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_accounts'
+  
+  ...
+[0m06:41:05.995336 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.30 seconds
+[0m06:41:06.000081 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_accounts"
+[0m06:41:06.002316 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_accounts"} */
+
+
+  create or replace view `analytics`.`stg_xero_accounts` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Accounts'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS account_external_id,
+    JSONExtractString(raw_data, 'name') AS account_name,
+    JSONExtractString(raw_data, 'type') AS account_type,
+    JSONExtractString(raw_data, '_class') AS account_sub_type,
+    
+    -- Classification
+    CASE 
+        WHEN JSONExtractString(raw_data, '_class') IN ('ASSET', 'LIABILITY', 'EQUITY', 'Asset', 'Liability', 'Equity') THEN 'BalanceSheet'
+        ELSE 'ProfitAndLoss'
+    END AS classification,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Status
+    CASE WHEN JSONExtractString(raw_data, 'status') IN ('ACTIVE', 'Active') THEN true ELSE false END AS is_active,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:41:06.237393 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:06.239693 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1098f40e0>]}
+[0m06:41:06.240509 [info ] [Thread-1 (]: 3 of 8 OK created sql view model `analytics`.`stg_xero_accounts` ............... [[32mOK[0m in 0.55s]
+[0m06:41:06.241125 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_accounts
+[0m06:41:06.241558 [debug] [Thread-1 (]: Began running node model.analytics.stg_xero_invoices
+[0m06:41:06.242120 [info ] [Thread-1 (]: 4 of 8 START sql view model `analytics`.`stg_xero_invoices` .................... [RUN]
+[0m06:41:06.242633 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_accounts, now model.analytics.stg_xero_invoices)
+[0m06:41:06.243018 [debug] [Thread-1 (]: Began compiling node model.analytics.stg_xero_invoices
+[0m06:41:06.246226 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.stg_xero_invoices"
+[0m06:41:06.247005 [debug] [Thread-1 (]: Began executing node model.analytics.stg_xero_invoices
+[0m06:41:06.249023 [debug] [Thread-1 (]: Relation stg_xero_invoices already exists, replacing it
+[0m06:41:06.249437 [debug] [Thread-1 (]: Model mvs to replace ['stg_xero_invoices_mv']
+[0m06:41:06.249885 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.stg_xero_invoices'
+  
+  ...
+[0m06:41:06.505675 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m06:41:06.507612 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.stg_xero_invoices"
+[0m06:41:06.508664 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.stg_xero_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.stg_xero_invoices"} */
+
+
+  create or replace view `analytics`.`stg_xero_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    WITH raw_source AS (
+    SELECT *
+    FROM `xero_custom`.`xero_raw`
+    WHERE resource = 'Invoices'
+)
+
+SELECT
+    -- Metadata
+    tenant_id,
+    user_id,
+    connection_id,
+    'xero' AS provider,
+    org_id,
+    org_name,
+    
+    -- Core Identity
+    source_id AS invoice_external_id,
+    JSONExtractString(raw_data, 'invoiceNumber') AS invoice_number,
+    
+    -- Financials
+    JSONExtractFloat(raw_data, 'total') AS total_amount,
+    JSONExtractFloat(raw_data, 'amountDue') AS amount_due,
+    JSONExtractFloat(raw_data, 'amountPaid') AS amount_paid,
+    JSONExtractFloat(raw_data, 'amountCredited') AS amount_credited,
+    JSONExtractString(raw_data, 'currencyCode') AS currency,
+    
+    -- Dates
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'date')) AS issued_at,
+    parseDateTimeBestEffort(JSONExtractString(raw_data, 'dueDate')) AS due_at,
+    parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'fullyPaidOnDate')) AS paid_at,
+    
+    -- Status
+    JSONExtractString(raw_data, 'status') AS status,
+    JSONExtractString(raw_data, 'type') AS invoice_type,
+
+    -- Client / contact (robust to casing / SDK variations)
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'contactId'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'ContactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactID'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'contactId'), '')
+    ) AS contact_id,
+    coalesce(
+      nullIf(JSONExtractString(raw_data, 'contact', 'name'), ''),
+      nullIf(JSONExtractString(raw_data, 'contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'Name'), ''),
+      nullIf(JSONExtractString(raw_data, 'Contact', 'name'), '')
+    ) AS contact_name,
+    
+    -- Audit
+    updated_at,
+    synced_at
+
+FROM raw_source
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:41:06.746234 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:41:06.748841 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109a1eea0>]}
+[0m06:41:06.749730 [info ] [Thread-1 (]: 4 of 8 OK created sql view model `analytics`.`stg_xero_invoices` ............... [[32mOK[0m in 0.51s]
+[0m06:41:06.750428 [debug] [Thread-1 (]: Finished running node model.analytics.stg_xero_invoices
+[0m06:41:06.751660 [debug] [Thread-1 (]: Began running node model.analytics.dim_accounting_accounts
+[0m06:41:06.752375 [info ] [Thread-1 (]: 5 of 8 START sql table model `analytics`.`dim_accounting_accounts` ............. [RUN]
+[0m06:41:06.752909 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.stg_xero_invoices, now model.analytics.dim_accounting_accounts)
+[0m06:41:06.753311 [debug] [Thread-1 (]: Began compiling node model.analytics.dim_accounting_accounts
+[0m06:41:06.756832 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.dim_accounting_accounts"
+[0m06:41:06.757828 [debug] [Thread-1 (]: Began executing node model.analytics.dim_accounting_accounts
+[0m06:41:06.856670 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+            
+
+    
+        create table `analytics`.`dim_accounting_accounts__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,account_type,account_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m06:41:07.122922 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m06:41:07.148379 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+    select name, type from system.columns where table = 'dim_accounting_accounts__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:41:07.427111 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:41:07.432840 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.dim_accounting_accounts"
+[0m06:41:07.433930 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`dim_accounting_accounts__dbt_backup`
+        ("account_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "account_external_id", "account_name", "account_type", "account_sub_type", "classification", "currency", "is_active", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_accounts`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_accounts`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        account_external_id,
+        account_name,
+        account_type,
+        account_sub_type,
+        classification,
+        currency,
+        is_active,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS account_id,
+    *
+FROM unified
+  ...
+[0m06:41:07.780654 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.35 seconds
+[0m06:41:07.785727 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+EXCHANGE TABLES `analytics`.`dim_accounting_accounts__dbt_backup` AND `analytics`.`dim_accounting_accounts` 
+  
+  ...
+[0m06:41:08.040547 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m06:41:08.046056 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.dim_accounting_accounts: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.dim_accounting_accounts"} */
+drop table if exists `analytics`.`dim_accounting_accounts__dbt_backup` 
+  ...
+[0m06:41:08.296195 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.25 seconds
+[0m06:41:08.298267 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109808fe0>]}
+[0m06:41:08.298915 [info ] [Thread-1 (]: 5 of 8 OK created sql table model `analytics`.`dim_accounting_accounts` ........ [[32mOK[0m in 1.55s]
+[0m06:41:08.299446 [debug] [Thread-1 (]: Finished running node model.analytics.dim_accounting_accounts
+[0m06:41:08.299825 [debug] [Thread-1 (]: Began running node model.analytics.fact_accounting_invoices
+[0m06:41:08.300349 [info ] [Thread-1 (]: 6 of 8 START sql table model `analytics`.`fact_accounting_invoices` ............ [RUN]
+[0m06:41:08.300866 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.dim_accounting_accounts, now model.analytics.fact_accounting_invoices)
+[0m06:41:08.301360 [debug] [Thread-1 (]: Began compiling node model.analytics.fact_accounting_invoices
+[0m06:41:08.304485 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.fact_accounting_invoices"
+[0m06:41:08.305243 [debug] [Thread-1 (]: Began executing node model.analytics.fact_accounting_invoices
+[0m06:41:08.309187 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+            
+
+    
+        create table `analytics`.`fact_accounting_invoices__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        order by (user_id,issued_at,invoice_external_id)
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+          )
+        
+        ...
+[0m06:41:08.552974 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:41:08.555644 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+    select name, type from system.columns where table = 'fact_accounting_invoices__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:41:08.825685 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m06:41:08.827977 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.fact_accounting_invoices"
+[0m06:41:08.829013 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`fact_accounting_invoices__dbt_backup`
+        ("invoice_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "invoice_external_id", "invoice_number", "total_amount", "amount_due", "amount_paid", "amount_credited", "currency", "issued_at", "due_at", "paid_at", "status", "invoice_type", "contact_id", "contact_name", "updated_at", "synced_at")
+
+WITH xero AS (
+    SELECT * FROM `analytics`.`stg_xero_invoices`
+),
+
+qb AS (
+    SELECT * FROM `analytics`.`stg_qb_invoices`
+),
+
+unified AS (
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM xero
+    
+    UNION ALL
+    
+    SELECT
+        user_id,
+        tenant_id,
+        connection_id,
+        provider,
+        org_id,
+        org_name,
+        invoice_external_id,
+        invoice_number,
+        total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
+        currency,
+        issued_at,
+        due_at,
+        paid_at,
+        status,
+        invoice_type,
+        contact_id,
+        contact_name,
+        updated_at,
+        synced_at
+    FROM qb
+)
+
+SELECT
+    -- Build a unique surrogate key for our warehouse
+    generateUUIDv4() AS invoice_id,
+    *
+FROM unified
+  ...
+[0m06:41:09.108549 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:41:09.110178 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+EXCHANGE TABLES `analytics`.`fact_accounting_invoices__dbt_backup` AND `analytics`.`fact_accounting_invoices` 
+  
+  ...
+[0m06:41:09.345576 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:09.348696 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.fact_accounting_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.fact_accounting_invoices"} */
+drop table if exists `analytics`.`fact_accounting_invoices__dbt_backup` 
+  ...
+[0m06:41:09.577163 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:09.578611 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10930c050>]}
+[0m06:41:09.579194 [info ] [Thread-1 (]: 6 of 8 OK created sql table model `analytics`.`fact_accounting_invoices` ....... [[32mOK[0m in 1.28s]
+[0m06:41:09.579694 [debug] [Thread-1 (]: Finished running node model.analytics.fact_accounting_invoices
+[0m06:41:09.580426 [debug] [Thread-1 (]: Began running node model.analytics.rag_context_invoices
+[0m06:41:09.580941 [info ] [Thread-1 (]: 7 of 8 START sql view model `analytics`.`rag_context_invoices` ................. [RUN]
+[0m06:41:09.581371 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.fact_accounting_invoices, now model.analytics.rag_context_invoices)
+[0m06:41:09.581720 [debug] [Thread-1 (]: Began compiling node model.analytics.rag_context_invoices
+[0m06:41:09.586339 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.rag_context_invoices"
+[0m06:41:09.587048 [debug] [Thread-1 (]: Began executing node model.analytics.rag_context_invoices
+[0m06:41:09.588968 [debug] [Thread-1 (]: Relation rag_context_invoices already exists, replacing it
+[0m06:41:09.589493 [debug] [Thread-1 (]: Model mvs to replace ['rag_context_invoices_mv']
+[0m06:41:09.589987 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+    
+    select name
+    from system.tables
+    where engine = 'MaterializedView'
+      and extract(create_table_query, 'TO\\s+([^\\s(]+)') = 'analytics.rag_context_invoices'
+  
+  ...
+[0m06:41:09.875186 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.28 seconds
+[0m06:41:09.876815 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.rag_context_invoices"
+[0m06:41:09.877698 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.rag_context_invoices: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.rag_context_invoices"} */
+
+
+  create or replace view `analytics`.`rag_context_invoices` 
+  
+    
+  
+  
+    
+    
+  as (
+    
+
+WITH invoices AS (
+    SELECT * FROM `analytics`.`fact_accounting_invoices`
+)
+
+SELECT
+    invoice_id,
+    user_id,
+    tenant_id,
+    provider,
+    org_id,
+    org_name,
+    -- This is the "Gold" for RAG. A pre-built context string.
+    -- Example: "Invoice #INV-100 from Xero for $1,250.00 USD is currently OVERDUE. Issued on 2023-01-01, due on 2023-01-15."
+    concat(
+        'Invoice #', invoice_number, 
+        ' for ', org_name, ' (', upper(substring(provider, 1, 1)), substring(provider, 2), ')',
+        ' for ', toString(total_amount), ' ', currency, 
+        ' is currently ', IF(status = '', 'UNKNOWN', status),
+        '. Issued on ', toString(toDate(issued_at)), 
+        ', due on ', toString(toDate(due_at)), '.'
+    ) AS text_content,
+    
+    -- Original fields for metadata filtering in Vector Stores
+    total_amount,
+    currency,
+    status,
+    issued_at,
+    due_at
+FROM invoices
+    
+  )
+      
+      
+                    -- end_of_sql
+                    
+                    ...
+[0m06:41:10.191454 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.31 seconds
+[0m06:41:10.193185 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1098b0140>]}
+[0m06:41:10.193821 [info ] [Thread-1 (]: 7 of 8 OK created sql view model `analytics`.`rag_context_invoices` ............ [[32mOK[0m in 0.61s]
+[0m06:41:10.194347 [debug] [Thread-1 (]: Finished running node model.analytics.rag_context_invoices
+[0m06:41:10.194719 [debug] [Thread-1 (]: Began running node model.analytics.revenue_by_month
+[0m06:41:10.195217 [info ] [Thread-1 (]: 8 of 8 START sql table model `analytics`.`revenue_by_month` .................... [RUN]
+[0m06:41:10.195709 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.analytics.rag_context_invoices, now model.analytics.revenue_by_month)
+[0m06:41:10.196086 [debug] [Thread-1 (]: Began compiling node model.analytics.revenue_by_month
+[0m06:41:10.198703 [debug] [Thread-1 (]: Writing injected SQL for node "model.analytics.revenue_by_month"
+[0m06:41:10.200076 [debug] [Thread-1 (]: Began executing node model.analytics.revenue_by_month
+[0m06:41:10.202917 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+            
+
+    
+        create table `analytics`.`revenue_by_month__dbt_backup`
+        
+  
+        
+  engine = MergeTree()
+        
+      order by (tuple())
+        
+        
+        
+        
+                    -- end_of_sql
+                    SETTINGS replicated_deduplication_window='0'
+
+                    
+            empty
+          as (
+            
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+          )
+        
+        ...
+[0m06:41:10.440492 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.24 seconds
+[0m06:41:10.444940 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+    select name, type from system.columns where table = 'revenue_by_month__dbt_backup'
+    
+      
+        and database = 'analytics'
+      
+    
+    order by position
+  ...
+[0m06:41:10.703854 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.26 seconds
+[0m06:41:10.706089 [debug] [Thread-1 (]: Writing runtime sql for node "model.analytics.revenue_by_month"
+[0m06:41:10.707233 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+
+  
+    
+    
+    
+        
+         
+
+
+        
+  
+
+  insert into `analytics`.`revenue_by_month__dbt_backup`
+        ("month", "currency", "total_revenue", "tenant_id", "provider", "org_id", "org_name")
+
+SELECT
+    toStartOfMonth(issued_at) as month,
+    currency,
+    SUM(total_amount) as total_revenue,
+    tenant_id,
+    provider,
+    org_id,
+    org_name
+FROM `analytics`.`fact_accounting_invoices`
+WHERE status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+GROUP BY month, currency, tenant_id, provider, org_id, org_name
+ORDER BY month ASC
+  ...
+[0m06:41:10.941579 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:10.943404 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+EXCHANGE TABLES `analytics`.`revenue_by_month__dbt_backup` AND `analytics`.`revenue_by_month` 
+  
+  ...
+[0m06:41:11.170479 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.23 seconds
+[0m06:41:11.173968 [debug] [Thread-1 (]: dbt_clickhouse adapter: On model.analytics.revenue_by_month: /* {"app": "dbt", "dbt_version": "1.11.7", "profile_name": "analytics", "target_name": "dev", "node_id": "model.analytics.revenue_by_month"} */
+drop table if exists `analytics`.`revenue_by_month__dbt_backup` 
+  ...
+[0m06:41:11.446970 [debug] [Thread-1 (]: dbt_clickhouse adapter: SQL status: OK in 0.27 seconds
+[0m06:41:11.448748 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '53ec8b05-ea77-4e17-88e3-6b7f01e32138', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x108dbb890>]}
+[0m06:41:11.449428 [info ] [Thread-1 (]: 8 of 8 OK created sql table model `analytics`.`revenue_by_month` ............... [[32mOK[0m in 1.25s]
+[0m06:41:11.449962 [debug] [Thread-1 (]: Finished running node model.analytics.revenue_by_month
+[0m06:41:11.451444 [debug] [MainThread]: Connection 'master' was properly closed.
+[0m06:41:11.452117 [debug] [MainThread]: Connection 'model.analytics.revenue_by_month' was left open.
+[0m06:41:11.452576 [debug] [MainThread]: On model.analytics.revenue_by_month: Close
+[0m06:41:11.453078 [info ] [MainThread]: 
+[0m06:41:11.453431 [info ] [MainThread]: Finished running 3 table models, 5 view models in 0 hours 0 minutes and 10.75 seconds (10.75s).
+[0m06:41:11.454562 [debug] [MainThread]: Command end result
+[0m06:41:11.484937 [debug] [MainThread]: Wrote artifact WritableManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/manifest.json
+[0m06:41:11.487110 [debug] [MainThread]: Wrote artifact SemanticManifest to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/semantic_manifest.json
+[0m06:41:11.492539 [debug] [MainThread]: Wrote artifact RunExecutionResult to /Users/basanireddy/Desktop/test-1234/packages/analytics/target/run_results.json
+[0m06:41:11.492913 [info ] [MainThread]: 
+[0m06:41:11.493292 [info ] [MainThread]: [32mCompleted successfully[0m
+[0m06:41:11.493628 [info ] [MainThread]: 
+[0m06:41:11.494069 [info ] [MainThread]: Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=8
+[0m06:41:11.497660 [debug] [MainThread]: Resource report: {"command_name": "run", "command_success": true, "command_wall_clock_time": 11.444198, "process_in_blocks": "0", "process_kernel_time": 0.394948, "process_mem_max_rss": "129695744", "process_out_blocks": "0", "process_user_time": 2.097924}
+[0m06:41:11.498162 [debug] [MainThread]: Command `dbt run` succeeded at 06:41:11.498088 after 11.44 seconds
+[0m06:41:11.498542 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10416b560>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1091ef4a0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1063d8f20>]}
+[0m06:41:11.498893 [debug] [MainThread]: Flushing usage events
+[0m06:41:12.769084 [debug] [MainThread]: An error was encountered while trying to flush usage events

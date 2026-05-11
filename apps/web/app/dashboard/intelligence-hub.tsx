@@ -101,11 +101,11 @@ export default function IntelligenceHub() {
       } catch (caught) {
         const message =
           caught instanceof ApiError
-            ? caught.toUserMessage("RAG advisor stream interrupted.")
+            ? caught.toUserMessage("Prism stream interrupted.")
             : caught instanceof Error
               ? caught.message
-              : "RAG advisor stream interrupted.";
-        errors.push(`Advisor: ${message}`);
+              : "Prism stream interrupted.";
+        errors.push(`Prism: ${message}`);
         setRagMessages((prev) => {
           const copy = [...prev];
           copy[copy.length - 1] = { role: "assistant", content: `_${message}_` };
@@ -139,11 +139,11 @@ export default function IntelligenceHub() {
       } catch (caught) {
         const message =
           caught instanceof ApiError
-            ? caught.toUserMessage("Agent stream interrupted.")
+            ? caught.toUserMessage("Astra stream interrupted.")
             : caught instanceof Error
               ? caught.message
-              : "Agent stream interrupted.";
-        errors.push(`Agent: ${message}`);
+              : "Astra stream interrupted.";
+        errors.push(`Astra: ${message}`);
         setAgentMessages((prev) => {
           const copy = [...prev];
           copy[copy.length - 1] = { role: "assistant", content: `_${message}_` };
@@ -237,7 +237,7 @@ export default function IntelligenceHub() {
             One question. Two ways to answer.
           </h2>
           <p className="mt-1 text-sm text-text-muted">
-            The advisor cites sources. The agent turns answers into dashboards.
+            Prism cites sources. Astra turns answers into dashboards.
           </p>
         </div>
         <StatusPill tone={isStreaming ? "info" : "neutral"}>
@@ -252,8 +252,8 @@ export default function IntelligenceHub() {
       ) : null}
 
       <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[1fr_1fr_1.5fr]">
-        <MessageList title="Advisor" tone="blue" messages={ragMessages} scrollRef={ragScrollRef} />
-        <MessageList title="Agent" tone="violet" messages={agentMessages} scrollRef={agentScrollRef} />
+        <MessageList title="Prism" tone="blue" messages={ragMessages} scrollRef={ragScrollRef} />
+        <MessageList title="Astra" tone="violet" messages={agentMessages} scrollRef={agentScrollRef} />
 
         <section className="flex h-full flex-col overflow-hidden">
           <div className="mb-2 flex items-center gap-2 px-1">

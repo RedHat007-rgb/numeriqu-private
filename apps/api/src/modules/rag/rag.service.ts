@@ -43,6 +43,17 @@ interface FinancialContext {
   computedAt: string;
 }
 
+type TimeRange =
+  | { kind: 'ALL_TIME' }
+  | { kind: 'MTD' }
+  | { kind: 'QTD' }
+  | { kind: 'YTD' }
+  | { kind: 'LAST_N_DAYS'; days: number }
+  | { kind: 'LAST_N_WEEKS'; weeks: number }
+  | { kind: 'LAST_N_MONTHS'; months: number }
+  | { kind: 'LAST_N_QUARTERS'; quarters: number }
+  | { kind: 'LAST_N_YEARS'; years: number };
+
 const SAFE_QUERY_SETTINGS = {
   max_memory_usage: '536870912',
   max_execution_time: 25,
@@ -81,50 +92,22 @@ function classifyIntent(query: string): 'greeting' | 'financial' | 'off_topic' {
 
 // ─── Prompt Builder ───────────────────────────────────────────────────────────
 
-const RAG_ADVISOR_SYSTEM_PROMPT = `You are NumeriQ Intelligence — a Goldman Sachs Managing Director-level CFO AI with 25 years of institutional finance experience and real-time access to the user's live accounting data. You combine the analytical depth of a McKinsey Financial Advisory partner, the precision of a Bloomberg Terminal, and the strategic urgency of a board-facing CFO.
+const RAG_ADVISOR_SYSTEM_PROMPT = `You are Prism — NumeriQ's evidence-first finance calculator.
 
-━━━ IDENTITY ━━━
-You have managed $500M+ P&Ls, sat on audit committees, navigated recessions, and advised Series A through IPO-stage companies. You think three fiscal quarters ahead. You never hedge when the data is clear. You surface what a CEO needs to hear before they walk into a board meeting — not just what was asked.
+Your job:
+- Answer ONLY what the user asked.
+- Use ONLY the numbers in the LIVE FINANCIAL INTELLIGENCE BLOCK (no outside knowledge, no guessing).
 
-━━━ ANALYTICAL FRAMEWORKS (apply situationally) ━━━
-• Revenue Quality: Recurring vs one-time split, customer concentration (top-3 HHI), velocity trends
-• Cash Conversion Cycle: DSO + DIO - DPO — diagnose collection efficiency precisely
-• Burn Multiple: Net Burn ÷ Net New Revenue (< 1x = efficient, > 2x = danger zone)
-• Rule of 40 (SaaS): Revenue Growth% + EBITDA Margin% — benchmark against 40% threshold
-• DuPont Decomposition: When discussing ROE/profitability, decompose into margin × turnover × leverage
-• Altman Z-Score Signals: Flag distress indicators (burn acceleration, AR deterioration, coverage ratios)
-• Runway Cliff Date: Calculate exact calendar date when cash reaches zero at current burn
-• Working Capital Cycle: Identify days where cash is trapped in operations
+Hard constraints:
+1) No suggestions, no recommendations, no next steps. Do not tell the user what to do.
+2) Be audit-friendly: show the formula and the exact values used.
+3) If a metric is not available, say: "Not available in the current gold layer."
+4) If the question is ambiguous, ask a clarifying question and provide 4–7 options.
 
-━━━ MANDATORY RESPONSE STRUCTURE ━━━
-
-**[EXECUTIVE SIGNAL]** 🔴/🟡/🟢
-One sentence. The single most important number or trend. Phrased as a CEO briefing opening line.
-
-**KEY FINANCIAL FINDINGS**
-- Lead with what changes decisions today
-- Quantify everything: "MoM decline 17%: $82K → $68K over 3 months" — never "revenue decreased"
-- Compute derived metrics inline: growth rates, runway dates, concentration percentages
-- Flag velocity changes: acceleration or deceleration in trends
-- Surface hidden patterns: entity concentration risk, invoice aging velocity, seasonal anomalies
-
-**⚠️ RISK FLAGS** (include only when data supports it)
-- ⚠️ Emerging risk with timeline and quantified impact
-- 🚨 Critical threat requiring immediate action
-
-━━━ INTELLIGENCE RULES ━━━
-• ONLY cite numbers from the DATA BLOCK. Never invent, interpolate, or use external statistics as facts.
-• When data is zero or missing: diagnose why and prescribe the exact fix (e.g., "no overdue data likely means invoices aren't aging yet — check sync frequency").
-• Calculate runway cliff date whenever burn > 0 and cash is available.
-• Surface revenue concentration: if one entity drives >50% of revenue, flag it as concentration risk.
-• Be the advisor who prevents the CFO from being surprised. Surface the uncomfortable truth if the data shows it.
-• If a question requires data you don't have in the block, name exactly which ERP integration would provide it.
-
-━━━ STRICT PROHIBITIONS ━━━
-• NEVER output a "Strategic Action Plan", "Action Plan", "Recommendations", or any numbered list of actions/steps to take.
-• NEVER use headers like "STRATEGIC ACTION PLAN", "IMMEDIATE", "SHORT-TERM", "STRATEGIC PRIORITY", or any variant.
-• NEVER suggest what the user should do next. Only analyze and report what the data shows.
-• Your role is ANALYSIS ONLY — not advice, not action items, not recommendations.`;
+Preferred format:
+- A short direct answer (1–3 lines)
+- Then a CALCULATION section showing the math
+- Then a DATA USED section listing the exact inputs (numbers)`;
 
 function buildFactBlock(ctx: FinancialContext): string {
   const $$ = (n: number) =>
@@ -247,6 +230,218 @@ function buildMessages(
   ];
 }
 
+// ─── Prism Query Helpers ──────────────────────────────────────────────────────
+
+function parseTimeRangeFromQuery(query: string): TimeRange | null {
+  const q = query.toLowerCase();
+  if (/\b(all time|all-time|lifetime|since inception)\b/.test(q)) return { kind: 'ALL_TIME' };
+  if (/\b(mtd|month to date|month-to-date|this month)\b/.test(q)) return { kind: 'MTD' };
+  if (/\b(qtd|quarter to date|quarter-to-date|this quarter)\b/.test(q)) return { kind: 'QTD' };
+  if (/\b(ytd|year to date|year-to-date|this year)\b/.test(q)) return { kind: 'YTD' };
+
+  const days = q.match(/\b(last|past)\s+(\d{1,3})\s+days?\b/);
+  if (days) return { kind: 'LAST_N_DAYS', days: Math.max(1, Math.floor(Number(days[2]))) };
+  const weeks = q.match(/\b(last|past)\s+(\d{1,3})\s+weeks?\b/);
+  if (weeks) return { kind: 'LAST_N_WEEKS', weeks: Math.max(1, Math.floor(Number(weeks[2]))) };
+  const months = q.match(/\b(last|past)\s+(\d{1,3})\s+months?\b/);
+  if (months) return { kind: 'LAST_N_MONTHS', months: Math.max(1, Math.floor(Number(months[2]))) };
+  const quarters = q.match(/\b(last|past)\s+(\d{1,2})\s+quarters?\b/);
+  if (quarters) return { kind: 'LAST_N_QUARTERS', quarters: Math.max(1, Math.floor(Number(quarters[2]))) };
+  const years = q.match(/\b(last|past)\s+(\d{1,2})\s+years?\b/);
+  if (years) return { kind: 'LAST_N_YEARS', years: Math.max(1, Math.floor(Number(years[2]))) };
+
+  if (/\b(last month|previous month)\b/.test(q)) return { kind: 'LAST_N_MONTHS', months: 1 };
+  if (/\b(last quarter|previous quarter)\b/.test(q)) return { kind: 'LAST_N_QUARTERS', quarters: 1 };
+  if (/\b(last year|previous year)\b/.test(q)) return { kind: 'LAST_N_YEARS', years: 1 };
+
+  return null;
+}
+
+function queryNeedsRangeClarification(query: string): boolean {
+  const q = query.toLowerCase();
+  const impliesPeriod =
+    /\b(compare|comparison|trend|month|monthly|quarter|quarterly|qoq|mom|growth|decline|increase|decrease|change|delta|over time)\b/.test(q);
+  if (!impliesPeriod) return false;
+  return parseTimeRangeFromQuery(query) == null;
+}
+
+function formatRangeLabel(range: TimeRange): string {
+  if (range.kind === 'ALL_TIME') return 'All time';
+  if (range.kind === 'MTD') return 'Month to date';
+  if (range.kind === 'QTD') return 'Quarter to date';
+  if (range.kind === 'YTD') return 'Year to date';
+  if (range.kind === 'LAST_N_DAYS') return `Last ${range.days} days`;
+  if (range.kind === 'LAST_N_WEEKS') return `Last ${range.weeks} weeks`;
+  if (range.kind === 'LAST_N_MONTHS') return `Last ${range.months} months`;
+  if (range.kind === 'LAST_N_QUARTERS') return `Last ${range.quarters} quarters`;
+  if (range.kind === 'LAST_N_YEARS') return `Last ${range.years} years`;
+  return 'All time';
+}
+
+function formatMoney(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? '-' : '';
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
+function pct(n: number): string {
+  if (!Number.isFinite(n)) return '0.0%';
+  return `${n.toFixed(1)}%`;
+}
+
+function buildDeterministicPrismAnswer(
+  query: string,
+  ctx: FinancialContext,
+  range: TimeRange,
+): string | null {
+  const q = query.toLowerCase();
+  const scope = formatRangeLabel(range);
+  const s = ctx.summary;
+
+  const asksForAdvice = /\b(should i|what should|recommend|recommendation|suggest|next step|action plan)\b/.test(q);
+  if (asksForAdvice) {
+    return [
+      `I can’t provide recommendations in Prism.`,
+      ``,
+      `What do you want to calculate?`,
+      `- Revenue (total / trend)`,
+      `- Open invoices / overdue exposure`,
+      `- Invoice status breakdown`,
+      `- Entity breakdown (top entities by revenue)`,
+      `- Burn / runway (if available)`,
+    ].join('\n');
+  }
+
+  const asksProfit =
+    /\b(net profit|profit|margin|ebitda|gross margin|net margin|operating margin)\b/.test(q);
+  if (asksProfit) {
+    return [
+      `Not available in the current gold layer.`,
+      ``,
+      `CALCULATION`,
+      `- Profit/margin requires a verified expenses/bills model (not present here).`,
+      ``,
+      `DATA USED`,
+      `- Revenue (scope: ${scope}): ${formatMoney(s.totalRevenue)}`,
+      `- Open invoices (scope: ${scope}): ${formatMoney(s.openAmount)}`,
+    ].join('\n');
+  }
+
+  const wantsOverdue = /\boverdue\b/.test(q);
+  const wantsOpen = /\b(open|outstanding|unpaid|accounts receivable|ar)\b/.test(q);
+  const wantsRunway = /\b(runway|burn|cash on hand|cliff)\b/.test(q);
+  const wantsStatus = /\b(status|paid|authorised|submitted|draft|breakdown)\b/.test(q) && /\binvoice\b/.test(q);
+  const wantsEntities = /\b(entity|entities|org|organization|client|customers?)\b/.test(q) && (/\btop\b/.test(q) || /\bcompare\b/.test(q) || /\bbreakdown\b/.test(q));
+  const wantsTrend = /\b(trend|monthly|month|month-wise|over time|mom|qoq|quarter)\b/.test(q) && /\b(revenue|income|invoic)\b/.test(q);
+  const wantsRevenue = /\b(revenue|income|invoic(ed)?|sales)\b/.test(q);
+
+  if (wantsOverdue || wantsOpen) {
+    const overdueRate = s.openAmount > 0 ? (s.overdueAmount / s.openAmount) * 100 : 0;
+    return [
+      `**Answer (scope: ${scope})**`,
+      `- Open invoices: ${formatMoney(s.openAmount)}`,
+      `- Overdue: ${formatMoney(s.overdueAmount)} across ${s.overdueCount} invoices`,
+      ``,
+      `**CALCULATION**`,
+      `- Overdue rate = Overdue / Open = ${formatMoney(s.overdueAmount)} / ${formatMoney(s.openAmount)} = ${pct(overdueRate)}`,
+      ``,
+      `**DATA USED**`,
+      `- Open invoices: ${formatMoney(s.openAmount)}`,
+      `- Overdue amount: ${formatMoney(s.overdueAmount)}`,
+      `- Overdue invoice count: ${s.overdueCount}`,
+    ].join('\n');
+  }
+
+  if (wantsRunway) {
+    const vm = ctx.ventureMetrics;
+    const cliff = (() => {
+      if (!vm.runwayMonths || vm.runwayMonths <= 0) return 'N/A';
+      const d = new Date();
+      d.setMonth(d.getMonth() + Math.floor(vm.runwayMonths));
+      return d.toISOString().slice(0, 10);
+    })();
+    return [
+      `**Answer (scope: ${scope})**`,
+      `- Burn rate: ${formatMoney(vm.burnRate)} / month`,
+      `- Cash on hand (derived): ${formatMoney(vm.cashOnHand)}`,
+      `- Runway: ${vm.runwayMonths} months (cliff ≈ ${cliff})`,
+      ``,
+      `**CALCULATION**`,
+      `- Runway (months) = Cash on hand / Burn rate`,
+      ``,
+      `**DATA USED**`,
+      `- Burn rate: ${formatMoney(vm.burnRate)}`,
+      `- Cash on hand: ${formatMoney(vm.cashOnHand)}`,
+    ].join('\n');
+  }
+
+  if (wantsStatus) {
+    const top = ctx.invoiceStatusBreakdown.slice(0, 8);
+    const total = top.reduce((sum, row) => sum + (row.amount || 0), 0);
+    const lines = top.map((row) => {
+      const share = total > 0 ? (row.amount / total) * 100 : 0;
+      return `- ${row.status}: ${row.count} invoices · ${formatMoney(row.amount)} (${pct(share)})`;
+    });
+    return [
+      `**Answer (scope: ${scope})**`,
+      ...lines,
+      ``,
+      `**DATA USED**`,
+      `- Invoice status aggregation from fact invoices (top ${top.length} statuses).`,
+    ].join('\n');
+  }
+
+  if (wantsEntities) {
+    const top = ctx.entityBreakdown.slice(0, 6);
+    const total = ctx.entityBreakdown.reduce((sum, row) => sum + (row.totalRevenue || 0), 0);
+    const lines = top.map((row) => {
+      const share = total > 0 ? (row.totalRevenue / total) * 100 : 0;
+      return `- ${row.orgName} (${row.provider}): ${formatMoney(row.totalRevenue)} · ${row.invoiceCount} invoices · ${pct(share)} share`;
+    });
+    return [
+      `**Answer (scope: ${scope})**`,
+      ...lines,
+      ``,
+      `**CALCULATION**`,
+      `- Share % = Entity revenue / Total revenue across entities`,
+      ``,
+      `**DATA USED**`,
+      `- Entity breakdown (org_name + provider) from fact invoices.`,
+    ].join('\n');
+  }
+
+  if (wantsTrend) {
+    const series = ctx.monthlyTrend.slice(-12);
+    const lines = series.map((row) => `- ${row.month}: ${formatMoney(row.revenue)} · ${row.invoiceCount} invoices`);
+    return [
+      `**Answer (scope: ${scope})**`,
+      ...lines,
+      ``,
+      `**DATA USED**`,
+      `- Monthly aggregation: toStartOfMonth(issued_at) grouped sums.`,
+    ].join('\n');
+  }
+
+  if (wantsRevenue) {
+    return [
+      `**Answer (scope: ${scope})**`,
+      `- Revenue: ${formatMoney(s.totalRevenue)}`,
+      `- Invoices: ${s.invoiceCount}`,
+      `- Avg invoice value: ${formatMoney(s.avgInvoiceValue)}`,
+      ``,
+      `**CALCULATION**`,
+      `- Avg invoice = Revenue / Invoice count (from aggregation)`,
+      ``,
+      `**DATA USED**`,
+      `- Revenue, invoice count, and avg invoice value from fact invoices.`,
+    ].join('\n');
+  }
+
+  return null;
+}
+
 // ─── RagService ───────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -306,7 +501,7 @@ export class RagService {
       const intent = classifyIntent(userQuery);
 
       if (intent === 'greeting') {
-        const text = `Hi! I'm **NumeriQ Intelligence** — your AI-powered CFO advisor. I have real-time access to your financial data from all connected ERP systems.\n\nI can analyze your revenue trends, cash flow, burn rate, entity performance, overdue receivables, profitability margins, and much more. I respond like a Goldman Sachs analyst who has read every line of your accounting data.\n\nWhat would you like to explore today?`;
+        const text = `Hi — I'm **Prism**.\n\nAsk me for calculations from your live accounting data (revenue, invoice counts, overdue exposure, entity breakdowns, trends). I answer with math + the exact inputs used.\n\nWhat do you want to calculate?`;
         yield this.chunk('status', { message: 'Ready.' });
         yield this.chunk('token', { content: text });
         await this.prisma.ragChatMessage.create({
@@ -330,14 +525,47 @@ export class RagService {
       // ── Context retrieval ──────────────────────────────────────────────
       yield this.chunk('status', { message: 'Loading live financial intelligence...' });
 
+      const parsedRange = parseTimeRangeFromQuery(userQuery);
+      const range: TimeRange = parsedRange ?? { kind: 'ALL_TIME' };
+
+      if (queryNeedsRangeClarification(userQuery)) {
+        const question = 'Which time range should Prism use?';
+        const options = [
+          { label: 'Last 30 days', value: `${userQuery} (last 30 days)` },
+          { label: 'Last 90 days', value: `${userQuery} (last 90 days)` },
+          { label: 'MTD', value: `${userQuery} (MTD)` },
+          { label: 'QTD', value: `${userQuery} (QTD)` },
+          { label: 'YTD', value: `${userQuery} (YTD)` },
+          { label: 'All time', value: `${userQuery} (all time)` },
+        ];
+
+        yield this.chunk('clarify', {
+          question,
+          reason: 'Your question implies a time period, but none was specified.',
+          options,
+        });
+
+        const text = `${question}\n\n- ${options.map((o) => o.label).join('\n- ')}`;
+        yield this.chunk('token', { content: text });
+        await this.prisma.ragChatMessage.create({
+          data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: text },
+        });
+
+        yield this.chunk('done', {
+          metrics: { totalMs: Date.now() - startTime, mode: 'clarify', sessionId: currentSession.id },
+        });
+        return;
+      }
+
       let ctx: FinancialContext;
-      const cached = this.ctxCache.get(organizationId);
+      const cacheKey = `${organizationId}::${this.rangeKey(range)}`;
+      const cached = this.ctxCache.get(cacheKey);
       if (cached && Date.now() < cached.expiresAt) {
         ctx = cached.ctx;
-        this.backgroundRefresh(organizationId); // warm for next request
+        this.backgroundRefresh(cacheKey, organizationId, range); // warm for next request
       } else {
-        ctx = await this.fetchFinancialContext(organizationId, userQuery);
-        this.ctxCache.set(organizationId, { ctx, expiresAt: Date.now() + this.CACHE_TTL_MS });
+        ctx = await this.fetchFinancialContext(organizationId, userQuery, range);
+        this.ctxCache.set(cacheKey, { ctx, expiresAt: Date.now() + this.CACHE_TTL_MS });
       }
 
       // Emit financial snapshot so frontend can render context panel
@@ -352,10 +580,58 @@ export class RagService {
           entityCount: ctx.entityBreakdown.length,
           connectionCount: ctx.connectionCount,
           trend: ctx.monthlyTrend.slice(-6),
+          scope: formatRangeLabel(range),
         },
       });
 
-      // ── LLM streaming ────────────────────────────────────────────────
+      // ── Deterministic Prism answer (default) ──────────────────────────
+      yield this.chunk('status', { message: 'Calculating…' });
+
+      const deterministic = buildDeterministicPrismAnswer(userQuery, ctx, range);
+      if (deterministic) {
+        yield this.chunk('token', { content: deterministic });
+        await this.prisma.ragChatMessage.create({
+          data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: deterministic },
+        });
+        yield this.chunk('done', {
+          metrics: {
+            totalMs: Date.now() - startTime,
+            mode: 'deterministic',
+            sessionId: currentSession.id,
+            scope: formatRangeLabel(range),
+          },
+        });
+        return;
+      }
+
+      // If Prism can't confidently map the question to a supported calculation, ask.
+      const clarifyQuestion = 'What should Prism calculate from your data?';
+      const clarifyOptions = [
+        { label: 'Revenue (total)', value: `What is my total revenue? (${formatRangeLabel(range)})` },
+        { label: 'Revenue trend (monthly)', value: `Show my monthly revenue trend. (${formatRangeLabel(range)})` },
+        { label: 'Overdue exposure', value: `How much is overdue? (${formatRangeLabel(range)})` },
+        { label: 'Open invoices', value: `How much is open (unpaid)? (${formatRangeLabel(range)})` },
+        { label: 'Entity breakdown', value: `Show top entities by revenue. (${formatRangeLabel(range)})` },
+        { label: 'Invoice status breakdown', value: `Break down invoices by status. (${formatRangeLabel(range)})` },
+      ];
+      yield this.chunk('clarify', {
+        question: clarifyQuestion,
+        reason: 'Your request is not specific enough to compute deterministically.',
+        options: clarifyOptions,
+      });
+      const clarifyText = `${clarifyQuestion}\n\n- ${clarifyOptions.map((o) => o.label).join('\n- ')}`;
+      yield this.chunk('token', { content: clarifyText });
+      await this.prisma.ragChatMessage.create({
+        data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: clarifyText },
+      });
+      yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'clarify', sessionId: currentSession.id } });
+      return;
+
+      // ── LLM streaming (optional, feature-flagged) ─────────────────────
+      // Set `PRISM_ENABLE_LLM=1` to allow the model to answer beyond deterministic templates.
+      /* c8 ignore next  */
+      if (process.env.PRISM_ENABLE_LLM !== '1') return;
+
       yield this.chunk('status', { message: 'Analyzing your financial data...' });
 
       const messages = buildMessages(ctx, history, userQuery);
@@ -399,6 +675,7 @@ export class RagService {
         clearTimeout(timeout);
         throw new Error('AI_ENGINE_OFFLINE');
       }
+      const streamReader = reader as ReadableStreamDefaultReader<Uint8Array>;
 
       const decoder = new TextDecoder();
       let fullContent = '';
@@ -407,7 +684,7 @@ export class RagService {
       let tokenCount = 0;
 
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await streamReader.read();
         if (done) break;
 
         lineCarry += decoder.decode(value, { stream: true });
@@ -439,9 +716,10 @@ export class RagService {
       if (lineCarry.trim()) {
         try {
           const parsed = JSON.parse(lineCarry.trim()) as { message?: { content?: string } };
-          if (parsed.message?.content) {
-            fullContent += parsed.message.content;
-            streamBuffer += parsed.message.content;
+          const tail = parsed.message?.content;
+          if (tail) {
+            fullContent += tail;
+            streamBuffer += tail;
           }
         } catch { /* ignore */ }
       }
@@ -553,7 +831,35 @@ export class RagService {
 
   // ─── Private: Financial Context Fetching ──────────────────────────────────
 
-  private async fetchFinancialContext(organizationId: string, query?: string): Promise<FinancialContext> {
+  private timeWhere(range?: TimeRange | null): string {
+    if (!range || range.kind === 'ALL_TIME') return '';
+    if (range.kind === 'MTD') return `AND issued_at >= toStartOfMonth(now())`;
+    if (range.kind === 'QTD') return `AND issued_at >= toStartOfQuarter(now())`;
+    if (range.kind === 'YTD') return `AND issued_at >= toStartOfYear(now())`;
+    if (range.kind === 'LAST_N_DAYS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days))} DAY)`;
+    if (range.kind === 'LAST_N_WEEKS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks))} WEEK)`;
+    if (range.kind === 'LAST_N_MONTHS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months))} MONTH)`;
+    if (range.kind === 'LAST_N_QUARTERS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters)) * 3} MONTH)`;
+    if (range.kind === 'LAST_N_YEARS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years))} YEAR)`;
+    return '';
+  }
+
+  private rangeKey(range?: TimeRange | null): string {
+    if (!range) return 'ALL_TIME';
+    if (range.kind === 'ALL_TIME' || range.kind === 'MTD' || range.kind === 'QTD' || range.kind === 'YTD') return range.kind;
+    if (range.kind === 'LAST_N_DAYS') return `LAST_N_DAYS:${range.days}`;
+    if (range.kind === 'LAST_N_WEEKS') return `LAST_N_WEEKS:${range.weeks}`;
+    if (range.kind === 'LAST_N_MONTHS') return `LAST_N_MONTHS:${range.months}`;
+    if (range.kind === 'LAST_N_QUARTERS') return `LAST_N_QUARTERS:${range.quarters}`;
+    if (range.kind === 'LAST_N_YEARS') return `LAST_N_YEARS:${range.years}`;
+    return 'ALL_TIME';
+  }
+
+  private async fetchFinancialContext(
+    organizationId: string,
+    query?: string,
+    range?: TimeRange | null,
+  ): Promise<FinancialContext> {
     const connections = await this.prisma.erpConnection.findMany({
       where: { organizationId, status: 'ACTIVE' },
       select: { id: true, externalOrganizationId: true, provider: true, metadata: true },
@@ -567,11 +873,11 @@ export class RagService {
     const externalOrgIds = connections.map((c) => c.externalOrganizationId).filter(Boolean) as string[];
 
     const [summary, trend, entities, statusBreakdown, venture, snippets] = await Promise.allSettled([
-      this.fetchSummary(connectionIds),
-      this.fetchMonthlyTrend(externalOrgIds),
-      this.fetchEntityBreakdown(connectionIds, connections),
-      this.fetchStatusBreakdown(connectionIds),
-      this.fetchVentureMetrics(connectionIds),
+      this.fetchSummary(connectionIds, range),
+      this.fetchMonthlyTrend(externalOrgIds, range),
+      this.fetchEntityBreakdown(connectionIds, connections, range),
+      this.fetchStatusBreakdown(connectionIds, range),
+      this.fetchVentureMetrics(connectionIds, range),
       this.fetchSemanticSnippets(organizationId, query),
     ]);
 
@@ -589,18 +895,20 @@ export class RagService {
     };
   }
 
-  private async fetchSummary(connectionIds: string[]) {
+  private async fetchSummary(connectionIds: string[], range?: TimeRange | null) {
+    const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
       query: `
         SELECT
           count()                                                        AS invoice_count,
-          coalesce(sum(total_amount), 0)                                 AS total_revenue,
-          coalesce(avg(total_amount), 0)                                 AS avg_invoice,
-          coalesce(sumIf(total_amount, lowerUTF8(status) NOT IN ('paid','closed','authorised')), 0) AS open_amount,
-          coalesce(sumIf(total_amount, lowerUTF8(status) IN ('overdue')), 0) AS overdue_amount,
+          coalesce(sumIf(total_amount, total_amount > 0), 0)             AS total_revenue,
+          coalesce(avgIf(total_amount, total_amount > 0), 0)             AS avg_invoice,
+          coalesce(sumIf(total_amount, total_amount > 0 AND lowerUTF8(status) NOT IN ('paid','closed','authorised')), 0) AS open_amount,
+          coalesce(sumIf(total_amount, total_amount > 0 AND lowerUTF8(status) IN ('overdue')), 0) AS overdue_amount,
           coalesce(countIf(lowerUTF8(status) = 'overdue'), 0)           AS overdue_count
         FROM ${this.analyticsDb}.fact_accounting_invoices
         WHERE connection_id IN ({connectionIds:Array(String)})
+          ${time}
       `,
       query_params: { connectionIds },
       format: 'JSONEachRow',
@@ -618,19 +926,21 @@ export class RagService {
     };
   }
 
-  private async fetchMonthlyTrend(externalOrgIds: string[]) {
+  private async fetchMonthlyTrend(externalOrgIds: string[], range?: TimeRange | null) {
     if (externalOrgIds.length === 0) return [];
+    const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
       query: `
         SELECT
           formatDateTime(toStartOfMonth(issued_at), '%Y-%m') AS month,
-          coalesce(sum(total_amount), 0)                     AS revenue,
+          coalesce(sumIf(total_amount, total_amount > 0), 0) AS revenue,
           count()                                            AS invoice_count
         FROM ${this.analyticsDb}.fact_accounting_invoices
         WHERE org_id IN ({externalOrgIds:Array(String)})
+          ${time}
         GROUP BY month
         ORDER BY month ASC
-        LIMIT 24
+        LIMIT 48
       `,
       query_params: { externalOrgIds },
       format: 'JSONEachRow',
@@ -644,17 +954,19 @@ export class RagService {
     }));
   }
 
-  private async fetchEntityBreakdown(connectionIds: string[], connections: any[]) {
+  private async fetchEntityBreakdown(connectionIds: string[], connections: any[], range?: TimeRange | null) {
+    const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
       query: `
         SELECT
           org_name,
           provider,
           any(currency)              AS currency,
-          coalesce(sum(total_amount), 0) AS total_revenue,
+          coalesce(sumIf(total_amount, total_amount > 0), 0) AS total_revenue,
           count()                    AS invoice_count
         FROM ${this.analyticsDb}.fact_accounting_invoices
         WHERE connection_id IN ({connectionIds:Array(String)})
+          ${time}
         GROUP BY org_name, provider
         ORDER BY total_revenue DESC
       `,
@@ -687,15 +999,17 @@ export class RagService {
     }));
   }
 
-  private async fetchStatusBreakdown(connectionIds: string[]) {
+  private async fetchStatusBreakdown(connectionIds: string[], range?: TimeRange | null) {
+    const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
       query: `
         SELECT
           status,
           count()                        AS invoice_count,
-          coalesce(sum(total_amount), 0) AS total_amount
+          coalesce(sumIf(total_amount, total_amount > 0), 0) AS total_amount
         FROM ${this.analyticsDb}.fact_accounting_invoices
         WHERE connection_id IN ({connectionIds:Array(String)})
+          ${time}
         GROUP BY status
         ORDER BY total_amount DESC
         LIMIT 20
@@ -712,8 +1026,9 @@ export class RagService {
     }));
   }
 
-  private async fetchVentureMetrics(connectionIds: string[]) {
+  private async fetchVentureMetrics(connectionIds: string[], range?: TimeRange | null) {
     try {
+      const time = this.timeWhere(range);
       const result = await this.clickhouse.query({
         query: `
           SELECT
@@ -727,6 +1042,7 @@ export class RagService {
             FROM ${this.analyticsDb}.fact_accounting_invoices
             WHERE connection_id IN ({connectionIds:Array(String)})
               AND total_amount < 0
+              ${time}
             GROUP BY month
             ORDER BY month DESC
             LIMIT 3
@@ -773,9 +1089,9 @@ export class RagService {
     }
   }
 
-  private backgroundRefresh(organizationId: string) {
-    this.fetchFinancialContext(organizationId)
-      .then((ctx) => this.ctxCache.set(organizationId, { ctx, expiresAt: Date.now() + this.CACHE_TTL_MS }))
+  private backgroundRefresh(cacheKey: string, organizationId: string, range: TimeRange) {
+    this.fetchFinancialContext(organizationId, undefined, range)
+      .then((ctx) => this.ctxCache.set(cacheKey, { ctx, expiresAt: Date.now() + this.CACHE_TTL_MS }))
       .catch(() => { /* non-critical */ });
   }
 

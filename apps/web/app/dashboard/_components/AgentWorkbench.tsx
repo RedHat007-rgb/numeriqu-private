@@ -43,6 +43,11 @@ type Message = { role: "user" | "assistant" | "system"; content: string };
 type Phase = { id: string; label: string; status: "pending" | "running" | "done" };
 type ToolCall = { tool: string; label: string; status: "running" | "done"; rowCount?: number };
 type QueryIntent = "CREATE_DASHBOARD" | "EDIT_DASHBOARD" | null;
+type ClarificationPrompt = {
+  question: string;
+  options: Array<{ label: string; value: string }>;
+  reason?: string;
+};
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 
@@ -140,6 +145,9 @@ function SessionSidebar({
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const visibleSessions = showAll ? sessions : sessions.slice(0, 14);
+
   return (
     <motion.div
       animate={{ width: collapsed ? 52 : 220 }}
@@ -194,7 +202,7 @@ function SessionSidebar({
           )}
 
           <AnimatePresence initial={false}>
-            {sessions.map((session, i) => (
+            {visibleSessions.map((session, i) => (
               <motion.button
                 key={session.id}
                 initial={{ opacity: 0, x: -8 }}
@@ -228,6 +236,18 @@ function SessionSidebar({
               </motion.button>
             ))}
           </AnimatePresence>
+
+          {!isLoading && sessions.length > 14 ? (
+            <div className="sticky bottom-0 -mx-2 mt-2 border-t border-default bg-bg-surface/80 p-2 backdrop-blur">
+              <button
+                type="button"
+                onClick={() => setShowAll((v) => !v)}
+                className="w-full rounded-xl border border-default bg-bg-elevated/40 px-3 py-2 text-[11px] font-semibold text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary"
+              >
+                {showAll ? "Show fewer" : `Show all conversations (${sessions.length})`}
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
     </motion.div>
@@ -599,6 +619,7 @@ function DashboardGeneratingOverlay() {
 export function AgentWorkbench() {
   const { agent, loading } = useNumeriquApi();
   const searchParams = useSearchParams();
+  const autoRunRef = useRef(false);
 
   // Sidebar state
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
@@ -611,6 +632,7 @@ export function AgentWorkbench() {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingClarification, setPendingClarification] = useState<ClarificationPrompt | null>(null);
 
   // Dashboard state
   const [syncTrigger, setSyncTrigger] = useState(0);
@@ -663,6 +685,19 @@ export function AgentWorkbench() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
+  // ── Auto-run from ?q=... (Command Palette) ─────────────────────────────────
+
+  useEffect(() => {
+    if (loading) return;
+    if (autoRunRef.current) return;
+    const q = searchParams.get("q");
+    if (!q) return;
+    autoRunRef.current = true;
+    handleNewSession();
+    setTimeout(() => void execute(q), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   // ── Auto-scroll ────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -696,6 +731,7 @@ export function AgentWorkbench() {
     if (id === sessionId) return;
     resetThinking();
     setError(null);
+    setPendingClarification(null);
     setMessages([]);
     setSessionId(id);
     setActiveDashboardTitle(null);
@@ -715,6 +751,7 @@ export function AgentWorkbench() {
     setIsHistoricalSession(false);
     resetThinking();
     setError(null);
+    setPendingClarification(null);
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
@@ -727,6 +764,7 @@ export function AgentWorkbench() {
     setError(null);
     setInput("");
     resetThinking();
+    setPendingClarification(null);
     setIsDashboardGenerating(true);
 
     setMessages((prev) => [
@@ -762,6 +800,42 @@ export function AgentWorkbench() {
             if (msg.activeDashboardTitle) {
               setActiveDashboardTitle(msg.activeDashboardTitle as string);
             }
+          }
+
+          if (msg.type === "clarify") {
+            const question = String(msg.question ?? "Quick clarification:");
+            const options = Array.isArray(msg.options) ? (msg.options as any[]) : [];
+
+            setPendingClarification({
+              question,
+              options: options
+                .map((o) => ({
+                  label: String(o?.label ?? "").trim(),
+                  value: String(o?.value ?? "").trim(),
+                }))
+                .filter((o) => o.label && o.value)
+                .slice(0, 6),
+              reason: typeof msg.reason === "string" ? msg.reason : undefined,
+            });
+
+            // Fill the current assistant bubble with the question so it is visible in history.
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant") {
+                const optionLines = options
+                  .map((o, i) => `${i + 1}) ${String(o?.label ?? "").trim()}`)
+                  .filter(Boolean)
+                  .join("\n");
+                copy[copy.length - 1] = {
+                  ...last,
+                  content: [question, optionLines].filter(Boolean).join("\n\n"),
+                };
+              }
+              return copy;
+            });
+
+            setIsDashboardGenerating(false);
           }
 
           if (msg.type === "phase") {
@@ -859,7 +933,7 @@ export function AgentWorkbench() {
   const hasConversation = messages.filter((m) => m.role !== "system").length > 0 || phases.length > 0;
 
   return (
-    <div className="flex h-[calc(100vh-9.5rem)] overflow-hidden rounded-2xl border border-default bg-bg-elevated/10">
+    <div className="surface-card flex h-full overflow-hidden p-0">
       {/* ── Col 1: Session History ─── */}
       <SessionSidebar
         sessions={sessions}
@@ -872,13 +946,13 @@ export function AgentWorkbench() {
       />
 
       {/* ── Col 2: Chat Panel ─── */}
-      <div className="flex w-[380px] shrink-0 flex-col border-r border-default">
-        {/* Chat header */}
-        <div className="flex items-center justify-between border-b border-default px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Brain size={13} className="text-accent-violet" />
-            <span className="text-xs font-bold text-text-primary">Mission Console</span>
-          </div>
+        <div className="flex w-[380px] shrink-0 flex-col border-r border-default">
+          {/* Chat header */}
+          <div className="flex items-center justify-between border-b border-default px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Brain size={13} className="text-accent-violet" />
+              <span className="text-xs font-bold text-text-primary">Astra Console</span>
+            </div>
           <div className="flex items-center gap-2">
             {activeDashboardTitle && !isStreaming && (
               <span className="flex items-center gap-1 rounded-full bg-accent-cyan/10 px-2 py-0.5 text-[10px] font-semibold text-accent-cyan ring-1 ring-accent-cyan/20">
@@ -971,6 +1045,37 @@ export function AgentWorkbench() {
 
         {/* Input */}
         <div className="border-t border-default p-3">
+          <AnimatePresence>
+            {pendingClarification && !isStreaming && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 6 }}
+                className="mb-2 rounded-xl border border-accent-violet/20 bg-accent-violet/6 p-3"
+              >
+                <p className="text-xs font-semibold text-text-primary">
+                  {pendingClarification.question}
+                </p>
+                {pendingClarification.options.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {pendingClarification.options.map((opt) => (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={() => void execute(opt.value)}
+                        className="rounded-full bg-bg-elevated px-3 py-1 text-[11px] font-semibold text-text-secondary ring-1 ring-default transition-colors hover:bg-bg-elevated/70 hover:text-text-primary"
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-[10px] text-text-muted">
+                  You can also type your answer and press send.
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <form
             className="flex items-center gap-2"
             onSubmit={(e) => {
@@ -987,7 +1092,7 @@ export function AgentWorkbench() {
               placeholder={
                 activeDashboardTitle
                   ? `Refine dashboard... "Add quarterly view"`
-                  : "Deploy a financial mission..."
+                  : "Tell Astra what you want to build…"
               }
               className="flex-1 rounded-xl border border-default bg-bg-surface/70 px-4 py-2.5 text-sm text-text-primary outline-none transition-colors focus:border-accent-violet/50 disabled:opacity-50"
             />

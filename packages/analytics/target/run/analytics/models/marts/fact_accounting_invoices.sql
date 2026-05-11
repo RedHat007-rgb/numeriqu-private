@@ -11,7 +11,7 @@
   
 
   insert into `analytics`.`fact_accounting_invoices__dbt_backup`
-        ("invoice_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "invoice_external_id", "invoice_number", "total_amount", "currency", "issued_at", "due_at", "status", "updated_at", "synced_at")
+        ("invoice_id", "user_id", "tenant_id", "connection_id", "provider", "org_id", "org_name", "invoice_external_id", "invoice_number", "total_amount", "amount_due", "amount_paid", "amount_credited", "currency", "issued_at", "due_at", "paid_at", "status", "invoice_type", "contact_id", "contact_name", "updated_at", "synced_at")
 
 WITH xero AS (
     SELECT * FROM `analytics`.`stg_xero_invoices`
@@ -32,10 +32,17 @@ unified AS (
         invoice_external_id,
         invoice_number,
         total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
         currency,
         issued_at,
         due_at,
+        paid_at,
         status,
+        invoice_type,
+        contact_id,
+        contact_name,
         updated_at,
         synced_at
     FROM xero
@@ -52,10 +59,17 @@ unified AS (
         invoice_external_id,
         invoice_number,
         total_amount,
+        amount_due,
+        amount_paid,
+        amount_credited,
         currency,
         issued_at,
         due_at,
+        paid_at,
         status,
+        invoice_type,
+        contact_id,
+        contact_name,
         updated_at,
         synced_at
     FROM qb

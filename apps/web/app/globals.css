@@ -136,6 +136,52 @@ body {
   transition: background-color 200ms ease, color 200ms ease;
 }
 
+/* ============================================================
+ * App mode (dashboard) — crisp, high-signal, CFO-grade.
+ * Opt-in via `document.body.classList.add("nq-app")`.
+ * ============================================================ */
+body.nq-app {
+  background-color: rgb(248 250 252);
+  background-image:
+    radial-gradient(circle at 14% 10%, rgb(var(--color-accent-blue) / 0.045) 0%, transparent 30%),
+    radial-gradient(circle at 88% 0%, rgb(var(--color-accent-violet) / 0.04) 0%, transparent 26%),
+    linear-gradient(180deg, rgb(255 255 255) 0%, rgb(248 250 252) 55%, rgb(248 250 252) 100%);
+}
+
+/* Immersive mode (Astra / Prism) — prevent window scroll; internal panes scroll instead. */
+html.nq-immersive,
+body.nq-immersive {
+  height: 100%;
+  overflow: hidden;
+}
+
+body.nq-app::before,
+body.nq-app::after {
+  display: none;
+}
+
+body.nq-app h1,
+body.nq-app h2,
+body.nq-app h3,
+body.nq-app h4,
+body.nq-app h5,
+body.nq-app h6 {
+  font-family: var(--font-inter);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+body.nq-app .surface-card,
+body.nq-app .glass-card {
+  background: #ffffff;
+  border: 1px solid rgb(15 23 42 / 0.06);
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 18px 36px -30px rgb(15 23 42 / 0.18);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 .light body {
   background-image:
     radial-gradient(circle at 18% 18%, rgb(var(--color-accent-blue) / 0.06) 0%, transparent 24%),

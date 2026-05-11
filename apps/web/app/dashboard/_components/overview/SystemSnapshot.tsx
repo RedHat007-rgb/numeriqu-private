@@ -2,6 +2,7 @@
 
 import type { DashboardResponse } from "../../../../lib/api";
 import { formatRelativeTime } from "./format";
+import { formatRange } from "./TimeRangeSelect";
 
 export function SystemSnapshot({ meta }: { meta: DashboardResponse["meta"] }) {
   return (
@@ -16,11 +17,16 @@ export function SystemSnapshot({ meta }: { meta: DashboardResponse["meta"] }) {
         </span>
         <span aria-hidden>·</span>
         <span>
+          Scope{" "}
+          <span className="text-text-secondary">{formatRange(meta.range)}</span>
+        </span>
+        <span aria-hidden>·</span>
+        <span>
           API latency{" "}
           <span className="font-mono text-text-secondary">{meta.latencyMs}ms</span>
         </span>
         <span aria-hidden>·</span>
-        <span>RAG + Agent run as independent layers</span>
+        <span>Prism + Astra run as independent layers</span>
       </div>
       {meta.error ? (
         <p className="text-xs text-feedback-warning">Last sync surfaced: {meta.error}</p>

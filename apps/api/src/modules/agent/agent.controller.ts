@@ -102,16 +102,75 @@ export class AgentController {
     @CurrentUser() user: AuthUser,
     @Query('metric') metric: string,
     @Query('grouping') grouping: string,
+    @Query('providerHint') providerHint?: string,
+    @Query('clientName') clientName?: string,
+    @Query('clientNames') clientNamesRaw?: string,
+    @Query('orgId') orgId?: string,
+    @Query('breakdown') breakdown?: string,
+    @Query('topN') topN?: string,
+    @Query('rangeKind') rangeKind?: string,
+    @Query('rangeValue') rangeValue?: string,
+    @Query('rangeStart') rangeStart?: string,
+    @Query('rangeEnd') rangeEnd?: string,
     @Headers('x-organization-id') organizationId?: string,
   ) {
     const context = await this.organizationContext.ensureContext({
       id: user.id,
       email: user.email,
     }, { organizationId });
+
+    const parsedRange = (() => {
+      if (!rangeKind) return undefined;
+      const kind = String(rangeKind);
+      const n = rangeValue ? Number(rangeValue) : undefined;
+      const start = rangeStart ? String(rangeStart) : undefined;
+      const end = rangeEnd ? String(rangeEnd) : undefined;
+      if (kind === 'LAST_N_DAYS' && Number.isFinite(n)) return { kind, days: n as number };
+      if (kind === 'LAST_N_WEEKS' && Number.isFinite(n)) return { kind, weeks: n as number };
+      if (kind === 'LAST_N_MONTHS' && Number.isFinite(n)) return { kind, months: n as number };
+      if (kind === 'LAST_N_QUARTERS' && Number.isFinite(n)) return { kind, quarters: n as number };
+      if (kind === 'LAST_N_YEARS' && Number.isFinite(n)) return { kind, years: n as number };
+      if (kind === 'ALL_TIME' || kind === 'MTD' || kind === 'QTD' || kind === 'YTD') return { kind };
+      if (kind === 'SINCE_DATE' && start) return { kind, start };
+      if (kind === 'BETWEEN_DATES' && start && end) return { kind, start, end };
+      return undefined;
+    })();
+
+    const clientNames = (() => {
+      if (!clientNamesRaw) return undefined;
+      const raw = String(clientNamesRaw).trim();
+      if (!raw) return undefined;
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((v) => String(v ?? '').trim())
+            .filter(Boolean)
+            .slice(0, 5);
+        }
+      } catch {
+        // Accept pipe/comma separated fallback.
+        return raw
+          .split(/\s*(?:\||,|;)\s*/g)
+          .map((v) => v.trim())
+          .filter(Boolean)
+          .slice(0, 5);
+      }
+      return undefined;
+    })();
+
     return this.agentService.metricData(
       context.organization.id,
+      context.membership.role,
       metric || 'revenue',
       grouping || 'month',
+      parsedRange as any,
+      providerHint ? String(providerHint) : undefined,
+      clientName ? String(clientName) : undefined,
+      clientNames,
+      orgId ? String(orgId) : undefined,
+      breakdown ? String(breakdown) : undefined,
+      topN ? Number(topN) : undefined,
     );
   }
 
@@ -141,6 +200,7 @@ export class AgentController {
       for await (const chunk of this.agentService.query(
         context.organization.id,
         context.user.id,
+        context.membership.role,
         body.query,
         body.sessionId,
       )) {

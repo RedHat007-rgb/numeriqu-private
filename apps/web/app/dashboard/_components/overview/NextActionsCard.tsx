@@ -3,7 +3,7 @@
 import type { DashboardResponse } from "../../../../lib/api";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { StatusPill } from "../../../../components/ui/StatusPill";
-import { formatRelativeTime } from "./format";
+import { formatMoney, formatRelativeTime } from "./format";
 
 type Tone = "info" | "warning" | "success" | "danger" | "neutral";
 
@@ -16,8 +16,63 @@ function toneFromType(type: string): Tone {
   return "neutral";
 }
 
-export function NextActionsCard({ insights }: { insights: DashboardResponse["insights"] }) {
-  const top = insights.slice(0, 5);
+function deriveInsights(kpis: DashboardResponse["kpis"]): DashboardResponse["insights"] {
+  const now = new Date().toISOString();
+  const openAmount = kpis.openInvoiceAmount ?? kpis.totalExpenses ?? 0;
+  const openCount = kpis.openInvoiceCount ?? 0;
+
+  const generated: DashboardResponse["insights"] = [];
+
+  if (kpis.totalRevenue === 0 && kpis.totalInvoices === 0) {
+    generated.push({
+      id: "nq:connect-source",
+      title: "Connect a finance source to unlock metrics",
+      description: "Once data is synced, this overview will populate revenue, overdue exposure, and entity breakdowns.",
+      type: "Info",
+      createdAt: now,
+    });
+  }
+
+  if (kpis.overdueAmount > 0) {
+    generated.push({
+      id: "nq:overdue-followup",
+      title: "Chase overdue invoices",
+      description: `${formatMoney(kpis.overdueAmount)} is overdue across ${kpis.overdueCount} invoices. Prioritize top clients and set follow-up reminders.`,
+      type: "Warning",
+      createdAt: now,
+    });
+  } else if (openAmount > 0) {
+    generated.push({
+      id: "nq:open-invoices",
+      title: "Review open invoices",
+      description: `${formatMoney(openAmount)} is currently open across ${openCount || "multiple"} invoices. Confirm due dates and expected collection windows.`,
+      type: "Note",
+      createdAt: now,
+    });
+  }
+
+  if (kpis.providerCount === 0 || kpis.orgCount === 0) {
+    generated.push({
+      id: "nq:entities",
+      title: "Finish connecting entities",
+      description: "Connect all business entities to avoid missing revenue or exposure in this overview.",
+      type: "Info",
+      createdAt: now,
+    });
+  }
+
+  return generated;
+}
+
+export function NextActionsCard({
+  insights,
+  kpis,
+}: {
+  insights: DashboardResponse["insights"];
+  kpis: DashboardResponse["kpis"];
+}) {
+  const computed = insights.length > 0 ? insights : deriveInsights(kpis);
+  const top = computed.slice(0, 5);
 
   return (
     <div className="surface-card p-6">

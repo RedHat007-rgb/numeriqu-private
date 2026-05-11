@@ -11,6 +11,7 @@ import { NextActionsCard } from "../_components/overview/NextActionsCard";
 import { OrgBreakdownCard } from "../_components/overview/OrgBreakdownCard";
 import { RevenueTrendCard } from "../_components/overview/RevenueTrendCard";
 import { SystemSnapshot } from "../_components/overview/SystemSnapshot";
+import { TimeRangeSelect } from "../_components/overview/TimeRangeSelect";
 
 function OverviewSkeleton() {
   return (
@@ -34,7 +35,7 @@ function OverviewSkeleton() {
 }
 
 export function OverviewPage() {
-  const { state, dashboard, error, refresh, hasLoadedOnce } = useDashboard();
+  const { state, dashboard, error, refresh, hasLoadedOnce, range, setRange } = useDashboard();
 
   if (state === "loading" && !hasLoadedOnce) {
     return <OverviewSkeleton />;
@@ -52,14 +53,17 @@ export function OverviewPage() {
             North Star metrics first, then trend context, then actions. Every number is scoped to your synced entities.
           </p>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => void refresh()}
-          loading={state === "loading"}
-        >
-          {state === "loading" ? "Refreshing..." : "Refresh overview"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <TimeRangeSelect value={range} onChange={setRange} />
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void refresh(range)}
+            loading={state === "loading"}
+          >
+            {state === "loading" ? "Refreshing..." : "Refresh"}
+          </Button>
+        </div>
       </header>
 
       {state === "error" && error ? (
@@ -84,7 +88,7 @@ export function OverviewPage() {
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <NextActionsCard insights={dashboard.insights} />
+        <NextActionsCard insights={dashboard.insights} kpis={dashboard.kpis} />
         <ConnectedEntitiesCard orgs={dashboard.connectedOrgs} />
       </section>
 

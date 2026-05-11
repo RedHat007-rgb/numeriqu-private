@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion, AnimatePresence } from "framer-motion";
@@ -24,6 +25,11 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Message = { role: "user" | "assistant" | "system"; content: string };
+type ClarificationPrompt = {
+  question: string;
+  options: Array<{ label: string; value: string }>;
+  reason?: string;
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,6 +67,9 @@ function SessionSidebar({
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const visibleSessions = showAll ? sessions : sessions.slice(0, 14);
+
   return (
     <motion.div
       animate={{ width: collapsed ? 52 : 220 }}
@@ -120,7 +129,7 @@ function SessionSidebar({
           )}
 
           <AnimatePresence initial={false}>
-            {sessions.map((session, i) => (
+            {visibleSessions.map((session, i) => (
               <motion.button
                 key={session.id}
                 initial={{ opacity: 0, x: -8 }}
@@ -154,6 +163,18 @@ function SessionSidebar({
               </motion.button>
             ))}
           </AnimatePresence>
+
+          {!isLoading && sessions.length > 14 ? (
+            <div className="sticky bottom-0 -mx-2 mt-2 border-t border-default bg-bg-surface/80 p-2 backdrop-blur">
+              <button
+                type="button"
+                onClick={() => setShowAll((v) => !v)}
+                className="w-full rounded-xl border border-default bg-bg-elevated/40 px-3 py-2 text-[11px] font-semibold text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary"
+              >
+                {showAll ? "Show fewer" : `Show all conversations (${sessions.length})`}
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
     </motion.div>
@@ -186,7 +207,7 @@ function WelcomeScreen() {
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.12 }}
       >
-        <h2 className="font-display text-lg font-bold text-text-primary">RAG Advisor</h2>
+        <h2 className="font-display text-lg font-bold text-text-primary">Prism</h2>
         <p className="mt-1.5 max-w-[260px] text-xs leading-relaxed text-text-muted">
           Ask anything about your finances — revenue, burn rate, overdue invoices, cash flow, or entity comparisons.
         </p>
@@ -259,6 +280,8 @@ function MessageBubble({
 
 export function RagWorkbench() {
   const { rag, loading } = useNumeriquApi();
+  const searchParams = useSearchParams();
+  const autoAskRef = useRef(false);
 
   // Sidebar
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
@@ -272,6 +295,7 @@ export function RagWorkbench() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingClarification, setPendingClarification] = useState<ClarificationPrompt | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -294,6 +318,19 @@ export function RagWorkbench() {
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  // ── Auto-ask from ?q=... (Command Palette) ──────────────────────────────────
+
+  useEffect(() => {
+    if (loading) return;
+    if (autoAskRef.current) return;
+    const q = searchParams.get("q");
+    if (!q) return;
+    autoAskRef.current = true;
+    handleNewSession();
+    setTimeout(() => void ask(q), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
 
   // ── Auto-scroll ──────────────────────────────────────────────────────────────
 
@@ -334,6 +371,7 @@ export function RagWorkbench() {
     setError(null);
     setInput("");
     setStatusMsg(null);
+    setPendingClarification(null);
     setIsStreaming(true);
     setMessages((prev) => [
       ...prev,
@@ -364,6 +402,15 @@ export function RagWorkbench() {
           if (msg.type === "status") {
             setStatusMsg(msg.message as string);
           }
+          if (msg.type === "clarify") {
+            setPendingClarification({
+              question: String(msg.question ?? "Clarify"),
+              reason: msg.reason ? String(msg.reason) : undefined,
+              options: Array.isArray(msg.options)
+                ? msg.options.map((o: any) => ({ label: String(o.label ?? ""), value: String(o.value ?? "") }))
+                : [],
+            });
+          }
         },
       });
     } catch (caught) {
@@ -372,7 +419,7 @@ export function RagWorkbench() {
           ? caught.toUserMessage("The advisor stream was interrupted. Please retry.")
           : caught instanceof Error
             ? caught.message
-            : "The advisor stream was interrupted. Please retry.";
+            : "Prism stream was interrupted. Please retry.";
       setError(message);
       setMessages((prev) => {
         const copy = [...prev];
@@ -391,7 +438,7 @@ export function RagWorkbench() {
   const visibleMessages = messages.filter((m) => m.role !== "system");
 
   return (
-    <div className="flex h-[calc(100vh-9.5rem)] overflow-hidden rounded-2xl border border-default bg-bg-elevated/10">
+    <div className="surface-card flex h-full overflow-hidden p-0">
       {/* ── Col 1: History Sidebar ── */}
       <SessionSidebar
         sessions={sessions}
@@ -409,7 +456,7 @@ export function RagWorkbench() {
         <div className="flex items-center justify-between border-b border-default px-4 py-3">
           <div className="flex items-center gap-2">
             <BookOpen size={13} className="text-accent-blue" />
-            <span className="text-xs font-bold text-text-primary">RAG Advisor</span>
+            <span className="text-xs font-bold text-text-primary">Prism</span>
           </div>
           <span
             className={cn(
@@ -462,13 +509,43 @@ export function RagWorkbench() {
           )}
         </AnimatePresence>
 
-        {/* Input */}
-        <div className="border-t border-default p-3">
-          <form
-            className="flex items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void ask(input);
+      {/* Input */}
+      <div className="border-t border-default p-3">
+        <AnimatePresence>
+          {pendingClarification && !isStreaming ? (
+            <motion.div
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              className="mb-2 rounded-xl border border-accent-blue/20 bg-accent-blue/6 p-3"
+            >
+              <p className="text-xs font-semibold text-text-primary">{pendingClarification.question}</p>
+              {pendingClarification.reason ? (
+                <p className="mt-1 text-[11px] text-text-muted">{pendingClarification.reason}</p>
+              ) : null}
+              {pendingClarification.options.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {pendingClarification.options.map((opt) => (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      onClick={() => void ask(opt.value)}
+                      className="rounded-full bg-bg-elevated px-3 py-1 text-[11px] font-semibold text-text-secondary ring-1 ring-default transition-colors hover:bg-bg-elevated/70 hover:text-text-primary"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <p className="mt-2 text-[10px] text-text-muted">You can also type your answer and press send.</p>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void ask(input);
             }}
           >
             <input

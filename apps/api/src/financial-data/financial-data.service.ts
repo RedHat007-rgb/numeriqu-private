@@ -316,7 +316,10 @@ export class FinancialDataService {
   }
 
   /**
-   * Expense metrics from overdue / payable invoices
+   * Exposure metrics from open / overdue invoices.
+   *
+   * NOTE: This repo currently models invoices in Gold; bills/expenses are not yet available
+   * as a verified gold dataset. Treat these numbers as receivables exposure, not spend.
    */
   private async getExpenseMetrics(
     tenantId: string,
@@ -565,7 +568,20 @@ export class FinancialDataService {
   /**
    * Revenue by month — time series per org for trend analysis (Gold Layer only)
    */
-  async getMonthlyRevenueTrend(tenantId: string): Promise<any[]> {
+  private timeWhere(range?: any): string {
+    if (!range || range.kind === 'ALL_TIME') return '';
+    if (range.kind === 'MTD') return `AND issued_at >= toStartOfMonth(now())`;
+    if (range.kind === 'QTD') return `AND issued_at >= toStartOfQuarter(now())`;
+    if (range.kind === 'YTD') return `AND issued_at >= toStartOfYear(now())`;
+    if (range.kind === 'LAST_N_DAYS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days ?? 1))} DAY)`;
+    if (range.kind === 'LAST_N_WEEKS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks ?? 1))} WEEK)`;
+    if (range.kind === 'LAST_N_MONTHS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months ?? 1))} MONTH)`;
+    if (range.kind === 'LAST_N_QUARTERS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters ?? 1)) * 3} MONTH)`;
+    if (range.kind === 'LAST_N_YEARS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years ?? 1))} YEAR)`;
+    return '';
+  }
+
+  async getMonthlyRevenueTrend(tenantId: string, range?: any): Promise<any[]> {
     try {
       const activeConns = await prisma.erpConnection.findMany({
         where: { organizationId: tenantId, status: 'ACTIVE' },
@@ -574,6 +590,7 @@ export class FinancialDataService {
       const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
       if (activeOrgIds.length === 0) return [];
 
+      const time = this.timeWhere(range);
       const result = await this.clickhouse.query({
         query: `
           SELECT
@@ -587,6 +604,7 @@ export class FinancialDataService {
           FROM ${this.dbName}.fact_accounting_invoices
           WHERE tenant_id = {tenantId:String}
             AND org_id IN ({activeOrgIds:Array(String)})
+            ${time}
           GROUP BY month, provider, org_id, org_name
           ORDER BY month ASC
           LIMIT 500
@@ -638,6 +656,114 @@ export class FinancialDataService {
     } catch (e: any) {
       this.logger.error(
         `[FinancialData] Invoices list query failed: ${e.message}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Invoice Payment Delays (DSO-style) — Invoice-level days-to-pay for a specific client/contact.
+   *
+   * For Xero, "paid_at" is derived from the latest Payment.date applied to the invoice
+   * in the raw table (`xero_raw`, resource = 'Payments').
+   *
+   * NOTE: This intentionally uses raw payments because Gold invoices do not currently
+   * materialize a paid_at / fullyPaidOnDate column.
+   */
+  async getInvoicePaymentDelaysByContactName(
+    tenantId: string,
+    contactName: string,
+    options?: { limit?: number; includeUnpaid?: boolean },
+  ): Promise<
+    Array<{
+      invoiceId: string;
+      invoiceNumber: string;
+      orgName: string;
+      contactName: string;
+      status: string;
+      currency: string;
+      amount: number;
+      invoiceDate: string | null;
+      paidDate: string | null;
+      daysToPay: number | null;
+    }>
+  > {
+    const limit = Math.min(Math.max(options?.limit ?? 200, 1), 1000);
+    const includeUnpaid = options?.includeUnpaid ?? false;
+
+    try {
+      const activeConns = await prisma.erpConnection.findMany({
+        where: { organizationId: tenantId, status: 'ACTIVE' },
+        select: { externalOrganizationId: true },
+      });
+      const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
+      if (activeOrgIds.length === 0) return [];
+
+      const xeroDb = process.env.CLICKHOUSE_XERO_DB || 'xero_custom';
+
+      // We currently support invoice paid-date derivation for Xero only.
+      // If the tenant has non-Xero invoices with the same contact name, they will not be included.
+      const result = await this.clickhouse.query({
+        query: `
+          WITH payments AS (
+            SELECT
+              JSONExtractString(raw_data, 'invoice', 'invoiceID') AS invoice_external_id,
+              max(parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'date'))) AS paid_at
+            FROM ${xeroDb}.xero_raw
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({activeOrgIds:Array(String)})
+              AND resource = 'Payments'
+            GROUP BY invoice_external_id
+          )
+          SELECT
+            i.invoice_id                                            AS invoice_id,
+            i.invoice_number                                        AS invoice_number,
+            i.org_name                                              AS org_name,
+            i.contact_name                                          AS contact_name,
+            i.status                                                AS status,
+            i.currency                                              AS currency,
+            toFloat64(i.total_amount)                               AS amount,
+            ifNull(toString(i.issued_at), '')                       AS issued_at,
+            ifNull(toString(p.paid_at), '')                         AS paid_at,
+            if(
+              (p.paid_at IS NULL) OR (i.issued_at IS NULL),
+              NULL,
+              dateDiff('day', toDate(i.issued_at), toDate(p.paid_at))
+            )                                                       AS days_to_pay
+          FROM ${this.dbName}.fact_accounting_invoices i
+          LEFT JOIN payments p ON p.invoice_external_id = i.invoice_external_id
+          WHERE i.tenant_id = {tenantId:String}
+            AND i.org_id IN ({activeOrgIds:Array(String)})
+            AND i.provider = 'xero'
+            AND positionCaseInsensitiveUTF8(i.contact_name, {contactName:String}) > 0
+            ${includeUnpaid ? '' : 'AND p.paid_at IS NOT NULL'}
+          ORDER BY i.issued_at DESC
+          LIMIT {limit:UInt32}
+        `,
+        query_params: { tenantId, activeOrgIds, contactName, limit },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      });
+
+      const rows: any[] = await result.json();
+      return rows.map((r) => ({
+        invoiceId: String(r.invoice_id ?? ''),
+        invoiceNumber: String(r.invoice_number ?? ''),
+        orgName: String(r.org_name ?? ''),
+        contactName: String(r.contact_name ?? ''),
+        status: String(r.status ?? ''),
+        currency: String(r.currency ?? ''),
+        amount: Number(r.amount ?? 0),
+        invoiceDate: r.issued_at ? String(r.issued_at) : null,
+        paidDate: r.paid_at ? String(r.paid_at) : null,
+        daysToPay:
+          r.days_to_pay === null || r.days_to_pay === undefined
+            ? null
+            : Number(r.days_to_pay),
+      }));
+    } catch (e: any) {
+      this.logger.error(
+        `[FinancialData] Invoice payment delays query failed: ${e.message}`,
       );
       return [];
     }

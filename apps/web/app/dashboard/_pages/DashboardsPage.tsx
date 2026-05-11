@@ -76,9 +76,22 @@ function fmtNumber(value: number): string {
   return value.toFixed(0);
 }
 
+function prettyChartType(type: string): string {
+  const t = String(type || "").toLowerCase();
+  if (t === "bar") return "Bar chart";
+  if (t === "line") return "Line chart";
+  if (t === "pie") return "Pie chart";
+  if (t === "area") return "Area chart";
+  if (t === "metric") return "Metric";
+  if (t === "table") return "Table";
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Chart";
+}
+
 function formatValue(metric: string, grouping: string, value: number): string {
   const isPercent = metric === "collection_rate" || metric === "overdue_rate";
   if (isPercent) return `${value.toFixed(1)}%`;
+
+  if (metric === "dso") return `${value.toFixed(1)}d`;
 
   const isCurrencyMetric =
     metric === "revenue" ||
@@ -234,7 +247,7 @@ function ChartRenderer({
     return (
       <div style={{ height: h }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <AreaChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
             <defs>
               <linearGradient id={`grad-${chartId}`} x1="0" y1="0" x2="0" y2="1">
                 <stop
@@ -250,7 +263,14 @@ function ChartRenderer({
               </linearGradient>
             </defs>
             <CartesianGrid {...GRID} />
-            <XAxis dataKey="name" tick={TICK} tickLine={false} axisLine={false} />
+            <XAxis
+              dataKey="name"
+              tick={TICK}
+              tickLine={false}
+              axisLine={false}
+              minTickGap={14}
+              interval="preserveStartEnd"
+            />
             <YAxis
               tick={TICK}
               tickLine={false}
@@ -258,7 +278,8 @@ function ChartRenderer({
               tickFormatter={(v: number) =>
                 formatValue(metric, grouping, Number(v) || 0)
               }
-              width={40}
+              width={56}
+              tickMargin={8}
             />
             <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
             <Area
@@ -277,10 +298,22 @@ function ChartRenderer({
   }
 
   if (type === "bar") {
+    const useHorizontalBars = grouping === "client" && data.length > 6;
+    const seriesKeys = (() => {
+      const first = data[0] as Record<string, unknown> | undefined;
+      if (!first) return [];
+      return Object.keys(first).filter((k) => k !== "name" && typeof (first as any)[k] === "number");
+    })();
+    const isMulti = seriesKeys.length >= 2 && grouping === "month";
+    const trimmed = useHorizontalBars ? data.slice(0, 8) : data;
     return (
-      <div style={{ height: h }}>
+      <div style={{ height: useHorizontalBars ? Math.max(h, trimmed.length * 24 + 24) : h }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <BarChart
+            data={trimmed}
+            margin={useHorizontalBars ? { top: 6, right: 10, left: 8, bottom: 6 } : { top: 8, right: 4, left: 12, bottom: 0 }}
+            layout={useHorizontalBars ? "vertical" : "horizontal"}
+          >
             <defs>
               <linearGradient id={`grad-bar-${chartId}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="rgb(var(--color-accent-blue))" stopOpacity={1} />
@@ -292,23 +325,72 @@ function ChartRenderer({
               </linearGradient>
             </defs>
             <CartesianGrid {...GRID} vertical={false} />
-            <XAxis dataKey="name" tick={TICK} tickLine={false} axisLine={false} />
-            <YAxis
+            {useHorizontalBars ? (
+              <>
+                <XAxis
+                  type="number"
+                  tick={TICK}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v: number) => formatValue(metric, grouping, Number(v) || 0)}
+                  tickMargin={8}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  tick={TICK}
+                  tickLine={false}
+                  axisLine={false}
+                  width={150}
+                  tickMargin={10}
+                  interval={0}
+                  tickFormatter={(v: string) => {
+                    const label = String(v ?? "");
+                    return label.length > 18 ? label.slice(0, 17) + "…" : label;
+                  }}
+                />
+              </>
+            ) : (
+              <>
+            <XAxis
+              dataKey="name"
               tick={TICK}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v: number) =>
-                formatValue(metric, grouping, Number(v) || 0)
-              }
-              width={40}
+              minTickGap={14}
+              interval="preserveStartEnd"
             />
+                <YAxis
+                  tick={TICK}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v: number) =>
+                    formatValue(metric, grouping, Number(v) || 0)
+                  }
+                  width={56}
+                  tickMargin={8}
+                />
+              </>
+            )}
             <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
-            <Bar
-              dataKey="value"
-              fill={`url(#grad-bar-${chartId})`}
-              radius={[5, 5, 0, 0]}
-              maxBarSize={48}
-            />
+            {isMulti ? (
+              seriesKeys.slice(0, 4).map((k, idx) => (
+                <Bar
+                  key={k}
+                  dataKey={k}
+                  fill={PIE_COLORS[idx % PIE_COLORS.length]}
+                  radius={useHorizontalBars ? [6, 6, 6, 6] : [5, 5, 0, 0]}
+                  maxBarSize={useHorizontalBars ? 16 : 28}
+                />
+              ))
+            ) : (
+              <Bar
+                dataKey="value"
+                fill={`url(#grad-bar-${chartId})`}
+                radius={useHorizontalBars ? [6, 6, 6, 6] : [5, 5, 0, 0]}
+                maxBarSize={useHorizontalBars ? 16 : 48}
+              />
+            )}
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -407,7 +489,7 @@ function ChartRenderer({
   return (
     <div style={{ height: h }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data}>
+        <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
           <CartesianGrid {...GRID} />
           <XAxis dataKey="name" tick={TICK} />
           <YAxis
@@ -415,7 +497,8 @@ function ChartRenderer({
             tickFormatter={(v: number) =>
               formatValue(metric, grouping, Number(v) || 0)
             }
-            width={40}
+            width={56}
+            tickMargin={8}
           />
           <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
           <Line
@@ -474,7 +557,7 @@ function ExpandedDashboard({
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.07, duration: 0.3 }}
-            className="rounded-2xl border border-default bg-bg-elevated/40 p-4"
+            className="surface-card p-4"
           >
             <div className="mb-2 flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -505,8 +588,8 @@ function ExpandedDashboard({
               )}
             </div>
             <div className="mt-2">
-              <span className="rounded-full bg-bg-elevated px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-text-muted">
-                {chart.type}
+              <span className="rounded-full bg-bg-elevated px-2 py-0.5 text-[10px] font-semibold text-text-muted ring-1 ring-default">
+                {prettyChartType(chart.type)}
               </span>
             </div>
           </motion.div>
@@ -588,8 +671,15 @@ export function DashboardsPage() {
         dashboard.charts.map(async (chart) => {
           const metric = (chart.queryConfig.metric as string) ?? "revenue";
           const grouping = (chart.queryConfig.grouping as string) ?? "month";
+          const timeRange = (chart.queryConfig as any)?.timeRange ?? null;
+          const providerHint = (chart.queryConfig as any)?.providerHint ?? null;
+          const clientName = (chart.queryConfig as any)?.clientName ?? null;
+          const clientNames = (chart.queryConfig as any)?.clientNames ?? null;
+          const orgId = (chart.queryConfig as any)?.orgId ?? null;
+          const breakdown = (chart.queryConfig as any)?.breakdown ?? null;
+          const topN = (chart.queryConfig as any)?.topN ?? null;
           try {
-            const res = await agent.getMetrics(metric, grouping);
+            const res = await agent.getMetrics(metric, grouping, timeRange, providerHint, clientName, clientNames, orgId, breakdown, topN);
             dataMap[chart.id] = (res.data ?? []) as ChartData;
           } catch {
             dataMap[chart.id] = [];
@@ -614,7 +704,7 @@ export function DashboardsPage() {
             Saved decision surfaces
           </h2>
           <p className="mt-1 text-sm text-text-muted">
-            Click a dashboard to expand charts. Use the Agent to generate or refine new ones.
+            Click a dashboard to expand charts. Use Astra to generate or refine new ones.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -630,7 +720,7 @@ export function DashboardsPage() {
             size="sm"
             onClick={() => router.push("/dashboard/agent")}
           >
-            <Sparkles className="size-4" /> Open Agent
+            <Sparkles className="size-4" /> Open Astra
           </Button>
         </div>
       </header>
@@ -664,10 +754,10 @@ export function DashboardsPage() {
           ) : savedDashboards.length === 0 ? (
             <EmptyState
               title="No saved dashboards yet"
-              detail="Create dashboards from the Agent to build your board pack library."
+              detail="Create dashboards from Astra to build your board pack library."
               action={
                 <Button size="sm" onClick={() => router.push("/dashboard/agent")}>
-                  <Sparkles className="size-4" /> Open Agent
+                  <Sparkles className="size-4" /> Open Astra
                 </Button>
               }
             />
@@ -723,7 +813,7 @@ export function DashboardsPage() {
                       <div className="flex shrink-0 items-center gap-2">
                         <button
                           type="button"
-                          title="Continue editing in Agent"
+                          title="Continue editing in Astra"
                           onClick={async (e) => {
                             e.stopPropagation();
                             try {
@@ -740,7 +830,7 @@ export function DashboardsPage() {
                           className="flex items-center gap-1 rounded-lg border border-default px-2 py-1 text-[10px] font-medium text-text-muted transition-colors hover:border-accent-violet/30 hover:text-accent-violet"
                         >
                           <ExternalLink size={10} />
-                          Edit in Agent
+                          Edit in Astra
                         </button>
                         <Button
                           variant="secondary"

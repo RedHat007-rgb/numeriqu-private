@@ -17,7 +17,7 @@ function formatBusMessage(value: string) {
 
 function DashboardSkeleton() {
   return (
-    <div className="min-h-screen bg-bg-base p-6 text-text-primary">
+    <div className="min-h-screen bg-transparent p-6 text-text-primary">
       <div className="mx-auto max-w-7xl space-y-6">
         <Skeleton height={48} width="40%" rounded="xl" />
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
@@ -45,6 +45,7 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
   const searchParams = useSearchParams();
   const { isAuthenticated, signOut, useDevToken, loading, currentUser } = useNumeriquApi();
   const [tenantLabel, setTenantLabel] = useState<string>("Loading workspace...");
+  const [userLabel, setUserLabel] = useState<string>("");
   const [toast, setToast] = useState<Toast>(null);
 
   const success = searchParams.get("success");
@@ -57,6 +58,13 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
   }, [success, error]);
 
   useEffect(() => {
+    document.body.classList.add("nq-app");
+    return () => {
+      document.body.classList.remove("nq-app");
+    };
+  }, []);
+
+  useEffect(() => {
     if (loading) return;
     if (!isAuthenticated) {
       router.push("/login");
@@ -64,7 +72,8 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
     }
     const tenantName = currentUser?.tenant?.name ?? "Workspace";
     const userIdent = currentUser?.user?.email ?? currentUser?.user?.id ?? "";
-    setTenantLabel(userIdent ? `${tenantName} · ${userIdent}` : tenantName);
+    setTenantLabel(tenantName);
+    setUserLabel(userIdent);
   }, [currentUser, isAuthenticated, loading, router]);
 
   if (loading) return <DashboardSkeleton />;
@@ -73,6 +82,7 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
   return (
     <DashboardShell
       tenantLabel={tenantLabel}
+      userLabel={userLabel}
       onSignOut={signOut}
       accountType={currentUser?.tenant?.accountType ?? "ORGANIZATION"}
     >

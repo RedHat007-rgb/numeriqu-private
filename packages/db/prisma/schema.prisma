@@ -75,6 +75,7 @@ enum RagMessageRole {
 enum AgentRequestStatus {
   QUEUED
   RUNNING
+  NEEDS_INPUT
   SUCCEEDED
   FAILED
   CANCELED
@@ -83,6 +84,7 @@ enum AgentRequestStatus {
 enum AgentRunStatus {
   QUEUED
   RUNNING
+  NEEDS_INPUT
   SUCCEEDED
   FAILED
   CANCELED

@@ -31,6 +31,8 @@ export class ApiError extends Error {
     if (this.status === 403) return "You do not have access to this resource.";
     if (this.status === 404) return "We could not find what you were looking for.";
     if (this.status === 400) return fallback;
+    if (this.status === 408) return "Request timed out. Please retry.";
+    if (this.status === 0) return "Request blocked by browser/extension. Disable adblock for localhost and retry.";
     if (this.status === 429) return "Too many requests. Wait a moment and retry.";
     if (this.status >= 500) return "Our service is having trouble right now. Please retry shortly.";
     return fallback;
@@ -39,8 +41,30 @@ export class ApiError extends Error {
 
 export type TokenProvider = () => Promise<string | null>;
 
+export const SELECTED_ORG_ID_KEY = "nq.organizationId";
+export const SELECTED_ORG_COOKIE = "nq_organization_id";
+
+export function getSelectedOrganizationId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(SELECTED_ORG_ID_KEY);
+    const trimmed = raw?.trim();
+    return trimmed ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setSelectedOrganizationCookie(organizationId: string | null) {
+  if (typeof document === "undefined") return;
+  const maxAge = 60 * 60 * 24 * 30; // 30 days
+  const value = organizationId ? encodeURIComponent(organizationId) : "";
+  // SameSite=Lax so it flows on normal navigation; no Secure for localhost dev.
+  document.cookie = `${SELECTED_ORG_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; SameSite=Lax`;
+}
+
 /**
- * Browser: same-origin `/api/numeriqu` (Next.js rewrite to Nest) unless NEXT_PUBLIC_API_*_URL is set.
+ * Browser: same-origin proxy path (Next.js rewrite to Nest) unless NEXT_PUBLIC_API_*_URL is set.
  * Server: direct internal URL for any SSR usage.
  */
 export function getApiBaseURL(): string {
@@ -49,7 +73,8 @@ export function getApiBaseURL(): string {
     process.env.NEXT_PUBLIC_API_URL?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
   if (typeof window !== "undefined") {
-    return `${window.location.origin.replace(/\/$/, "")}/api/numeriqu`;
+    // Use a proxy path that is less likely to be blocked by browser extensions/adblock rules.
+    return `${window.location.origin.replace(/\/$/, "")}/api/internal`;
   }
   const internal =
     process.env.API_INTERNAL_URL?.trim() ||
@@ -70,7 +95,9 @@ export function getStreamApiBaseURL(): string {
     process.env.NEXT_PUBLIC_API_URL?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
   if (typeof window !== "undefined") {
-    return "http://localhost:3000";
+    // Prefer same-origin proxy in dev. Direct `localhost:3000` can be blocked by browser extensions
+    // and some Next dev setups buffer upstream streams anyway.
+    return getApiBaseURL();
   }
   return getApiBaseURL();
 }
@@ -83,6 +110,16 @@ function normalizeMessage(payload: ApiErrorPayload | undefined, fallback: string
   return Array.isArray(payload.message) ? payload.message.join(" ") : payload.message;
 }
 
+function getOrgIdFromCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)nq_organization_id=([^;]+)/);
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createRequester(getToken: TokenProvider) {
   return async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = await getToken();
@@ -91,14 +128,45 @@ export function createRequester(getToken: TokenProvider) {
     if (token) {
       headers.set("Authorization", `Bearer ${token}`);
     }
+    // Always forward the selected org so the backend scopes the request correctly.
+    // The Next.js /api/internal proxy also injects this from the cookie server-side,
+    // but including it here ensures it works even when NEXT_PUBLIC_API_BASE_URL bypasses the proxy.
+    if (!headers.has("x-organization-id")) {
+      const orgId = getOrgIdFromCookie();
+      if (orgId) headers.set("x-organization-id", orgId);
+    }
     if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
-    const response = await fetch(`${getApiBaseURL()}${path}`, {
-      ...init,
-      headers,
-      credentials: "include",
-      cache: "no-store",
-    });
+    const controller = new AbortController();
+    const timeoutMs =
+      typeof init.signal === "undefined"
+        ? // Default timeouts: keep auth/metadata snappy, allow heavier POSTs longer.
+          (init.method?.toUpperCase?.() === "GET" ? 15000 : 60000)
+        : null;
+    const timeout =
+      timeoutMs === null ? null : setTimeout(() => controller.abort(), timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${getApiBaseURL()}${path}`, {
+        ...init,
+        headers,
+        credentials: "include",
+        cache: "no-store",
+        signal: init.signal ?? controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new ApiError("Request timed out.", 408);
+      }
+      // Some browser extensions block requests and surface this as a generic failed fetch.
+      if (error instanceof TypeError && /fetch/i.test(error.message)) {
+        throw new ApiError("Request blocked by browser or network.", 0);
+      }
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       let payload: ApiErrorPayload | undefined;
@@ -143,6 +211,8 @@ export async function streamJsonSseLines(params: {
   if (params.token) {
     headers.Authorization = `Bearer ${params.token}`;
   }
+  // Org scoping is injected server-side via cookie in the dev proxy. For direct streaming to the API,
+  // callers should pass `x-organization-id` explicitly if needed.
 
   const response = await fetch(`${getStreamApiBaseURL()}${params.path}`, {
     method: "POST",

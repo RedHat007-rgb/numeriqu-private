@@ -8,6 +8,7 @@ import {
   UseGuards,
   ForbiddenException,
   Query,
+  Headers,
 } from '@nestjs/common';
 import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
@@ -24,8 +25,14 @@ export class OrgController {
 
   @Get('organizations')
   @UseGuards(SupabaseAuthGuard)
-  async listOrganizations(@CurrentUser() user: AuthUser) {
-    const ctx = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async listOrganizations(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const ctx = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.orgService.listOrganizations(ctx.organization.id);
   }
 
@@ -34,8 +41,12 @@ export class OrgController {
   async getOrganization(
     @CurrentUser() user: AuthUser,
     @Param('id') connectionId: string,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const ctx = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const ctx = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     if (ctx.membership.role !== 'ADMIN') throw new ForbiddenException('Admins only.');
     return this.orgService.getOrganization(ctx.organization.id, connectionId);
   }
@@ -46,8 +57,12 @@ export class OrgController {
     @CurrentUser() user: AuthUser,
     @Param('id') connectionId: string,
     @Body() body: { email: string; role?: 'admin' | 'member' },
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const ctx = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const ctx = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     if (ctx.membership.role !== 'ADMIN') throw new ForbiddenException('Admins only.');
     return this.orgService.inviteToOrganization(
       ctx.organization.id,
@@ -63,8 +78,12 @@ export class OrgController {
   async removeMember(
     @CurrentUser() user: AuthUser,
     @Param('userId') targetUserId: string,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const ctx = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const ctx = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     await this.orgService.removeMember(ctx.organization.id, targetUserId, ctx.membership.role);
     return { status: 'success' };
   }

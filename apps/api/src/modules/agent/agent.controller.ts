@@ -64,6 +64,23 @@ export class AgentController {
     return session;
   }
 
+  @Get('sessions/:id/dashboard')
+  async sessionDashboard(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    }, { organizationId });
+    return this.agentService.dashboardForSession(
+      context.organization.id,
+      context.user.id,
+      id,
+    );
+  }
+
   @Get('dashboards/latest')
   async latestDashboard(
     @CurrentUser() user: AuthUser,
@@ -112,6 +129,7 @@ export class AgentController {
     @Query('rangeValue') rangeValue?: string,
     @Query('rangeStart') rangeStart?: string,
     @Query('rangeEnd') rangeEnd?: string,
+    @Query('widgetId') widgetId?: string,
     @Headers('x-organization-id') organizationId?: string,
   ) {
     const context = await this.organizationContext.ensureContext({
@@ -171,6 +189,7 @@ export class AgentController {
       orgId ? String(orgId) : undefined,
       breakdown ? String(breakdown) : undefined,
       topN ? Number(topN) : undefined,
+      widgetId ? String(widgetId) : undefined,
     );
   }
 

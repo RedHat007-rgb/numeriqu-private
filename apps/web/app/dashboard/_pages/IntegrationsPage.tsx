@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "../../../components/ui/Button";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
@@ -365,6 +366,49 @@ export function IntegrationsPage() {
   const { integrations } = useNumeriquApi();
   const [userRole, setUserRole] = useState<string>("owner");
   const [orgs, setOrgs] = useState<Organization[]>([]);
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const didAutoSync = useRef(false);
+
+  // When redirected back after OAuth connect, auto-poll until the background sync settles
+  useEffect(() => {
+    const success = searchParams.get("success");
+    if (!success || !/connected$/.test(success)) return;
+    if (didAutoSync.current) return;
+    didAutoSync.current = true;
+
+    // Clear the query param so a refresh doesn't re-trigger
+    router.replace("/dashboard/integrations", { scroll: false });
+
+    const poll = async () => {
+      const deadline = Date.now() + 120_000; // wait up to 2 minutes
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3_000));
+        try {
+          const next = await integrations.syncJobs();
+          const running = next.find(
+            (j) => j.status === "RUNNING" || j.status === "PENDING",
+          );
+          const latest = next[0];
+          if (!running && latest && (latest.status === "SUCCEEDED" || latest.status === "FAILED")) {
+            await refresh();
+            if (latest.status === "SUCCEEDED") {
+              toast.success("Sync complete", { description: "Your data is now up to date." });
+            } else {
+              toast.error("Sync failed", { description: "Check the sync jobs panel for details." });
+            }
+            return;
+          }
+        } catch {
+          // non-fatal — keep polling
+        }
+      }
+      await refresh();
+    };
+
+    void poll();
+  }, [searchParams, integrations, refresh, router]);
 
   // Keep orgs list in sync with connections (derive from the same source)
   useEffect(() => {

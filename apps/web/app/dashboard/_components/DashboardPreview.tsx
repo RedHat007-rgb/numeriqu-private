@@ -21,6 +21,7 @@ import {
   Bar,
   XAxis,
   YAxis,
+  ZAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
@@ -31,6 +32,12 @@ import {
   Area,
   AreaChart,
   ReferenceLine,
+  Treemap,
+  ScatterChart,
+  Scatter,
+  ComposedChart,
+  RadialBarChart,
+  RadialBar,
 } from "recharts";
 import { ApiError, type TimeRange } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
@@ -47,10 +54,15 @@ interface ChartConfig {
   timeRange?: TimeRange | null;
   providerHint?: string | null;
   clientName?: string | null;
+  clientNames?: string[] | null;
   orgId?: string | null;
   orgName?: string | null;
   breakdown?: "client" | null;
   topN?: number | null;
+  display?: {
+    donut?: boolean | null;
+    highlightMaxMin?: boolean | null;
+  } | null;
 }
 
 interface Chart {
@@ -82,14 +94,61 @@ type DataRow = Record<string, number | string>;
 
 const PIE_COLORS = ["#7c3aed", "#3b82f6", "#06b6d4", "#14b8a6", "#f59e0b", "#ef4444", "#8b5cf6"];
 
+// ─── Series Key Inference ─────────────────────────────────────────────────────
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function hasFiniteValueKey(rows: DataRow[], key: string): boolean {
+  return rows.some((row) => toFiniteNumber((row as any)?.[key]) !== null);
+}
+
+function inferNumericSeriesKeys(rows: DataRow[]): string[] {
+  const totals = new Map<string, number>();
+
+  for (const row of rows) {
+    if (!row) continue;
+    for (const [k, raw] of Object.entries(row)) {
+      if (k === "name" || k === "value") continue;
+      const n = toFiniteNumber(raw);
+      if (n === null) continue;
+      totals.set(k, (totals.get(k) ?? 0) + Math.abs(n));
+    }
+  }
+
+  return Array.from(totals.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k]) => k);
+}
+
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
 function prettyChartType(type: string): string {
   const t = String(type || "").toLowerCase();
   if (t === "bar") return "Bar chart";
+  if (t === "stacked_bar") return "Stacked bar";
+  if (t === "horizontal_bar") return "Ranked bar";
   if (t === "line") return "Line chart";
   if (t === "pie") return "Pie chart";
+  if (t === "donut") return "Donut chart";
   if (t === "area") return "Area chart";
+  if (t === "waterfall") return "Waterfall";
+  if (t === "treemap") return "Treemap";
+  if (t === "scatter") return "Scatter plot";
+  if (t === "histogram") return "Histogram";
+  if (t === "pareto") return "Pareto chart";
+  if (t === "gauge") return "Gauge";
+  if (t === "bubble") return "Bubble chart";
+  if (t === "heatmap") return "Heatmap";
+  if (t === "kpi") return "KPI cards";
   if (t === "metric") return "Metric";
   if (t === "table") return "Table";
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Chart";
@@ -124,11 +183,25 @@ function formatValue(metric: string, grouping: string, value: number): string {
 
   const isCurrencyMetric =
     metric === "revenue" ||
+    metric === "revenue_cumulative" ||
     metric === "outstanding" ||
     metric === "overdue" ||
     metric === "paid" ||
     metric === "total_invoiced" ||
     metric === "avg_invoice" ||
+    metric === "expense" ||
+    metric === "opex" ||
+    metric === "cogs" ||
+    metric === "gross_profit" ||
+    metric === "net_income" ||
+    metric === "ebitda" ||
+    metric === "revenue_vs_expense" ||
+    metric === "net_position" ||
+    metric === "running_balance" ||
+    metric === "transaction_value" ||
+    metric === "invoice_value" ||
+    (metric === "invoice_amount" && grouping === "time") ||
+    metric === "debits_credits" ||
     (metric === "invoices" && grouping === "status");
 
   if (isCurrencyMetric) return fmtCurrency(value);
@@ -384,16 +457,10 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     stroke: "rgb(var(--color-text-muted) / 0.12)",
   };
 
-  if (chart.type === "line") {
-    const seriesKeys = (() => {
-      const first = data[0] as Record<string, unknown> | undefined;
-      if (!first) return [];
-      return Object.keys(first).filter((k) => {
-        if (k === "name" || k === "value") return false;
-        return typeof (first as any)[k] === "number";
-      });
-    })();
-    const isMultiSeries = seriesKeys.length > 0;
+  if (chart.type === "line" || chart.type === "area") {
+    const seriesKeys = inferNumericSeriesKeys(data);
+    const hasValueSeries = hasFiniteValueKey(data, "value");
+    const isMultiSeries = !hasValueSeries && seriesKeys.length > 0;
 
     const vals = isMultiSeries
       ? []
@@ -403,7 +470,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+	          <AreaChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
             <defs>
               <linearGradient id={`grad-line-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="rgb(var(--color-accent-violet))" stopOpacity={0.3} />
@@ -448,7 +515,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 }}
               />
             )}
-            {isMultiSeries ? (
+	            {isMultiSeries ? (
               <>
                 {seriesKeys.slice(0, 4).map((k, idx) => (
                   <Area
@@ -474,11 +541,11 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
                 />
               </>
-            ) : (
-              <Area
-                type="monotone"
-                dataKey="value"
-                stroke="rgb(var(--color-accent-violet))"
+	            ) : (
+	              <Area
+	                type="monotone"
+	                dataKey="value"
+	                stroke="rgb(var(--color-accent-violet))"
                 strokeWidth={isExpanded ? 2.5 : 2}
                 fill={`url(#grad-line-${chart.id})`}
                 dot={
@@ -492,15 +559,70 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   strokeWidth: 2,
                   stroke: "rgb(var(--color-bg-card))",
                 }}
-              />
-            )}
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-    );
-  }
+	              />
+	            )}
+	          </AreaChart>
+	        </ResponsiveContainer>
+	      </div>
+	    );
+	  }
 
-  if (chart.type === "bar") {
+	  if (chart.type === "waterfall") {
+	    const rows = data.map((d) => ({
+	      name: String((d as any).name ?? ""),
+	      value: Number((d as any).value) || 0,
+	    }));
+	    let running = 0;
+	    const wf = rows.map((r) => {
+	      const start = running;
+	      const end = running + r.value;
+	      const base = Math.min(start, end);
+	      const delta = Math.abs(r.value);
+	      running = end;
+	      return { name: r.name, base, delta, _pos: r.value >= 0 };
+	    });
+
+	    return (
+	      <div style={{ height: h, width: "100%" }}>
+	        <ResponsiveContainer width="100%" height="100%">
+	          <BarChart data={wf} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+	            <CartesianGrid {...gridStyle} vertical={false} />
+	            <XAxis dataKey="name" tick={tickStyle} tickLine={false} axisLine={false} interval={0} />
+	            <YAxis
+	              tick={tickStyle}
+	              tickLine={false}
+	              axisLine={false}
+	              tickFormatter={(v: number) =>
+	                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+	              }
+	              width={56}
+	              tickMargin={8}
+	            />
+	            <Tooltip content={<CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+	            <Bar dataKey="base" stackId="wf" fill="transparent" />
+	            <Bar
+	              dataKey="delta"
+	              stackId="wf"
+	              radius={[6, 6, 0, 0]}
+	              maxBarSize={56}
+	              // eslint-disable-next-line react/no-unstable-nested-components
+	              fillOpacity={1}
+	            >
+	              {wf.map((entry, idx) => (
+	                <Cell
+	                  key={idx}
+	                  fill={entry._pos ? "#10b981" : "#ef4444"}
+	                  stroke="none"
+	                />
+	              ))}
+	            </Bar>
+	          </BarChart>
+	        </ResponsiveContainer>
+	      </div>
+	    );
+	  }
+
+	  if (chart.type === "bar" || chart.type === "stacked_bar") {
     const isClientGrouping = chart.config.grouping === "client";
     const useHorizontalBars = isClientGrouping && data.length > 6;
 
@@ -508,15 +630,23 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       ? data.slice(0, isExpanded ? 15 : 8)
       : data;
 
-    const seriesKeys = (() => {
-      const first = trimmed[0] as Record<string, unknown> | undefined;
-      if (!first) return [];
-      return Object.keys(first).filter((k) => {
-        if (k === "name" || k === "value") return false;
-        return typeof (first as any)[k] === "number";
-      });
-    })();
-    const isMultiSeries = !useHorizontalBars && chart.config.grouping === "month" && seriesKeys.length >= 1;
+    const seriesKeys = inferNumericSeriesKeys(trimmed);
+    const hasValueSeries = hasFiniteValueKey(trimmed, "value");
+	    const isMultiSeries =
+        !useHorizontalBars &&
+        chart.config.grouping === "month" &&
+        !hasValueSeries &&
+        seriesKeys.length >= 1;
+	    const highlightMaxMin = Boolean(chart.config.display?.highlightMaxMin) && !isMultiSeries;
+	    const highlight = (() => {
+	      if (!highlightMaxMin) return null;
+	      const vals = trimmed.map((d) => Number((d as any).value) || 0);
+	      if (vals.length < 2) return null;
+	      const max = Math.max(...vals);
+	      const min = Math.min(...vals);
+	      if (!Number.isFinite(max) || !Number.isFinite(min) || max === min) return null;
+	      return { max, min };
+	    })();
 
     const barHeight = useHorizontalBars
       ? Math.max(h, trimmed.length * (isExpanded ? 30 : 26) + 32)
@@ -623,13 +753,14 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             />
             {isMultiSeries ? (
               <>
-                {seriesKeys.slice(0, 4).map((k, idx) => (
+                {seriesKeys.slice(0, 6).map((k, idx) => (
                   <Bar
                     key={k}
                     dataKey={k}
                     fill={PIE_COLORS[idx % PIE_COLORS.length]}
                     radius={[6, 6, 0, 0]}
                     maxBarSize={isExpanded ? 24 : 20}
+                    stackId={chart.type === "stacked_bar" ? "stack" : undefined}
                   />
                 ))}
                 <Legend
@@ -638,23 +769,88 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
                 />
               </>
-            ) : (
-              <Bar
-                dataKey="value"
-                fill={`url(#grad-bar-${chart.id})`}
-                radius={useHorizontalBars ? [6, 6, 6, 6] : [6, 6, 0, 0]}
-                maxBarSize={useHorizontalBars ? (isExpanded ? 18 : 16) : 56}
-              />
-            )}
-          </BarChart>
+	            ) : (
+	              <Bar
+	                dataKey="value"
+	                fill={highlight ? "#7c3aed" : `url(#grad-bar-${chart.id})`}
+	                radius={useHorizontalBars ? [6, 6, 6, 6] : [6, 6, 0, 0]}
+	                maxBarSize={useHorizontalBars ? (isExpanded ? 18 : 16) : 56}
+	              >
+	                {highlight
+	                  ? trimmed.map((entry: any, idx: number) => {
+	                      const v = Number(entry?.value) || 0;
+	                      const isMax = v === highlight.max;
+	                      const isMin = v === highlight.min;
+		                      return (
+		                        <Cell
+		                          key={idx}
+		                          fill={isMax ? "#10b981" : isMin ? "#ef4444" : "#7c3aed"}
+		                        />
+		                      );
+	                    })
+	                  : null}
+	              </Bar>
+	            )}
+	          </BarChart>
+	        </ResponsiveContainer>
+	      </div>
+	    );
+	  }
+
+  if (chart.type === "treemap") {
+    const nodes = data
+      .map((d) => ({ name: String((d as any).name ?? ""), size: Number((d as any).value) || 0 }))
+      .filter((n) => n.name && Number.isFinite(n.size) && n.size > 0)
+      .slice(0, 40);
+
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <Treemap
+            data={nodes}
+            dataKey="size"
+            nameKey="name"
+            stroke="rgb(var(--color-bg-card))"
+            fill="rgb(var(--color-accent-violet))"
+            aspectRatio={4 / 3}
+          />
         </ResponsiveContainer>
       </div>
     );
   }
 
-  if (chart.type === "pie") {
-    const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
-    const enriched = data.map((d) => ({ ...d, total }));
+  if (chart.type === "scatter") {
+    const xKey = "date";
+    const yKey = "amount";
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ScatterChart margin={{ top: 8, right: 10, left: 12, bottom: 24 }}>
+            <CartesianGrid {...gridStyle} />
+            <XAxis dataKey={xKey} type="category" tick={tickStyle} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+            <YAxis
+              dataKey={yKey}
+              tick={tickStyle}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v: number) =>
+                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+              }
+              width={56}
+              tickMargin={8}
+            />
+            <Tooltip content={<CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+            <Scatter data={data as any} fill="rgb(var(--color-accent-blue))" />
+          </ScatterChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+	  if (chart.type === "pie") {
+	    const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
+	    const enriched = data.map((d) => ({ ...d, total }));
+	    const isDonut = chart.config.display?.donut ?? true;
 
     const renderLabel = ({
       cx,
@@ -687,17 +883,17 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={enriched}
-              cx="45%"
-              cy="50%"
-              innerRadius={isExpanded ? "35%" : "28%"}
-              outerRadius={isExpanded ? "65%" : "58%"}
-              paddingAngle={3}
-              dataKey="value"
-              labelLine={false}
-              label={renderLabel}
+	          <PieChart>
+	            <Pie
+	              data={enriched}
+	              cx="45%"
+	              cy="50%"
+	              innerRadius={isDonut ? (isExpanded ? "35%" : "28%") : 0}
+	              outerRadius={isExpanded ? "65%" : "58%"}
+	              paddingAngle={3}
+	              dataKey="value"
+	              labelLine={false}
+	              label={renderLabel}
             >
               {enriched.map((_, i) => (
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="none" />
@@ -766,6 +962,247 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+    );
+  }
+
+  // ── donut (pie with inner hole) ────────────────────────────────────────────
+  if (chart.type === "donut") {
+    const COLORS = ["#7C3AED","#0EA5E9","#10B981","#F59E0B","#EF4444","#8B5CF6","#06B6D4","#84CC16"];
+    const total = data.reduce((s, d) => s + (Number((d as any).value) || 0), 0);
+    void total;
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%"
+              innerRadius={isExpanded ? 70 : 50} outerRadius={isExpanded ? 120 : 85} paddingAngle={2}>
+              {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+            </Pie>
+            <Tooltip formatter={(v) => [fmtCurrency(Number(v) || 0), ""]} />
+            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // ── horizontal_bar (ranked horizontal bars) ────────────────────────────────
+  if (chart.type === "horizontal_bar") {
+    const sorted = [...data].sort((a, b) => (Number((b as any).value) || 0) - (Number((a as any).value) || 0));
+    return (
+      <div style={{ height: Math.max(h, sorted.length * 32 + 40), width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={sorted} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" horizontal={false} />
+            <XAxis type="number" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
+              tickLine={false} axisLine={false}
+              tickFormatter={(v: number) => formatValue(chart.config.metric, chart.config.grouping, v)} />
+            <YAxis type="category" dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
+              tickLine={false} axisLine={false} width={120} />
+            <Tooltip content={<CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+            <Bar dataKey="value" fill="rgb(var(--color-accent-violet))" radius={[0, 4, 4, 0]} maxBarSize={24} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // ── histogram (distribution bars) ─────────────────────────────────────────
+  if (chart.type === "histogram") {
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 16 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
+            <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 9 }}
+              tickLine={false} axisLine={false} />
+            <YAxis tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
+              tickLine={false} axisLine={false} width={40} />
+            <Tooltip formatter={(v) => [`${Number(v) || 0} invoices`, "Count"]} />
+            <Bar dataKey="value" fill="rgb(var(--color-accent-cyan))" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // ── pareto (bar + cumulative % line) ──────────────────────────────────────
+  if (chart.type === "pareto") {
+    const sorted = [...data].sort((a, b) => (Number((b as any).value) || 0) - (Number((a as any).value) || 0));
+    const totalVal = sorted.reduce((s, d) => s + (Number((d as any).value) || 0), 0);
+    let cumSum = 0;
+    const paretoData = sorted.map((d) => {
+      cumSum += Number((d as any).value) || 0;
+      return { ...(d as any), cumPct: totalVal > 0 ? Math.round((cumSum / totalVal) * 100) : 0 };
+    });
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={paretoData} margin={{ top: 8, right: 40, left: 8, bottom: 16 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
+            <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 9 }}
+              tickLine={false} axisLine={false} />
+            <YAxis yAxisId="left" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
+              tickLine={false} axisLine={false} width={56}
+              tickFormatter={(v: number) => formatValue(chart.config.metric, chart.config.grouping, v)} />
+            <YAxis yAxisId="right" orientation="right" domain={[0, 100]}
+              tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
+              tickLine={false} axisLine={false} tickFormatter={(v: number) => `${v}%`} width={36} />
+            <Tooltip formatter={(v, name) =>
+              name === "cumPct" ? [`${Number(v) || 0}%`, "Cumulative %"] : [fmtCurrency(Number(v) || 0), "Value"]} />
+            <Bar yAxisId="left" dataKey="value" fill="rgb(var(--color-accent-violet))" radius={[4, 4, 0, 0]} />
+            <Line yAxisId="right" type="monotone" dataKey="cumPct"
+              stroke="rgb(var(--color-accent-cyan))" strokeWidth={2} dot={false} />
+            <ReferenceLine yAxisId="right" y={80} stroke="rgb(var(--color-accent-cyan))"
+              strokeDasharray="4 4" label={{ value: "80%", position: "right", fontSize: 9, fill: "rgb(var(--color-accent-cyan))" }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // ── gauge (radial financial health) ──────────────────────────────────────
+  if (chart.type === "gauge") {
+    const raw = (data[0] as any) ?? {};
+    const score = Math.max(0, Math.min(100, Number(raw.value) || 0));
+    const label = raw.label ?? (score >= 80 ? "Excellent" : score >= 60 ? "Good" : score >= 40 ? "Fair" : "Needs Attention");
+    const color = score >= 80 ? "#10B981" : score >= 60 ? "#0EA5E9" : score >= 40 ? "#F59E0B" : "#EF4444";
+    const gaugeData = [{ name: "Score", value: score, fill: color }, { name: "Remaining", value: 100 - score, fill: "transparent" }];
+    return (
+      <div style={{ height: h, width: "100%" }} className="flex flex-col items-center justify-center">
+        <ResponsiveContainer width="100%" height={isExpanded ? 300 : 200}>
+          <RadialBarChart cx="50%" cy="70%" innerRadius="60%" outerRadius="90%"
+            startAngle={180} endAngle={0} data={gaugeData}>
+            <RadialBar dataKey="value" background={{ fill: "rgba(var(--color-text-muted)/0.1)" }}
+              cornerRadius={8}>
+              {gaugeData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+            </RadialBar>
+          </RadialBarChart>
+        </ResponsiveContainer>
+        <div className="mt-[-40px] flex flex-col items-center gap-1">
+          <p className="text-4xl font-black" style={{ color }}>{score}</p>
+          <p className="text-sm font-semibold" style={{ color }}>{label}</p>
+          <p className="text-[10px] text-text-muted">Financial Health Score</p>
+          {raw.revenue > 0 && (
+            <div className="mt-2 flex gap-4 text-[10px] text-text-muted">
+              <span>Revenue: {fmtCurrency(raw.revenue)}</span>
+              <span>Collected: {raw.collectionRate}%</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── bubble (scatter with size dimension) ──────────────────────────────────
+  if (chart.type === "bubble") {
+    const maxZ = Math.max(...data.map((d) => Number((d as any).z) || 0), 1);
+    const bubbleData = data.map((d) => ({
+      ...(d as any),
+      z: Math.max(4, Math.round((Number((d as any).z) / maxZ) * 30)),
+    }));
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ScatterChart margin={{ top: 8, right: 8, left: 8, bottom: 24 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
+            <XAxis type="number" dataKey="x" name="Revenue"
+              tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
+              tickFormatter={(v: number) => fmtCurrency(v)} label={{ value: "Revenue", position: "bottom", fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
+            <YAxis type="number" dataKey="y" name="Invoices"
+              tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
+              label={{ value: "Invoices", angle: -90, position: "left", fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
+            <ZAxis type="number" dataKey="z" range={[40, 400]} />
+            <Tooltip cursor={{ strokeDasharray: "3 3" }}
+              content={({ payload }) => {
+                const d = payload?.[0]?.payload;
+                if (!d) return null;
+                return (
+                  <div className="rounded-lg border border-default bg-bg-elevated p-2 text-[10px] shadow-lg">
+                    <p className="font-semibold text-text-primary">{d.name}</p>
+                    <p className="text-text-muted">Revenue: {fmtCurrency(d.revenue ?? d.x)}</p>
+                    <p className="text-text-muted">Invoices: {d.invoices ?? d.y}</p>
+                    <p className="text-text-muted">Avg Invoice: {fmtCurrency(d.avgInvoice ?? 0)}</p>
+                  </div>
+                );
+              }} />
+            <Scatter data={bubbleData} fill="rgb(var(--color-accent-violet))" fillOpacity={0.7} />
+          </ScatterChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // ── kpi (multi-card grid) ─────────────────────────────────────────────────
+  if (chart.type === "kpi") {
+    const iconMap: Record<string, string> = {
+      revenue: "↑", expenses: "↓", profit: "◈", invoice: "◻", count: "#", overdue: "⚠"
+    };
+    const colorMap: Record<string, string> = {
+      revenue: "text-emerald-400", expenses: "text-red-400", profit: "text-violet-400",
+      invoice: "text-cyan-400", count: "text-blue-400", overdue: "text-amber-400"
+    };
+    return (
+      <div className="grid h-full w-full grid-cols-2 gap-2 p-1 md:grid-cols-3">
+        {data.map((item, i) => {
+          const d = item as any;
+          const fmt = d.format === "currency" ? fmtCurrency(d.value) : fmtNumber(d.value);
+          const icon = iconMap[d.icon ?? ""] ?? "◈";
+          const color = colorMap[d.icon ?? ""] ?? "text-violet-400";
+          return (
+            <div key={i} className="flex flex-col items-center justify-center gap-1 rounded-xl border border-default bg-bg-elevated/40 p-3 text-center">
+              <span className={`text-lg ${color}`}>{icon}</span>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted">{d.label}</p>
+              <p className={`text-lg font-black tracking-tight ${color}`}>{fmt}</p>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── heatmap (revenue vs expenses comparison grid) ─────────────────────────
+  if (chart.type === "heatmap") {
+    const maxVal = Math.max(...data.flatMap((d) => [Number((d as any).Revenue) || 0, Number((d as any).Expenses) || 0]), 1);
+    return (
+      <div style={{ height: h, width: "100%", overflowX: "auto" }}>
+        <div className="flex flex-col gap-1 min-w-[400px]">
+          {["Revenue", "Expenses", "Net"].map((series) => (
+            <div key={series} className="flex items-center gap-1">
+              <span className="w-16 shrink-0 text-[9px] font-semibold text-text-muted text-right pr-2">{series}</span>
+              <div className="flex flex-1 gap-[2px]">
+                {data.map((d, i) => {
+                  const val = Number((d as any)[series]) || 0;
+                  const intensity = series === "Net" ? Math.min(1, Math.abs(val) / maxVal) : Math.min(1, val / maxVal);
+                  const isNeg = val < 0;
+                  const bg = series === "Revenue"
+                    ? `rgba(124,58,237,${0.1 + intensity * 0.7})`
+                    : series === "Expenses"
+                    ? `rgba(239,68,68,${0.1 + intensity * 0.7})`
+                    : isNeg ? `rgba(239,68,68,${0.1 + intensity * 0.7})` : `rgba(16,185,129,${0.1 + intensity * 0.7})`;
+                  return (
+                    <div key={i} title={`${(d as any).name}: ${fmtCurrency(val)}`}
+                      className="flex flex-1 flex-col items-center justify-center rounded py-2 cursor-default transition-opacity hover:opacity-80"
+                      style={{ background: bg, minWidth: 32 }}>
+                      <span className="text-[8px] font-semibold text-text-primary">{fmtCurrency(Math.abs(val)).replace('$', '')}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center gap-1 mt-1">
+            <span className="w-16 shrink-0" />
+            <div className="flex flex-1 gap-[2px]">
+              {data.map((d, i) => (
+                <div key={i} className="flex flex-1 justify-center">
+                  <span className="text-[8px] text-text-muted">{String((d as any).name ?? "")}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -883,9 +1320,11 @@ function ChartCard({
 export function DashboardPreview({
   triggerSync,
   isGenerating = false,
+  sessionId,
 }: {
   triggerSync: number;
   isGenerating?: boolean;
+  sessionId?: string | null;
 }) {
   const { agent, loading } = useNumeriquApi();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -901,7 +1340,7 @@ export function DashboardPreview({
       setIsLoading(true);
       setError(null);
       try {
-        const latest = await agent.latestDashboard();
+        const latest = sessionId ? await agent.dashboardForSession(sessionId) : await agent.latestDashboard();
         if (latest) {
           const charts: Chart[] = (latest.charts ?? []).map((c) => ({
             id: c.id,
@@ -932,6 +1371,7 @@ export function DashboardPreview({
                   chart.config.orgId ?? null,
                   chart.config.breakdown ?? null,
                   chart.config.topN ?? null,
+                  chart.config.metric === "dynamic" ? chart.id : null,
                 );
                 dataMap[chart.id] = (res.data ?? []) as DataRow[];
               } catch {
@@ -942,6 +1382,7 @@ export function DashboardPreview({
           setChartData(dataMap);
         } else {
           setDashboard(null);
+          setChartData({});
         }
       } catch (caught) {
         const message =
@@ -955,7 +1396,7 @@ export function DashboardPreview({
     };
 
     void fetchDashboard();
-  }, [agent, loading, triggerSync]);
+  }, [agent, loading, triggerSync, sessionId]);
 
   // ── Loading / Generating state ──────────────────────────────────────────────
 

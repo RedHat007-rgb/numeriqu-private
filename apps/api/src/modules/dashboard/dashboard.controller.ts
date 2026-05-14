@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   Param,
   Patch,
@@ -92,20 +93,40 @@ export class DashboardController {
   ) {}
 
   @Get()
-  async list(@CurrentUser() user: AuthUser) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async list(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.dashboardService.list(context.organization.id, context.user.id);
   }
 
   @Get(':id')
-  async getById(@CurrentUser() user: AuthUser, @Param('id') dashboardId: string) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async getById(
+    @CurrentUser() user: AuthUser,
+    @Param('id') dashboardId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.dashboardService.getById(context.organization.id, context.user.id, dashboardId);
   }
 
   @Post()
-  async create(@CurrentUser() user: AuthUser, @Body() body: CreateDashboardDto) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async create(
+    @CurrentUser() user: AuthUser,
+    @Body() body: CreateDashboardDto,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.dashboardService.create({
       organizationId: context.organization.id,
       ownerId: context.user.id,
@@ -119,8 +140,15 @@ export class DashboardController {
 
   @Patch(':id/refresh')
   @HttpCode(200)
-  async refresh(@CurrentUser() user: AuthUser, @Param('id') dashboardId: string) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async refresh(
+    @CurrentUser() user: AuthUser,
+    @Param('id') dashboardId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.dashboardService.refresh(context.organization.id, context.user.id, dashboardId);
   }
 
@@ -130,8 +158,12 @@ export class DashboardController {
     @CurrentUser() user: AuthUser,
     @Param('id') dashboardId: string,
     @Body() body: ShareDashboardDto,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.dashboardService.share({
       organizationId: context.organization.id,
       requesterId: context.user.id,
@@ -147,8 +179,12 @@ export class DashboardController {
     @CurrentUser() user: AuthUser,
     @Param('id') dashboardId: string,
     @Param('userId') sharedWithUserId: string,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.dashboardService.unshare({
       organizationId: context.organization.id,
       requesterId: context.user.id,

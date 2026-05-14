@@ -1,16 +1,27 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Surface } from "../../../components/ui/Surface";
 import { Field } from "../../../components/ui/Field";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
 
-export function AuthPanel({ onDevToken }: { onDevToken: (token: string) => void }) {
+export function AuthPanel({
+  onDevToken,
+  error,
+}: {
+  onDevToken: (token: string) => void;
+  error?: string | null;
+}) {
   const router = useRouter();
   const [manualToken, setManualToken] = useState("");
   const [status, setStatus] = useState<{ tone: "info" | "danger"; text: string } | null>(null);
+  const [dismissedError, setDismissedError] = useState(false);
+
+  useEffect(() => {
+    setDismissedError(false);
+  }, [error]);
 
   return (
     <main className="relative min-h-screen bg-bg-base px-6 py-16 text-text-primary">
@@ -35,6 +46,11 @@ export function AuthPanel({ onDevToken }: { onDevToken: (token: string) => void 
               onDismiss={() => setStatus(null)}
             >
               {status.text}
+            </ErrorBanner>
+          ) : null}
+          {!status && error && !dismissedError ? (
+            <ErrorBanner tone="danger" onDismiss={() => setDismissedError(true)}>
+              {error}
             </ErrorBanner>
           ) : null}
 

@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   Inject,
   Logger,
@@ -111,11 +112,14 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(SupabaseAuthGuard)
-  async me(@CurrentUser() user: AuthUser) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+  async me(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return {
       user: {
         id: context.user.id,
@@ -173,8 +177,15 @@ export class AuthController {
 
   @Post('xero/connect')
   @UseGuards(SupabaseAuthGuard)
-  async connectXero(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const context = await this.organizationContext.ensureContext({ id: user.id, email: user.email });
+  async connectXero(
+    @CurrentUser() user: AuthUser,
+    @Body() body: any,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     const oauthState = randomUUID();
     const xero = this.getXeroClient(oauthState);
     const consentUrl = await xero.buildConsentUrl();
@@ -246,8 +257,14 @@ export class AuthController {
 
   @Post('quickbooks/connect')
   @UseGuards(SupabaseAuthGuard)
-  async connectQuickBooks(@CurrentUser() user: AuthUser) {
-    const context = await this.organizationContext.ensureContext({ id: user.id, email: user.email });
+  async connectQuickBooks(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     const stateToken = this.persistOAuthState({ organizationId: context.organization.id, userId: context.user.id });
 
     const url = new URL('https://appcenter.intuit.com/connect/oauth2');

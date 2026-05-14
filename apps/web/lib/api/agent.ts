@@ -47,6 +47,10 @@ export class AgentApi {
     return this.request<GeneratedDashboard | null>("/agent/dashboards/latest");
   }
 
+  dashboardForSession(sessionId: string) {
+    return this.request<GeneratedDashboard | null>(`/agent/sessions/${sessionId}/dashboard`);
+  }
+
   getDashboardSession(dashboardId: string) {
     return this.request<{ sessionId: string; sessionTitle: string } | null>(
       `/agent/dashboards/${dashboardId}/session`,
@@ -63,6 +67,7 @@ export class AgentApi {
     orgId?: string | null,
     breakdown?: Breakdown | null,
     topN?: number | null,
+    widgetId?: string | null,
   ) {
     const params = new URLSearchParams({ metric, grouping });
     if (providerHint) params.set("providerHint", providerHint);
@@ -75,6 +80,7 @@ export class AgentApi {
     if (typeof topN === "number" && Number.isFinite(topN)) {
       params.set("topN", String(topN));
     }
+    if (widgetId) params.set("widgetId", widgetId);
     if (timeRange?.kind) {
       params.set("rangeKind", String(timeRange.kind));
       if (timeRange.kind === "SINCE_DATE") {

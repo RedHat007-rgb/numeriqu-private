@@ -266,6 +266,27 @@ export type Organization = {
   memberCount: number;
 };
 
+// ── Workspace switcher (app organizations) ─────────────────────────────────
+
+export type WorkspaceSummary = {
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+    accountType: "SOLO" | "ORGANIZATION";
+    createdAt: string;
+    updatedAt: string;
+  };
+  membership: {
+    id: string;
+    role: OrganizationRole;
+    canViewDashboard: boolean;
+    canCreateDashboard: boolean;
+    canShareDashboard: boolean;
+    joinedAt: string;
+  };
+};
+
 export type OrgMember = {
   userId: string;
   email: string;

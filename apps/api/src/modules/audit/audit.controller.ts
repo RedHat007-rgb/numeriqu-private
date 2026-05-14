@@ -2,6 +2,7 @@ import {
   Controller,
   DefaultValuePipe,
   Get,
+  Headers,
   ParseIntPipe,
   Query,
   UseGuards,
@@ -24,8 +25,12 @@ export class AuditController {
   async events(
     @CurrentUser() user: AuthUser,
     @Query('limit', new DefaultValuePipe(100), ParseIntPipe) limit: number,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     await this.orgContext.assertAdmin(context.organization.id, context.user.id);
     const events = await this.auditService.listOrganizationAuditEvents(
       context.organization.id,

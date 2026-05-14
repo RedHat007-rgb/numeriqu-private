@@ -108,6 +108,41 @@ export class OrganizationService {
     }
   }
 
+  async listOrganizationsForUser(userId: string) {
+    const memberships = await this.prisma.organizationMembership.findMany({
+      where: { userId, leftAt: null },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            accountType: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: 'asc' },
+    });
+
+    return memberships.map((membership) => ({
+      organization: {
+        ...membership.organization,
+        createdAt: membership.organization.createdAt.toISOString(),
+        updatedAt: membership.organization.updatedAt.toISOString(),
+      },
+      membership: {
+        id: membership.id,
+        role: membership.role,
+        canViewDashboard: membership.canViewDashboard,
+        canCreateDashboard: membership.canCreateDashboard,
+        canShareDashboard: membership.canShareDashboard,
+        joinedAt: membership.joinedAt.toISOString(),
+      },
+    }));
+  }
+
   async listMembers(organizationId: string, requesterId: string) {
     await this.orgContext.assertOrganizationMember(organizationId, requesterId);
     const memberships = await this.prisma.organizationMembership.findMany({

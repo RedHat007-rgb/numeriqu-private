@@ -16,6 +16,8 @@ import {
   ArrowDownRight,
   Sparkles,
   ExternalLink,
+  Maximize2,
+  X,
 } from "lucide-react";
 import {
   AreaChart,
@@ -46,6 +48,47 @@ import { cn } from "../../../components/ui/cn";
 
 type SavedState = "loading" | "ready" | "error";
 type ChartData = Array<Record<string, number | string>>;
+type ZoomChartState = {
+  dashboardId: string;
+  dashboardTitle: string;
+  chart: WorkspaceDashboardSummary["charts"][number];
+  data: ChartData;
+} | null;
+
+// ─── Series Key Inference ─────────────────────────────────────────────────────
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function hasFiniteValueKey(rows: ChartData, key: string): boolean {
+  return rows.some((row) => toFiniteNumber((row as any)?.[key]) !== null);
+}
+
+function inferNumericSeriesKeys(rows: ChartData): string[] {
+  const totals = new Map<string, number>();
+
+  for (const row of rows) {
+    if (!row) continue;
+    for (const [k, raw] of Object.entries(row)) {
+      if (k === "name" || k === "value") continue;
+      const n = toFiniteNumber(raw);
+      if (n === null) continue;
+      totals.set(k, (totals.get(k) ?? 0) + Math.abs(n));
+    }
+  }
+
+  return Array.from(totals.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k]) => k);
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -299,13 +342,10 @@ function ChartRenderer({
 
   if (type === "bar") {
     const useHorizontalBars = grouping === "client" && data.length > 6;
-    const seriesKeys = (() => {
-      const first = data[0] as Record<string, unknown> | undefined;
-      if (!first) return [];
-      return Object.keys(first).filter((k) => k !== "name" && typeof (first as any)[k] === "number");
-    })();
-    const isMulti = seriesKeys.length >= 2 && grouping === "month";
     const trimmed = useHorizontalBars ? data.slice(0, 8) : data;
+    const seriesKeys = inferNumericSeriesKeys(trimmed);
+    const hasValueSeries = hasFiniteValueKey(trimmed, "value");
+    const isMulti = grouping === "month" && !hasValueSeries && seriesKeys.length >= 1;
     return (
       <div style={{ height: useHorizontalBars ? Math.max(h, trimmed.length * 24 + 24) : h }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -374,15 +414,22 @@ function ChartRenderer({
             )}
             <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
             {isMulti ? (
-              seriesKeys.slice(0, 4).map((k, idx) => (
-                <Bar
-                  key={k}
-                  dataKey={k}
-                  fill={PIE_COLORS[idx % PIE_COLORS.length]}
-                  radius={useHorizontalBars ? [6, 6, 6, 6] : [5, 5, 0, 0]}
-                  maxBarSize={useHorizontalBars ? 16 : 28}
+              <>
+                {seriesKeys.slice(0, 4).map((k, idx) => (
+                  <Bar
+                    key={k}
+                    dataKey={k}
+                    fill={PIE_COLORS[idx % PIE_COLORS.length]}
+                    radius={useHorizontalBars ? [6, 6, 6, 6] : [5, 5, 0, 0]}
+                    maxBarSize={useHorizontalBars ? 16 : 28}
+                  />
+                ))}
+                <Legend
+                  verticalAlign="top"
+                  height={24}
+                  wrapperStyle={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
                 />
-              ))
+              </>
             ) : (
               <Bar
                 dataKey="value"
@@ -520,10 +567,12 @@ function ExpandedDashboard({
   dashboard,
   chartData,
   loading,
+  onZoom,
 }: {
   dashboard: WorkspaceDashboardSummary;
   chartData: Record<string, ChartData>;
   loading: boolean;
+  onZoom: (next: ZoomChartState) => void;
 }) {
   if (loading) {
     return (
@@ -557,7 +606,28 @@ function ExpandedDashboard({
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.07, duration: 0.3 }}
-            className="surface-card p-4"
+            role="button"
+            tabIndex={0}
+            onClick={() =>
+              onZoom({
+                dashboardId: dashboard.id,
+                dashboardTitle: dashboard.title,
+                chart,
+                data,
+              })
+            }
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onZoom({
+                  dashboardId: dashboard.id,
+                  dashboardTitle: dashboard.title,
+                  chart,
+                  data,
+                });
+              }
+            }}
+            className="surface-card group cursor-pointer p-4 outline-none transition-colors hover:border-accent-violet/25 focus-visible:ring-2 focus-visible:ring-accent-violet/35"
           >
             <div className="mb-2 flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -570,7 +640,12 @@ function ExpandedDashboard({
                   </p>
                 )}
               </div>
-              <InsightPill type={chart.type} data={data} />
+              <div className="flex items-center gap-2">
+                <InsightPill type={chart.type} data={data} />
+                <span className="rounded-lg border border-default bg-bg-elevated/40 p-1 text-text-muted opacity-0 transition-opacity group-hover:opacity-100">
+                  <Maximize2 size={12} />
+                </span>
+              </div>
             </div>
             <div className="pointer-events-none">
               {data.length === 0 ? (
@@ -609,6 +684,7 @@ export function DashboardsPage() {
   const [savedError, setSavedError] = useState<string | null>(null);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [zoomChart, setZoomChart] = useState<ZoomChartState>(null);
   const [chartDataCache, setChartDataCache] = useState<
     Record<string, Record<string, ChartData>>
   >({});
@@ -638,6 +714,15 @@ export function DashboardsPage() {
     return () => window.removeEventListener("focus", onFocus);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!zoomChart) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setZoomChart(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [zoomChart]);
 
   async function handleRefresh(dashboardId: string) {
     setRefreshingId(dashboardId);
@@ -694,6 +779,79 @@ export function DashboardsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Zoom modal (chart click) */}
+      <AnimatePresence>
+        {zoomChart ? (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setZoomChart(null);
+            }}
+          >
+            <motion.div
+              className="w-full max-w-5xl overflow-hidden rounded-3xl border border-default bg-bg-card shadow-2xl"
+              initial={{ opacity: 0, y: 14, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.985 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-default px-5 py-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-text-muted">
+                    {zoomChart.dashboardTitle}
+                  </p>
+                  <h3 className="mt-1 truncate text-base font-semibold text-text-primary">
+                    {zoomChart.chart.title}
+                  </h3>
+                  {(zoomChart.chart.chartConfig as any)?.description ? (
+                    <p className="mt-1 line-clamp-2 text-xs text-text-secondary">
+                      {String((zoomChart.chart.chartConfig as any)?.description ?? "")}
+                    </p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setZoomChart(null)}
+                  className="rounded-xl border border-default bg-bg-elevated/40 p-2 text-text-muted transition-colors hover:border-accent-violet/25 hover:text-text-primary"
+                  title="Close"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div className="p-5">
+                {zoomChart.data.length === 0 ? (
+                  <div className="flex h-[420px] items-center justify-center rounded-2xl bg-bg-elevated/30">
+                    <p className="text-sm text-text-muted">No data available</p>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-default bg-bg-elevated/20 p-3">
+                    <ChartRenderer
+                      type={zoomChart.chart.type}
+                      data={zoomChart.data}
+                      chartId={zoomChart.chart.id}
+                      metric={String((zoomChart.chart.queryConfig as any)?.metric ?? "")}
+                      grouping={String((zoomChart.chart.queryConfig as any)?.grouping ?? "")}
+                    />
+                  </div>
+                )}
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="rounded-full bg-bg-elevated px-2 py-0.5 text-[10px] font-semibold text-text-muted ring-1 ring-default">
+                    {prettyChartType(zoomChart.chart.type)}
+                  </span>
+                  <p className="text-[10px] text-text-muted">
+                    Click outside or press Esc to close
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
       {/* Page header */}
       <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
@@ -867,6 +1025,7 @@ export function DashboardsPage() {
                             dashboard={item}
                             chartData={chartDataCache[item.id] ?? {}}
                             loading={isLoadingThis}
+                            onZoom={setZoomChart}
                           />
                         </div>
                       </motion.div>

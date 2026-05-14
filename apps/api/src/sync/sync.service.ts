@@ -142,6 +142,33 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         ORDER BY (tenant_id, org_id, provider, invoice_external_id, payment_id)
       `);
 
+      // 3c. Journal lines fact table — needed for CFO-grade P&L / margin / expense analytics.
+      // Populated by InlineTransformService.upsertFactJournalLines() (Xero-only for now).
+      await safeQuery(`
+        CREATE TABLE IF NOT EXISTS ${db}.fact_accounting_journal_lines (
+          journal_id      String,
+          journal_number  UInt64        DEFAULT 0,
+          journal_date    Nullable(DateTime),
+          source_type     String        DEFAULT '',
+          source_id       String        DEFAULT '',
+          line_id         String        DEFAULT '',
+          account_id      String        DEFAULT '',
+          account_code    String        DEFAULT '',
+          account_name    String        DEFAULT '',
+          line_amount     Decimal(18,4) DEFAULT 0,
+          description     String        DEFAULT '',
+          tenant_id       String,
+          user_id         String        DEFAULT '',
+          connection_id   String        DEFAULT '',
+          provider        String        DEFAULT '',
+          org_id          String        DEFAULT '',
+          org_name        String        DEFAULT '',
+          updated_at      DateTime      DEFAULT now(),
+          synced_at       DateTime      DEFAULT now()
+        ) ENGINE = ReplacingMergeTree()
+        ORDER BY (tenant_id, org_id, provider, journal_id, line_id)
+      `);
+
       // 4. Ensure Dimension Table (Chart of Accounts) — org-aware
       await safeQuery(`
         CREATE TABLE IF NOT EXISTS ${db}.dim_accounting_accounts (

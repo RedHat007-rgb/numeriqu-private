@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Headers, Inject, UseGuards, Query } from '@nestjs/common';
 import type { PrismaClient } from '@repo/db';
 import { SupabaseAuthGuard } from '../../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../../common/decorators/user.decorator';
@@ -17,11 +17,14 @@ export class AnalyticsController {
   ) {}
 
   @Get('insights')
-  async insights(@CurrentUser() user: AuthUser) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+  async insights(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     const dashboards = await this.prisma.dashboard.findMany({
       where: { organizationId: context.organization.id, deletedAt: null },
@@ -44,12 +47,13 @@ export class AnalyticsController {
     @CurrentUser() user: AuthUser,
     @Query('rangeKind') rangeKind?: string,
     @Query('rangeValue') rangeValue?: string,
+    @Headers('x-organization-id') orgHeader?: string,
   ) {
     const startedAt = Date.now();
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId: orgHeader },
+    );
     const organizationId = context.organization.id;
 
     const range = (() => {

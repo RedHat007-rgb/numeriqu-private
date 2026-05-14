@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Headers,
   UseGuards,
   UsePipes,
   ValidationPipe,
@@ -72,8 +73,14 @@ export class OrganizationController {
   ) {}
 
   @Get('current')
-  async current(@CurrentUser() user: AuthUser) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async current(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return {
       organization: context.organization,
       membership: {
@@ -86,21 +93,50 @@ export class OrganizationController {
     };
   }
 
-  @Get('members')
-  async members(@CurrentUser() user: AuthUser) {
+  /**
+   * GET /organizations — list all workspaces the user belongs to.
+   * Used by the web workspace switcher.
+   */
+  @Get()
+  async list(@CurrentUser() user: AuthUser) {
     const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    return this.organizationService.listOrganizationsForUser(context.user.id);
+  }
+
+  @Get('members')
+  async members(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.organizationService.listMembers(context.organization.id, context.user.id);
   }
 
   @Get('invites')
-  async invites(@CurrentUser() user: AuthUser) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async invites(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.organizationService.listInvites(context.organization.id, context.user.id);
   }
 
   @Post('invites')
-  async createInvite(@CurrentUser() user: AuthUser, @Body() body: CreateInviteDto) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async createInvite(
+    @CurrentUser() user: AuthUser,
+    @Body() body: CreateInviteDto,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.organizationService.createInvite({
       organizationId: context.organization.id,
       invitedById: context.user.id,
@@ -114,8 +150,15 @@ export class OrganizationController {
 
   @Post('invites/:id/resend')
   @HttpCode(200)
-  async resendInvite(@CurrentUser() user: AuthUser, @Param('id') inviteId: string) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async resendInvite(
+    @CurrentUser() user: AuthUser,
+    @Param('id') inviteId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.organizationService.resendInvite({
       organizationId: context.organization.id,
       inviteId,
@@ -125,8 +168,15 @@ export class OrganizationController {
 
   @Delete('invites/:id')
   @HttpCode(200)
-  async revokeInvite(@CurrentUser() user: AuthUser, @Param('id') inviteId: string) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async revokeInvite(
+    @CurrentUser() user: AuthUser,
+    @Param('id') inviteId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.organizationService.revokeInvite({
       organizationId: context.organization.id,
       inviteId,
@@ -150,8 +200,12 @@ export class OrganizationController {
     @CurrentUser() user: AuthUser,
     @Param('membershipId') membershipId: string,
     @Body() body: PermissionDto,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.organizationService.grantMembershipPermission({
       organizationId: context.organization.id,
       requesterId: context.user.id,
@@ -166,8 +220,12 @@ export class OrganizationController {
     @CurrentUser() user: AuthUser,
     @Param('membershipId') membershipId: string,
     @Param('permission') permission: 'VIEW_DASHBOARD' | 'CREATE_DASHBOARD' | 'SHARE_DASHBOARD',
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     return this.organizationService.revokeMembershipPermission({
       organizationId: context.organization.id,
       requesterId: context.user.id,

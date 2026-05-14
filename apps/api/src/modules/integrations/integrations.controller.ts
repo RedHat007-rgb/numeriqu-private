@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpException,
   HttpStatus,
   Inject,
@@ -27,11 +28,14 @@ export class IntegrationsController {
   ) {}
 
   @Get()
-  async listConnections(@CurrentUser() user: AuthUser) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+  async listConnections(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     const connections = await this.prisma.erpConnection.findMany({
       where: { organizationId: context.organization.id },
@@ -49,11 +53,14 @@ export class IntegrationsController {
   }
 
   @Get('jobs')
-  async listJobs(@CurrentUser() user: AuthUser) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+  async listJobs(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     const jobs = await this.prisma.syncJob.findMany({
       where: { organizationId: context.organization.id },
@@ -79,11 +86,15 @@ export class IntegrationsController {
   }
 
   @Post(':id/sync')
-  async syncConnection(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+  async syncConnection(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     const connection = await this.prisma.erpConnection.findFirst({
       where: { id, organizationId: context.organization.id },
@@ -107,11 +118,14 @@ export class IntegrationsController {
   }
 
   @Post('sync-all')
-  async syncAll(@CurrentUser() user: AuthUser) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+  async syncAll(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     const connections = await this.prisma.erpConnection.findMany({
       where: { organizationId: context.organization.id, status: 'ACTIVE' },
@@ -137,11 +151,15 @@ export class IntegrationsController {
   }
 
   @Delete(':id')
-  async deleteConnection(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    });
+  async deleteConnection(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     const existing = await this.prisma.erpConnection.findFirst({
       where: { id, organizationId: context.organization.id },

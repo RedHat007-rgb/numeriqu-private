@@ -20,6 +20,7 @@ import {
 import { Button } from "../../../components/ui/Button";
 import { cn } from "../../../components/ui/cn";
 import { CommandPalette } from "./CommandPalette";
+import type { WorkspaceSummary } from "../../../lib/api/types";
 
 const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon: any }> = [
   { href: "/dashboard", label: "Overview", description: "What changed, at a glance", icon: LayoutDashboard },
@@ -100,12 +101,18 @@ export function DashboardShell({
   userLabel,
   onSignOut,
   accountType,
+  currentWorkspaceId,
+  workspaces,
+  onSelectWorkspace,
   children,
 }: {
   tenantLabel: string;
   userLabel: string;
   onSignOut: () => Promise<void>;
   accountType: "SOLO" | "ORGANIZATION";
+  currentWorkspaceId: string | null;
+  workspaces: WorkspaceSummary[];
+  onSelectWorkspace: (organizationId: string) => Promise<void>;
   children: React.ReactNode;
 }) {
   const visibleNavItems =
@@ -255,6 +262,44 @@ export function DashboardShell({
                       <p className="mt-1 truncate text-sm font-semibold text-text-primary">{tenantLabel}</p>
                       {userLabel ? <p className="mt-0.5 truncate text-xs text-text-muted">{userLabel}</p> : null}
                     </div>
+                    {workspaces.length > 1 ? (
+                      <div className="border-b border-default p-2">
+                        <p className="px-2 pb-2 text-[10px] font-bold uppercase tracking-[0.22em] text-text-muted">
+                          Switch workspace
+                        </p>
+                        <div className="space-y-1">
+                          {workspaces.map((ws) => {
+                            const active = ws.organization.id === currentWorkspaceId;
+                            return (
+                              <button
+                                key={ws.organization.id}
+                                type="button"
+                                onClick={async () => {
+                                  setUserMenuOpen(false);
+                                  await onSelectWorkspace(ws.organization.id);
+                                }}
+                                className={cn(
+                                  "flex w-full items-start justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+                                  active
+                                    ? "bg-accent-blue/10 text-text-primary ring-1 ring-accent-blue/25"
+                                    : "text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary",
+                                )}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-semibold">{ws.organization.name}</p>
+                                  <p className="truncate text-[11px] text-text-muted">{ws.organization.slug}</p>
+                                </div>
+                                {active ? (
+                                  <span className="mt-0.5 shrink-0 rounded-lg bg-accent-blue/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-accent-blue ring-1 ring-accent-blue/25">
+                                    Active
+                                  </span>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
                     <div className="p-2">
                       <Link
                         href="/dashboard/settings"

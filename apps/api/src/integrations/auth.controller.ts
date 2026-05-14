@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Logger,
   Post,
   Req,
@@ -58,7 +59,8 @@ export class AuthController {
   private getXeroClient(state?: string): XeroClient {
     const scopes =
       process.env.XERO_SCOPES ||
-      'openid profile email offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read accounting.payments.read accounting.banktransactions.read accounting.manualjournals.read';
+      // NOTE: When scopes change, users must reconnect Xero to grant the new permissions.
+      'openid profile email offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read accounting.payments.read accounting.banktransactions.read accounting.manualjournals.read accounting.journals.read accounting.reports.read';
     return new XeroClient({
       clientId: process.env.XERO_CLIENT_ID!,
       clientSecret: process.env.XERO_CLIENT_SECRET!,
@@ -166,8 +168,15 @@ export class AuthController {
 
   @Post('xero/connect')
   @UseGuards(SupabaseAuthGuard)
-  async connectXero(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async connectXero(
+    @CurrentUser() user: AuthUser,
+    @Body() body: any,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     const requestedStartDate = this.normalizeStartDateInput(body.startDate);
 
     try {
@@ -197,8 +206,14 @@ export class AuthController {
 
   @Post('quickbooks/connect')
   @UseGuards(SupabaseAuthGuard)
-  async connectQuickBooks(@CurrentUser() user: AuthUser) {
-    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async connectQuickBooks(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     // Persist state server-side
     const stateToken = this.persistOAuthState({
@@ -318,14 +333,14 @@ export class AuthController {
           this.logger.error('QuickBooks background sync failed', err),
         );
 
-      res.redirect(`${webAppUrl}/?success=quickbooks_connected`);
+      res.redirect(`${webAppUrl}/dashboard/integrations?success=quickbooks_connected`);
     } catch (e: any) {
       this.logger.error('QuickBooks callback failed', e);
       const userError =
         e.status === 400
           ? encodeURIComponent(e.response?.message || 'Connection expired')
           : 'quickbooks_connection_failed';
-      res.redirect(`${webAppUrl}/?error=${userError}`);
+      res.redirect(`${webAppUrl}/dashboard/integrations?error=${userError}`);
     }
   }
 
@@ -400,21 +415,28 @@ export class AuthController {
           );
       }
 
-      res.redirect(`${webAppUrl}/?success=xero_connected`);
+      res.redirect(`${webAppUrl}/dashboard/integrations?success=xero_connected`);
     } catch (e: any) {
       this.logger.error('Xero callback failed', e);
       const userError =
         e.status === 400
           ? encodeURIComponent(e.response?.message || 'Connection expired')
           : 'xero_connection_failed';
-      res.redirect(`${webAppUrl}/?error=${userError}`);
+      res.redirect(`${webAppUrl}/dashboard/integrations?error=${userError}`);
     }
   }
 
   @Post('workday/setup')
   @UseGuards(SupabaseAuthGuard)
-  async setupWorkday(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async setupWorkday(
+    @CurrentUser() user: AuthUser,
+    @Body() body: any,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
 
     const connection = await prisma.erpConnection.upsert({
       where: {
@@ -468,8 +490,12 @@ export class AuthController {
       environment: string;
       companyId: string;
     },
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const { organization } = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const { organization } = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.logger.log(`Setting up Dynamics 365 for organization ${organization.id}`);
 
     // 1. Persist the connection with encrypted Client Secret

@@ -1160,8 +1160,8 @@ export function AgentWorkbench() {
             >
               <p className="text-[11px] text-text-muted">
                 <span className="font-semibold text-text-secondary">Viewing a past session.</span>
-                {" "}The dashboard below is your most recently generated one — dashboards are not stored per-session.
-                Send a message to generate a new one from this conversation.
+                {" "}The dashboard below is the one generated for this session (if available).
+                Send a message to regenerate or refine it from this conversation.
               </p>
             </motion.div>
           )}
@@ -1203,6 +1203,7 @@ export function AgentWorkbench() {
                 <DashboardPreview
                   triggerSync={syncTrigger}
                   isGenerating={isDashboardGenerating}
+                  sessionId={isHistoricalSession ? sessionId : null}
                 />
               </motion.div>
             )}

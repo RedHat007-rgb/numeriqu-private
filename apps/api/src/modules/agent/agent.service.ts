@@ -17,6 +17,26 @@ interface OrgScope {
 
 type MembershipRole = 'ADMIN' | 'USER';
 
+type ChartType =
+  | 'line'
+  | 'bar'
+  | 'pie'
+  | 'donut'
+  | 'metric'
+  | 'kpi'
+  | 'table'
+  | 'area'
+  | 'treemap'
+  | 'scatter'
+  | 'stacked_bar'
+  | 'waterfall'
+  | 'histogram'
+  | 'horizontal_bar'
+  | 'pareto'
+  | 'gauge'
+  | 'bubble'
+  | 'heatmap';
+
 interface ToolResult {
   tool: string;
   data: unknown;
@@ -32,11 +52,16 @@ interface AgentPlan {
     widgets: Array<{
       title: string;
       description: string;
-      type: 'line' | 'bar' | 'pie' | 'metric' | 'table';
+      type: ChartType;
       metric: string;
       grouping: string;
       breakdown?: 'client';
       topN?: number;
+      // Presentation-only hints for the frontend (ignored by /agent/metrics).
+      display?: {
+        donut?: boolean;
+        highlightMaxMin?: boolean;
+      };
       display_order: number;
     }>;
   };
@@ -48,7 +73,7 @@ interface DashboardEditPlan {
   add: Array<{
     title: string;
     description: string;
-    type: 'line' | 'bar' | 'pie' | 'metric' | 'table';
+    type: ChartType;
     metric: string;
     grouping: string;
     breakdown?: 'client';
@@ -58,7 +83,7 @@ interface DashboardEditPlan {
   modify: Array<{
     index: number;
     title?: string;
-    type?: 'line' | 'bar' | 'pie' | 'metric' | 'table';
+    type?: ChartType;
     description?: string;
   }>;
 }
@@ -85,7 +110,7 @@ interface ClarificationPrompt {
 
 type ExplicitChartConstraints = {
   exactCount?: number;
-  requiredTypes?: Array<'line' | 'bar' | 'pie' | 'metric' | 'table'>;
+  requiredTypes?: ChartType[];
 };
 
 type ClientResolution =
@@ -134,11 +159,13 @@ const VALID_WIDGETS = [
   { type: 'line', metric: 'outstanding', grouping: 'month' },
   { type: 'line', metric: 'paid', grouping: 'month' },
   { type: 'line', metric: 'invoice_count', grouping: 'month' },
+  { type: 'bar', metric: 'invoice_count', grouping: 'month' },
   { type: 'line', metric: 'overdue', grouping: 'month' },
   { type: 'line', metric: 'collection_rate', grouping: 'month' },
   { type: 'line', metric: 'mom_growth', grouping: 'month' },
   { type: 'line', metric: 'revenue', grouping: 'quarter' },
   { type: 'line', metric: 'avg_invoice', grouping: 'month' },
+  { type: 'bar', metric: 'avg_invoice', grouping: 'month' },
   // ── Comparison bars — entity / period
   { type: 'bar', metric: 'revenue', grouping: 'org' },
   { type: 'bar', metric: 'revenue', grouping: 'quarter' },
@@ -171,6 +198,49 @@ const VALID_WIDGETS = [
   // ── Payment efficiency distributions
   { type: 'bar', metric: 'payment_days', grouping: 'bucket' },
   { type: 'line', metric: 'dso', grouping: 'month' },
+
+  // ── P&L / Income Statement (sourced from fact_accounting_journal_lines)
+  { type: 'line',   metric: 'net_income',         grouping: 'month'   },
+  { type: 'bar',    metric: 'net_income',         grouping: 'month'   },
+  { type: 'bar',    metric: 'net_income',         grouping: 'quarter' },
+  { type: 'line',   metric: 'expense',            grouping: 'month'   },
+  { type: 'bar',    metric: 'expense',            grouping: 'month'   },
+  { type: 'bar',    metric: 'expense',            grouping: 'quarter' },
+  { type: 'line',   metric: 'gross_profit',       grouping: 'month'   },
+  { type: 'line',   metric: 'gross_margin_pct',   grouping: 'month'   },
+  { type: 'line',   metric: 'net_margin_pct',     grouping: 'month'   },
+  { type: 'line',   metric: 'ebitda',             grouping: 'month'   },
+  { type: 'line',   metric: 'revenue_vs_expense', grouping: 'month'   },
+  { type: 'bar',    metric: 'revenue_vs_expense', grouping: 'month'   },
+
+  // ── Expense breakdowns by GL account
+  { type: 'bar',    metric: 'expense',            grouping: 'account' },
+  { type: 'pie',    metric: 'expense',            grouping: 'account' },
+  { type: 'bar',    metric: 'opex',               grouping: 'account' },
+  { type: 'bar',    metric: 'cogs',               grouping: 'account' },
+
+  // ── CFO / controller-style extras
+  { type: 'area',   metric: 'revenue_cumulative', grouping: 'month' },
+  { type: 'line',   metric: 'revenue_cumulative', grouping: 'month' },
+  { type: 'bar',    metric: 'debits_credits',     grouping: 'month' },
+  { type: 'stacked_bar', metric: 'debits_credits', grouping: 'month' },
+  { type: 'bar',    metric: 'net_position',       grouping: 'month' },
+  { type: 'waterfall', metric: 'net_position',    grouping: 'month' },
+  { type: 'line',   metric: 'running_balance',    grouping: 'month' },
+  { type: 'bar',    metric: 'invoice_amount',     grouping: 'bucket' },
+  { type: 'table',  metric: 'top_invoices',       grouping: 'list' },
+  { type: 'pie',    metric: 'invoice_value',      grouping: 'invoice_type' },
+  { type: 'pie',    metric: 'transaction_value',  grouping: 'journal_type' },
+  { type: 'pie',    metric: 'transaction_value',  grouping: 'currency' },
+  { type: 'treemap', metric: 'expense',           grouping: 'account' },
+  { type: 'scatter', metric: 'invoice_amount',    grouping: 'time' },
+
+  // ── P&L tables and metric tiles
+  { type: 'table',  metric: 'pl',                 grouping: 'summary' },
+  { type: 'table',  metric: 'expense',            grouping: 'list'    },
+  { type: 'table',  metric: 'gl_transactions',    grouping: 'list'    },
+  { type: 'metric', metric: 'pl_summary',         grouping: 'summary' },
+  { type: 'metric', metric: 'expense_summary',    grouping: 'summary' },
 ] as const;
 
 // ─── Planning Prompt — minimal for fast Ollama inference ─────────────────────
@@ -182,93 +252,146 @@ const VALID_WIDGETS = [
 
 const PLANNER_SYSTEM = `You are a world-class CFO analytics copilot. Given a user query and LIVE DATA from their accounting system, design the minimum set of accurate charts needed to answer the user's request. Output JSON only. No explanation.
 
-AVAILABLE CHART TYPES — use ONLY these exact type/metric/grouping values:
+CHART TYPE MAPPING — map user language to EXACT type. This rule is ABSOLUTE — never substitute:
+  "line chart" → line          "bar chart" / "column chart" → bar           "area chart" → area
+  "waterfall chart" → waterfall  "stacked bar" / "stacked column" → stacked_bar
+  "pie chart" → pie              "donut chart" / "doughnut" / "ring chart" → donut
+  "treemap" → treemap            "scatter plot" / "scatter chart" → scatter
+  "histogram" → histogram        "horizontal bar" / "ranked horizontal bar" / "ranked bar" → horizontal_bar
+  "pareto chart" → pareto        "gauge chart" / "speedometer" → gauge
+  "bubble chart" → bubble        "heatmap" / "heat map" → heatmap
+  "KPI cards" / "KPI tiles" / "metric cards" → kpi    "metric" / "tile" → metric
+  "table" / "list" → table       "clustered bar" / "clustered column" → bar
+  "multi-line" → line (use breakdown param)   "box plot" → horizontal_bar
 
-LINE (trends over time):
-  line/revenue/month        — monthly revenue trend
-  bar/revenue/month         — monthly revenue trend (bar form when explicitly requested)
-  line/outstanding/month    — monthly outstanding AR build-up
-  line/paid/month           — monthly cash collected trend
-  line/invoice_count/month  — monthly invoice volume trend
-  line/overdue/month        — monthly overdue AR accumulation
-  line/collection_rate/month — monthly collection rate (paid / invoiced)
-  line/mom_growth/month     — month-on-month growth % (revenue)
-  line/revenue/quarter      — quarterly revenue as trend line
-  line/avg_invoice/month    — average invoice size trend
-  line/dso/month            — days sales outstanding trend (avg days to pay)
+AVAILABLE CHART VOCABULARY — use ONLY these exact type/metric/grouping values:
 
-BAR (ranked comparisons):
-  bar/revenue/org           — total revenue per entity
-  bar/revenue/quarter       — revenue per quarter
-  bar/invoices/org          — invoice count per entity
-  bar/outstanding/org       — outstanding balance per entity
-  bar/overdue/org           — overdue exposure per entity
-  bar/revenue/client        — total paid revenue per client
-  bar/total_invoiced/client — lifetime gross billing per client
-  bar/outstanding/client    — outstanding balance per client
-  bar/overdue/client        — overdue exposure per client
-  bar/invoices/client       — invoice count per client
-  bar/avg_invoice/client    — average invoice size per client
-  bar/paid/client           — cash collected per client
-  bar/collection_rate/client — % collected (paid / invoiced) per client
-  bar/overdue_rate/client    — % overdue (overdue / invoiced) per client
-  bar/payment_days/bucket    — payment speed histogram (days to pay buckets)
+LINE:
+  line/revenue/month              line/outstanding/month          line/paid/month
+  line/invoice_count/month        line/overdue/month              line/collection_rate/month
+  line/mom_growth/month           line/revenue/quarter            line/avg_invoice/month
+  line/dso/month                  line/net_income/month           line/expense/month
+  line/gross_profit/month         line/gross_margin_pct/month     line/net_margin_pct/month
+  line/ebitda/month               line/revenue_vs_expense/month   line/revenue_cumulative/month
+  line/running_balance/month
 
-PIE (proportional breakdowns):
-  pie/revenue/client        — revenue share by client
-  pie/revenue/provider      — revenue split by ERP system
-  pie/invoices/status       — invoice count by status
-  pie/outstanding/client    — outstanding concentration by client
+BAR:
+  bar/revenue/month               bar/revenue/org                 bar/revenue/quarter
+  bar/revenue/client              bar/total_invoiced/client       bar/outstanding/client
+  bar/overdue/client              bar/invoices/client             bar/avg_invoice/client
+  bar/avg_invoice/month           bar/paid/client                 bar/collection_rate/client
+  bar/expense/month               bar/expense/account             bar/net_income/month
+  bar/net_income/quarter          bar/revenue_vs_expense/month    bar/debits_credits/month
+  bar/net_position/month          bar/invoice_count/month         bar/top_invoices/value
+  bar/expense_by_type/source      bar/pl_accounts/account         bar/bs_accounts/account
+  bar/accounts_by_type/classification
 
-METRIC (tiles):
-  metric/venture/summary    — burn, runway, cash, efficiency
-  metric/top5_revenue_share/summary — % of revenue from top 5 clients
-  metric/collected_vs_outstanding/summary — % collected vs outstanding
+HORIZONTAL_BAR (horizontal ranked bars):
+  horizontal_bar/revenue/client   horizontal_bar/top_invoices/value
+  horizontal_bar/expense/account  horizontal_bar/overdue/client
 
-TABLE (rows):
-  table/invoices/list       — recent invoices (audit view)
-  table/overdue/aging       — overdue invoice aging table (0–30 / 31–60 / 60+)
-  table/payment_days/list   — per-invoice payment days list (issued → paid)
-  table/payment_days/list   — per-invoice payment days (issued → paid) for a client or overall
+STACKED_BAR:
+  stacked_bar/debits_credits/month    stacked_bar/expense_by_type/month
+  stacked_bar/revenue_vs_expense/month
+
+AREA:
+  area/revenue/month              area/revenue_cumulative/month   area/outstanding/month
+
+WATERFALL:
+  waterfall/net_position/month
+
+PIE:
+  pie/revenue/client              pie/invoices/status             pie/expense/account
+  pie/invoice_value/invoice_type  pie/transaction_value/source_type
+  pie/transaction_value/currency  pie/accounts/classification     pie/accounts/active_status
+
+DONUT (ring display, same data sources as pie):
+  donut/revenue/client            donut/invoice_value/invoice_type
+  donut/expense/account           donut/transaction_value/source_type
+  donut/transaction_value/currency  donut/accounts/classification
+
+TREEMAP:
+  treemap/expense/account         treemap/revenue/client
+
+SCATTER:
+  scatter/invoice_amount/time
+
+HISTOGRAM:
+  histogram/invoice_amount/bucket   histogram/payment_days/bucket
+
+PARETO:
+  pareto/revenue/client           pareto/expense/account
+
+BUBBLE:
+  bubble/clients/revenue_invoices_avg
+
+HEATMAP:
+  heatmap/revenue_expense/month
+
+GAUGE:
+  gauge/financial_health/summary
+
+KPI:
+  kpi/summary/overview
+
+METRIC:
+  metric/venture/summary          metric/pl_summary/summary       metric/expense_summary/summary
+
+TABLE:
+  table/invoices/list             table/overdue/aging             table/top_invoices/list
+  table/payment_days/list         table/pl/summary                table/expense/list
+  table/gl_transactions/list
 
 TOOLS:
-  revenue_trend             — monthly/quarterly revenue data
-  entity_comparison         — revenue, invoices, overdue per entity
-  invoice_breakdown         — invoice status analysis
-  venture_metrics           — burn rate, cash, runway
-  financial_summary         — overall totals and averages
-  client_breakdown          — top clients by revenue (from gold table)
-  client_financial_profile  — full per-client data: revenue, outstanding, overdue, counts, dates
-  (payment_days and dso are served via metrics: table/payment_days/list, bar/payment_days/bucket, line/dso/month)
-
-SPECIAL PARAMS (optional fields on a widget object):
-- breakdown: "client" (ONLY supported on line/revenue/month and bar/revenue/month)
-- topN: number (1–5). Only used when breakdown="client" (e.g. topN=2 for "top two clients")
+  revenue_trend, entity_comparison, invoice_breakdown, venture_metrics,
+  financial_summary, client_breakdown, client_financial_profile
 
 RULES:
-1. Read the LIVE DATA CONTEXT carefully — base your chart choices on the actual numbers
-2. If the user explicitly asks for specific chart types (e.g. "line chart", "bar chart", "table") or an exact number of charts, obey exactly.
-3. If the user does NOT specify charts, pick the best single chart (or at most 2-3) that answers the question with the least cognitive load.
-4. Only add extra charts if they are strictly necessary to answer the question.
-5. NEVER repeat the same metric+grouping twice
-6. Title the dashboard and each chart specifically — not generic names
-7. For client queries: prefer client_financial_profile tool + at least 1 client-grouping chart when relevant
-8. For payment-speed questions (days to pay / payment days / paid after / DSO): include table/payment_days/list. If the user asks for a trend, add line/dso/month. If they ask for distribution, add bar/payment_days/bucket.
-9. For trend queries: favour line charts; for comparisons: favour bar; for distribution: include a pie (except payment-days distribution uses bar/payment_days/bucket)
-10. Never invent unavailable metrics. If the request cannot be answered with the available chart vocabulary, choose the closest accurate chart.
+1. Read LIVE DATA CONTEXT — base choices on actual numbers.
+2. ABSOLUTE: If user names a chart type, output THAT EXACT type. "waterfall chart" → waterfall. "donut chart" → donut. "histogram" → histogram. "bubble chart" → bubble. "gauge" → gauge. NEVER substitute.
+3. If no chart type specified, pick best type for the data (trend→line, comparison→bar, proportion→pie, distribution→histogram).
+4. NEVER repeat same metric+grouping. Max 8 widgets per dashboard.
+5. Title each chart specifically — not generic.
+6. For cumulative/running total → area/revenue_cumulative/month or line/revenue_cumulative/month.
+7. For distribution → histogram/invoice_amount/bucket.
+8. For ranked horizontal bars → horizontal_bar type.
+9. For donut charts → donut type (never pie when user says donut).
+10. For executive/CFO dashboard → kpi/summary/overview + line/revenue_vs_expense/month + line/net_income/month + bar/expense/account + bar/revenue/client + table/pl/summary.
+11. For KPI cards → kpi/summary/overview.
+12. For gauge → gauge/financial_health/summary.
+13. For bubble → bubble/clients/revenue_invoices_avg.
+14. For Pareto → pareto/revenue/client or pareto/expense/account.
+15. For "split by invoice type" → pie/invoice_value/invoice_type or donut/invoice_value/invoice_type.
+16. For "by journal type" / "by source type" → pie/transaction_value/source_type or donut/transaction_value/source_type.
+17. For stacked expenses by month → stacked_bar/expense_by_type/month.
+18. For "by account type" / "P&L vs Balance Sheet" → bar/accounts_by_type/classification or pie/accounts/classification.
 
-OUTPUT FORMAT (JSON only, no markdown):
-Return ONLY candidates (you must provide 1-3 candidates):
-{"candidates":[{"title":"Candidate A","tools":["tool1"],"widgets":[...]},{"title":"Candidate B","tools":[...],"widgets":[...]}]}
+OUTPUT FORMAT (JSON only):
+{"candidates":[{"title":"...","tools":["tool1"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Trend"}]}]}
 
 EXAMPLES:
-Q: "who are my top clients" + 12 clients, $4.2M revenue, $45K overdue → {"title":"Top Client Revenue & Collection Intelligence","tools":["client_financial_profile","client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Total Revenue Collected"},{"type":"bar","metric":"outstanding","grouping":"client","title":"Outstanding Balance per Client"},{"type":"bar","metric":"overdue","grouping":"client","title":"Overdue Exposure per Client"},{"type":"pie","metric":"revenue","grouping":"client","title":"Revenue Concentration Risk"}]}
-Q: "show overdue invoices" + $45K overdue, 8 clients → {"title":"AR Collection Risk Analysis","tools":["invoice_breakdown","client_financial_profile"],"widgets":[{"type":"bar","metric":"overdue","grouping":"client","title":"Overdue Exposure by Client"},{"type":"line","metric":"overdue","grouping":"month","title":"Overdue AR Accumulation Trend"},{"type":"pie","metric":"invoices","grouping":"status","title":"Invoice Status Breakdown"}]}
-Q: "quarterly revenue breakdown" + 2 entities, $4.2M lifetime → {"title":"Quarterly Revenue Performance","tools":["revenue_trend","entity_comparison"],"widgets":[{"type":"bar","metric":"revenue","grouping":"quarter","title":"Quarterly Revenue Cadence"},{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Within Quarters"},{"type":"bar","metric":"revenue","grouping":"org","title":"Revenue by Entity"}]}
-Q: "compare entities" + 2 entities → {"title":"Entity Revenue Concentration","tools":["entity_comparison","financial_summary"],"widgets":[{"type":"bar","metric":"revenue","grouping":"org","title":"Revenue by Entity"},{"type":"bar","metric":"outstanding","grouping":"org","title":"Outstanding AR by Entity"},{"type":"bar","metric":"invoices","grouping":"org","title":"Invoice Volume by Entity"}]}
-Q: "revenue trend" + strong growth → {"title":"Revenue Growth & Momentum Analysis","tools":["revenue_trend","financial_summary"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Growth Trajectory"},{"type":"bar","metric":"revenue","grouping":"quarter","title":"Quarterly Revenue Acceleration"},{"type":"line","metric":"invoice_count","grouping":"month","title":"Invoice Volume Momentum"}]}
-Q: "month wise revenue for my top two clients for last six months as a bar chart" → {"title":"Top Client Revenue Trend","tools":["client_financial_profile"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":2,"title":"Top 2 Clients — Monthly Revenue"}]}
-Q: "CFO board pack" + all data available → {"title":"Executive Financial Intelligence Dashboard","tools":["financial_summary","revenue_trend","entity_comparison","client_financial_profile"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Revenue Growth Trajectory"},{"type":"bar","metric":"revenue","grouping":"client","title":"Top Client Revenue Ranking"},{"type":"bar","metric":"outstanding","grouping":"client","title":"Outstanding AR by Client"},{"type":"pie","metric":"invoices","grouping":"status","title":"Invoice Portfolio Health"}]}`;
+Q: "Create a line chart showing total revenue by month for the last 12 months" → {"candidates":[{"title":"Monthly Revenue — Last 12 Months","tools":["revenue_trend"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Total Revenue by Month"}]}]}
+Q: "Create an area chart showing cumulative revenue growth across the year" → {"candidates":[{"title":"Cumulative Revenue Growth","tools":["revenue_trend"],"widgets":[{"type":"area","metric":"revenue_cumulative","grouping":"month","title":"Cumulative Revenue Growth Across the Year"}]}]}
+Q: "Create a waterfall chart showing net monthly financial position using total credits minus total debits" → {"candidates":[{"title":"Net Monthly Financial Position","tools":["financial_summary"],"widgets":[{"type":"waterfall","metric":"net_position","grouping":"month","title":"Net Monthly Position — Credits Minus Debits"}]}]}
+Q: "Create a stacked bar chart showing debit and credit amounts by month" → {"candidates":[{"title":"Monthly Debits vs Credits","tools":["financial_summary"],"widgets":[{"type":"stacked_bar","metric":"debits_credits","grouping":"month","title":"Monthly Debits and Credits (Stacked)"}]}]}
+Q: "Create a donut chart showing the split of total transaction value by invoice type" → {"candidates":[{"title":"Invoice Type Distribution","tools":["financial_summary"],"widgets":[{"type":"donut","metric":"invoice_value","grouping":"invoice_type","title":"Transaction Value Split by Invoice Type"}]}]}
+Q: "Create a pie chart showing total transaction value by journal type such as AP, AR, EX" → {"candidates":[{"title":"Transaction Value by Source Type","tools":["financial_summary"],"widgets":[{"type":"pie","metric":"transaction_value","grouping":"source_type","title":"Transaction Value by Journal Type"}]}]}
+Q: "Create a histogram showing the distribution of invoice amounts" → {"candidates":[{"title":"Invoice Amount Distribution","tools":["financial_summary"],"widgets":[{"type":"histogram","metric":"invoice_amount","grouping":"bucket","title":"Invoice Amount Distribution"}]}]}
+Q: "Create a ranked horizontal bar chart showing the top 10 highest-value invoices" → {"candidates":[{"title":"Top 10 Highest-Value Invoices","tools":["financial_summary"],"widgets":[{"type":"horizontal_bar","metric":"top_invoices","grouping":"value","title":"Top 10 Invoices by Value"}]}]}
+Q: "Create a treemap showing expense contribution by account name" → {"candidates":[{"title":"Expense Treemap by Account","tools":["financial_summary"],"widgets":[{"type":"treemap","metric":"expense","grouping":"account","title":"Expense Contribution by Account"}]}]}
+Q: "Create a Pareto chart showing revenue concentration among top clients" → {"candidates":[{"title":"Revenue Pareto — Client Concentration","tools":["client_financial_profile"],"widgets":[{"type":"pareto","metric":"revenue","grouping":"client","title":"Revenue Concentration (80/20 Pareto)"}]}]}
+Q: "Create a bubble chart showing clients by total revenue, number of invoices, and average invoice value" → {"candidates":[{"title":"Client Revenue Bubble Analysis","tools":["client_financial_profile"],"widgets":[{"type":"bubble","metric":"clients","grouping":"revenue_invoices_avg","title":"Clients — Revenue vs Invoice Count vs Avg Value"}]}]}
+Q: "Create KPI cards showing total revenue, total expenses, net profit, avg invoice value, number of invoices, and ending balance" → {"candidates":[{"title":"Executive KPI Dashboard","tools":["financial_summary"],"widgets":[{"type":"kpi","metric":"summary","grouping":"overview","title":"Key Financial Performance Indicators"}]}]}
+Q: "Create a gauge chart showing current financial health" → {"candidates":[{"title":"Financial Health Gauge","tools":["financial_summary"],"widgets":[{"type":"gauge","metric":"financial_health","grouping":"summary","title":"Overall Financial Health Score"}]}]}
+Q: "Create a heatmap showing monthly revenue and expenses side by side" → {"candidates":[{"title":"Revenue vs Expenses Heatmap","tools":["financial_summary","revenue_trend"],"widgets":[{"type":"heatmap","metric":"revenue_expense","grouping":"month","title":"Monthly Revenue vs Expenses Heatmap"}]}]}
+Q: "Create a bar chart showing total expenses by account name" → {"candidates":[{"title":"Expense Breakdown by Account","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"expense","grouping":"account","title":"Total Expenses by Account Name"}]}]}
+Q: "Create a stacked column chart showing monthly expenses broken down by account category" → {"candidates":[{"title":"Monthly Expenses by Category","tools":["financial_summary"],"widgets":[{"type":"stacked_bar","metric":"expense_by_type","grouping":"month","title":"Monthly Expenses by Source Category"}]}]}
+Q: "Create a bar chart showing total transaction amount by account type" → {"candidates":[{"title":"Transactions by Account Type","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"accounts_by_type","grouping":"classification","title":"Total by Account Classification"}]}]}
+Q: "Create a bar chart showing total amount for Profit & Loss accounts" → {"candidates":[{"title":"P&L Accounts Breakdown","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"pl_accounts","grouping":"account","title":"P&L Accounts by Total Amount"}]}]}
+Q: "Create an executive summary dashboard" → {"candidates":[{"title":"Executive CFO Dashboard","tools":["financial_summary","revenue_trend","client_financial_profile"],"widgets":[{"type":"kpi","metric":"summary","grouping":"overview","title":"Executive KPIs"},{"type":"line","metric":"revenue_vs_expense","grouping":"month","title":"Revenue vs Expenses Trend"},{"type":"line","metric":"net_income","grouping":"month","title":"Net Income Trend"},{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Revenue"},{"type":"bar","metric":"expense","grouping":"account","title":"Top Expense Accounts"},{"type":"table","metric":"pl","grouping":"summary","title":"P&L Statement"}]}]}
+Q: "Show me my revenue dashboard" → {"candidates":[{"title":"Revenue Dashboard","tools":["revenue_trend","financial_summary","client_financial_profile"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Trend"},{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Revenue"},{"type":"metric","metric":"pl_summary","grouping":"summary","title":"Revenue KPIs"}]}]}
+Q: "Compare top two clients revenue for last six months" → {"candidates":[{"title":"Top 2 Clients — Revenue by Month","tools":["client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":2,"title":"Top 2 Clients — Revenue by Month"}]}]}
+Q: "Show top 3 clients revenue by month for last year" → {"candidates":[{"title":"Top 3 Clients — Monthly Revenue","tools":["client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":3,"title":"Top 3 Clients — Revenue by Month"}]}]}`;
 
 const PLANNER_SCHEMA = {
   type: 'object',
@@ -291,7 +414,26 @@ const PLANNER_SCHEMA = {
               properties: {
                 type: {
                   type: 'string',
-                  enum: ['line', 'bar', 'pie', 'metric', 'table'],
+                  enum: [
+                    'line',
+                    'bar',
+                    'pie',
+                    'donut',
+                    'metric',
+                    'kpi',
+                    'table',
+                    'area',
+                    'treemap',
+                    'scatter',
+                    'stacked_bar',
+                    'waterfall',
+                    'histogram',
+                    'horizontal_bar',
+                    'pareto',
+                    'gauge',
+                    'bubble',
+                    'heatmap',
+                  ],
                 },
                 metric: { type: 'string' },
                 grouping: { type: 'string' },
@@ -315,14 +457,23 @@ const PLANNER_SCHEMA = {
 const EDITOR_SYSTEM = `You are a precise financial dashboard editor. Apply the minimal change to satisfy the user's request.
 
 AVAILABLE WIDGET TYPES (use ONLY these exact pairs):
-LINE: revenue/month | outstanding/month | paid/month | invoice_count/month | overdue/month | collection_rate/month | mom_growth/month | revenue/quarter | avg_invoice/month
-BAR:  revenue/month
+LINE: revenue/month | outstanding/month | paid/month | invoice_count/month | overdue/month | collection_rate/month | mom_growth/month | revenue/quarter | avg_invoice/month | dso/month
+      net_income/month | expense/month | gross_profit/month | gross_margin_pct/month | net_margin_pct/month | ebitda/month | revenue_vs_expense/month
+      revenue_cumulative/month | running_balance/month
+BAR:  revenue/month | net_income/month | net_income/quarter | expense/month | expense/quarter | expense/account | opex/account | cogs/account
 BAR:  revenue/org | revenue/quarter | invoices/org | outstanding/org | overdue/org
       revenue/client | total_invoiced/client | outstanding/client | overdue/client | invoices/client | avg_invoice/client | paid/client
-      collection_rate/client | overdue_rate/client
-PIE:  invoices/status | revenue/provider | revenue/client | outstanding/client
-METRIC: venture/summary | top5_revenue_share/summary | collected_vs_outstanding/summary
-TABLE: invoices/list | overdue/aging
+      collection_rate/client | overdue_rate/client | payment_days/bucket
+      revenue_vs_expense/month | debits_credits/month | net_position/month | invoice_amount/bucket
+STACKED_BAR: debits_credits/month
+WATERFALL: net_position/month
+PIE:  invoices/status | revenue/provider | revenue/client | outstanding/client | expense/account
+      invoice_value/invoice_type | transaction_value/journal_type | transaction_value/currency
+TREEMAP: expense/account
+METRIC: venture/summary | top5_revenue_share/summary | collected_vs_outstanding/summary | pl_summary/summary | expense_summary/summary
+TABLE: invoices/list | overdue/aging | payment_days/list | pl/summary | expense/list | gl_transactions/list
+      top_invoices/list
+SCATTER: invoice_amount/time
 
 OUTPUT: Respond with ONLY valid JSON. Zero explanation. Zero markdown.
 
@@ -358,7 +509,18 @@ const EDITOR_SCHEMA = {
           description: { type: 'string' },
           type: {
             type: 'string',
-            enum: ['line', 'bar', 'pie', 'metric', 'table'],
+            enum: [
+              'line',
+              'bar',
+              'pie',
+              'metric',
+              'table',
+              'area',
+              'treemap',
+              'scatter',
+              'stacked_bar',
+              'waterfall',
+            ],
           },
           metric: { type: 'string' },
           grouping: { type: 'string' },
@@ -376,7 +538,18 @@ const EDITOR_SCHEMA = {
           title: { type: 'string' },
           type: {
             type: 'string',
-            enum: ['line', 'bar', 'pie', 'metric', 'table'],
+            enum: [
+              'line',
+              'bar',
+              'pie',
+              'metric',
+              'table',
+              'area',
+              'treemap',
+              'scatter',
+              'stacked_bar',
+              'waterfall',
+            ],
           },
           description: { type: 'string' },
         },
@@ -401,6 +574,70 @@ RULES:
 - Maximum 3 sentences. No headers. No bullet points. No financial analysis.
 - Never invent numbers. Never give advice.
 - If dashboard was edited: mention what changed instead.`;
+
+// ─── Analytics Schema Context (for dynamic SQL generation) ───────────────────
+
+const ANALYTICS_SCHEMA_CONTEXT = `
+ClickHouse Analytics Database Schema — available tables for querying:
+
+TABLE: v_fact_accounting_invoices_latest
+  Columns: connection_id, tenant_id, org_id, provider, invoice_id, invoice_number,
+    invoice_type, contact_name, contact_id, status, issued_at, due_at, paid_at,
+    total_amount, amount_due, amount_paid, currency, updated_at
+  Filters always required: org_id IN ({externalOrgIds:Array(String)})
+  Notes: status values are 'paid','open','overdue','voided','draft'
+         invoice_type = 'ACCREC' for sales invoices on Xero
+         total_amount is in local currency; positive = revenue
+
+TABLE: v_dim_clients_latest
+  Columns: connection_id, tenant_id, org_id, provider, client_id, client_name,
+    total_invoiced, total_paid, outstanding, overdue, invoice_count,
+    avg_invoice_amount, last_invoice_date, updated_at
+  Filters always required: org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_fact_accounting_journal_lines_latest
+  Columns: connection_id, tenant_id, org_id, provider, journal_id, line_id,
+    journal_number, journal_date, account_id, account_code, account_name,
+    line_amount, description, source_type, updated_at
+  Filters always required: org_id IN ({externalOrgIds:Array(String)})
+  Notes: line_amount is signed (positive = debit/expense, negative = credit/revenue in some systems)
+         account_name contains GL account labels like 'Sales Revenue', 'Rent Expense', 'COGS', etc.
+         journal_date is DateTime — use toStartOfMonth(journal_date) for monthly grouping
+
+IMPORTANT ClickHouse rules:
+- Always filter: org_id IN ({externalOrgIds:Array(String)})
+- Use toStartOfMonth(col) for monthly grouping, formatDateTime(col, '%Y-%m') for labels
+- Use formatDateTime(toStartOfMonth(col), '%b %Y') for human-readable month labels
+- No CTEs (WITH clause) — use subqueries or flat SQL
+- For the output column "name", always put the label/dimension
+- For the output column "value", always put the primary numeric measure
+- Additional numeric columns are fine (they render as multi-series)
+- Add ORDER BY on the time or dimension column
+- Always add LIMIT (max 500 rows)
+- NEVER access system tables or tables not listed above
+- NEVER use INSERT, UPDATE, DELETE, DROP, CREATE, ALTER
+- Output column aliases must be simple snake_case (no spaces)
+`;
+
+const DYNAMIC_SQL_SYSTEM = `You are a ClickHouse SQL expert generating safe, read-only analytical queries for a financial dashboard.
+
+SCHEMA:
+${ANALYTICS_SCHEMA_CONTEXT}
+
+TASK: Given a financial question and a chart title, write ONE ClickHouse SELECT statement.
+
+RULES:
+1. Output ONLY the raw SQL — no explanation, no markdown, no code fences
+2. Always include: WHERE org_id IN ({externalOrgIds:Array(String)})
+3. Always include LIMIT (use 100 for aggregates, 500 for lists)
+4. The query MUST return at least a "name" column (dimension label) and a "value" column (primary metric)
+5. Additional numeric columns are allowed for multi-series charts
+6. Sort by time ascending for trends, by value descending for rankings
+7. Use simple aggregations: sum(), count(), avg(), max(), min()
+8. For monthly trends: GROUP BY toStartOfMonth(col) ORDER BY toStartOfMonth(col)
+9. For rankings: GROUP BY dimension ORDER BY value DESC
+10. Never use WITH (CTE), window functions, or ARRAY JOIN unless essential
+11. Keep queries simple and fast — max 2 JOINs`;
 
 // ─── AgentService ─────────────────────────────────────────────────────────────
 
@@ -529,6 +766,87 @@ export class AgentService {
         ];
         for (const q of migrations) await safeDDL(q);
 
+        // FINAL is not supported on plain MergeTree, and even on ReplacingMergeTree it may
+        // still return duplicates until merges complete. Create "latest" views that are
+        // safe and deterministic across table engines.
+        await safeDDL(`
+          CREATE VIEW IF NOT EXISTS ${db}.v_fact_accounting_invoices_latest AS
+          SELECT
+            tenant_id,
+            org_id,
+            provider,
+            invoice_id,
+            argMax(user_id, updated_at)             AS user_id,
+            argMax(connection_id, updated_at)       AS connection_id,
+            argMax(org_name, updated_at)            AS org_name,
+            argMax(invoice_external_id, updated_at) AS invoice_external_id,
+            argMax(invoice_number, updated_at)      AS invoice_number,
+            argMax(total_amount, updated_at)        AS total_amount,
+            argMax(amount_due, updated_at)          AS amount_due,
+            argMax(amount_paid, updated_at)         AS amount_paid,
+            argMax(amount_credited, updated_at)     AS amount_credited,
+            argMax(currency, updated_at)            AS currency,
+            argMax(issued_at, updated_at)           AS issued_at,
+            argMax(due_at, updated_at)              AS due_at,
+            argMax(paid_at, updated_at)             AS paid_at,
+            argMax(status, updated_at)              AS status,
+            argMax(invoice_type, updated_at)        AS invoice_type,
+            argMax(contact_id, updated_at)          AS contact_id,
+            argMax(contact_name, updated_at)        AS contact_name
+          FROM ${db}.fact_accounting_invoices
+          GROUP BY tenant_id, org_id, provider, invoice_id
+        `);
+
+        await safeDDL(`
+          CREATE VIEW IF NOT EXISTS ${db}.v_dim_clients_latest AS
+          SELECT
+            tenant_id,
+            org_id,
+            provider,
+            client_id,
+            argMax(client_name, updated_at)        AS client_name,
+            argMax(org_name, updated_at)           AS org_name,
+            argMax(currency, updated_at)           AS currency,
+            argMax(total_invoiced, updated_at)     AS total_invoiced,
+            argMax(total_revenue, updated_at)      AS total_revenue,
+            argMax(total_outstanding, updated_at)  AS total_outstanding,
+            argMax(total_overdue, updated_at)      AS total_overdue,
+            argMax(invoice_count, updated_at)      AS invoice_count,
+            argMax(paid_count, updated_at)         AS paid_count,
+            argMax(outstanding_count, updated_at)  AS outstanding_count,
+            argMax(overdue_count, updated_at)      AS overdue_count,
+            argMax(draft_count, updated_at)        AS draft_count,
+            argMax(avg_invoice_amount, updated_at) AS avg_invoice_amount,
+            argMax(first_invoice_date, updated_at) AS first_invoice_date,
+            argMax(last_invoice_date, updated_at)  AS last_invoice_date
+          FROM ${db}.dim_clients
+          GROUP BY tenant_id, org_id, provider, client_id
+        `);
+
+        await safeDDL(`
+          CREATE VIEW IF NOT EXISTS ${db}.v_fact_accounting_journal_lines_latest AS
+          SELECT
+            tenant_id,
+            org_id,
+            provider,
+            journal_id,
+            line_id,
+            argMax(journal_number, updated_at)  AS journal_number,
+            argMax(journal_date,   updated_at)  AS journal_date,
+            argMax(source_type,    updated_at)  AS source_type,
+            argMax(source_id,      updated_at)  AS source_id,
+            argMax(account_id,     updated_at)  AS account_id,
+            argMax(account_code,   updated_at)  AS account_code,
+            argMax(account_name,   updated_at)  AS account_name,
+            argMax(line_amount,    updated_at)  AS line_amount,
+            argMax(description,    updated_at)  AS description,
+            argMax(user_id,        updated_at)  AS user_id,
+            argMax(connection_id,  updated_at)  AS connection_id,
+            argMax(org_name,       updated_at)  AS org_name
+          FROM ${db}.fact_accounting_journal_lines
+          GROUP BY tenant_id, org_id, provider, journal_id, line_id
+        `);
+
         this.analyticsSchemaEnsured = true;
       } catch (err: any) {
         // Non-fatal: queries may still work if schema already exists; otherwise caller will see a query error.
@@ -609,19 +927,51 @@ export class AgentService {
       orderBy: { updatedAt: 'desc' },
       include: { widgets: { orderBy: { displayOrder: 'asc' } } },
     });
-    if (!dashboard) return null;
+    return dashboard ? this.serializeDashboard(dashboard) : null;
+  }
+
+  async dashboardForSession(
+    organizationId: string,
+    userId: string,
+    sessionId: string,
+  ) {
+    const req = await this.prisma.agentDashboardRequest.findFirst({
+      where: {
+        organizationId,
+        requestedById: userId,
+        agentSessionId: sessionId,
+        generatedDashboardId: { not: null },
+      },
+      orderBy: [{ completedAt: 'desc' }, { updatedAt: 'desc' }],
+      select: { generatedDashboardId: true },
+    });
+    if (!req?.generatedDashboardId) return null;
+
+    const dashboard = await this.prisma.dashboard.findFirst({
+      where: {
+        id: req.generatedDashboardId,
+        organizationId,
+        ownerId: userId,
+        deletedAt: null,
+      },
+      include: { widgets: { orderBy: { displayOrder: 'asc' } } },
+    });
+    return dashboard ? this.serializeDashboard(dashboard) : null;
+  }
+
+  private serializeDashboard(dashboard: any) {
     return {
       id: dashboard.id,
       title: dashboard.title,
       description: dashboard.description,
-      charts: dashboard.widgets.map((w) => ({
+      charts: (dashboard.widgets ?? []).map((w: any) => ({
         id: w.id,
         title: w.title,
         description: (w.chartConfig as any)?.description ?? null,
         type: w.chartType,
         config:
           typeof w.queryConfig === 'object' && w.queryConfig
-            ? (w.queryConfig as Record<string, string>)
+            ? (w.queryConfig as Record<string, unknown>)
             : { metric: 'revenue', grouping: 'month' },
         layoutIndex: w.displayOrder,
       })),
@@ -642,10 +992,30 @@ export class AgentService {
     orgId?: string,
     breakdown?: string,
     topN?: number,
+    widgetId?: string,
   ) {
     await this.ensureAnalyticsSchema();
     const scope = await this.getOrgScope(organizationId, role, orgId);
-    if (scope.connectionIds.length === 0) return { data: [] };
+    if (scope.externalOrgIds.length === 0) return { data: [] };
+
+    // Dynamic SQL widget — look up stored SQL from the widget's queryConfig and execute it
+    if (metric === 'dynamic' && widgetId) {
+      try {
+        const widget = await this.prisma.dashboardWidget.findFirst({
+          where: { id: widgetId, organizationId },
+          select: { queryConfig: true },
+        });
+        const cfg = widget?.queryConfig as Record<string, unknown> | null;
+        const sql = typeof cfg?.dynamicSql === 'string' ? cfg.dynamicSql : null;
+        if (sql) {
+          const data = await this.executeDynamicSql(sql, scope);
+          return { data };
+        }
+      } catch (err: any) {
+        this.logger.warn(`[Agent:Dynamic] widgetId=${widgetId} SQL exec failed: ${err.message}`);
+      }
+      return { data: [] };
+    }
     // Enforce member scoping on read endpoints too: never mix entities for non-admins.
     if (role !== 'ADMIN' && !orgId && scope.externalOrgIds.length > 1)
       return { data: [] };
@@ -698,6 +1068,12 @@ export class AgentService {
       }
       return 'now()';
     })();
+    const requestedTopN = (() => {
+      if (typeof topN !== 'number' || !Number.isFinite(topN)) return null;
+      const n = Math.floor(topN);
+      if (n <= 0) return null;
+      return Math.max(1, Math.min(50, n));
+    })();
 
     // For Xero, the Invoices endpoint contains both sales (ACCREC) and bills (ACCPAY).
     // We prefer ACCREC, but older ingestions may have blank invoice_type; don't exclude all data in that case.
@@ -708,15 +1084,15 @@ export class AgentService {
         `SELECT
            coalesce(sum(total_amount), 0) AS total_revenue,
            coalesce(sumIf(total_amount, lowerUTF8(status) NOT IN ('paid','closed')), 0) AS open_amount
-         FROM ${this.analyticsDb}.fact_accounting_invoices
-         WHERE connection_id IN ({connectionIds:Array(String)})
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)})
            ${provider}
            ${client}
            ${clientListFact}
            ${entity}
            ${time}`,
         {
-          connectionIds: scope.connectionIds,
+          externalOrgIds: scope.externalOrgIds,
           ...providerParam,
           ...clientParam,
           ...clientListParam,
@@ -753,7 +1129,7 @@ export class AgentService {
              issued_at,
              provider,
              invoice_type
-           FROM ${this.analyticsDb}.fact_accounting_invoices
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
            WHERE org_id IN ({externalOrgIds:Array(String)})
              ${provider}
              ${time}
@@ -790,7 +1166,7 @@ export class AgentService {
       } catch {
         const rows = await this.queryRows<any>(
           `SELECT total_revenue
-           FROM ${this.analyticsDb}.dim_clients FINAL
+           FROM ${this.analyticsDb}.v_dim_clients_latest
            WHERE org_id IN ({externalOrgIds:Array(String)}) AND client_name != ''
            ORDER BY total_revenue DESC LIMIT 100`,
           { externalOrgIds: scope.externalOrgIds },
@@ -869,7 +1245,7 @@ export class AgentService {
              sum(total_invoiced) AS total_invoiced,
              sum(total_revenue) AS total_collected,
              sum(total_outstanding) AS total_outstanding
-           FROM ${this.analyticsDb}.dim_clients FINAL
+           FROM ${this.analyticsDb}.v_dim_clients_latest
            WHERE org_id IN ({externalOrgIds:Array(String)})`,
           { externalOrgIds: scope.externalOrgIds },
         );
@@ -928,13 +1304,13 @@ export class AgentService {
       const rows = await this.queryRows<any>(
         `SELECT status, coalesce(sum(total_amount), 0) AS total_amount, count() AS total_count
          FROM ${this.analyticsDb}.fact_accounting_invoices
-         WHERE connection_id IN ({connectionIds:Array(String)})
+         WHERE org_id IN ({externalOrgIds:Array(String)})
            ${provider}
            ${client}
            ${time}
          GROUP BY status ORDER BY total_amount DESC`,
         {
-          connectionIds: scope.connectionIds,
+          externalOrgIds: scope.externalOrgIds,
           ...providerParam,
           ...clientParam,
         },
@@ -961,14 +1337,14 @@ export class AgentService {
 	           provider,
 	           currency
 	         FROM ${this.analyticsDb}.fact_accounting_invoices
-	         WHERE connection_id IN ({connectionIds:Array(String)})
+	         WHERE org_id IN ({externalOrgIds:Array(String)})
 	           ${provider}
 	           ${client}
 	           ${time}
 	         ORDER BY issued_at DESC
 	         LIMIT 50`,
         {
-          connectionIds: scope.connectionIds,
+          externalOrgIds: scope.externalOrgIds,
           ...providerParam,
           ...clientParam,
         },
@@ -992,10 +1368,12 @@ export class AgentService {
 	             provider,
 	             currency,
 	             toDecimal64(total_amount, 4) AS total_amount
-	           FROM ${this.analyticsDb}.fact_accounting_invoices
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${provider}
 	             ${client}
+	             ${clientListFact}
+	             ${entity}
 	             ${time}
 	             ${arFilter}
 	             AND issued_at IS NOT NULL
@@ -1008,6 +1386,7 @@ export class AgentService {
 	             sum(amount) AS paid_to_date
 	           FROM ${this.analyticsDb}.fact_accounting_payment_applications
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
+	             ${entity}
 	             AND payment_at IS NOT NULL
 	             AND payment_at <= ${rangeEndExpr}
 	             AND invoice_external_id != ''
@@ -1040,6 +1419,8 @@ export class AgentService {
           externalOrgIds: scope.externalOrgIds,
           ...providerParam,
           ...clientParam,
+          ...clientListParam,
+          ...entityParam,
         },
       );
       return { data: rows };
@@ -1048,16 +1429,103 @@ export class AgentService {
     // ── dso/month (line) ─────────────────────────────────────────────────────
     if (metric === 'dso' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+
+      // Explicit client comparison: pivot DSO trend per selected clients
+      if (
+        breakdown === 'client' &&
+        normalizedClientNames &&
+        normalizedClientNames.length >= 2
+      ) {
+        const explicitClients = normalizedClientNames
+          .map((c) => c.toLowerCase())
+          .filter(Boolean)
+          .slice(0, 5);
+
+        const rows = await this.queryRows<any>(
+          `WITH invoices AS (
+             SELECT
+               invoice_external_id,
+               issued_at,
+               paid_at,
+               coalesce(nullIf(contact_name, ''), 'Unknown') AS client_name,
+               lowerUTF8(coalesce(nullIf(contact_name, ''), 'Unknown')) AS client_name_lower
+             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+             WHERE org_id IN ({externalOrgIds:Array(String)})
+               ${provider}
+               ${clientListFact}
+               ${entity}
+               ${time}
+               ${arFilter}
+               AND issued_at IS NOT NULL
+               AND invoice_external_id != ''
+               AND client_name_lower IN ({clientNames:Array(String)})
+           ),
+           paid_apps AS (
+             SELECT
+               invoice_external_id,
+               max(payment_at) AS last_paid_at
+             FROM ${this.analyticsDb}.fact_accounting_payment_applications
+             WHERE org_id IN ({externalOrgIds:Array(String)})
+               ${entity}
+               AND payment_at IS NOT NULL
+               AND payment_at <= ${rangeEndExpr}
+               AND invoice_external_id != ''
+             GROUP BY invoice_external_id
+           ),
+           joined AS (
+             SELECT
+               i.client_name,
+               i.client_name_lower,
+               i.invoice_external_id,
+               i.issued_at,
+               coalesce(p.last_paid_at, i.paid_at) AS resolved_paid_at
+             FROM invoices i
+             LEFT JOIN paid_apps p ON p.invoice_external_id = i.invoice_external_id
+           )
+           SELECT
+             formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
+             toStartOfMonth(issued_at) AS month_start,
+             client_name,
+             avg(dateDiff('day', toDate(issued_at), toDate(resolved_paid_at))) AS avg_days_to_pay,
+             count() AS paid_invoice_count
+           FROM joined
+           WHERE resolved_paid_at IS NOT NULL
+             AND resolved_paid_at >= issued_at
+           GROUP BY month, month_start, client_name
+           ORDER BY month_start ASC, client_name ASC
+           LIMIT 240`,
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...providerParam,
+            ...clientListParam,
+            ...entityParam,
+            clientNames: explicitClients,
+          },
+        );
+
+        const map = new Map<string, any>();
+        for (const r of rows) {
+          const key = String(r.month);
+          const existing = map.get(key) ?? { name: key };
+          existing[String(r.client_name)] =
+            Math.round(this.num(r.avg_days_to_pay) * 10) / 10;
+          map.set(key, existing);
+        }
+        return { data: Array.from(map.values()) };
+      }
+
       const rows = await this.queryRows<any>(
         `WITH invoices AS (
 	           SELECT
 	             invoice_external_id,
 	             issued_at,
 	             paid_at
-	           FROM ${this.analyticsDb}.fact_accounting_invoices
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${provider}
 	             ${client}
+	             ${clientListFact}
+	             ${entity}
 	             ${time}
 	             ${arFilter}
 	             AND issued_at IS NOT NULL
@@ -1069,6 +1537,7 @@ export class AgentService {
 	             max(payment_at) AS last_paid_at
 	           FROM ${this.analyticsDb}.fact_accounting_payment_applications
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
+	             ${entity}
 	             AND payment_at IS NOT NULL
 	             AND payment_at <= ${rangeEndExpr}
 	             AND invoice_external_id != ''
@@ -1097,6 +1566,8 @@ export class AgentService {
           externalOrgIds: scope.externalOrgIds,
           ...providerParam,
           ...clientParam,
+          ...clientListParam,
+          ...entityParam,
         },
       );
       return {
@@ -1179,9 +1650,212 @@ export class AgentService {
       };
     }
 
+    // ── invoice_amount/bucket (invoice size histogram) ───────────────────────
+    if (metric === 'invoice_amount' && grouping === 'bucket') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `WITH scoped AS (
+           SELECT
+             abs(toFloat64(total_amount)) AS amount
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${provider}
+             ${client}
+             ${entity}
+             ${time}
+             ${arFilter}
+             AND issued_at IS NOT NULL
+         )
+         SELECT
+           multiIf(
+             amount < 100, '0-99',
+             amount < 500, '100-499',
+             amount < 1000, '500-999',
+             amount < 5000, '1K-4.9K',
+             amount < 10000, '5K-9.9K',
+             amount < 50000, '10K-49.9K',
+             '50K+'
+           ) AS bucket,
+           count() AS invoice_count
+         FROM scoped
+         GROUP BY bucket
+         ORDER BY
+           multiIf(bucket='0-99',1,bucket='100-499',2,bucket='500-999',3,bucket='1K-4.9K',4,bucket='5K-9.9K',5,bucket='10K-49.9K',6,7) ASC`,
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...entityParam,
+        },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: String(r.bucket ?? ''),
+          value: this.num(r.invoice_count),
+        })),
+      };
+    }
+
+    // ── top_invoices/list (table) ────────────────────────────────────────────
+    if (metric === 'top_invoices' && grouping === 'list') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(org_name, ''), org_id) AS org_name,
+           provider,
+           currency,
+           coalesce(nullIf(contact_name, ''), 'Unknown') AS client_name,
+           invoice_number,
+           formatDateTime(issued_at, '%Y-%m-%d') AS issued_date,
+           status,
+           round(toFloat64(total_amount), 2) AS total_amount
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+	         WHERE org_id IN ({externalOrgIds:Array(String)})
+	           ${provider}
+	           ${client}
+	           ${entity}
+	           ${time}
+	           ${arFilter}
+	           AND issued_at IS NOT NULL
+	         ORDER BY abs(total_amount) DESC
+	         LIMIT ${requestedTopN ?? 10}`,
+	        {
+	          externalOrgIds: scope.externalOrgIds,
+	          ...providerParam,
+	          ...clientParam,
+          ...entityParam,
+        },
+      );
+      return { data: rows };
+    }
+
+    // ── invoice_value/invoice_type (pie) ─────────────────────────────────────
+    if (metric === 'invoice_value' && grouping === 'invoice_type') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(invoice_type, ''), 'Unknown') AS invoice_type,
+           round(sum(abs(total_amount)), 0) AS total_value
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${provider}
+           ${client}
+           ${entity}
+           ${time}
+           AND issued_at IS NOT NULL
+         GROUP BY invoice_type
+         ORDER BY total_value DESC
+         LIMIT 12`,
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...entityParam,
+        },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: String(r.invoice_type ?? ''),
+          value: this.num(r.total_value),
+        })),
+      };
+    }
+
+    // ── transaction_value/journal_type (pie) ─────────────────────────────────
+    if (metric === 'transaction_value' && grouping === 'journal_type') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(source_type, ''), 'Other') AS journal_type,
+           round(sum(abs(line_amount)), 0) AS total_value
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           ${jTime}
+           AND journal_date IS NOT NULL
+         GROUP BY journal_type
+         ORDER BY total_value DESC
+         LIMIT 12`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: String(r.journal_type ?? ''),
+          value: this.num(r.total_value),
+        })),
+      };
+    }
+
+    // ── transaction_value/currency (donut/pie) ───────────────────────────────
+    if (metric === 'transaction_value' && grouping === 'currency') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(currency, ''), 'Unknown') AS currency,
+           round(sum(abs(total_amount)), 0) AS total_value
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${provider}
+           ${client}
+           ${entity}
+           ${time}
+           ${arFilter}
+           AND issued_at IS NOT NULL
+         GROUP BY currency
+         ORDER BY total_value DESC
+         LIMIT 12`,
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...entityParam,
+        },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: String(r.currency ?? ''),
+          value: this.num(r.total_value),
+        })),
+      };
+    }
+
+    // ── invoice_amount/time (scatter) ────────────────────────────────────────
+    if (metric === 'invoice_amount' && grouping === 'time') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toDate(issued_at), '%Y-%m-%d') AS date,
+           round(toFloat64(abs(total_amount)), 2) AS amount
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${provider}
+           ${client}
+           ${entity}
+           ${time}
+           ${arFilter}
+           AND issued_at IS NOT NULL
+         ORDER BY issued_at ASC
+         LIMIT 600`,
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...entityParam,
+        },
+      );
+      return {
+        data: rows.map((r) => ({
+          date: String(r.date ?? ''),
+          amount: this.num(r.amount),
+        })),
+      };
+    }
+
     // ── overdue/aging (table) ────────────────────────────────────────────────
     if (metric === 'overdue' && grouping === 'aging') {
-      if (scope.connectionIds.length === 0) return { data: [] };
+      if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `WITH invoices AS (
            SELECT
@@ -1196,7 +1870,7 @@ export class AgentService {
              due_at,
              invoice_type
            FROM ${this.analyticsDb}.fact_accounting_invoices
-           WHERE connection_id IN ({connectionIds:Array(String)})
+           WHERE org_id IN ({externalOrgIds:Array(String)})
              ${time}
              ${arFilter}
              AND issued_at IS NOT NULL
@@ -1206,7 +1880,7 @@ export class AgentService {
              invoice_external_id,
              sum(amount) AS paid_to_date
            FROM ${this.analyticsDb}.fact_accounting_payment_applications
-           WHERE connection_id IN ({connectionIds:Array(String)})
+           WHERE org_id IN ({externalOrgIds:Array(String)})
              AND payment_at IS NOT NULL
              AND payment_at <= ${rangeEndExpr}
              AND invoice_external_id != ''
@@ -1240,7 +1914,7 @@ export class AgentService {
            AND balance > 0
          ORDER BY days_overdue DESC
          LIMIT 200`,
-        { connectionIds: scope.connectionIds },
+        { externalOrgIds: scope.externalOrgIds },
       );
       return { data: rows };
     }
@@ -1249,13 +1923,13 @@ export class AgentService {
       const rows = await this.queryRows<any>(
         `SELECT coalesce(org_name, org_id) AS org_name, count() AS total_count, coalesce(sum(total_amount), 0) AS total_amount
          FROM ${this.analyticsDb}.fact_accounting_invoices
-         WHERE connection_id IN ({connectionIds:Array(String)})
+         WHERE org_id IN ({externalOrgIds:Array(String)})
            ${provider}
            ${entity}
            ${time}
          GROUP BY org_name, org_id ORDER BY total_count DESC LIMIT 10`,
         {
-          connectionIds: scope.connectionIds,
+          externalOrgIds: scope.externalOrgIds,
           ...providerParam,
           ...entityParam,
         },
@@ -1298,7 +1972,7 @@ export class AgentService {
       const rows = await this.queryRows<any>(
         `SELECT provider, coalesce(sum(total_amount), 0) AS total_revenue
          FROM ${this.analyticsDb}.fact_accounting_invoices
-         WHERE connection_id IN ({connectionIds:Array(String)})
+         WHERE org_id IN ({externalOrgIds:Array(String)})
            ${provider}
            ${entity}
            ${time}
@@ -1306,7 +1980,7 @@ export class AgentService {
            AND issued_at IS NOT NULL
          GROUP BY provider ORDER BY total_revenue DESC`,
         {
-          connectionIds: scope.connectionIds,
+          externalOrgIds: scope.externalOrgIds,
           ...providerParam,
           ...entityParam,
         },
@@ -1348,20 +2022,92 @@ export class AgentService {
       };
     }
 
-    // ── revenue/month (default) ───────────────────────────────────────────────
-    // Note: breakdown="client" is handled by a separate branch that pivots top-N clients.
-    if (
-      metric === 'revenue' &&
-      grouping === 'month' &&
-      breakdown !== 'client'
-    ) {
+    // ── revenue/month ─────────────────────────────────────────────────────────
+    if (metric === 'revenue' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+
+      // Multi-series client breakdown (either explicit clients OR top-N clients).
+      // Output rows: { name: "MM/YY", "<Client A>": 123, "<Client B>": 456 }
+      if (breakdown === 'client') {
+        const explicitClients =
+          normalizedClientNames && normalizedClientNames.length >= 2
+            ? normalizedClientNames
+                .map((c) => c.toLowerCase())
+                .filter(Boolean)
+                .slice(0, 5)
+            : null;
+        const n =
+          explicitClients && explicitClients.length >= 2
+            ? explicitClients.length
+            : Number.isFinite(topN as number)
+              ? Math.max(1, Math.min(5, Math.floor(topN as number)))
+              : 2;
+
+        const rows = await this.queryRows<any>(
+          `WITH scoped AS (
+             SELECT
+               toStartOfMonth(issued_at) AS month_start,
+               formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
+               coalesce(nullIf(contact_name, ''), 'Unknown Client') AS client_name,
+               lowerUTF8(coalesce(nullIf(contact_name, ''), 'Unknown Client')) AS client_name_lower,
+               sumIf(total_amount, lowerUTF8(status) IN ('paid','voided','closed','active','open')) AS collected
+             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+             WHERE org_id IN ({externalOrgIds:Array(String)})
+               ${provider}
+               ${client}
+               ${clientListFact}
+               ${entity}
+               ${time}
+               ${arFilter}
+               AND issued_at IS NOT NULL
+             GROUP BY month_start, month, client_name, client_name_lower
+           ),
+           top_clients AS (
+             SELECT client_name_lower
+             FROM scoped
+             GROUP BY client_name_lower
+             ORDER BY sum(collected) DESC
+             LIMIT ${n}
+           )
+           SELECT
+             month,
+             month_start,
+             client_name,
+             collected
+           FROM scoped
+           WHERE ${
+             explicitClients && explicitClients.length >= 2
+               ? `client_name_lower IN ({clientNames:Array(String)})`
+               : `client_name_lower IN (SELECT client_name_lower FROM top_clients)`
+           }
+           ORDER BY month_start ASC, client_name ASC`,
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...providerParam,
+            ...clientParam,
+            ...clientListParam,
+            ...entityParam,
+            ...(explicitClients ? { clientNames: explicitClients } : {}),
+          },
+        );
+
+        const map = new Map<string, any>();
+        for (const r of rows) {
+          const key = String(r.month);
+          const existing = map.get(key) ?? { name: key };
+          existing[String(r.client_name)] = this.num(r.collected);
+          map.set(key, existing);
+        }
+        return { data: Array.from(map.values()) };
+      }
+
+      // Default single-series revenue trend
       const rows = await this.queryRows<any>(
         `SELECT
            formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
            toStartOfMonth(issued_at) AS month_start,
            coalesce(sum(total_amount), 0) AS total_revenue
-         FROM ${this.analyticsDb}.fact_accounting_invoices
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
          WHERE org_id IN ({externalOrgIds:Array(String)})
            ${provider}
            ${client}
@@ -1372,12 +2118,12 @@ export class AgentService {
          GROUP BY month, month_start
          ORDER BY month_start ASC
          LIMIT 36`,
-	      {
-	        externalOrgIds: scope.externalOrgIds,
-	        ...providerParam,
-	        ...clientParam,
-	        ...clientListParam,
-	        ...entityParam,
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...clientListParam,
+          ...entityParam,
         },
       );
       return {
@@ -1390,6 +2136,138 @@ export class AgentService {
 
     if (metric === 'overdue' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+
+      // Client breakdown (explicit client list only): returns multi-series rows:
+      // { name: "MM/YY", "<Client A>": 123, "<Client B>": 456 }
+      if (
+        breakdown === 'client' &&
+        normalizedClientNames &&
+        normalizedClientNames.length >= 2
+      ) {
+        const explicitClients = normalizedClientNames
+          .map((c) => c.toLowerCase())
+          .filter(Boolean)
+          .slice(0, 5);
+
+        const rows = await this.queryRows<any>(
+          `WITH invoices AS (
+             SELECT
+               invoice_external_id,
+               coalesce(nullIf(contact_name, ''), 'Unknown Client') AS client_name,
+               lowerUTF8(coalesce(nullIf(contact_name, ''), 'Unknown Client')) AS client_name_lower,
+               toDecimal64(total_amount, 4) AS total_amount,
+               issued_at,
+               due_at
+             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+             WHERE org_id IN ({externalOrgIds:Array(String)})
+               ${provider}
+               ${client}
+               ${clientListFact}
+               ${entity}
+               ${time}
+               ${arFilter}
+               AND issued_at IS NOT NULL
+           ),
+           pay_by_month AS (
+             SELECT
+               invoice_external_id,
+               toStartOfMonth(payment_at) AS month_start,
+               sum(amount) AS paid_this_month
+             FROM ${this.analyticsDb}.fact_accounting_payment_applications
+             WHERE org_id IN ({externalOrgIds:Array(String)})
+               ${entity}
+               AND payment_at IS NOT NULL
+               AND payment_at <= ${rangeEndExpr}
+               AND invoice_external_id != ''
+             GROUP BY invoice_external_id, month_start
+           ),
+           grid AS (
+             SELECT
+               i.invoice_external_id,
+               i.client_name,
+               i.client_name_lower,
+               i.total_amount,
+               i.due_at,
+               i.month_start
+             FROM (
+               SELECT
+                 invoice_external_id,
+                 client_name,
+                 client_name_lower,
+                 total_amount,
+                 due_at,
+                 addMonths(toStartOfMonth(issued_at), m) AS month_start
+               FROM invoices
+               ARRAY JOIN range(
+                 0,
+                 dateDiff('month', toStartOfMonth(issued_at), toStartOfMonth(${rangeEndExpr})) + 1
+               ) AS m
+             ) i
+           ),
+           joined AS (
+             SELECT
+               g.invoice_external_id,
+               g.client_name,
+               g.client_name_lower,
+               g.total_amount,
+               g.due_at,
+               g.month_start,
+               ifNull(p.paid_this_month, toDecimal64(0, 4)) AS paid_this_month
+             FROM grid g
+             LEFT JOIN pay_by_month p
+               ON p.invoice_external_id = g.invoice_external_id
+              AND p.month_start = g.month_start
+           ),
+           calc AS (
+             SELECT
+               invoice_external_id,
+               client_name,
+               client_name_lower,
+               month_start,
+               due_at,
+               total_amount,
+               sum(paid_this_month) OVER (
+                 PARTITION BY invoice_external_id
+                 ORDER BY month_start ASC
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+               ) AS paid_to_date,
+               greatest(total_amount - paid_to_date, toDecimal64(0, 4)) AS outstanding_balance,
+               if(due_at IS NOT NULL AND due_at < addMonths(month_start, 1),
+                 greatest(total_amount - paid_to_date, toDecimal64(0, 4)),
+                 toDecimal64(0, 4)
+               ) AS overdue_balance
+             FROM joined
+           )
+           SELECT
+             formatDateTime(month_start, '%m/%y') AS month,
+             month_start,
+             client_name,
+             sum(overdue_balance) AS overdue_amount
+           FROM calc
+           WHERE client_name_lower IN ({clientNames:Array(String)})
+           GROUP BY month, month_start, client_name
+           ORDER BY month_start ASC, client_name ASC
+           LIMIT 240`,
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...providerParam,
+            ...clientParam,
+            ...clientListParam,
+            ...entityParam,
+            clientNames: explicitClients,
+          },
+        );
+
+        const map = new Map<string, any>();
+        for (const r of rows) {
+          const key = String(r.month);
+          const existing = map.get(key) ?? { name: key };
+          existing[String(r.client_name)] = this.num(r.overdue_amount);
+          map.set(key, existing);
+        }
+        return { data: Array.from(map.values()) };
+      }
+
       const rows = await this.queryRows<any>(
         `WITH invoices AS (
            SELECT
@@ -1397,9 +2275,12 @@ export class AgentService {
              toDecimal64(total_amount, 4) AS total_amount,
              issued_at,
              due_at
-           FROM ${this.analyticsDb}.fact_accounting_invoices
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
            WHERE org_id IN ({externalOrgIds:Array(String)})
              ${provider}
+             ${client}
+             ${clientListFact}
+             ${entity}
              ${time}
              ${arFilter}
              AND issued_at IS NOT NULL
@@ -1411,6 +2292,7 @@ export class AgentService {
              sum(amount) AS paid_this_month
            FROM ${this.analyticsDb}.fact_accounting_payment_applications
            WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${entity}
              AND payment_at IS NOT NULL
              AND payment_at <= ${rangeEndExpr}
              AND invoice_external_id != ''
@@ -1467,7 +2349,13 @@ export class AgentService {
          GROUP BY month, month_start
          ORDER BY month_start ASC
          LIMIT 36`,
-        { externalOrgIds: scope.externalOrgIds, ...providerParam },
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...clientListParam,
+          ...entityParam,
+        },
       );
       return {
         data: rows.map((r) => ({
@@ -1494,18 +2382,18 @@ export class AgentService {
 	             sum(invoice_count) AS invoice_count,
 	             sum(overdue_count) AS overdue_count,
 	             avg(avg_invoice_amount) AS avg_invoice_amount
-	           FROM ${this.analyticsDb}.dim_clients FINAL
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             ${clientListDim}
-	             ${entity}
-	           GROUP BY client_name
-	           ORDER BY total_collected DESC
-	           LIMIT 30`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...entityParam,
-	          },
+		           FROM ${this.analyticsDb}.v_dim_clients_latest
+		           WHERE org_id IN ({externalOrgIds:Array(String)})
+		             ${clientListDim}
+		             ${entity}
+		           GROUP BY client_name
+		           ORDER BY total_collected DESC
+		           LIMIT ${requestedTopN ?? 30}`,
+		          {
+		            externalOrgIds: scope.externalOrgIds,
+		            ...clientListParam,
+		            ...entityParam,
+		          },
 	        );
         if (rows.length > 0) {
           return {
@@ -1614,7 +2502,7 @@ export class AgentService {
              total_outstanding,
              total_overdue,
              avg_invoice_amount
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${clientListDim}
 	             AND client_name != ''
@@ -1636,85 +2524,6 @@ export class AgentService {
       }
     }
 
-    // ── revenue/month broken down by client (top N) ─────────────────────────
-    // Returns multi-series rows: { name: "MM/YY", "<Client A>": 123, "<Client B>": 456 }
-    if (
-      metric === 'revenue' &&
-      grouping === 'month' &&
-      breakdown === 'client'
-    ) {
-      if (scope.externalOrgIds.length === 0) return { data: [] };
-      const explicitClients =
-        normalizedClientNames && normalizedClientNames.length >= 2
-          ? normalizedClientNames
-              .map((c) => c.toLowerCase())
-              .filter(Boolean)
-              .slice(0, 5)
-          : null;
-      const n =
-        explicitClients && explicitClients.length >= 2
-          ? explicitClients.length
-          : Number.isFinite(topN as number)
-            ? Math.max(1, Math.min(5, Math.floor(topN as number)))
-            : 2;
-
-      const rows = await this.queryRows<any>(
-        `WITH scoped AS (
-           SELECT
-             toStartOfMonth(issued_at) AS month_start,
-             formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
-             coalesce(nullIf(contact_name, ''), 'Unknown Client') AS client_name,
-             lowerUTF8(coalesce(nullIf(contact_name, ''), 'Unknown Client')) AS client_name_lower,
-             sumIf(total_amount, lowerUTF8(status) IN ('paid','voided','closed','active','open')) AS collected
-           FROM ${this.analyticsDb}.fact_accounting_invoices
-           WHERE org_id IN ({externalOrgIds:Array(String)})
-             ${provider}
-             ${client}
-             ${entity}
-             ${time}
-             ${arFilter}
-             AND issued_at IS NOT NULL
-           GROUP BY month_start, month, client_name, client_name_lower
-         ),
-         top_clients AS (
-           SELECT client_name_lower
-           FROM scoped
-           GROUP BY client_name_lower
-           ORDER BY sum(collected) DESC
-           LIMIT ${n}
-         )
-         SELECT
-           month,
-           month_start,
-           client_name,
-           collected
-         FROM scoped
-         WHERE ${
-           explicitClients && explicitClients.length >= 2
-             ? `client_name_lower IN ({clientNames:Array(String)})`
-             : `client_name_lower IN (SELECT client_name_lower FROM top_clients)`
-         }
-         ORDER BY month_start ASC, client_name ASC`,
-        {
-          externalOrgIds: scope.externalOrgIds,
-          ...providerParam,
-          ...clientParam,
-          ...entityParam,
-          ...(explicitClients ? { clientNames: explicitClients } : {}),
-        },
-      );
-
-      // Pivot in JS for Recharts multi-series.
-      const map = new Map<string, any>();
-      for (const r of rows) {
-        const key = String(r.month);
-        const existing = map.get(key) ?? { name: key };
-        existing[String(r.client_name)] = this.num(r.collected);
-        map.set(key, existing);
-      }
-      return { data: Array.from(map.values()) };
-    }
-
     if (metric === 'invoices' && grouping === 'client') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       if (time.trim()) {
@@ -1725,7 +2534,7 @@ export class AgentService {
                contact_id AS client_id,
                count() AS invoice_count,
                coalesce(sum(abs(total_amount)), 0) AS total_invoiced
-             FROM ${this.analyticsDb}.fact_accounting_invoices
+             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
              WHERE org_id IN ({externalOrgIds:Array(String)})
                ${time}
                ${clientListFact}
@@ -1750,7 +2559,7 @@ export class AgentService {
                client_id,
                invoice_count,
                total_invoiced
-             FROM ${this.analyticsDb}.dim_clients FINAL
+             FROM ${this.analyticsDb}.v_dim_clients_latest
              WHERE org_id IN ({externalOrgIds:Array(String)})
                ${clientListDim}
                AND client_name != ''
@@ -1772,7 +2581,7 @@ export class AgentService {
            client_id,
            invoice_count,
            total_invoiced
-         FROM ${this.analyticsDb}.dim_clients FINAL
+         FROM ${this.analyticsDb}.v_dim_clients_latest
          WHERE org_id IN ({externalOrgIds:Array(String)})
            ${clientListDim}
            AND client_name != ''
@@ -1791,6 +2600,133 @@ export class AgentService {
     // ── outstanding/month ──────────────────────────────────────────────────────
     if (metric === 'outstanding' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+
+      // Client breakdown (explicit client list only): returns multi-series rows:
+      // { name: "MM/YY", "<Client A>": 123, "<Client B>": 456 }
+      if (
+        breakdown === 'client' &&
+        normalizedClientNames &&
+        normalizedClientNames.length >= 2
+      ) {
+        const explicitClients = normalizedClientNames
+          .map((c) => c.toLowerCase())
+          .filter(Boolean)
+          .slice(0, 5);
+
+        const rows = await this.queryRows<any>(
+          `WITH invoices AS (
+             SELECT
+               invoice_external_id,
+               coalesce(nullIf(contact_name, ''), 'Unknown Client') AS client_name,
+               lowerUTF8(coalesce(nullIf(contact_name, ''), 'Unknown Client')) AS client_name_lower,
+               toDecimal64(total_amount, 4) AS total_amount,
+               issued_at,
+               due_at
+             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+             WHERE org_id IN ({externalOrgIds:Array(String)})
+               ${provider}
+               ${client}
+               ${clientListFact}
+               ${entity}
+               ${time}
+               ${arFilter}
+               AND issued_at IS NOT NULL
+           ),
+           pay_by_month AS (
+             SELECT
+               invoice_external_id,
+               toStartOfMonth(payment_at) AS month_start,
+               sum(amount) AS paid_this_month
+             FROM ${this.analyticsDb}.fact_accounting_payment_applications
+             WHERE org_id IN ({externalOrgIds:Array(String)})
+               ${entity}
+               AND payment_at IS NOT NULL
+               AND payment_at <= ${rangeEndExpr}
+               AND invoice_external_id != ''
+             GROUP BY invoice_external_id, month_start
+           ),
+           grid AS (
+             SELECT
+               i.invoice_external_id,
+               i.client_name,
+               i.client_name_lower,
+               i.total_amount,
+               i.month_start,
+               i.due_at
+             FROM (
+               SELECT
+                 invoice_external_id,
+                 client_name,
+                 client_name_lower,
+                 total_amount,
+                 due_at,
+                 addMonths(toStartOfMonth(issued_at), m) AS month_start
+               FROM invoices
+               ARRAY JOIN range(
+                 0,
+                 dateDiff('month', toStartOfMonth(issued_at), toStartOfMonth(${rangeEndExpr})) + 1
+               ) AS m
+             ) i
+           ),
+           joined AS (
+             SELECT
+               g.invoice_external_id,
+               g.client_name,
+               g.client_name_lower,
+               g.total_amount,
+               g.due_at,
+               g.month_start,
+               ifNull(p.paid_this_month, toDecimal64(0, 4)) AS paid_this_month
+             FROM grid g
+             LEFT JOIN pay_by_month p
+               ON p.invoice_external_id = g.invoice_external_id
+              AND p.month_start = g.month_start
+           ),
+           calc AS (
+             SELECT
+               invoice_external_id,
+               client_name,
+               client_name_lower,
+               month_start,
+               total_amount,
+               sum(paid_this_month) OVER (
+                 PARTITION BY invoice_external_id
+                 ORDER BY month_start ASC
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+               ) AS paid_to_date,
+               greatest(total_amount - paid_to_date, toDecimal64(0, 4)) AS outstanding_balance
+             FROM joined
+           )
+           SELECT
+             formatDateTime(month_start, '%m/%y') AS month,
+             month_start,
+             client_name,
+             sum(outstanding_balance) AS outstanding_amount
+           FROM calc
+           WHERE client_name_lower IN ({clientNames:Array(String)})
+           GROUP BY month, month_start, client_name
+           ORDER BY month_start ASC, client_name ASC
+           LIMIT 240`,
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...providerParam,
+            ...clientParam,
+            ...clientListParam,
+            ...entityParam,
+            clientNames: explicitClients,
+          },
+        );
+
+        const map = new Map<string, any>();
+        for (const r of rows) {
+          const key = String(r.month);
+          const existing = map.get(key) ?? { name: key };
+          existing[String(r.client_name)] = this.num(r.outstanding_amount);
+          map.set(key, existing);
+        }
+        return { data: Array.from(map.values()) };
+      }
+
       const rows = await this.queryRows<any>(
         `WITH invoices AS (
            SELECT
@@ -1798,8 +2734,12 @@ export class AgentService {
              toDecimal64(total_amount, 4) AS total_amount,
              issued_at,
              due_at
-           FROM ${this.analyticsDb}.fact_accounting_invoices
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
            WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${provider}
+             ${client}
+             ${clientListFact}
+             ${entity}
              ${time}
              ${arFilter}
              AND issued_at IS NOT NULL
@@ -1811,6 +2751,7 @@ export class AgentService {
              sum(amount) AS paid_this_month
            FROM ${this.analyticsDb}.fact_accounting_payment_applications
            WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${entity}
              AND payment_at IS NOT NULL
              AND payment_at <= ${rangeEndExpr}
              AND invoice_external_id != ''
@@ -1861,7 +2802,13 @@ export class AgentService {
          GROUP BY month, month_start
          ORDER BY month_start ASC
          LIMIT 36`,
-        { externalOrgIds: scope.externalOrgIds },
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...clientListParam,
+          ...entityParam,
+        },
       );
       return {
         data: rows.map((r) => ({
@@ -1872,36 +2819,47 @@ export class AgentService {
     }
 
     // ── paid/month ────────────────────────────────────────────────────────────
-    if (metric === 'paid' && grouping === 'month') {
-      if (scope.externalOrgIds.length === 0) return { data: [] };
-      const rows = await this.queryRows<any>(
-        `WITH invoices AS (
-           SELECT invoice_external_id
-           FROM ${this.analyticsDb}.fact_accounting_invoices
-           WHERE org_id IN ({externalOrgIds:Array(String)})
-             ${time}
-             ${arFilter}
-             AND issued_at IS NOT NULL
-         )
-         SELECT
-           formatDateTime(toStartOfMonth(p.payment_at), '%m/%y') AS month,
-           toStartOfMonth(p.payment_at) AS month_start,
-           sum(p.amount) AS paid_amount
-         FROM ${this.analyticsDb}.fact_accounting_payment_applications p
-         INNER JOIN invoices i ON i.invoice_external_id = p.invoice_external_id
-         WHERE p.org_id IN ({externalOrgIds:Array(String)})
-           AND p.payment_at IS NOT NULL
-           AND p.payment_at <= ${rangeEndExpr}
-           AND p.invoice_external_id != ''
-         GROUP BY month, month_start
-         ORDER BY month_start ASC
-         LIMIT 36`,
-        { externalOrgIds: scope.externalOrgIds },
-      );
-      return {
-        data: rows.map((r) => ({
-          name: r.month as string,
-          value: this.num(r.paid_amount),
+	    if (metric === 'paid' && grouping === 'month') {
+	      if (scope.externalOrgIds.length === 0) return { data: [] };
+	      const rows = await this.queryRows<any>(
+	        `WITH invoices AS (
+	           SELECT invoice_external_id
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+	           WHERE org_id IN ({externalOrgIds:Array(String)})
+	             ${provider}
+	             ${client}
+	             ${clientListFact}
+	             ${entity}
+	             ${time}
+	             ${arFilter}
+	             AND issued_at IS NOT NULL
+	         )
+	         SELECT
+	           formatDateTime(toStartOfMonth(p.payment_at), '%m/%y') AS month,
+	           toStartOfMonth(p.payment_at) AS month_start,
+	           sum(p.amount) AS paid_amount
+	         FROM ${this.analyticsDb}.fact_accounting_payment_applications p
+	         INNER JOIN invoices i ON i.invoice_external_id = p.invoice_external_id
+	         WHERE p.org_id IN ({externalOrgIds:Array(String)})
+	           ${entity}
+	           AND p.payment_at IS NOT NULL
+	           AND p.payment_at <= ${rangeEndExpr}
+	           AND p.invoice_external_id != ''
+	         GROUP BY month, month_start
+	         ORDER BY month_start ASC
+	         LIMIT 36`,
+	        {
+	          externalOrgIds: scope.externalOrgIds,
+	          ...providerParam,
+	          ...clientParam,
+	          ...clientListParam,
+	          ...entityParam,
+	        },
+	      );
+	      return {
+	        data: rows.map((r) => ({
+	          name: r.month as string,
+	          value: this.num(r.paid_amount),
         })),
       };
     }
@@ -2028,6 +2986,137 @@ export class AgentService {
       return { data: out };
     }
 
+    // ── revenue_cumulative/month ─────────────────────────────────────────────
+    if (metric === 'revenue_cumulative' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           toStartOfMonth(issued_at) AS month_start,
+           formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
+           round(sum(total_amount), 0) AS revenue
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${provider}
+           ${client}
+           ${entity}
+           ${time}
+           ${arFilter}
+           AND issued_at IS NOT NULL
+         GROUP BY month_start, month
+         ORDER BY month_start ASC
+         LIMIT 36`,
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...entityParam,
+        },
+      );
+      let running = 0;
+      const out = rows.map((r) => {
+        const cur = this.num(r.revenue);
+        running += cur;
+        return { name: String(r.month ?? ''), value: Math.round(running), revenue: Math.round(cur) };
+      });
+      return { data: out };
+    }
+
+    // ── debits_credits/month ─────────────────────────────────────────────────
+    if (metric === 'debits_credits' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           toStartOfMonth(journal_date) AS month_start,
+           formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
+           round(sumIf(line_amount, line_amount > 0), 0) AS debits,
+           round(sumIf(-line_amount, line_amount < 0), 0) AS credits
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           ${jTime}
+           AND journal_date IS NOT NULL
+         GROUP BY month_start, month
+         ORDER BY month_start ASC
+         LIMIT 36`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: String(r.month ?? ''),
+          Debits: this.num(r.debits),
+          Credits: this.num(r.credits),
+        })),
+      };
+    }
+
+    // ── net_position/month ───────────────────────────────────────────────────
+    if (metric === 'net_position' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           toStartOfMonth(journal_date) AS month_start,
+           formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
+           round(sumIf(line_amount, line_amount > 0), 0) AS debits,
+           round(sumIf(-line_amount, line_amount < 0), 0) AS credits
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           ${jTime}
+           AND journal_date IS NOT NULL
+         GROUP BY month_start, month
+         ORDER BY month_start ASC
+         LIMIT 36`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return {
+        data: rows.map((r) => {
+          const debits = this.num(r.debits);
+          const credits = this.num(r.credits);
+          return {
+            name: String(r.month ?? ''),
+            value: Math.round(credits - debits),
+            Debits: Math.round(debits),
+            Credits: Math.round(credits),
+          };
+        }),
+      };
+    }
+
+    // ── running_balance/month ────────────────────────────────────────────────
+    // Cumulative net position (credits - debits) starting from zero.
+    if (metric === 'running_balance' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           toStartOfMonth(journal_date) AS month_start,
+           formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
+           round(sumIf(line_amount, line_amount > 0), 0) AS debits,
+           round(sumIf(-line_amount, line_amount < 0), 0) AS credits
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           ${jTime}
+           AND journal_date IS NOT NULL
+         GROUP BY month_start, month
+         ORDER BY month_start ASC
+         LIMIT 36`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      let running = 0;
+      const out = rows.map((r) => {
+        const net = this.num(r.credits) - this.num(r.debits);
+        running += net;
+        return { name: String(r.month ?? ''), value: Math.round(running), net: Math.round(net) };
+      });
+      return { data: out };
+    }
+
     // ── revenue/quarter (line variant) ────────────────────────────────────────
     if (metric === 'revenue' && grouping === 'quarter') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
@@ -2056,7 +3145,7 @@ export class AgentService {
 
     // ── outstanding/org and overdue/org ───────────────────────────────────────
     if (metric === 'outstanding' && grouping === 'org') {
-      if (scope.connectionIds.length === 0) return { data: [] };
+      if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `WITH invoices AS (
            SELECT
@@ -2068,7 +3157,7 @@ export class AgentService {
              provider,
              invoice_type
            FROM ${this.analyticsDb}.fact_accounting_invoices
-           WHERE connection_id IN ({connectionIds:Array(String)})
+           WHERE org_id IN ({externalOrgIds:Array(String)})
              ${entity}
              ${time}
              ${arFilter}
@@ -2079,7 +3168,7 @@ export class AgentService {
              invoice_external_id,
              sum(amount) AS paid_to_date
            FROM ${this.analyticsDb}.fact_accounting_payment_applications
-           WHERE connection_id IN ({connectionIds:Array(String)})
+           WHERE org_id IN ({externalOrgIds:Array(String)})
              AND payment_at IS NOT NULL
              AND payment_at <= ${rangeEndExpr}
              AND invoice_external_id != ''
@@ -2100,7 +3189,7 @@ export class AgentService {
          GROUP BY org_name
          ORDER BY outstanding DESC
          LIMIT 10`,
-        { connectionIds: scope.connectionIds, ...entityParam },
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
       return {
         data: rows.map((r) => ({
@@ -2111,7 +3200,7 @@ export class AgentService {
     }
 
     if (metric === 'overdue' && grouping === 'org') {
-      if (scope.connectionIds.length === 0) return { data: [] };
+      if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `WITH invoices AS (
            SELECT
@@ -2123,7 +3212,7 @@ export class AgentService {
              provider,
              invoice_type
            FROM ${this.analyticsDb}.fact_accounting_invoices
-           WHERE connection_id IN ({connectionIds:Array(String)})
+           WHERE org_id IN ({externalOrgIds:Array(String)})
              ${entity}
              ${time}
              ${arFilter}
@@ -2134,7 +3223,7 @@ export class AgentService {
              invoice_external_id,
              sum(amount) AS paid_to_date
            FROM ${this.analyticsDb}.fact_accounting_payment_applications
-           WHERE connection_id IN ({connectionIds:Array(String)})
+           WHERE org_id IN ({externalOrgIds:Array(String)})
              AND payment_at IS NOT NULL
              AND payment_at <= ${rangeEndExpr}
              AND invoice_external_id != ''
@@ -2155,7 +3244,7 @@ export class AgentService {
          GROUP BY org_name
          ORDER BY overdue DESC
          LIMIT 10`,
-        { connectionIds: scope.connectionIds, ...entityParam },
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
       return {
         data: rows.map((r) => ({
@@ -2201,7 +3290,7 @@ export class AgentService {
         } catch {
           const rows = await this.queryRows<any>(
             `SELECT coalesce(nullIf(client_name, ''), 'Unknown') AS client_name, client_id, total_invoiced, invoice_count
-             FROM ${this.analyticsDb}.dim_clients FINAL
+             FROM ${this.analyticsDb}.v_dim_clients_latest
              WHERE org_id IN ({externalOrgIds:Array(String)})
                ${entity}
                ${clientListDim}
@@ -2224,7 +3313,7 @@ export class AgentService {
       }
       const rows = await this.queryRows<any>(
         `SELECT coalesce(nullIf(client_name, ''), 'Unknown') AS client_name, client_id, total_invoiced, invoice_count
-         FROM ${this.analyticsDb}.dim_clients FINAL
+         FROM ${this.analyticsDb}.v_dim_clients_latest
          WHERE org_id IN ({externalOrgIds:Array(String)})
            ${entity}
            ${clientListDim}
@@ -2278,7 +3367,7 @@ export class AgentService {
         } catch {
           const rows = await this.queryRows<any>(
             `SELECT coalesce(nullIf(client_name, ''), 'Unknown') AS client_name, client_id, avg_invoice_amount, invoice_count
-             FROM ${this.analyticsDb}.dim_clients FINAL
+             FROM ${this.analyticsDb}.v_dim_clients_latest
              WHERE org_id IN ({externalOrgIds:Array(String)})
                ${entity}
                ${clientListDim}
@@ -2301,7 +3390,7 @@ export class AgentService {
       }
       const rows = await this.queryRows<any>(
         `SELECT coalesce(nullIf(client_name, ''), 'Unknown') AS client_name, client_id, avg_invoice_amount, invoice_count
-         FROM ${this.analyticsDb}.dim_clients FINAL
+         FROM ${this.analyticsDb}.v_dim_clients_latest
          WHERE org_id IN ({externalOrgIds:Array(String)})
            ${entity}
            ${clientListDim}
@@ -2390,7 +3479,7 @@ export class AgentService {
              client_id,
              total_revenue AS paid_amount,
              paid_count
-           FROM ${this.analyticsDb}.dim_clients FINAL
+           FROM ${this.analyticsDb}.v_dim_clients_latest
            WHERE org_id IN ({externalOrgIds:Array(String)})
              ${entity}
              ${clientListDim}
@@ -2486,7 +3575,7 @@ export class AgentService {
              coalesce(nullIf(client_name, ''), 'Unknown') AS client_name,
              total_invoiced,
              total_revenue
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${entity}
 	             ${clientListDim}
@@ -2590,7 +3679,7 @@ export class AgentService {
              coalesce(nullIf(client_name, ''), 'Unknown') AS client_name,
              total_invoiced,
              total_overdue
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${clientListDim}
 	             AND client_name != '' AND total_invoiced > 0
@@ -2624,7 +3713,7 @@ export class AgentService {
 	             total_outstanding,
 	             outstanding_count,
 	             total_overdue
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${orgId ? `AND org_id = {orgId:String}` : ''}
 	             ${clientListDim}
@@ -2717,7 +3806,7 @@ export class AgentService {
              total_outstanding,
              outstanding_count,
              total_overdue
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${clientListDim}
 	             AND client_name != ''
@@ -2747,7 +3836,7 @@ export class AgentService {
 	             total_overdue,
 	             overdue_count,
 	             total_outstanding
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${orgId ? `AND org_id = {orgId:String}` : ''}
 	             ${clientListDim}
@@ -2840,7 +3929,7 @@ export class AgentService {
              total_overdue,
              overdue_count,
              total_outstanding
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${clientListDim}
 	             AND client_name != ''
@@ -2857,6 +3946,1049 @@ export class AgentService {
           })),
         };
       }
+    }
+
+    // ─── Journal-lines helpers ────────────────────────────────────────────────
+    // All journal queries use journal_date (not issued_at).
+    const jTime = this.timeWhereOn('journal_date', range);
+
+    // Balance-sheet account exclusion: omit AR, AP, cash, equity, GST etc.
+    // from P&L aggregations so only income-statement accounts remain.
+    const BS_EXCL = `
+      AND NOT (
+           lowerUTF8(account_name) LIKE '%receivable%'
+        OR lowerUTF8(account_name) LIKE '%payable%'
+        OR lowerUTF8(account_name) LIKE '%cash%'
+        OR lowerUTF8(account_name) LIKE '%bank%'
+        OR lowerUTF8(account_name) LIKE '%loan%'
+        OR lowerUTF8(account_name) LIKE '%mortgage%'
+        OR lowerUTF8(account_name) LIKE '%retained%'
+        OR lowerUTF8(account_name) LIKE '%equity%'
+        OR lowerUTF8(account_name) LIKE '%capital%'
+        OR lowerUTF8(account_name) LIKE '%rounding%'
+        OR lowerUTF8(account_name) LIKE '%suspense%'
+        OR lowerUTF8(account_name) LIKE '%clearing%'
+        OR lowerUTF8(account_name) LIKE '%prepaid%'
+        OR lowerUTF8(account_name) LIKE '%deposit%'
+        OR lowerUTF8(account_name) LIKE '%inventory%'
+        OR lowerUTF8(account_name) LIKE '%gst%'
+        OR lowerUTF8(account_name) LIKE '%vat%'
+        OR lowerUTF8(account_name) LIKE '%tax payable%'
+        OR lowerUTF8(account_name) LIKE '%tax liability%'
+        OR lowerUTF8(account_name) LIKE '%opening balance%'
+      )`;
+
+    // COGS account pattern: direct costs, materials, subcontractors etc.
+    const COGS_MATCH = `(
+         lowerUTF8(account_name) LIKE '%cost of%'
+      OR lowerUTF8(account_name) LIKE '%cogs%'
+      OR lowerUTF8(account_name) LIKE '%direct cost%'
+      OR lowerUTF8(account_name) LIKE '%direct labour%'
+      OR lowerUTF8(account_name) LIKE '%direct labor%'
+      OR lowerUTF8(account_name) LIKE '%cost of goods%'
+      OR lowerUTF8(account_name) LIKE '%cost of sales%'
+      OR lowerUTF8(account_name) LIKE '%cost of revenue%'
+      OR lowerUTF8(account_name) LIKE '%raw material%'
+      OR lowerUTF8(account_name) LIKE '%subcontract%'
+      OR lowerUTF8(account_name) LIKE '%production%'
+    )`;
+
+    // Depreciation / amortisation accounts (added back for EBITDA).
+    const DA_MATCH = `(
+         lowerUTF8(account_name) LIKE '%depreciation%'
+      OR lowerUTF8(account_name) LIKE '%amortisation%'
+      OR lowerUTF8(account_name) LIKE '%amortization%'
+    )`;
+
+    const jDb  = this.analyticsDb;
+    const jTbl = `${jDb}.v_fact_accounting_journal_lines_latest`;
+
+    // ── expense/month (line or bar) ───────────────────────────────────────────
+    if (metric === 'expense' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
+           toStartOfMonth(journal_date) AS month_start,
+           round(sum(line_amount), 0) AS total_expense
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           AND line_amount > 0
+           AND journal_date IS NOT NULL
+           ${jTime}
+           ${BS_EXCL}
+         GROUP BY month, month_start
+         ORDER BY month_start ASC
+         LIMIT 36`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return { data: rows.map((r) => ({ name: r.month as string, value: this.num(r.total_expense) })) };
+    }
+
+    // ── expense/quarter (bar) ─────────────────────────────────────────────────
+    if (metric === 'expense' && grouping === 'quarter') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           concat('Q', toString(toQuarter(journal_date)), ' ', toString(toYear(journal_date))) AS quarter,
+           toStartOfQuarter(journal_date) AS quarter_start,
+           round(sum(line_amount), 0) AS total_expense
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           AND line_amount > 0
+           AND journal_date IS NOT NULL
+           ${jTime}
+           ${BS_EXCL}
+         GROUP BY quarter, quarter_start
+         ORDER BY quarter_start ASC
+         LIMIT 16`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return { data: rows.map((r) => ({ name: r.quarter as string, value: this.num(r.total_expense) })) };
+    }
+
+    // ── expense/account (bar or pie) ──────────────────────────────────────────
+    if (metric === 'expense' && grouping === 'account') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const limit = (() => {
+        const n =
+          typeof topN === 'number' && Number.isFinite(topN) ? Math.floor(topN) : 20;
+        return Math.max(3, Math.min(50, n));
+      })();
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(account_name, ''), 'Unknown Account') AS account_name,
+           round(sum(line_amount), 0) AS total_expense
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           AND line_amount > 0
+           AND journal_date IS NOT NULL
+           AND account_name != ''
+           ${jTime}
+           ${BS_EXCL}
+         GROUP BY account_name
+         HAVING total_expense > 0
+         ORDER BY total_expense DESC
+         LIMIT ${limit}`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return { data: rows.map((r) => ({ name: r.account_name as string, value: this.num(r.total_expense) })) };
+    }
+
+    // ── opex/account (bar) — operating expenses excluding COGS ───────────────
+    if (metric === 'opex' && grouping === 'account') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(account_name, ''), 'Unknown Account') AS account_name,
+           round(sum(line_amount), 0) AS total_opex
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           AND line_amount > 0
+           AND journal_date IS NOT NULL
+           AND account_name != ''
+           ${jTime}
+           ${BS_EXCL}
+           AND NOT ${COGS_MATCH}
+         GROUP BY account_name
+         HAVING total_opex > 0
+         ORDER BY total_opex DESC
+         LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return { data: rows.map((r) => ({ name: r.account_name as string, value: this.num(r.total_opex) })) };
+    }
+
+    // ── cogs/account (bar) — cost of goods / direct costs only ───────────────
+    if (metric === 'cogs' && grouping === 'account') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(account_name, ''), 'Unknown Account') AS account_name,
+           round(sum(line_amount), 0) AS total_cogs
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${entity}
+           AND line_amount > 0
+           AND journal_date IS NOT NULL
+           AND account_name != ''
+           ${jTime}
+           AND ${COGS_MATCH}
+         GROUP BY account_name
+         HAVING total_cogs > 0
+         ORDER BY total_cogs DESC
+         LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return { data: rows.map((r) => ({ name: r.account_name as string, value: this.num(r.total_cogs) })) };
+    }
+
+    // ── net_income/month (line or bar) ────────────────────────────────────────
+    if (metric === 'net_income' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT
+             toStartOfMonth(issued_at) AS month_start,
+             formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
+             round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${entity} ${time} ${arFilter}
+             AND issued_at IS NOT NULL
+           GROUP BY month_start, month`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT
+             toStartOfMonth(journal_date) AS month_start,
+             formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
+             round(sum(line_amount), 0) AS exp
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${entity}
+             AND line_amount > 0
+             AND journal_date IS NOT NULL
+             ${jTime}
+             ${BS_EXCL}
+           GROUP BY month_start, month`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const expMap = new Map<string, { exp: number; month: string }>(
+        expRows.map((r: any) => [
+          String(r.month_start),
+          { exp: this.num(r.exp), month: String(r.month ?? '') },
+        ]),
+      );
+      return {
+        data: revRows
+          .map((r: any) => {
+            const key = String(r.month_start);
+            const rev = this.num(r.rev);
+            const exp = expMap.get(key)?.exp ?? 0;
+            return {
+              name: String(r.month ?? ''),
+              value: Math.round(rev - exp),
+              _sort: key,
+            };
+          })
+          .sort((a: any, b: any) => String(a._sort).localeCompare(String(b._sort)))
+          .map(({ _sort: _s, ...rest }: any) => rest),
+      };
+    }
+
+    // ── net_income/quarter (bar) ──────────────────────────────────────────────
+    if (metric === 'net_income' && grouping === 'quarter') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT
+             concat('Q', toString(toQuarter(issued_at)), ' ', toString(toYear(issued_at))) AS quarter,
+             toStartOfQuarter(issued_at) AS quarter_start,
+             round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${entity} ${time} ${arFilter}
+             AND issued_at IS NOT NULL
+           GROUP BY quarter, quarter_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT
+             concat('Q', toString(toQuarter(journal_date)), ' ', toString(toYear(journal_date))) AS quarter,
+             toStartOfQuarter(journal_date) AS quarter_start,
+             round(sum(line_amount), 0) AS exp
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             ${entity}
+             AND line_amount > 0
+             AND journal_date IS NOT NULL
+             ${jTime}
+             ${BS_EXCL}
+           GROUP BY quarter, quarter_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const expMap = new Map<string, number>(expRows.map((r: any) => [String(r.quarter), this.num(r.exp)]));
+      return {
+        data: revRows
+          .map((r: any) => ({ name: String(r.quarter), value: Math.round(this.num(r.rev) - (expMap.get(String(r.quarter)) ?? 0)), _qs: String(r.quarter_start) }))
+          .sort((a: any, b: any) => a._qs.localeCompare(b._qs))
+          .map(({ _qs: _qs, ...rest }: any) => rest),
+      };
+    }
+
+    // ── gross_profit/month (line) — revenue minus COGS ───────────────────────
+    if (metric === 'gross_profit' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, cogsRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(issued_at) AS month_start, round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(journal_date) AS month_start, round(sum(line_amount), 0) AS cogs
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime}
+             AND ${COGS_MATCH}
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const cogsMap = new Map<string, number>(cogsRows.map((r: any) => [String(r.month_start), this.num(r.cogs)]));
+      return {
+        data: revRows
+          .map((r: any) => ({ name: String(r.month_start), value: Math.round(this.num(r.rev) - (cogsMap.get(String(r.month_start)) ?? 0)) }))
+          .sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      };
+    }
+
+    // ── gross_margin_pct/month (line) — gross profit % ───────────────────────
+    if (metric === 'gross_margin_pct' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, cogsRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(issued_at) AS month_start, round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(journal_date) AS month_start, round(sum(line_amount), 0) AS cogs
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} AND ${COGS_MATCH}
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const cogsMap = new Map<string, number>(cogsRows.map((r: any) => [String(r.month_start), this.num(r.cogs)]));
+      return {
+        data: revRows
+          .map((r: any) => {
+            const rev = this.num(r.rev);
+            const cogs = cogsMap.get(String(r.month_start)) ?? 0;
+            return { name: String(r.month_start), value: rev > 0 ? Math.round(((rev - cogs) / rev) * 1000) / 10 : 0 };
+          })
+          .sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      };
+    }
+
+    // ── net_margin_pct/month (line) — net income % ───────────────────────────
+    if (metric === 'net_margin_pct' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(issued_at) AS month_start, round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(journal_date) AS month_start, round(sum(line_amount), 0) AS exp
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} ${BS_EXCL}
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const expMap = new Map<string, number>(expRows.map((r: any) => [String(r.month_start), this.num(r.exp)]));
+      return {
+        data: revRows
+          .map((r: any) => {
+            const rev = this.num(r.rev);
+            const exp = expMap.get(String(r.month_start)) ?? 0;
+            return { name: String(r.month_start), value: rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0 };
+          })
+          .sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      };
+    }
+
+    // ── ebitda/month (line) — net income + depreciation/amortisation ─────────
+    if (metric === 'ebitda' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, expRows, daRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(issued_at) AS month_start, round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(journal_date) AS month_start, round(sum(line_amount), 0) AS exp
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} ${BS_EXCL}
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT toStartOfMonth(journal_date) AS month_start, round(sum(line_amount), 0) AS da
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime}
+             AND ${DA_MATCH}
+           GROUP BY month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const expMap = new Map<string, number>(expRows.map((r: any) => [String(r.month_start), this.num(r.exp)]));
+      const daMap  = new Map<string, number>(daRows.map((r: any) => [String(r.month_start), this.num(r.da)]));
+      return {
+        data: revRows
+          .map((r: any) => {
+            const key = String(r.month_start);
+            const rev = this.num(r.rev);
+            const exp = expMap.get(key) ?? 0;
+            const da  = daMap.get(key) ?? 0;
+            return { name: key, value: Math.round(rev - exp + da) };
+          })
+          .sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      };
+    }
+
+    // ── revenue_vs_expense/month (line) — dual series ─────────────────────────
+    if (metric === 'revenue_vs_expense' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT
+             formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
+             toStartOfMonth(issued_at) AS month_start,
+             round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL
+           GROUP BY month, month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT
+             formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
+             toStartOfMonth(journal_date) AS month_start,
+             round(sum(line_amount), 0) AS exp
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} ${BS_EXCL}
+           GROUP BY month, month_start`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const map = new Map<string, any>();
+      for (const r of revRows) map.set(String(r.month), { name: String(r.month), Revenue: this.num(r.rev), Expense: 0, _sort: String(r.month_start) });
+      for (const r of expRows) {
+        const key = String(r.month);
+        const existing = map.get(key) ?? { name: key, Revenue: 0, _sort: key };
+        existing.Expense = this.num(r.exp);
+        map.set(key, existing);
+      }
+      return { data: Array.from(map.values()).sort((a, b) => a._sort.localeCompare(b._sort)).map(({ _sort: _s, ...rest }) => rest) };
+    }
+
+    // ── pl/summary (table) — full P&L by account ─────────────────────────────
+    if (metric === 'pl' && grouping === 'summary') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revSummary, plRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT round(sum(total_amount), 0) AS total_revenue
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT
+             account_name,
+             if(${COGS_MATCH}, 'Cost of Sales', 'Operating Expense') AS category,
+             round(sum(line_amount), 0) AS amount
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL
+             AND account_name != ''
+             ${jTime} ${BS_EXCL}
+           GROUP BY account_name, category
+           HAVING amount > 0
+           ORDER BY category ASC, amount DESC
+           LIMIT 50`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const totalRevenue = this.num((revSummary[0] as any)?.total_revenue ?? 0);
+      const totalExpenses = plRows.reduce((s: number, r: any) => s + this.num(r.amount), 0);
+      const rows: Array<{ category: string; account: string; amount: number }> = [
+        { category: 'Revenue', account: 'Total Revenue (from invoices)', amount: totalRevenue },
+        ...plRows.map((r: any) => ({ category: String(r.category), account: String(r.account_name), amount: this.num(r.amount) })),
+        { category: 'Net Income', account: 'Net Income', amount: Math.round(totalRevenue - totalExpenses) },
+      ];
+      return { data: rows };
+    }
+
+    // ── expense/list (table) — detailed expense entries ───────────────────────
+    if (metric === 'expense' && grouping === 'list') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(journal_date, '%Y-%m-%d') AS date,
+           account_name,
+           coalesce(nullIf(description, ''), source_type) AS description,
+           round(line_amount, 2) AS amount
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+           AND line_amount > 0 AND journal_date IS NOT NULL
+           ${jTime} ${BS_EXCL}
+         ORDER BY journal_date DESC, line_amount DESC
+         LIMIT 100`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return {
+        data: rows.map((r: any) => ({
+          date: String(r.date),
+          account: String(r.account_name),
+          description: String(r.description),
+          amount: this.num(r.amount),
+        })),
+      };
+    }
+
+    // ── gl_transactions/list (table) — all journal lines ──────────────────────
+    if (metric === 'gl_transactions' && grouping === 'list') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(journal_date, '%Y-%m-%d') AS date,
+           journal_number,
+           account_code,
+           account_name,
+           coalesce(nullIf(description, ''), source_type) AS description,
+           round(line_amount, 2) AS amount,
+           if(line_amount > 0, 'Debit', 'Credit') AS type
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+           AND journal_date IS NOT NULL ${jTime}
+         ORDER BY journal_date DESC, abs(line_amount) DESC
+         LIMIT 200`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return {
+        data: rows.map((r: any) => ({
+          date: String(r.date),
+          journalNumber: this.num(r.journal_number),
+          accountCode: String(r.account_code),
+          account: String(r.account_name),
+          description: String(r.description),
+          amount: Math.abs(this.num(r.amount)),
+          type: String(r.type),
+        })),
+      };
+    }
+
+    // ── pl_summary/summary (metric tile) — P&L KPIs ──────────────────────────
+    if (metric === 'pl_summary' && grouping === 'summary') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [revRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT round(sum(total_amount), 0) AS rev
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT
+             round(sum(line_amount), 0) AS total_exp,
+             round(sumIf(line_amount, ${COGS_MATCH}), 0) AS total_cogs
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} ${BS_EXCL}`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const rev  = this.num((revRows[0] as any)?.rev ?? 0);
+      const exp  = this.num((expRows[0] as any)?.total_exp ?? 0);
+      const cogs = this.num((expRows[0] as any)?.total_cogs ?? 0);
+      const gp   = rev - cogs;
+      const ni   = rev - exp;
+      return {
+        data: [
+          { label: 'Total Revenue',    value: rev,  format: 'currency' },
+          { label: 'Total Expenses',   value: exp,  format: 'currency' },
+          { label: 'Gross Profit',     value: gp,   format: 'currency' },
+          { label: 'Net Income',       value: ni,   format: 'currency' },
+          { label: 'Gross Margin',     value: rev > 0 ? Math.round((gp / rev) * 1000) / 10 : 0, format: 'percent' },
+          { label: 'Net Margin',       value: rev > 0 ? Math.round((ni / rev) * 1000) / 10 : 0, format: 'percent' },
+        ],
+      };
+    }
+
+    // ── expense_summary/summary (metric tile) — expense KPIs ─────────────────
+    if (metric === 'expense_summary' && grouping === 'summary') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const [expRows, topRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT
+             round(sum(line_amount), 0) AS total_exp,
+             round(sumIf(line_amount, ${COGS_MATCH}), 0) AS total_cogs,
+             round(sumIf(line_amount, NOT ${COGS_MATCH}), 0) AS total_opex
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} ${BS_EXCL}`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+        this.queryRows<any>(
+          `SELECT account_name, round(sum(line_amount), 0) AS amt
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
+             AND line_amount > 0 AND journal_date IS NOT NULL AND account_name != ''
+             ${jTime} ${BS_EXCL}
+           GROUP BY account_name ORDER BY amt DESC LIMIT 1`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        ),
+      ]);
+      const totalExp  = this.num((expRows[0] as any)?.total_exp ?? 0);
+      const totalCogs = this.num((expRows[0] as any)?.total_cogs ?? 0);
+      const totalOpex = this.num((expRows[0] as any)?.total_opex ?? 0);
+      const topAcct   = String((topRows[0] as any)?.account_name ?? 'N/A');
+      const topAmt    = this.num((topRows[0] as any)?.amt ?? 0);
+      return {
+        data: [
+          { label: 'Total Expenses',         value: totalExp,  format: 'currency' },
+          { label: 'Cost of Sales (COGS)',   value: totalCogs, format: 'currency' },
+          { label: 'Operating Expenses',     value: totalOpex, format: 'currency' },
+          { label: 'Largest Expense',        value: topAmt,    format: 'currency', note: topAcct },
+        ],
+      };
+    }
+
+    // ── revenue_cumulative/month ─────────────────────────────────────────────
+    if (metric === 'revenue_cumulative' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(issued_at), '%m/%y') AS month,
+           toStartOfMonth(issued_at) AS month_start,
+           coalesce(sum(total_amount), 0) AS monthly_revenue
+         FROM ${this.analyticsDb}.fact_accounting_invoices
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           ${time} ${arFilter} AND issued_at IS NOT NULL
+         GROUP BY month, month_start ORDER BY month_start ASC LIMIT 36`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      let cumulative = 0;
+      return {
+        data: rows.map((r: any) => {
+          cumulative += this.num(r.monthly_revenue);
+          return { name: String(r.month ?? ''), value: Math.round(cumulative), monthly: Math.round(this.num(r.monthly_revenue)) };
+        }),
+      };
+    }
+
+    // ── invoice_value/invoice_type (pie/donut — ACCREC vs ACCPAY split) ──────
+    if (metric === 'invoice_value' && grouping === 'invoice_type') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           invoice_type AS name,
+           round(sum(total_amount), 0) AS value
+         FROM ${this.analyticsDb}.fact_accounting_invoices
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${time}
+           AND invoice_external_id != ''
+         GROUP BY invoice_type ORDER BY value DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── transaction_value/source_type (pie/donut — journal source breakdown) ─
+    if (metric === 'transaction_value' && grouping === 'source_type') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(source_type, ''), 'OTHER') AS name,
+           round(abs(sum(toFloat64(line_amount))), 0) AS value
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${jTime}
+         GROUP BY name ORDER BY value DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── transaction_value/currency (pie/donut) ────────────────────────────────
+    if (metric === 'transaction_value' && grouping === 'currency') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(currency, ''), 'UNKNOWN') AS name,
+           round(sum(total_amount), 0) AS value
+         FROM ${this.analyticsDb}.fact_accounting_invoices
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${time}
+           AND invoice_external_id != ''
+         GROUP BY name ORDER BY value DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── accounts/classification (pie/donut — P&L vs Balance Sheet) ──────────
+    if (metric === 'accounts' && grouping === 'classification') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const acctTbl = `${this.analyticsDb}.dim_accounting_accounts`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(a.classification, 'Unknown') AS name,
+           round(abs(sum(toFloat64(j.line_amount))), 0) AS value
+         FROM ${jTbl} j
+         LEFT JOIN ${acctTbl} a ON a.account_code = j.account_code AND a.org_id = j.org_id
+         WHERE j.org_id IN ({externalOrgIds:Array(String)}) ${jTime}
+         GROUP BY name ORDER BY value DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── accounts/active_status (pie — active vs inactive accounts) ───────────
+    if (metric === 'accounts' && grouping === 'active_status') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           if(is_active, 'Active', 'Inactive') AS name,
+           count() AS value
+         FROM ${this.analyticsDb}.dim_accounting_accounts
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+         GROUP BY name ORDER BY value DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── top_invoices/value (bar/horizontal_bar — top 10 by amount) ───────────
+    if (metric === 'top_invoices' && grouping === 'value') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(invoice_number, ''), invoice_external_id) AS name,
+           total_amount AS value,
+           coalesce(contact_name, '') AS client,
+           status
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${time}
+           AND invoice_external_id != '' ${arFilter} AND total_amount > 0
+         ORDER BY total_amount DESC LIMIT 10`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+          client: String(r.client ?? ''),
+          status: String(r.status ?? ''),
+        })),
+      };
+    }
+
+    // ── invoice_amount/bucket (histogram — distribution of invoice sizes) ─────
+    if (metric === 'invoice_amount' && grouping === 'bucket') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           multiIf(
+             total_amount < 1000,    '$0–1K',
+             total_amount < 5000,    '$1K–5K',
+             total_amount < 10000,   '$5K–10K',
+             total_amount < 25000,   '$10K–25K',
+             total_amount < 50000,   '$25K–50K',
+             total_amount < 100000,  '$50K–100K',
+             '$100K+'
+           ) AS bucket,
+           multiIf(
+             total_amount < 1000,    1,
+             total_amount < 5000,    2,
+             total_amount < 10000,   3,
+             total_amount < 25000,   4,
+             total_amount < 50000,   5,
+             total_amount < 100000,  6, 7
+           ) AS bucket_order,
+           count() AS invoice_count
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${time}
+           AND invoice_external_id != '' ${arFilter} AND total_amount > 0
+         GROUP BY bucket, bucket_order ORDER BY bucket_order ASC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.bucket ?? ''), value: this.num(r.invoice_count) })) };
+    }
+
+    // ── expense_by_type/source (bar — expenses ranked by source type) ─────────
+    if (metric === 'expense_by_type' && grouping === 'source') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(source_type, ''), 'OTHER') AS name,
+           round(abs(sum(toFloat64(line_amount))), 0) AS value
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${jTime}
+         GROUP BY name ORDER BY value DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── expense_by_type/month (stacked_bar — monthly expenses by source type) ─
+    if (metric === 'expense_by_type' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
+           toStartOfMonth(journal_date) AS month_start,
+           coalesce(nullIf(source_type, ''), 'OTHER') AS source_type,
+           round(abs(sum(toFloat64(line_amount))), 0) AS amount
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${jTime}
+           AND journal_date IS NOT NULL
+         GROUP BY month, month_start, source_type
+         ORDER BY month_start ASC, amount DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      const monthMap = new Map<string, Record<string, unknown>>();
+      const sortMap = new Map<string, string>();
+      for (const r of rows) {
+        const m = String(r.month ?? '');
+        if (!monthMap.has(m)) { monthMap.set(m, { name: m }); sortMap.set(m, String(r.month_start ?? '')); }
+        (monthMap.get(m) as any)[String(r.source_type)] = this.num(r.amount);
+      }
+      return {
+        data: [...monthMap.entries()]
+          .sort(([a], [b]) => (sortMap.get(a) ?? '').localeCompare(sortMap.get(b) ?? ''))
+          .map(([, v]) => v),
+      };
+    }
+
+    // ── pl_accounts/account (bar — P&L accounts by total amount) ─────────────
+    if (metric === 'pl_accounts' && grouping === 'account') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const acctTbl = `${this.analyticsDb}.dim_accounting_accounts`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           j.account_name AS name,
+           round(abs(sum(toFloat64(j.line_amount))), 0) AS value
+         FROM ${jTbl} j
+         LEFT JOIN ${acctTbl} a ON a.account_code = j.account_code AND a.org_id = j.org_id
+         WHERE j.org_id IN ({externalOrgIds:Array(String)}) ${jTime}
+           AND (a.classification = 'ProfitAndLoss' OR j.source_type IN ('EXPENSE','PAYROLL','TRAVEL'))
+         GROUP BY name ORDER BY value DESC LIMIT 15`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── bs_accounts/account (bar — Balance Sheet accounts by total amount) ────
+    if (metric === 'bs_accounts' && grouping === 'account') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const acctTbl = `${this.analyticsDb}.dim_accounting_accounts`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           j.account_name AS name,
+           round(abs(sum(toFloat64(j.line_amount))), 0) AS value
+         FROM ${jTbl} j
+         LEFT JOIN ${acctTbl} a ON a.account_code = j.account_code AND a.org_id = j.org_id
+         WHERE j.org_id IN ({externalOrgIds:Array(String)}) ${jTime}
+           AND a.classification = 'BalanceSheet'
+         GROUP BY name ORDER BY value DESC LIMIT 15`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── accounts_by_type/classification (bar — total by account classification)
+    if (metric === 'accounts_by_type' && grouping === 'classification') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const acctTbl = `${this.analyticsDb}.dim_accounting_accounts`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(a.classification, 'Unknown') AS name,
+           round(abs(sum(toFloat64(j.line_amount))), 0) AS value
+         FROM ${jTbl} j
+         LEFT JOIN ${acctTbl} a ON a.account_code = j.account_code AND a.org_id = j.org_id
+         WHERE j.org_id IN ({externalOrgIds:Array(String)}) ${jTime}
+         GROUP BY name ORDER BY value DESC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+    }
+
+    // ── bubble/clients/revenue_invoices_avg ────────────────────────────────────
+    if (metric === 'clients' && grouping === 'revenue_invoices_avg') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           coalesce(nullIf(contact_name, ''), 'Unknown') AS name,
+           round(sum(total_amount), 0) AS revenue,
+           count() AS invoice_count,
+           round(avg(total_amount), 0) AS avg_invoice
+         FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${time}
+           AND invoice_external_id != '' ${arFilter} AND total_amount > 0
+         GROUP BY name ORDER BY revenue DESC LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          x: this.num(r.revenue),
+          y: this.num(r.invoice_count),
+          z: this.num(r.avg_invoice),
+          revenue: this.num(r.revenue),
+          invoices: this.num(r.invoice_count),
+          avgInvoice: this.num(r.avg_invoice),
+        })),
+      };
+    }
+
+    // ── gauge/financial_health/summary ────────────────────────────────────────
+    if (metric === 'financial_health' && grouping === 'summary') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const [invRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT
+             coalesce(sum(total_amount), 0) AS total_revenue,
+             coalesce(sumIf(total_amount, lowerUTF8(status) IN ('paid','closed')), 0) AS collected,
+             coalesce(sumIf(total_amount, due_at IS NOT NULL AND due_at < now()), 0) AS overdue_amount
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${time}
+             AND invoice_external_id != '' ${arFilter} AND total_amount > 0`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+        this.queryRows<any>(
+          `SELECT round(abs(sum(toFloat64(line_amount))), 0) AS total_expenses
+           FROM ${jTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+      ]);
+      const revenue = this.num((invRows[0] as any)?.total_revenue ?? 0);
+      const collected = this.num((invRows[0] as any)?.collected ?? 0);
+      const overdue = this.num((invRows[0] as any)?.overdue_amount ?? 0);
+      const expenses = this.num((expRows[0] as any)?.total_expenses ?? 0);
+      const collectionRate = revenue > 0 ? (collected / revenue) * 100 : 0;
+      const overdueRatio = revenue > 0 ? (overdue / revenue) * 100 : 0;
+      const netMargin = revenue > 0 ? ((revenue - expenses) / revenue) * 100 : 50;
+      const score = Math.max(0, Math.min(100, Math.round(
+        collectionRate * 0.4 + Math.max(0, 100 - overdueRatio * 2) * 0.3 + Math.max(0, Math.min(100, netMargin)) * 0.3
+      )));
+      return {
+        data: [{
+          name: 'Financial Health',
+          value: score,
+          revenue: Math.round(revenue),
+          collected: Math.round(collected),
+          overdue: Math.round(overdue),
+          expenses: Math.round(expenses),
+          collectionRate: Math.round(collectionRate),
+          label: score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'Needs Attention',
+        }],
+      };
+    }
+
+    // ── kpi/summary/overview (multi-KPI cards) ────────────────────────────────
+    if (metric === 'summary' && grouping === 'overview') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const [invRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT
+             round(sum(total_amount), 0) AS total_revenue,
+             count() AS invoice_count,
+             round(avg(total_amount), 0) AS avg_invoice,
+             round(sumIf(total_amount, due_at IS NOT NULL AND due_at < now()), 0) AS overdue
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${time}
+             AND invoice_external_id != '' ${arFilter} AND total_amount > 0`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+        this.queryRows<any>(
+          `SELECT round(abs(sum(toFloat64(line_amount))), 0) AS total_expenses
+           FROM ${jTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+      ]);
+      const revenue = this.num((invRows[0] as any)?.total_revenue ?? 0);
+      const expenses = this.num((expRows[0] as any)?.total_expenses ?? 0);
+      const invoiceCount = this.num((invRows[0] as any)?.invoice_count ?? 0);
+      const avgInvoice = this.num((invRows[0] as any)?.avg_invoice ?? 0);
+      const overdue = this.num((invRows[0] as any)?.overdue ?? 0);
+      return {
+        data: [
+          { label: 'Total Revenue',     value: revenue,            format: 'currency', icon: 'revenue'  },
+          { label: 'Total Expenses',    value: expenses,           format: 'currency', icon: 'expenses' },
+          { label: 'Net Profit',        value: revenue - expenses, format: 'currency', icon: 'profit'   },
+          { label: 'Avg Invoice Value', value: avgInvoice,         format: 'currency', icon: 'invoice'  },
+          { label: 'Invoice Count',     value: invoiceCount,       format: 'number',   icon: 'count'    },
+          { label: 'Overdue Amount',    value: overdue,            format: 'currency', icon: 'overdue'  },
+        ],
+      };
+    }
+
+    // ── heatmap/revenue_expense/month ─────────────────────────────────────────
+    if (metric === 'revenue_expense' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_latest`;
+      const jTime = this.timeWhereOn('journal_date', range);
+      const [revRows, expRows] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT formatDateTime(toStartOfMonth(issued_at), '%b %y') AS month,
+             toStartOfMonth(issued_at) AS month_start,
+             round(sum(total_amount), 0) AS value
+           FROM ${this.analyticsDb}.fact_accounting_invoices
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${time} ${arFilter} AND issued_at IS NOT NULL
+           GROUP BY month, month_start ORDER BY month_start ASC LIMIT 24`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+        this.queryRows<any>(
+          `SELECT formatDateTime(toStartOfMonth(journal_date), '%b %y') AS month,
+             toStartOfMonth(journal_date) AS month_start,
+             round(abs(sum(toFloat64(line_amount))), 0) AS value
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${jTime} AND journal_date IS NOT NULL
+           GROUP BY month, month_start ORDER BY month_start ASC LIMIT 24`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+      ]);
+      const revMap = new Map(revRows.map((r: any) => [String(r.month), { value: this.num(r.value), sort: String(r.month_start) }]));
+      const expMap = new Map(expRows.map((r: any) => [String(r.month), { value: this.num(r.value), sort: String(r.month_start) }]));
+      const months = [...new Set([...revMap.keys(), ...expMap.keys()])]
+        .sort((a, b) => (revMap.get(a)?.sort ?? expMap.get(a)?.sort ?? '').localeCompare(revMap.get(b)?.sort ?? expMap.get(b)?.sort ?? ''));
+      return {
+        data: months.map(m => ({
+          name: m,
+          Revenue: revMap.get(m)?.value ?? 0,
+          Expenses: expMap.get(m)?.value ?? 0,
+          Net: (revMap.get(m)?.value ?? 0) - (expMap.get(m)?.value ?? 0),
+        })),
+      };
     }
 
     // Default: revenue by month
@@ -2996,7 +5128,18 @@ export class AgentService {
 
       // If the user clicked a clarification quick-action like "Use client: X" or "Use entity: Y",
       // preserve the original query (time window, chart constraints) by merging it in.
-      if (/^\s*use\s+(client|entity)(?:\s+(?:a|b|1|2))?\s*:/i.test(queryText)) {
+      // Also fire for short follow-up messages (e.g., "Compare revenue month by month") that
+      // could be the final step of a multi-step client selection flow — the prior "Use client A/B:"
+      // directives need to be merged in so the dashboard builder sees them.
+      const isDirectiveMessage = /^\s*use\s+(client|entity)(?:\s+(?:a|b|1|2))?\s*:/i.test(queryText);
+      const mightBeCompareFollowUp = !isDirectiveMessage &&
+        !spec.wantsTopClients &&
+        (
+          /\b(compare|comparison)\b/i.test(queryText) ||
+          (/\b(revenue|outstanding|overdue|dso|month|chart|bar|line)\b/i.test(queryText) &&
+            queryText.trim().split(/\s+/).length <= 20)
+        );
+      if (isDirectiveMessage || mightBeCompareFollowUp) {
         const recentUsers = await this.prisma.agentChatMessage.findMany({
           where: {
             sessionId: currentSession.id,
@@ -3004,42 +5147,108 @@ export class AgentService {
             role: 'user',
           },
           orderBy: { createdAt: 'desc' },
-          take: 10,
+          take: 40,
         });
         const prior = recentUsers
           .slice(1) // exclude current message
           .map((m) => String(m.content ?? '').trim())
           .filter(Boolean);
 
+        // Collect the latest directives across the recent session history.
+        // Important: don't stop scanning at the first non-directive user message.
+        // Users often (a) answer "Use entity: ..." then (b) restate the question,
+        // which would otherwise drop the entity directive and cause endless re-prompts.
         const priorDirectives: string[] = [];
-        let base: string | null = null;
+        const baseCandidates: string[] = [];
         for (const t of prior) {
           if (/^\d+$/.test(t)) continue;
           if (/^\s*use\s+(client|entity)(?:\s+(?:a|b|1|2))?\s*:/i.test(t)) {
             priorDirectives.push(t);
             continue;
           }
-          base = t;
-          break;
+          baseCandidates.push(t);
         }
 
         const normalize = (s: string) => s.trim().toLowerCase();
-        const uniq = (arr: string[]) => {
-          const seen = new Set<string>();
-          const out: string[] = [];
-          for (const x of arr) {
-            const k = normalize(x);
-            if (seen.has(k)) continue;
-            seen.add(k);
-            out.push(x.trim());
+        const base = (() => {
+          if (baseCandidates.length === 0) return null;
+          const score = (s: string) => {
+            const t = s.trim();
+            if (!t) return -1e9;
+            let sc = t.length;
+            // Prefer "real questions" over single names / acknowledgements.
+            if (/\?/.test(t)) sc += 30;
+            if (
+              /\b(last|past|since|between|from|compare|revenue|overdue|outstanding|collections|payment|days|invoice|client|entity|dashboard|chart|graph|table|bar|line)\b/i.test(
+                t,
+              )
+            )
+              sc += 60;
+            if (/^\s*use\s+/i.test(t)) sc -= 200;
+            if (t.split(/\s+/).length < 3) sc -= 40;
+            return sc;
+          };
+          return baseCandidates.sort((a, b) => score(b) - score(a))[0] ?? null;
+        })();
+
+        // Merge directives while keeping only the *latest* directive per key.
+        // This prevents loops where old "Use client A: ..." persists above the new pick.
+        const mergeWithLatestDirectives = (lines: string[]): string[] => {
+          const baseLines: string[] = [];
+          const directivesByKey = new Map<string, string>();
+
+          const directiveKey = (line: string): string | null => {
+            const m = line.match(
+              /^\s*use\s+(entity|client)(?:\s+(a|b|1|2))?\s*:/i,
+            );
+            if (!m) return null;
+            const kind = (m[1] ?? '').toLowerCase();
+            const slotRaw = (m[2] ?? '').toLowerCase();
+            const slot =
+              slotRaw === '1' ? 'a' : slotRaw === '2' ? 'b' : slotRaw || '';
+            return `${kind}${slot ? `_${slot}` : ''}`;
+          };
+
+          for (const rawLine of lines) {
+            const line = String(rawLine ?? '').trim();
+            if (!line) continue;
+            if (/^\d+$/.test(line)) continue;
+            const key = directiveKey(line);
+            if (key) {
+              // Keep the first (most recent) directive we encounter for each key.
+              if (!directivesByKey.has(key)) directivesByKey.set(key, line);
+              continue;
+            }
+            // Keep only the most recent "base" query line (the first non-directive we see
+            // when scanning from most-recent to oldest in the caller).
+            if (baseLines.length === 0) baseLines.push(line);
           }
+
+          // Emit: base, then directives in stable order, then any non-duplicate extra lines.
+          const directiveOrder = ['entity', 'client', 'client_a', 'client_b'] as const;
+          const orderedDirectives = directiveOrder
+            .map((k) => directivesByKey.get(k))
+            .filter(Boolean) as string[];
+
+          const out: string[] = [];
+          const seen = new Set<string>();
+          const pushUniq = (l: string) => {
+            const k = normalize(l);
+            if (seen.has(k)) return;
+            seen.add(k);
+            out.push(l.trim());
+          };
+
+          for (const l of baseLines) pushUniq(l);
+          for (const l of orderedDirectives) pushUniq(l);
           return out;
         };
 
-        const merged = uniq([
-          ...(base ? [base] : []),
-          ...priorDirectives.reverse(), // chronological
+        const merged = mergeWithLatestDirectives([
+          // Scan from most-recent to oldest so mergeWithLatestDirectives sees the latest base.
           queryText.trim(),
+          ...priorDirectives,
+          ...(base ? [base] : []),
         ]);
         if (merged.length >= 2) {
           queryText = merged.join('\n');
@@ -3101,39 +5310,9 @@ export class AgentService {
           scope.externalOrgIds.length > 1 &&
           !/\buse\s+entity\s*:/i.test(queryText)
         ) {
-          const connRows = await this.prisma.erpConnection.findMany({
-            where: { id: { in: scope.connectionIds }, status: 'ACTIVE' },
-            select: {
-              externalOrganizationId: true,
-              displayName: true,
-              metadata: true,
-              provider: true,
-            },
-          });
-          const options = connRows
-            .map((r) => {
-              const orgId = String(r.externalOrganizationId ?? '').trim();
-              const meta = (r.metadata as Record<string, any>) || {};
-              const orgName = String(
-                r.displayName ??
-                  meta.orgName ??
-                  meta.companyName ??
-                  meta.companyId ??
-                  orgId,
-              ).trim();
-              return {
-                orgId,
-                orgName,
-                provider: String(r.provider ?? '').toLowerCase(),
-              };
-            })
-            .filter(
-              (o) =>
-                o.orgId &&
-                o.orgName &&
-                (!spec.providerHint || o.provider === spec.providerHint),
-            )
-            .slice(0, 8);
+          const options = (
+            await this.listEntitiesForScope(scope.connectionIds, spec.providerHint)
+          ).slice(0, 8);
 
           if (options.length >= 2) {
             const clarification: ClarificationPrompt = {
@@ -3141,7 +5320,7 @@ export class AgentService {
               question: 'Which entity should I use for this client analysis?',
               options: options.map((o) => ({
                 label: o.orgName,
-                value: `Use entity: ${o.orgId}`,
+                value: `Use entity: ${o.orgName}`,
               })),
             };
 
@@ -3150,7 +5329,10 @@ export class AgentService {
             const questionText = [
               clarification.question,
               '',
-              ...clarification.options.map((o, i) => `${i + 1}) ${o.label}`),
+              ...clarification.options.map((o, i) => {
+                const detail = o.value && o.value !== o.label ? ` — ${o.value}` : '';
+                return `${i + 1}) ${o.label}${detail}`;
+              }),
             ].join('\n');
 
             await this.prisma.agentChatMessage.create({
@@ -3202,7 +5384,7 @@ export class AgentService {
             question: `Which entity did you mean by "${entityResolution.mention}"?`,
             options: entityResolution.candidates.slice(0, 5).map((c) => ({
               label: c.orgName,
-              value: `Use entity: ${c.orgId}`,
+              value: `Use entity: ${c.orgName}`,
             })),
           };
 
@@ -3263,38 +5445,10 @@ export class AgentService {
 
         // Enforce member scoping: non-admin users must pick exactly one entity.
         if (role !== 'ADMIN' && !spec.entityFilter) {
-          const connRows = await this.prisma.erpConnection.findMany({
-            where: { id: { in: scope.connectionIds }, status: 'ACTIVE' },
-            select: {
-              externalOrganizationId: true,
-              displayName: true,
-              metadata: true,
-              provider: true,
-            },
-          });
-          const entities = connRows
-            .map((r) => {
-              const id = String(r.externalOrganizationId ?? '').trim();
-              const meta = (r.metadata as Record<string, any>) || {};
-              const name = String(
-                r.displayName ??
-                  meta.orgName ??
-                  meta.companyName ??
-                  meta.companyId ??
-                  id,
-              ).trim();
-              return {
-                orgId: id,
-                orgName: name,
-                provider: String(r.provider ?? '').toLowerCase(),
-              };
-            })
-            .filter(
-              (e) =>
-                e.orgId &&
-                e.orgName &&
-                (!spec.providerHint || e.provider === spec.providerHint),
-            );
+          const entities = await this.listEntitiesForScope(
+            scope.connectionIds,
+            spec.providerHint,
+          );
 
           if (entities.length === 1) {
             spec = {
@@ -3312,7 +5466,9 @@ export class AgentService {
                 'Which entity should I use for this analysis? (Members are entity-scoped.)',
               options: entities.slice(0, 8).map((e) => ({
                 label: e.orgName,
-                value: `Use entity: ${e.orgId}`,
+                // Use the human name in the quick-action so users don't see opaque ids.
+                // resolveEntityFilter() can map this back to org_id deterministically via prisma.
+                value: `Use entity: ${e.orgName}`,
               })),
             };
 
@@ -3379,14 +5535,16 @@ export class AgentService {
                 (l) =>
                   l.match(/^use\s+client\s+(?:a|1)\s*[:\-]\s*(.+)$/i)?.[1]?.trim(),
               )
-              .find(Boolean) ?? null;
+              .filter(Boolean)
+              .slice(-1)[0] ?? null;
           const directiveB =
             lines
               .map(
                 (l) =>
                   l.match(/^use\s+client\s+(?:b|2)\s*[:\-]\s*(.+)$/i)?.[1]?.trim(),
               )
-              .find(Boolean) ?? null;
+              .filter(Boolean)
+              .slice(-1)[0] ?? null;
 
           const inferred = this.extractCompareClients(queryText);
           // If the user explicitly chose B (but not A), don't treat it as A.
@@ -3398,14 +5556,82 @@ export class AgentService {
           const hasA = Boolean(clientA);
           const hasB = Boolean(clientB);
 
+          // If they want to compare clients but didn't specify *what* to compare,
+          // ask once to avoid guessing (and generating irrelevant charts).
+          const hasCompareMetricSignal =
+            /\b(revenue|sales|invoiced|billed|paid|collected|outstanding|overdue|aging|ar\b|dso|payment|days\s+to\s+pay|payment\s+days)\b/i.test(
+              queryText,
+            );
+          if (hasA && hasB && !hasCompareMetricSignal) {
+            const clarification: ClarificationPrompt = {
+              reason: 'COMPARE_CLIENT_METRIC_REQUIRED',
+              question: 'What should I compare between these clients?',
+              options: [
+                {
+                  label: 'Revenue (monthly)',
+                  value: 'Compare revenue month by month in a bar chart.',
+                },
+                {
+                  label: 'Outstanding vs overdue (monthly)',
+                  value:
+                    'Compare outstanding and overdue month by month in a bar chart.',
+                },
+                {
+                  label: 'Payment speed (DSO, monthly)',
+                  value: 'Compare average days-to-pay by month in a line chart.',
+                },
+              ],
+            };
+
+            await logEvent('NEEDS_INPUT', { reason: clarification.reason });
+            const questionText = [
+              clarification.question,
+              '',
+              ...clarification.options.map((o, i) => `${i + 1}) ${o.label}`),
+            ].join('\n');
+
+            await this.prisma.agentChatMessage.create({
+              data: {
+                sessionId: currentSession.id,
+                organizationId,
+                role: 'assistant',
+                content: questionText,
+              },
+            });
+
+            await this.prisma.agentDashboardRequest.update({
+              where: { id: request.id },
+              data: { status: 'NEEDS_INPUT', completedAt: new Date() },
+            });
+            await this.prisma.agentRun.update({
+              where: { id: run.id },
+              data: {
+                status: 'NEEDS_INPUT',
+                completedAt: new Date(),
+                latencyMs: Date.now() - runStartedAt,
+              },
+            });
+
+            yield this.chunk(
+              'clarify',
+              clarification as unknown as Record<string, unknown>,
+            );
+            yield this.chunk('done', {
+              metrics: {
+                sessionId: currentSession.id,
+                intent,
+                needsInput: true,
+                reason: clarification.reason,
+              },
+            });
+            return;
+          }
+
           // We require entity scoping for client comparisons.
           const scopeForPick: OrgScope =
             spec.entityFilter?.orgId &&
             scope.externalOrgIds.includes(spec.entityFilter.orgId)
-              ? {
-                  connectionIds: scope.connectionIds,
-                  externalOrgIds: [spec.entityFilter.orgId],
-                }
+              ? { connectionIds: scope.connectionIds, externalOrgIds: [spec.entityFilter.orgId] }
               : scope;
 
           if (scopeForPick.externalOrgIds.length > 0 && (!hasA || !hasB)) {
@@ -3413,7 +5639,7 @@ export class AgentService {
               `SELECT
                  coalesce(nullIf(client_name, ''), '') AS client_name,
                  sum(total_invoiced) AS total_invoiced
-               FROM ${this.analyticsDb}.dim_clients FINAL
+               FROM ${this.analyticsDb}.v_dim_clients_latest
                WHERE org_id IN ({externalOrgIds:Array(String)})
                  AND client_name != ''
                GROUP BY client_name
@@ -3579,10 +5805,7 @@ export class AgentService {
         const scopeForClient: OrgScope =
           spec.entityFilter?.orgId &&
           scope.externalOrgIds.includes(spec.entityFilter.orgId)
-            ? {
-                connectionIds: scope.connectionIds,
-                externalOrgIds: [spec.entityFilter.orgId],
-              }
+            ? { connectionIds: scope.connectionIds, externalOrgIds: [spec.entityFilter.orgId] }
             : scope;
 
         const clientResolution = shouldResolveSingleClient
@@ -3848,17 +6071,25 @@ export class AgentService {
               : this.queryAwareFallbackWidgets(queryText);
 
           const compareClients = this.extractCompareClients(queryText);
+          const hasExplicitClientPairDirective =
+            /\buse\s+clients?\s*:/i.test(queryText) ||
+            /\buse\s+client\s+(?:a|b|1|2)\s*:/i.test(queryText);
           const shouldUseCompareClients =
-            /\bcompare\b/i.test(queryText) &&
-            /\b(client|clients|customer|customers|contact|contacts)\b/i.test(
-              queryText,
-            ) &&
-            !spec.wantsTopClients &&
             Array.isArray(compareClients) &&
-            compareClients.length >= 2;
+            compareClients.length >= 2 &&
+            // If the user explicitly picked A/B (or provided "use clients:"), always honor it,
+            // even if the original question mentioned "top N".
+            (hasExplicitClientPairDirective ||
+              (/\bcompare\b/i.test(queryText) &&
+                /\b(client|clients|customer|customers|contact|contacts)\b/i.test(
+                  queryText,
+                ) &&
+                !spec.wantsTopClients));
 
-          await this.prisma.dashboardWidget.createMany({
-            data: widgets.map((w) => {
+          // For any dynamic widgets, generate SQL now (before createMany)
+          const scope = await this.getOrgScope(organizationId, role, spec.entityFilter?.orgId);
+          const widgetDataList = await Promise.all(
+            widgets.map(async (w) => {
               const wantsClientPair =
                 shouldUseCompareClients &&
                 Array.isArray(compareClients) &&
@@ -3866,38 +6097,61 @@ export class AgentService {
 
               const applyClientPair =
                 wantsClientPair &&
-                (w.grouping === 'client' ||
-                  (w.metric === 'revenue' && w.grouping === 'month'));
+                (() => {
+                  if (w.grouping === 'client') return true;
+                  if (w.grouping !== 'month') return false;
+                  return ['revenue', 'overdue', 'outstanding', 'dso'].includes(
+                    String(w.metric ?? '').toLowerCase(),
+                  );
+                })();
 
+              const clientBreakdownMetrics = ['revenue', 'overdue', 'outstanding', 'dso', 'paid'];
               const breakdown =
-                wantsClientPair && w.metric === 'revenue' && w.grouping === 'month'
+                w.grouping === 'month' &&
+                clientBreakdownMetrics.includes(String(w.metric ?? '').toLowerCase()) &&
+                (wantsClientPair || spec.wantsTopClients)
                   ? 'client'
                   : ((w as any)?.breakdown ?? null);
+
+              let dynamicSql: string | null = null;
+              if (w.metric === 'dynamic') {
+                const intent = (w as any)._dynamicIntent ?? `${w.title} chart`;
+                dynamicSql = await this.generateDynamicSql(intent, w.title, scope, spec.timeRange).catch(() => null);
+              }
 
               return {
                 organizationId,
                 dashboardId: dashboard.id,
                 title: w.title,
                 chartType: w.type,
-                queryConfig: {
-                  metric: w.metric,
-                  grouping: w.grouping,
-                  timeRange: spec.timeRange ?? null,
-                  providerHint: spec.providerHint ?? null,
-                  clientName: spec.clientFilter?.name ?? null,
-                  clientNames: applyClientPair ? compareClients : null,
-                  orgId: spec.entityFilter?.orgId ?? null,
-                  orgName: spec.entityFilter?.orgName ?? null,
-                  breakdown,
-                  topN: applyClientPair ? null : ((w as any)?.topN ?? null),
-                } as Prisma.InputJsonValue,
+	                queryConfig: {
+	                  metric: w.metric,
+	                  grouping: w.grouping,
+	                  timeRange: spec.timeRange ?? null,
+	                  providerHint: spec.providerHint ?? null,
+	                  clientName: spec.clientFilter?.name ?? null,
+	                  clientNames: applyClientPair ? compareClients : null,
+	                  orgId: spec.entityFilter?.orgId ?? null,
+	                  orgName: spec.entityFilter?.orgName ?? null,
+	                  breakdown,
+	                  // Optional presentation hints for the dashboard renderer (safe no-ops elsewhere).
+	                  display: (w as any)?.display ?? null,
+	                  topN: applyClientPair
+                    ? null
+                    : breakdown === 'client' && spec.wantsTopClients
+                      ? (typeof (w as any)?.topN === 'number' ? (w as any).topN : (spec.topN ?? 2))
+                      : ((w as any)?.topN ?? null),
+	                  ...(dynamicSql ? { dynamicSql } : {}),
+	                } as Prisma.InputJsonValue,
                 chartConfig: {
                   description: w.description,
                 } as Prisma.InputJsonValue,
                 displayOrder: w.display_order,
               };
             }),
-          });
+          );
+
+          await this.prisma.dashboardWidget.createMany({ data: widgetDataList });
 
           // Link request to the generated dashboard
           await this.prisma.agentDashboardRequest.update({
@@ -4236,12 +6490,14 @@ export class AgentService {
       .map((l) =>
         l.match(/^use\s+client\s+(?:a|1)\s*[:\-]\s*(.+)$/i)?.[1]?.trim(),
       )
-      .find(Boolean);
+      .filter(Boolean)
+      .slice(-1)[0];
     const b2 = lines
       .map((l) =>
         l.match(/^use\s+client\s+(?:b|2)\s*[:\-]\s*(.+)$/i)?.[1]?.trim(),
       )
-      .find(Boolean);
+      .filter(Boolean)
+      .slice(-1)[0];
     if (a2 || b2) return [a2, b2].filter(Boolean) as string[];
 
     // Heuristic: quoted pair "X" vs "Y"
@@ -4327,7 +6583,7 @@ export class AgentService {
     const mk = (
       title: string,
       description: string,
-      type: 'line' | 'bar' | 'pie' | 'metric' | 'table',
+      type: ChartType,
       metric: string,
       grouping: string,
       order: number,
@@ -4359,6 +6615,396 @@ export class AgentService {
       if (w?.[1]) return words[w[1]] ?? null;
       return null;
     };
+
+    // ── Explicit chart instruction mode ─────────────────────────────────────
+    // If the user provides explicit “Create a X chart …” lines (common in specs),
+    // honor them deterministically. This reduces reliance on the LLM and makes
+    // behavior stable for generic “chart builder” prompts.
+    {
+      const explicitLines = query
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .filter((l) => /^(?:[-*]\s*)?(create|make|build|generate)\b/i.test(l));
+
+      if (explicitLines.length > 0) {
+        const widgets: W[] = [];
+        for (const line of explicitLines.slice(0, 8)) {
+          const lower = line.toLowerCase();
+          const wants = (r: RegExp) => r.test(lower);
+
+          const requestedType = ((): W['type'] => {
+            // UI currently renders “gauge” requests best as a KPI/metric tile.
+            if (wants(/gauge/)) return 'metric';
+            // Heatmaps aren't a first-class widget yet; map to bar/stacked bar as best-effort.
+            if (wants(/heatmap/)) return wants(/stacked/) ? 'stacked_bar' : 'bar';
+            if (wants(/waterfall/)) return 'waterfall';
+            if (wants(/treemap/)) return 'treemap';
+            if (wants(/scatter/)) return 'scatter';
+            if (wants(/area\s+chart/)) return 'area';
+            if (wants(/stacked\s+(bar|column)/)) return 'stacked_bar';
+            if (wants(/(bar|column)\s+chart/)) return 'bar';
+            if (wants(/pie\s+chart|donut\s+chart/)) return 'pie';
+            if (wants(/line\s+chart/)) return 'line';
+            return 'line';
+          })();
+
+          const display: W['display'] | undefined =
+            wants(/donut/) || (wants(/highlight/) && wants(/highest|lowest|max|min/))
+              ? {
+                  donut: wants(/donut/),
+                  highlightMaxMin:
+                    wants(/highlight/) && wants(/highest|lowest|max|min/),
+                }
+              : undefined;
+
+          const metricGrouping = ((): { metric: string; grouping: string } | null => {
+            // Gauge-style “financial health” defaults to a KPI summary.
+            if (wants(/gauge|health/) && wants(/revenue|expense|balance|profit|net/))
+              return { metric: 'pl_summary', grouping: 'summary' };
+
+            // Revenue by month
+            if (wants(/revenue/) && wants(/\bby\s+month\b|\bmonthly\b|\beach\s+month\b/))
+              return { metric: 'revenue', grouping: 'month' };
+
+            // Month-over-month revenue growth %
+            if (wants(/month[-\s]?over[-\s]?month|mom\b/) && wants(/revenue|growth/))
+              return { metric: 'mom_growth', grouping: 'month' };
+
+            // Cumulative revenue
+            if (wants(/cumulative/) && wants(/revenue|sales|income/))
+              return { metric: 'revenue_cumulative', grouping: 'month' };
+
+            // Revenue vs expenses comparison
+            if (wants(/compare|comparing/) && wants(/revenue/) && wants(/expense/))
+              return { metric: 'revenue_vs_expense', grouping: 'month' };
+            if (wants(/heatmap/) && wants(/revenue/) && wants(/expense/))
+              return { metric: 'revenue_vs_expense', grouping: 'month' };
+
+            // Net position (credits - debits)
+            if (
+              wants(/net\s+monthly|net\s+position|credits?\s*-\s*debits?|debits?\s*-\s*credits?/) ||
+              (wants(/credits?/) && wants(/debits?/))
+            )
+              return { metric: 'net_position', grouping: 'month' };
+
+            // Running balance
+            if (wants(/running\s+balance|balance\s+trend/))
+              return { metric: 'running_balance', grouping: 'month' };
+
+            // Debits vs credits
+            if (wants(/\bdebits?\b/) || wants(/\bcredits?\b/))
+              return { metric: 'debits_credits', grouping: 'month' };
+
+            // Invoice type split
+            if (wants(/invoice\s+type|invoice\s+types/))
+              return { metric: 'invoice_value', grouping: 'invoice_type' };
+
+            // Journal/source type split (AP/AR/EX)
+            if (wants(/journal\s+type|source\s+type|\bap\b|\bar\b|\bex\b/))
+              return { metric: 'transaction_value', grouping: 'journal_type' };
+
+            // Invoice value by month (column chart phrasing)
+            if (wants(/invoice\s+value/) && wants(/\bby\s+month\b|\bmonthly\b|\beach\s+month\b/))
+              return { metric: 'revenue', grouping: 'month' };
+
+            // Invoice count by month
+            if (wants(/number\s+of\s+invoices|invoice\s+count/))
+              return { metric: 'invoice_count', grouping: 'month' };
+
+            // Average invoice value by month
+            if (wants(/average\s+invoice/))
+              return { metric: 'avg_invoice', grouping: 'month' };
+
+            // Invoice amount histogram/distribution
+            if (wants(/histogram|distribution|bucket/) && wants(/invoice/))
+              return { metric: 'invoice_amount', grouping: 'bucket' };
+
+            // Top invoices / transactions
+            if (wants(/\btop\b/) && wants(/invoice|invoices|transaction/))
+              return { metric: 'top_invoices', grouping: 'list' };
+
+            // Expenses
+            if (wants(/expenses?/) && wants(/\bby\s+month\b|\bmonthly\b/))
+              return { metric: 'expense', grouping: 'month' };
+            if (wants(/expenses?/) && wants(/account/))
+              return { metric: 'expense', grouping: 'account' };
+
+            return null;
+          })();
+
+          if (!metricGrouping) continue;
+
+	          const type: W['type'] = (() => {
+	            // Some metrics are only meaningful in specific visual forms.
+	            if (metricGrouping.metric === 'top_invoices') return 'table';
+	            if (
+	              requestedType === 'waterfall' &&
+	              metricGrouping.metric === 'net_position'
+	            )
+	              return 'waterfall';
+            if (
+              requestedType === 'stacked_bar' &&
+              metricGrouping.metric === 'debits_credits'
+            )
+              return 'stacked_bar';
+            // For “net position” explicitly requested as line, allow line as well.
+            if (
+              metricGrouping.metric === 'net_position' &&
+              requestedType !== 'waterfall'
+            )
+              return requestedType === 'bar' ? 'bar' : 'line';
+	            return requestedType;
+	          })();
+
+	          const title = (() => {
+	            if (metricGrouping.metric === 'pl_summary') return 'Financial Health (KPI Summary)';
+	            if (metricGrouping.metric === 'revenue') return 'Monthly Revenue';
+	            if (metricGrouping.metric === 'mom_growth') return 'MoM Revenue Growth %';
+	            if (metricGrouping.metric === 'revenue_cumulative') return 'Cumulative Revenue';
+            if (metricGrouping.metric === 'revenue_vs_expense') return 'Revenue vs Expenses';
+            if (metricGrouping.metric === 'net_position') return 'Net Monthly Position';
+            if (metricGrouping.metric === 'running_balance') return 'Running Balance';
+            if (metricGrouping.metric === 'debits_credits') return 'Debits vs Credits';
+            if (metricGrouping.metric === 'invoice_value') return 'Invoice Value by Type';
+            if (metricGrouping.metric === 'transaction_value') return 'Transaction Value by Journal Type';
+            if (metricGrouping.metric === 'invoice_count') return 'Invoice Count Trend';
+            if (metricGrouping.metric === 'avg_invoice') return 'Average Invoice Value';
+            if (metricGrouping.metric === 'invoice_amount') return 'Invoice Amount Distribution';
+            if (metricGrouping.metric === 'top_invoices') return 'Top Invoices';
+            if (metricGrouping.metric === 'expense' && metricGrouping.grouping === 'month')
+              return 'Monthly Expenses';
+            if (metricGrouping.metric === 'expense' && metricGrouping.grouping === 'account')
+              return 'Top Expense Accounts';
+            return `${metricGrouping.metric} (${metricGrouping.grouping})`;
+          })();
+
+	          const description = line
+	            .replace(/^(?:[-*]\s*)?(create|make|build|generate)\s+/i, '')
+	            .trim();
+
+	          const topFromLine = (() => {
+	            const m = lower.match(/\btop\s+(\d+)\b/);
+	            if (!m?.[1]) return null;
+	            const n = Number(m[1]);
+	            if (!Number.isFinite(n)) return null;
+	            return Math.max(1, Math.min(50, Math.floor(n)));
+	          })();
+
+	          const extra = topFromLine ? ({ topN: topFromLine } as const) : undefined;
+
+	          widgets.push({
+	            ...mk(
+	              title,
+	              description,
+	              type,
+	              metricGrouping.metric,
+	              metricGrouping.grouping,
+	              widgets.length,
+	              extra,
+	            ),
+	            ...(display ? { display } : {}),
+	          });
+	        }
+
+        if (widgets.length > 0) return widgets;
+      }
+    }
+
+    // ── Cumulative / running totals ──────────────────────────────────────────
+    if (has(/\bcumulative\b|\brunning\s+total\b/)) {
+      if (has(/revenue|sales|income/)) {
+        return [
+          mk(
+            'Cumulative Revenue',
+            'Running total of revenue over time',
+            'area',
+            'revenue_cumulative',
+            'month',
+            0,
+          ),
+        ];
+      }
+    }
+
+    // ── Running balance / net position ───────────────────────────────────────
+    if (has(/running\s+balance|balance\s+trend|cash\s+position|net\s+position/)) {
+      const wantsWaterfall = has(/waterfall/);
+      if (wantsWaterfall) {
+        return [
+          mk(
+            'Net Monthly Position (Waterfall)',
+            'Credits minus debits by month, visualized as a waterfall progression',
+            'waterfall',
+            'net_position',
+            'month',
+            0,
+          ),
+        ];
+      }
+      return [
+        mk(
+          'Running Balance Trend',
+          'Cumulative net position over time (credits minus debits)',
+          'line',
+          'running_balance',
+          'month',
+          0,
+        ),
+        mk(
+          'Debits vs Credits',
+          'Monthly debits and credits from journal lines',
+          'stacked_bar',
+          'debits_credits',
+          'month',
+          1,
+        ),
+      ];
+    }
+
+    // ── Debit/credit breakdown ───────────────────────────────────────────────
+    if (has(/\bdebits?\b|\bcredits?\b/)) {
+      return [
+        mk(
+          'Debits vs Credits',
+          'Monthly debits and credits from journal lines',
+          has(/stacked/) ? 'stacked_bar' : 'bar',
+          'debits_credits',
+          'month',
+          0,
+        ),
+      ];
+    }
+
+    // ── Invoice type / journal type / currency splits ────────────────────────
+    if (has(/invoice\s+type|type\s+of\s+invoice/)) {
+      return [
+        mk(
+          'Invoice Value by Type',
+          'Total invoice value split by invoice type',
+          'pie',
+          'invoice_value',
+          'invoice_type',
+          0,
+        ),
+      ];
+    }
+    if (has(/journal\s+type|ap\b|ar\b|source\s+type/)) {
+      return [
+        mk(
+          'Transaction Value by Journal Type',
+          'Total journal value split by source type (AP/AR/EX/other)',
+          'pie',
+          'transaction_value',
+          'journal_type',
+          0,
+        ),
+      ];
+    }
+    if (has(/currency|currencies|fx|foreign\s+exchange/)) {
+      return [
+        mk(
+          'Transaction Value by Currency',
+          'Total transaction value split by currency',
+          'pie',
+          'transaction_value',
+          'currency',
+          0,
+        ),
+      ];
+    }
+
+    // ── Invoice size distribution / top invoices / outliers ──────────────────
+    if (has(/histogram|distribution|bucket/) && has(/invoice/)) {
+      return [
+        mk(
+          'Invoice Amount Distribution',
+          'Histogram of invoice amounts to identify typical transaction sizes',
+          'bar',
+          'invoice_amount',
+          'bucket',
+          0,
+        ),
+      ];
+    }
+    if (has(/top\s+\d+|highest.?value|largest/) && has(/invoice/)) {
+      return [
+        mk(
+          'Top Invoices by Value',
+          'Highest-value invoices in the selected period',
+          'table',
+          'top_invoices',
+          'list',
+          0,
+        ),
+      ];
+    }
+    if (has(/scatter|outlier/) && has(/invoice\s+amount|invoice\s+value|amount/)) {
+      return [
+        mk(
+          'Invoice Amount vs Date',
+          'Scatter plot to identify large or unusual invoices over time',
+          'scatter',
+          'invoice_amount',
+          'time',
+          0,
+        ),
+      ];
+    }
+
+    // ── EBITDA focus ─────────────────────────────────────────────────────────
+    if (has(/\bebitda\b/)) {
+      return [
+        mk('EBITDA Trend', 'Monthly EBITDA (net income + depreciation/amortisation add-back)', 'line', 'ebitda', 'month', 0),
+        mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary', 1),
+        mk('Revenue vs Expenses', 'Revenue and total expenses on the same timeline', 'line', 'revenue_vs_expense', 'month', 2),
+      ];
+    }
+
+    // ── Margin analysis focus ────────────────────────────────────────────────
+    if (has(/gross\s+margin|net\s+margin|margin\s+analysis|margin\s+trend|gross\s+profit|markup/)) {
+      return [
+        mk('Gross Margin % Trend', 'Monthly gross margin percentage (revenue minus COGS)', 'line', 'gross_margin_pct', 'month', 0),
+        mk('Net Margin % Trend', 'Monthly net margin percentage (revenue minus all expenses)', 'line', 'net_margin_pct', 'month', 1),
+        mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary', 2),
+      ];
+    }
+
+    // ── P&L / income statement / net income focus ───────────────────────────
+    if (has(/p&l|pl\b|profit\s+and\s+loss|income\s+statement|net\s+income|net\s+profit/) ||
+        (has(/profit|loss|profitability/) && !has(/overdue|ar\b|receivable/))) {
+      const chartType: 'line' | 'bar' = has(/bar\s+chart|bar\s+graph|\bbar\b/) ? 'bar' : 'line';
+      return [
+        mk('P&L Statement', 'Full income statement: Revenue, COGS, OPEX, Net Income by account', 'table', 'pl', 'summary', 0),
+        mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Gross Margin %, Net Margin %', 'metric', 'pl_summary', 'summary', 1),
+        mk('Net Income Trend', 'Monthly net income (revenue minus all GL expenses)', chartType, 'net_income', 'month', 2),
+      ];
+    }
+
+    // ── Expense / OPEX / cost breakdown focus ────────────────────────────────
+    if (has(/expense|expenses|opex|operating\s+expense|cost\s+breakdown|spending|spend|overheads?/)) {
+      const chartType: 'bar' | 'pie' = has(/pie\s+chart|pie\s+graph|\bpie\b/) ? 'pie' : 'bar';
+      const w: W[] = [
+        mk('Top Expenses by GL Account', 'Expense accounts ranked by total spend', chartType, 'expense', 'account', 0),
+        mk('Expense Trend', 'Monthly total expense trend from GL journals', 'line', 'expense', 'month', 1),
+        mk('Expense KPI Summary', 'Total Expenses, COGS, OPEX, largest expense account', 'metric', 'expense_summary', 'summary', 2),
+      ];
+      if (has(/cogs|cost\s+of\s+goods|cost\s+of\s+sales|direct\s+cost/)) {
+        w.push(mk('COGS by Account', 'Direct cost accounts ranked by spend', 'bar', 'cogs', 'account', 3));
+      }
+      if (has(/opex|operating\s+expense/) && !has(/only|just/)) {
+        w.push(mk('OPEX by Account', 'Operating expense accounts (excluding COGS)', 'bar', 'opex', 'account', 4));
+      }
+      return w;
+    }
+
+    // ── GL / journal / ledger focus ──────────────────────────────────────────
+    if (has(/journal|journals|gl\b|general\s+ledger|journal\s+lines?|gl\s+entries|ledger\s+entries/)) {
+      return [
+        mk('GL Journal Entries', 'All journal lines with debit/credit type, account, journal number', 'table', 'gl_transactions', 'list', 0),
+        mk('Top Expenses by Account', 'Expense accounts from journal lines ranked by spend', 'bar', 'expense', 'account', 1),
+      ];
+    }
 
     // ── Payment speed / days-to-pay focus ───────────────────────────────────
     if (
@@ -4439,6 +7085,45 @@ export class AgentService {
             'Monthly invoiced revenue for the selected clients',
             has(/line\s+chart|line\s+graph/) ? 'line' : 'bar',
             'revenue',
+            'month',
+            0,
+            { breakdown: 'client' },
+          ),
+        ];
+      }
+
+      if (
+        wantsCompareClients &&
+        has(/\b(outstanding|overdue|aging|ar\b|receivable|past.?due)\b/) &&
+        has(/month|monthly|month[-\s]?wise|trend|over\s+time|last\s+\d+\s+months?/)
+      ) {
+        const metric = has(/\boverdue|past.?due|aging\b/)
+          ? 'overdue'
+          : 'outstanding';
+        return [
+          mk(
+            `Client ${metric === 'overdue' ? 'Overdue' : 'Outstanding'} Comparison`,
+            `Monthly ${metric} balance for the selected clients`,
+            'bar',
+            metric,
+            'month',
+            0,
+            { breakdown: 'client' },
+          ),
+        ];
+      }
+
+      if (
+        wantsCompareClients &&
+        has(/dso|days?\s+to\s+pay|payment\s+days|issued.*paid|convert.*issued.*paid/) &&
+        has(/month|monthly|trend|over\s+time|line\s+chart/)
+      ) {
+        return [
+          mk(
+            'Client Payment Speed (DSO) Comparison',
+            'Average days-to-pay by month for the selected clients',
+            'line',
+            'dso',
             'month',
             0,
             { breakdown: 'client' },
@@ -4817,11 +7502,11 @@ export class AgentService {
       const entity = entityFilter ? `AND org_id = {orgId:String}` : '';
       const entityParam = entityFilter ? { orgId: entityFilter.orgId } : {};
 
-      const [summary, topClients, entities] = await Promise.allSettled([
-        this.queryRows<any>(
-          `SELECT
-             count()                                                                AS total_invoices,
-             round(coalesce(sum(total_amount), 0), 0)                              AS total_revenue,
+      const [summary, topClients, entities, journalCtx] = await Promise.allSettled([
+	        this.queryRows<any>(
+	          `SELECT
+	             count()                                                                AS total_invoices,
+	             round(coalesce(sum(total_amount), 0), 0)                              AS total_revenue,
              formatDateTime(min(issued_at), '%Y-%m')                               AS date_from,
              formatDateTime(max(issued_at), '%Y-%m')                               AS date_to,
              round(coalesce(sumIf(total_amount,
@@ -4830,21 +7515,21 @@ export class AgentService {
              round(coalesce(sumIf(total_amount,
                lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
                AND due_at IS NOT NULL AND due_at < now()), 0), 0)                  AS total_overdue
-           FROM ${this.analyticsDb}.fact_accounting_invoices
-           WHERE connection_id IN ({connectionIds:Array(String)})
-             ${client}
-             ${entity}
-             AND issued_at IS NOT NULL
-             ${time}`,
-          {
-            connectionIds: resolvedScope.connectionIds,
-            ...clientParam,
-            ...entityParam,
-          },
-        ),
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+	           WHERE org_id IN ({externalOrgIds:Array(String)})
+	             ${client}
+	             ${entity}
+	             AND issued_at IS NOT NULL
+	             ${time}`,
+	          {
+	            externalOrgIds: orgIds,
+	            ...clientParam,
+	            ...entityParam,
+	          },
+	        ),
         this.queryRows<any>(
           `SELECT client_name, round(total_invoiced, 0) AS billed, round(total_overdue, 0) AS overdue
-           FROM ${this.analyticsDb}.dim_clients FINAL
+           FROM ${this.analyticsDb}.v_dim_clients_latest
            WHERE org_id IN ({orgIds:Array(String)}) AND client_name != ''
            ${clientDim}
            ${entityFilter ? `AND org_id = {orgId:String}` : ''}
@@ -4854,24 +7539,51 @@ export class AgentService {
         ),
         this.queryRows<any>(
           `SELECT coalesce(org_name, org_id) AS org_name, count() AS invoice_count
-           FROM ${this.analyticsDb}.fact_accounting_invoices
-           WHERE connection_id IN ({connectionIds:Array(String)})
-             ${client}
-             ${entity}
-             ${time}
-           GROUP BY org_name ORDER BY invoice_count DESC LIMIT 5`,
-          {
-            connectionIds: resolvedScope.connectionIds,
-            ...clientParam,
-            ...entityParam,
-          },
-        ),
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+	           WHERE org_id IN ({externalOrgIds:Array(String)})
+	             ${client}
+	             ${entity}
+	             ${time}
+	           GROUP BY org_name ORDER BY invoice_count DESC LIMIT 5`,
+	          {
+	            externalOrgIds: orgIds,
+	            ...clientParam,
+	            ...entityParam,
+	          },
+	        ),
+        // Journal lines context — expenses, P&L signals
+        this.queryRows<any>(
+          `SELECT
+             round(sum(line_amount), 0) AS total_expenses,
+             round(sumIf(line_amount,
+               lowerUTF8(account_name) LIKE '%cost of%' OR lowerUTF8(account_name) LIKE '%cogs%'
+               OR lowerUTF8(account_name) LIKE '%direct cost%' OR lowerUTF8(account_name) LIKE '%cost of goods%'
+               OR lowerUTF8(account_name) LIKE '%cost of sales%' OR lowerUTF8(account_name) LIKE '%subcontract%'
+             ), 0) AS total_cogs,
+             count(DISTINCT account_name) AS expense_account_count,
+             count(DISTINCT journal_id)   AS journal_count
+           FROM ${this.analyticsDb}.v_fact_accounting_journal_lines_latest
+           WHERE org_id IN ({orgIds:Array(String)})
+             ${entityFilter ? `AND org_id = {orgId:String}` : ''}
+             AND line_amount > 0
+             AND journal_date IS NOT NULL
+             AND NOT (
+               lowerUTF8(account_name) LIKE '%receivable%' OR lowerUTF8(account_name) LIKE '%payable%'
+               OR lowerUTF8(account_name) LIKE '%cash%'    OR lowerUTF8(account_name) LIKE '%bank%'
+               OR lowerUTF8(account_name) LIKE '%loan%'    OR lowerUTF8(account_name) LIKE '%retained%'
+               OR lowerUTF8(account_name) LIKE '%equity%'  OR lowerUTF8(account_name) LIKE '%capital%'
+               OR lowerUTF8(account_name) LIKE '%gst%'     OR lowerUTF8(account_name) LIKE '%vat%'
+               OR lowerUTF8(account_name) LIKE '%rounding%'
+             )`,
+          { orgIds, ...entityParam },
+        ).catch(() => [] as any[]),
       ]);
 
       const s =
         (summary.status === 'fulfilled' ? summary.value[0] : null) ?? {};
       const clients = topClients.status === 'fulfilled' ? topClients.value : [];
       const ents = entities.status === 'fulfilled' ? entities.value : [];
+      const jCtx = (journalCtx.status === 'fulfilled' ? journalCtx.value[0] : null) ?? {};
 
       const clientCount = clients.length;
       const topStr = clients
@@ -4885,6 +7597,23 @@ export class AgentService {
         .filter(Boolean)
         .join(', ');
 
+      const totalRev = this.num(s.total_revenue);
+      const totalExp = this.num(jCtx.total_expenses ?? 0);
+      const totalCogs = this.num(jCtx.total_cogs ?? 0);
+      const journalCount = this.num(jCtx.journal_count ?? 0);
+      const expAccountCount = this.num(jCtx.expense_account_count ?? 0);
+      const netIncome = totalRev - totalExp;
+      const grossProfit = totalRev - totalCogs;
+      const hasJournalData = journalCount > 0;
+
+      const plLines = hasJournalData
+        ? [
+            `- GL Journals: ${journalCount} entries | Expense Accounts: ${expAccountCount}`,
+            `- Total Expenses: $${this.fmtK(totalExp)} | COGS: $${this.fmtK(totalCogs)} | OPEX: $${this.fmtK(totalExp - totalCogs)}`,
+            `- Gross Profit: $${this.fmtK(grossProfit)}${totalRev > 0 ? ` (${Math.round((grossProfit / totalRev) * 100)}% margin)` : ''} | Net Income: $${this.fmtK(netIncome)}${totalRev > 0 ? ` (${Math.round((netIncome / totalRev) * 100)}% margin)` : ''}`,
+          ]
+        : [`- GL Journals: no journal lines synced yet (P&L/expense charts need Xero journal sync)`];
+
       return [
         `LIVE DATA CONTEXT:`,
         ...(clientFilter ? [`- Client scope: ${clientFilter.name}`] : []),
@@ -4893,6 +7622,7 @@ export class AgentService {
         `- Revenue: $${this.fmtK(this.num(s.total_revenue))} | Outstanding: $${this.fmtK(this.num(s.total_outstanding))} | Overdue: $${this.fmtK(this.num(s.total_overdue))}`,
         `- Clients: ${clientCount}${topStr ? ` | Top: ${topStr}` : ''}`,
         `- Entities: ${entStr || 'None connected'}`,
+        ...plLines,
       ].join('\n');
     } catch {
       return '(Data context unavailable — proceed based on query intent)';
@@ -4921,6 +7651,10 @@ export class AgentService {
           ' ',
         )
         .trim();
+      // Guard: phrases like "client information" are not a client name.
+      if (/\b(info|information|details|data|list|breakdown|comparison)\b/i.test(chunk)) {
+        return null;
+      }
       return chunk.length >= 2 ? chunk : null;
     }
 
@@ -5096,6 +7830,98 @@ export class AgentService {
     return tokens.join(' ');
   }
 
+  private isOpaqueEntityLabel(name: string): boolean {
+    const s = String(name ?? '').trim();
+    if (!s) return true;
+    // UUID-ish or long numeric IDs are not user-friendly entity labels.
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s))
+      return true;
+    if (/^\d{8,}$/.test(s)) return true;
+    return false;
+  }
+
+  private async listEntitiesForScope(
+    connectionIds: string[],
+    providerHint?: 'xero' | 'quickbooks',
+  ): Promise<Array<{ orgId: string; orgName: string; provider: string }>> {
+    if (connectionIds.length === 0) return [];
+
+    const connRows = await this.prisma.erpConnection.findMany({
+      where: { id: { in: connectionIds }, status: 'ACTIVE' },
+      select: {
+        externalOrganizationId: true,
+        displayName: true,
+        metadata: true,
+        provider: true,
+      },
+    });
+
+    const base = connRows
+      .map((r) => {
+        const orgId = String(r.externalOrganizationId ?? '').trim();
+        const meta = (r.metadata as Record<string, any>) || {};
+        const orgName = String(
+          r.displayName ??
+            meta.orgName ??
+            meta.companyName ??
+            meta.companyId ??
+            orgId,
+        ).trim();
+        const provider = String(r.provider ?? '').toLowerCase().trim();
+        return { orgId, orgName, provider };
+      })
+      .filter(
+        (r) =>
+          r.orgId &&
+          (!providerHint || r.provider === String(providerHint).toLowerCase()),
+      );
+
+    // Try to replace opaque ids with human org names from live invoice data.
+    const opaqueOrgIds = base
+      .filter((b) => this.isOpaqueEntityLabel(b.orgName))
+      .map((b) => b.orgId);
+
+    if (opaqueOrgIds.length > 0) {
+      try {
+        const rows = await this.queryRows<any>(
+          `SELECT
+             org_id,
+             any(coalesce(nullIf(org_name, ''), org_id)) AS org_name,
+             sum(abs(toFloat64(total_amount))) AS total_amount
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE org_id IN ({orgIds:Array(String)})
+           GROUP BY org_id
+           ORDER BY total_amount DESC
+           LIMIT 500`,
+          { orgIds: opaqueOrgIds },
+        );
+        const map = new Map<string, string>();
+        for (const r of rows) {
+          const id = String(r.org_id ?? '').trim();
+          const name = String(r.org_name ?? '').trim();
+          if (id && name && !this.isOpaqueEntityLabel(name)) map.set(id, name);
+        }
+        for (const e of base) {
+          const better = map.get(e.orgId);
+          if (better) e.orgName = better;
+        }
+      } catch {
+        // Non-fatal — keep prisma-derived names
+      }
+    }
+
+    // De-dup by orgId, prefer non-opaque name if present.
+    const merged = base.reduce((acc, cur) => {
+      const existing = acc.get(cur.orgId);
+      if (!existing) acc.set(cur.orgId, cur);
+      else if (this.isOpaqueEntityLabel(existing.orgName) && !this.isOpaqueEntityLabel(cur.orgName))
+        acc.set(cur.orgId, cur);
+      return acc;
+    }, new Map<string, { orgId: string; orgName: string; provider: string }>());
+
+    return Array.from(merged.values());
+  }
+
   private scoreEntityNameMatch(
     mentionNorm: string,
     candidateNorm: string,
@@ -5141,7 +7967,7 @@ export class AgentService {
       `SELECT
          coalesce(nullIf(client_name, ''), '') AS client_name,
          sum(total_invoiced) AS total_invoiced
-       FROM ${this.analyticsDb}.dim_clients FINAL
+       FROM ${this.analyticsDb}.v_dim_clients_latest
        WHERE org_id IN ({externalOrgIds:Array(String)})
          AND client_name != ''
        GROUP BY client_name
@@ -5190,42 +8016,12 @@ export class AgentService {
   ): Promise<EntityResolution> {
     if (scope.connectionIds.length === 0) return { status: 'none' };
 
-    // Prefer Prisma connections list (stable even if invoices are empty / not yet synced).
-    const connRows = await this.prisma.erpConnection.findMany({
-      where: {
-        id: { in: scope.connectionIds },
-        status: 'ACTIVE',
-      },
-      select: {
-        externalOrganizationId: true,
-        displayName: true,
-        metadata: true,
-        provider: true,
-      },
-    });
-
-    const connCandidates = connRows
-      .map((r) => {
-        const orgId = String(r.externalOrganizationId ?? '').trim();
-        const meta = (r.metadata as Record<string, any>) || {};
-        const orgName = String(
-          r.displayName ??
-            meta.orgName ??
-            meta.companyName ??
-            meta.companyId ??
-            orgId,
-        ).trim();
-        const provider = String(r.provider ?? '')
-          .toLowerCase()
-          .trim();
-        return { orgId, orgName, provider };
-      })
-      .filter(
-        (r) =>
-          r.orgId &&
-          r.orgName &&
-          (!providerHint || r.provider === providerHint),
-      );
+    // Prefer Prisma connections list (stable even if invoices are empty / not yet synced),
+    // but enrich opaque ids with org_name from live invoice data when possible.
+    const connCandidates = await this.listEntitiesForScope(
+      scope.connectionIds,
+      providerHint,
+    );
 
     const extractedMention = this.extractEntityMention(query);
     // If the user directly provided an org_id ("Use entity: <id>"), short-circuit resolution.
@@ -5275,36 +8071,18 @@ export class AgentService {
     const mentionNorm = this.normalizeEntityName(mention);
     if (!mentionNorm) return { status: 'none' };
 
-    const connScored = connRows
-      .map((r) => {
-        const orgId = String(r.externalOrganizationId ?? '').trim();
-        const meta = (r.metadata as Record<string, any>) || {};
-        const orgName = String(
-          r.displayName ??
-            meta.orgName ??
-            meta.companyName ??
-            meta.companyId ??
-            orgId,
-        ).trim();
-        const score = this.scoreEntityNameMatch(
+    const connScored = connCandidates
+      .map((c) => ({
+        orgId: c.orgId,
+        orgName: c.orgName,
+        score: this.scoreEntityNameMatch(
           mentionNorm,
-          this.normalizeEntityName(orgName),
-        );
-        const provider = String(r.provider ?? '')
-          .toLowerCase()
-          .trim();
-        return { orgId, orgName, score, provider };
-      })
-      .filter(
-        (r) =>
-          r.orgId &&
-          r.orgName &&
-          r.score > 0 &&
-          (!providerHint || r.provider === providerHint),
-      )
+          this.normalizeEntityName(c.orgName),
+        ),
+      }))
+      .filter((r) => r.orgId && r.orgName && r.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 6)
-      .map((r) => ({ orgId: r.orgId, orgName: r.orgName, score: r.score }));
+      .slice(0, 6);
 
     // Fallback to ClickHouse names (may include org_name variants from ingestion).
     await this.ensureAnalyticsSchema();
@@ -5317,14 +8095,14 @@ export class AgentService {
          any(coalesce(nullIf(org_name, ''), org_id)) AS org_name,
          sum(abs(total_amount)) AS total_amount
        FROM ${this.analyticsDb}.fact_accounting_invoices
-       WHERE connection_id IN ({connectionIds:Array(String)})
+       WHERE org_id IN ({externalOrgIds:Array(String)})
          ${providerFilter}
          AND org_id != ''
        GROUP BY org_id
        ORDER BY total_amount DESC
        LIMIT 200`,
       {
-        connectionIds: scope.connectionIds,
+        externalOrgIds: scope.externalOrgIds,
         ...(providerHint ? { provider: providerHint } : {}),
       },
     );
@@ -5386,10 +8164,9 @@ export class AgentService {
     query: string,
   ): ExplicitChartConstraints | null {
     const q = query.toLowerCase();
-    const requiredTypes: Array<'line' | 'bar' | 'pie' | 'metric' | 'table'> =
-      [];
+    const requiredTypes: ChartType[] = [];
 
-    const addType = (t: (typeof requiredTypes)[number]) => {
+    const addType = (t: ChartType) => {
       if (!requiredTypes.includes(t)) requiredTypes.push(t);
     };
 
@@ -5399,15 +8176,23 @@ export class AgentService {
     )
       addType('line');
     if (
+      /\barea\s*chart\b|\barea\s*graph\b|\barea\b/.test(q) &&
+      /\bchart\b|\bgraph\b/.test(q)
+    )
+      addType('area');
+    if (
       /\bbar\s*chart\b|\bbarchart\b|\bbar\s*graph\b|\bstacked\s+bar\b|\bstacked\s+bars\b/.test(
         q,
       )
     )
-      addType('bar');
+      addType(/\bstacked\s+bar\b|\bstacked\s+bars\b/.test(q) ? 'stacked_bar' : 'bar');
     if (/\bpie\s+chart\b|\bpie\s+graph\b/.test(q)) addType('pie');
     if (/\btable\b|\btabular\b/.test(q)) addType('table');
     if (/\bmetric\s+tile\b|\bmetric\b/.test(q) && /\btile\b/.test(q))
       addType('metric');
+    if (/\bwaterfall\s+chart\b|\bwaterfall\b/.test(q)) addType('waterfall');
+    if (/\btreemap\b/.test(q)) addType('treemap');
+    if (/\bscatter\s*plot\b|\bscatter\b/.test(q)) addType('scatter');
 
     const countMatch =
       q.match(
@@ -5470,7 +8255,7 @@ export class AgentService {
 
       // If the user is clearly asking for a dashboard/pack, allow multiple charts.
       if (
-        /\b(dashboard|board pack|pack|suite|analysis|overview|signals|deep dive)\b/i.test(
+        /\b(dashboard|report|board pack|pack|suite|deep dive)\b/i.test(
           lower,
         )
       )
@@ -5655,16 +8440,46 @@ export class AgentService {
           ];
 
       const buildCandidate = (cand: (typeof candidates)[number]) => {
-        type PlannedWidget = AgentPlan['dashboard']['widgets'][number];
-        const validWidgets = (cand.widgets ?? [])
-          .filter((w) =>
-            VALID_WIDGETS.some(
-              (v) =>
-                v.type === w.type &&
-                v.metric === w.metric &&
-                v.grouping === w.grouping,
+        type PlannedWidget = AgentPlan['dashboard']['widgets'][number] & { _dynamicIntent?: string };
+        // Separate known widgets from unknown ones (unknown become dynamic SQL candidates)
+        const knownWidgets = (cand.widgets ?? []).filter((w) =>
+          VALID_WIDGETS.some(
+            (v) => v.type === w.type && v.metric === w.metric && v.grouping === w.grouping,
+          ),
+        );
+        const unknownWidgets = (cand.widgets ?? []).filter(
+          (w) =>
+            !VALID_WIDGETS.some(
+              (v) => v.type === w.type && v.metric === w.metric && v.grouping === w.grouping,
             ),
-          )
+        );
+        // Tag unknown widgets as dynamic — they get SQL generated in Phase 3
+        const dynamicWidgets: PlannedWidget[] = unknownWidgets.map((w: any, i) => ({
+          title: w.title ?? `${w.metric} Chart`,
+          description: w.description ?? '',
+          type: ((
+            [
+              'line',
+              'bar',
+              'pie',
+              'table',
+              'metric',
+              'area',
+              'treemap',
+              'scatter',
+              'stacked_bar',
+              'waterfall',
+            ].includes(w.type)
+              ? w.type
+              : 'bar'
+          ) as any),
+          metric: 'dynamic',
+          grouping: 'query',
+          display_order: knownWidgets.length + i,
+          _dynamicIntent: `${w.title ?? w.metric}: ${w.metric}/${w.grouping} chart for query "${query}"`,
+        }));
+
+        const validWidgets = knownWidgets
           .filter(
             (w, i, arr) =>
               // Enforce uniqueness: never repeat exact metric+grouping(+breakdown) within a single dashboard.
@@ -5676,7 +8491,7 @@ export class AgentService {
                     String((w as any).breakdown ?? ''),
               ) === i,
           )
-          .slice(0, 8)
+          .slice(0, 6) // cap known widgets to leave room for up to 2 dynamic
           .map((w: any, i) => {
             const breakdown =
               typeof w.breakdown === 'string' ? String(w.breakdown) : undefined;
@@ -5684,9 +8499,13 @@ export class AgentService {
               ? Number(w.topN)
               : undefined;
 
+            // Metrics that support breakdown='client' (multi-series per-client pivot)
+            const clientBreakdownSupportedMetrics = new Set([
+              'revenue', 'outstanding', 'overdue', 'paid', 'dso',
+            ]);
             const normalizedBreakdown: 'client' | undefined =
               breakdown === 'client' &&
-              w.metric === 'revenue' &&
+              clientBreakdownSupportedMetrics.has(w.metric) &&
               w.grouping === 'month'
                 ? 'client'
                 : undefined;
@@ -5718,9 +8537,15 @@ export class AgentService {
             return out;
           });
 
+        // Merge dynamic widgets (capped at 2 to avoid dashboard bloat)
+        const allWidgets = [
+          ...validWidgets,
+          ...dynamicWidgets.slice(0, Math.max(0, 8 - validWidgets.length)),
+        ].map((w, i) => ({ ...w, display_order: i }));
+
         // If the model fails to select any valid widgets, fall back deterministically.
         // This is a safety net only — we do NOT auto-add extra charts beyond what was requested.
-        if (validWidgets.length === 0) {
+        if (allWidgets.length === 0) {
           const filler = applyConstraints(
             this.selectWidgetsForQuery(query, activeDashboard),
           )
@@ -5734,7 +8559,7 @@ export class AgentService {
               ),
             )
             .map((w, i) => ({ ...w, display_order: i }));
-          validWidgets.push(...filler);
+          allWidgets.push(...filler);
         }
 
         const validTools = (cand.tools ?? []).filter((t) =>
@@ -5752,14 +8577,14 @@ export class AgentService {
         const inferredTools =
           validTools.length > 0
             ? validTools
-            : this.deriveToolsFromWidgets(validWidgets, query);
+            : this.deriveToolsFromWidgets(allWidgets, query);
 
         return {
           title:
             cand.title?.trim() && cand.title.length > 5
               ? cand.title.trim()
               : fallback.dashboard.title,
-          widgets: validWidgets,
+          widgets: allWidgets,
           tools: inferredTools,
         };
       };
@@ -5842,10 +8667,229 @@ export class AgentService {
           constrainedWidgets,
         );
         if (validationErrors.length > 0) {
+          const repair = (
+            errs: string[],
+            widgets: AgentPlan['dashboard']['widgets'],
+          ): AgentPlan['dashboard']['widgets'] => {
+            const out = widgets.slice();
+            const wantsType = constraints?.requiredTypes?.[0];
+
+            const mk = (
+              title: string,
+              description: string,
+              type: ChartType,
+              metric: string,
+              grouping: string,
+              extra?: Record<string, any>,
+            ) => ({
+              title,
+              description,
+              type,
+              metric,
+              grouping,
+              display_order: 0,
+              ...(extra ?? {}),
+            });
+
+            const replaceAll = (next: any[]) =>
+              applyImplicitMax(next).map((w, i) => ({ ...w, display_order: i }));
+
+            // Payment-speed intent repairs
+            if (errs.includes('PAYMENT_DAYS_TREND_REQUIRES_DSO')) {
+              return replaceAll([
+                mk(
+                  'DSO Trend',
+                  'Average days-to-pay by month (issued date)',
+                  wantsType === 'bar' ? 'bar' : 'line',
+                  'dso',
+                  'month',
+                ),
+              ]);
+            }
+            if (errs.includes('PAYMENT_DAYS_LIST_REQUIRES_TABLE')) {
+              return replaceAll([
+                mk(
+                  'Invoice Payment Days (Issued → Paid)',
+                  'Days between invoice issue and final payment',
+                  'table',
+                  'payment_days',
+                  'list',
+                ),
+              ]);
+            }
+            if (errs.includes('PAYMENT_DAYS_DISTRIBUTION_REQUIRES_BUCKETS')) {
+              return replaceAll([
+                mk(
+                  'Payment Speed Distribution',
+                  'Histogram of days-to-pay buckets',
+                  'bar',
+                  'payment_days',
+                  'bucket',
+                ),
+              ]);
+            }
+
+            // Top-clients repairs (avoid useless lifetime ranking when trend requested)
+            if (
+              errs.includes('TOP_CLIENTS_TREND_REQUIRES_TIME_SERIES') ||
+              errs.includes('TOP_CLIENTS_REQUIRES_CLIENT_BREAKDOWN')
+            ) {
+              const n = typeof spec.topN === 'number' ? Math.max(1, Math.min(5, spec.topN)) : 2;
+              const alreadyHasIt = out.some(
+                (w: any) =>
+                  w.metric === 'revenue' &&
+                  w.grouping === 'month' &&
+                  String((w as any).breakdown ?? '') === 'client',
+              );
+              if (alreadyHasIt) return replaceAll(out);
+              // Replace the whole plan — the LLM missed the breakdown requirement.
+              // Appending would be silently dropped by applyImplicitMax (which caps
+              // single-question dashboards at 1 widget). Replace instead.
+              return replaceAll([
+                mk(
+                  `Top ${n} Clients — Revenue by Month`,
+                  'Month-wise revenue for your top clients (grouped bars)',
+                  wantsType === 'line' ? 'line' : 'bar',
+                  'revenue',
+                  'month',
+                  { breakdown: 'client', topN: n },
+                ),
+              ]);
+            }
+
+            // Generic trend repairs
+            if (errs.includes('TREND_REQUIRES_TIME_SERIES')) {
+              return replaceAll([
+                mk(
+                  'Revenue Trend',
+                  'Monthly revenue trend',
+                  wantsType === 'bar' ? 'bar' : 'line',
+                  'revenue',
+                  'month',
+                ),
+              ]);
+            }
+
+            if (errs.includes('QUARTERLY_REQUIRES_QUARTER_GROUPING')) {
+              return replaceAll([
+                mk(
+                  'Quarterly Revenue Cadence',
+                  'Quarter-by-quarter revenue trend',
+                  'bar',
+                  'revenue',
+                  'quarter',
+                ),
+              ]);
+            }
+
+            if (errs.includes('AUDIT_REQUIRES_TABLE')) {
+              return replaceAll([
+                mk(
+                  'Recent Invoices Ledger',
+                  'Latest invoices for audit and drill-down',
+                  'table',
+                  'invoices',
+                  'list',
+                ),
+              ]);
+            }
+
+            if (errs.includes('VENTURE_REQUIRES_METRIC')) {
+              return replaceAll([
+                mk(
+                  'Venture Health Metrics',
+                  'Burn, runway, cash-on-hand, efficiency',
+                  'metric',
+                  'venture',
+                  'summary',
+                ),
+              ]);
+            }
+            if (errs.includes('VENTURE_WIDGET_NOT_RELEVANT')) {
+              return replaceAll(out.filter((w: any) => w.metric !== 'venture'));
+            }
+
+            // AR risk repairs
+            if (errs.includes('AR_RISK_REQUIRES_OVERDUE')) {
+              return replaceAll([
+                mk(
+                  'Overdue AR Trend',
+                  'Monthly overdue build-up — collection risk signal',
+                  wantsType === 'bar' ? 'bar' : 'line',
+                  'overdue',
+                  'month',
+                ),
+              ]);
+            }
+
+            // P&L repairs
+            if (errs.includes('PNL_REQUIRES_PNL_WIDGET')) {
+              return replaceAll([
+                mk('P&L Statement', 'Full income statement by account', 'table', 'pl', 'summary'),
+                mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary'),
+                mk('Net Income Trend', 'Monthly net income (revenue minus expenses)', wantsType === 'bar' ? 'bar' : 'line', 'net_income', 'month'),
+              ]);
+            }
+
+            // Expense repairs
+            if (errs.includes('EXPENSE_REQUIRES_EXPENSE_WIDGET')) {
+              return replaceAll([
+                mk('Top Expenses by Account', 'GL expense breakdown ranked by spend', wantsType === 'pie' ? 'pie' : 'bar', 'expense', 'account'),
+                mk('Expense Trend', 'Monthly total expense trend', 'line', 'expense', 'month'),
+                mk('Expense KPI Summary', 'Total Expenses, COGS, OPEX, largest account', 'metric', 'expense_summary', 'summary'),
+              ]);
+            }
+
+            // Margin repairs
+            if (errs.includes('MARGIN_REQUIRES_MARGIN_WIDGET')) {
+              return replaceAll([
+                mk('Gross Margin % Trend', 'Monthly gross margin percentage', 'line', 'gross_margin_pct', 'month'),
+                mk('Net Margin % Trend', 'Monthly net margin percentage', 'line', 'net_margin_pct', 'month'),
+                mk('P&L KPI Summary', 'Revenue, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary'),
+              ]);
+            }
+
+            // EBITDA repairs
+            if (errs.includes('EBITDA_REQUIRES_EBITDA_WIDGET')) {
+              return replaceAll([
+                mk('EBITDA Trend', 'Monthly EBITDA (net income + D&A add-back)', 'line', 'ebitda', 'month'),
+                mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary'),
+              ]);
+            }
+
+            // GL repairs
+            if (errs.includes('GL_REQUIRES_GL_WIDGET')) {
+              return replaceAll([
+                mk('GL Journal Entries', 'All journal lines with debit/credit, account, amount', 'table', 'gl_transactions', 'list'),
+                mk('Top Expenses by Account', 'GL expense breakdown ranked by spend', 'bar', 'expense', 'account'),
+              ]);
+            }
+
+            return out;
+          };
+
+          const repaired = repair(validationErrors, constrainedWidgets);
+          const remaining = this.validateWidgetsAgainstSpec(spec, repaired);
+          if (remaining.length > 0) {
+            this.logger.warn(
+              `[Agent:Planner] Plan rejected by spec validation: ${validationErrors.join(',')}; repair failed: ${remaining.join(',')}`,
+            );
+            return fallback;
+          }
           this.logger.warn(
-            `[Agent:Planner] Plan rejected by spec validation: ${validationErrors.join(',')}`,
+            `[Agent:Planner] Plan repaired after spec validation: ${validationErrors.join(',')}`,
           );
-          return fallback;
+          // Proceed with repaired widgets.
+          return {
+            tools_to_execute: this.deriveToolsFromWidgets(repaired, query),
+            should_generate_dashboard: true,
+            dashboard: {
+              title: best.title,
+              description: 'AI-generated financial intelligence dashboard',
+              widgets: repaired,
+            },
+            analysis_focus: query,
+          };
         }
         this.logger.log(
           `[Agent:Planner] Ollama succeeded — picked plan score=${best.score.toFixed(1)}, widgets=${best.widgets.length}, tools=${best.tools.length}`,
@@ -5879,9 +8923,10 @@ export class AgentService {
 
   private deriveToolsFromWidgets(
     widgets: Array<{
-      type: 'line' | 'bar' | 'pie' | 'metric' | 'table';
+      type: ChartType;
       metric: string;
       grouping: string;
+      breakdown?: 'client';
     }>,
     query: string,
   ): string[] {
@@ -5896,7 +8941,9 @@ export class AgentService {
         tools.add('entity_comparison');
       if (w.metric === 'invoices' || w.grouping === 'status')
         tools.add('invoice_breakdown');
-      if (w.grouping === 'client') {
+      const wantsClientData =
+        w.grouping === 'client' || (w.breakdown && w.breakdown === 'client');
+      if (wantsClientData) {
         tools.add('client_financial_profile');
         tools.add('client_breakdown');
       }
@@ -5904,6 +8951,14 @@ export class AgentService {
 
     // Always include a lightweight summary so synthesis can anchor quickly.
     tools.add('financial_summary');
+
+    // Safety: if the query clearly asks about clients/top clients, ensure client tools are present
+    // even if the widget model expressed it via titles/intent rather than `grouping`/`breakdown`.
+    const spec = parseQuerySpec(query);
+    if (spec.wantsTopClients || /\b(client|clients|customer|customers|contact|contacts)\b/i.test(query)) {
+      tools.add('client_financial_profile');
+      tools.add('client_breakdown');
+    }
 
     const inferred = Array.from(tools);
     // If inference yields nothing (shouldn't), fall back to deterministic intent-based tool selection.
@@ -5913,7 +8968,7 @@ export class AgentService {
   private scorePlannedDashboard(
     query: string,
     widgets: Array<{
-      type: 'line' | 'bar' | 'pie' | 'metric' | 'table';
+      type: ChartType;
       metric: string;
       grouping: string;
     }>,
@@ -5928,7 +8983,7 @@ export class AgentService {
     score += Math.min(widgets.length, 8) * 8;
 
     // Diversity across visualization types.
-    const types = new Set(widgets.map((w) => w.type));
+    const types = new Set(widgets.map((w) => w.type === 'area' ? 'line' : w.type));
     if (types.has('line')) score += 8;
     if (types.has('bar')) score += 8;
     if (types.has('pie')) score += 6;
@@ -5953,7 +9008,7 @@ export class AgentService {
       score += widgets.filter((w) => w.grouping === 'status').length * 3;
     }
     if (has(/trend|growth|momentum|mom\b|yoy|month/))
-      score += widgets.filter((w) => w.type === 'line').length * 5;
+      score += widgets.filter((w) => w.type === 'line' || w.type === 'area').length * 5;
     if (has(/quarter|q[1-4]\b|qoq|quarterly/))
       score += widgets.filter((w) => w.grouping === 'quarter').length * 6;
     if (has(/entity|org\b|entities|compare|versus|vs\b|concentration/))
@@ -5966,6 +9021,30 @@ export class AgentService {
       score +=
         widgets.filter((w) => w.type === 'metric' || w.metric === 'venture')
           .length * 6;
+
+    // P&L / net income
+    if (has(/p&l|pl\b|profit\s+and\s+loss|income\s+statement|net\s+income|net\s+profit/))
+      score += widgets.filter((w) => ['net_income', 'pl', 'pl_summary'].includes(w.metric)).length * 12;
+
+    // Expense / OPEX / cost
+    if (has(/expense|expenses|opex|operating\s+expense|cost\s+breakdown|spending|spend|overheads?|cogs|cost\s+of\s+goods|cost\s+of\s+sales|direct\s+cost/))
+      score += widgets.filter((w) => ['expense', 'opex', 'cogs', 'expense_summary'].includes(w.metric)).length * 12;
+
+    // Margin analysis
+    if (has(/gross\s+margin|net\s+margin|margin|profitability|gross\s+profit/))
+      score += widgets.filter((w) => ['gross_margin_pct', 'net_margin_pct', 'gross_profit', 'pl_summary'].includes(w.metric)).length * 12;
+
+    // EBITDA
+    if (has(/ebitda/))
+      score += widgets.filter((w) => w.metric === 'ebitda').length * 15;
+
+    // GL / journal
+    if (has(/journal|gl\b|general\s+ledger|ledger\s+entries/))
+      score += widgets.filter((w) => ['gl_transactions', 'pl'].includes(w.metric)).length * 10;
+
+    // Revenue vs expense comparison
+    if (has(/revenue\s+vs\s+expense|revenue\s+and\s+expense|expense\s+vs\s+revenue/))
+      score += widgets.filter((w) => w.metric === 'revenue_vs_expense').length * 12;
 
     return score;
   }
@@ -6020,6 +9099,10 @@ export class AgentService {
       if (!has((w) => w.type === 'metric' || w.metric === 'venture'))
         errs.push('VENTURE_REQUIRES_METRIC');
     }
+    // Avoid irrelevant venture metric tiles when the query isn't about venture runway/burn.
+    if (spec.focus !== 'VENTURE') {
+      if (has((w) => w.metric === 'venture')) errs.push('VENTURE_WIDGET_NOT_RELEVANT');
+    }
 
     if (spec.focus === 'AR_RISK') {
       if (!has((w) => w.metric === 'overdue' || w.metric === 'overdue_rate'))
@@ -6042,12 +9125,44 @@ export class AgentService {
         errs.push('TOP_CLIENTS_TREND_REQUIRES_TIME_SERIES');
     }
 
+    if (spec.focus === 'PNL') {
+      const hasPnlWidget = has(
+        (w) =>
+          ['net_income', 'pl', 'pl_summary', 'gross_profit', 'revenue_vs_expense'].includes(w.metric),
+      );
+      if (!hasPnlWidget) errs.push('PNL_REQUIRES_PNL_WIDGET');
+    }
+
+    if (spec.focus === 'EXPENSE') {
+      const hasExpenseWidget = has(
+        (w) => ['expense', 'opex', 'cogs', 'expense_summary'].includes(w.metric),
+      );
+      if (!hasExpenseWidget) errs.push('EXPENSE_REQUIRES_EXPENSE_WIDGET');
+    }
+
+    if (spec.focus === 'MARGIN') {
+      const hasMarginWidget = has(
+        (w) =>
+          ['gross_margin_pct', 'net_margin_pct', 'gross_profit', 'pl_summary'].includes(w.metric),
+      );
+      if (!hasMarginWidget) errs.push('MARGIN_REQUIRES_MARGIN_WIDGET');
+    }
+
+    if (spec.focus === 'EBITDA') {
+      if (!has((w) => w.metric === 'ebitda')) errs.push('EBITDA_REQUIRES_EBITDA_WIDGET');
+    }
+
+    if (spec.focus === 'GL') {
+      const hasGlWidget = has((w) => ['gl_transactions', 'pl', 'expense'].includes(w.metric));
+      if (!hasGlWidget) errs.push('GL_REQUIRES_GL_WIDGET');
+    }
+
     if (spec.wantsTrend) {
       // Trend intent can be satisfied by either a line or a time-binned bar chart.
       if (
         !has(
           (w) =>
-            (w.type === 'line' || w.type === 'bar') &&
+            (w.type === 'line' || w.type === 'area' || w.type === 'bar') &&
             (w.grouping === 'month' || w.grouping === 'quarter'),
         )
       ) {
@@ -6109,105 +9224,24 @@ export class AgentService {
 
     const spec = parseQuerySpec(query);
 
-    // If the user asks for metrics we do not have in our tool/widget vocabulary,
-    // we must clarify to avoid guessing (hallucination).
-    const hardUnsupportedMetric =
-      /(gross\s*margin|net\s*income|cogs|expense|expenses|opex|ebitda|cash\s*flow|cashflow|balance\s*sheet|p&l|income\s*statement)/i;
-    const softProfitLanguage =
-      /\b(profit|profitable|profitability|margin|margins)\b/i;
-    const hasInvoiceSignals =
-      /\b(revenue|sales|paid|collected|outstanding|overdue|invoice|invoices|ar\b|aging|collections?)\b/i.test(
+    // Balance sheet / cash flow statements are not derivable from journal lines alone.
+    // Only block if the user is *exclusively* asking for those (no other answerable signals).
+    const strictlyUnsupported =
+      /\b(balance\s*sheet|cash\s*flow\s*statement|statement\s*of\s*cash\s*flows?)\b/i;
+    const hasAnyAnswerableSignal =
+      /\b(revenue|sales|paid|collected|outstanding|overdue|invoice|invoices|ar\b|aging|collections?|expense|expenses|opex|ebitda|margin|profit|loss|p&l|income|cogs|cost|gl|journal)\b/i.test(
         query,
       );
 
-    // Hard finance statements require data we don't currently ingest (expenses/COGS/GL).
-    // Only block if the user is *primarily* asking for those, not when they also asked an answerable
-    // invoice-based question (e.g. "compare revenue across entities, which is most profitable").
-    if (hardUnsupportedMetric.test(query) && !hasInvoiceSignals) {
+    if (strictlyUnsupported.test(query) && !hasAnyAnswerableSignal) {
       return {
         reason: 'UNSUPPORTED_METRIC',
-        question: `I can only build dashboards from invoice-based signals right now (revenue/paid/outstanding/overdue/collections) plus the venture summary tile. Which should I focus on for this dashboard?`,
+        question: `Balance sheet and cash flow statements require additional data beyond what is currently synced. I can build P&L, expense breakdowns, margin analysis, and AR dashboards. Which would you like?`,
         options: [
-          {
-            label: 'Revenue performance',
-            value: 'Focus on revenue trends and revenue by entity/client.',
-          },
-          {
-            label: 'AR / overdue risk',
-            value: 'Focus on outstanding vs overdue and top overdue clients.',
-          },
-          {
-            label: 'Collections efficiency',
-            value:
-              'Focus on paid amounts and collection/overdue rates by client.',
-          },
-          {
-            label: 'Venture summary',
-            value:
-              'Focus on the venture summary tile (burn/runway/cash/efficiency) and supporting revenue context.',
-          },
-        ],
-      };
-    }
-
-    // Mixed ask: includes unsupported metrics *and* invoice signals (e.g. "revenue and gross margin").
-    // We must clarify to avoid silently dropping the unsupported part.
-    if (hardUnsupportedMetric.test(query) && hasInvoiceSignals) {
-      return {
-        reason: 'UNSUPPORTED_METRIC_MIXED',
-        question: `I can answer the invoice-based parts (revenue/paid/outstanding/overdue), but I can’t calculate true margins/profit yet (needs expenses/COGS). How should I proceed?`,
-        options: [
-          {
-            label: 'Proceed with invoice signals only',
-            value:
-              'Proceed using invoice-based metrics only (revenue/paid/outstanding/overdue/collections).',
-          },
-          {
-            label: 'Focus on collections/AR instead',
-            value:
-              'Focus on collections efficiency and AR/overdue risk (no margins).',
-          },
-          {
-            label: 'Show revenue only',
-            value: 'Show revenue trends and client/entity comparisons only.',
-          },
-          {
-            label: 'Cancel and fix data',
-            value:
-              'Stop and tell me what data source you need to calculate margins/profit (expenses/COGS).',
-          },
-        ],
-      };
-    }
-
-    // Soft "profit/profitable/margin" language shouldn't block if we can still answer using invoice signals.
-    if (
-      softProfitLanguage.test(query) &&
-      !hasInvoiceSignals &&
-      spec.focus !== 'VENTURE'
-    ) {
-      return {
-        reason: 'UNSUPPORTED_METRIC',
-        question: `I can’t calculate true profit/margins yet (needs expenses/COGS), but I *can* analyze invoice-based performance. Which should I focus on?`,
-        options: [
-          {
-            label: 'Revenue performance',
-            value: 'Focus on revenue trends and revenue by entity/client.',
-          },
-          {
-            label: 'AR / overdue risk',
-            value: 'Focus on outstanding vs overdue and top overdue clients.',
-          },
-          {
-            label: 'Collections efficiency',
-            value:
-              'Focus on paid amounts and collection/overdue rates by client.',
-          },
-          {
-            label: 'Venture summary',
-            value:
-              'Focus on the venture summary tile (burn/runway/cash/efficiency) and supporting revenue context.',
-          },
+          { label: 'P&L / Income Statement', value: 'Build a full P&L with net income, gross margin, and expense breakdown.' },
+          { label: 'Expense analysis', value: 'Show expenses by GL account with COGS vs OPEX breakdown.' },
+          { label: 'Revenue & AR', value: 'Focus on revenue trends, outstanding, and overdue.' },
+          { label: 'Executive CFO dashboard', value: 'Build a comprehensive CFO dashboard with P&L, margin, AR, and client data.' },
         ],
       };
     }
@@ -6586,12 +9620,14 @@ export class AgentService {
              formatDateTime(toStartOfMonth(issued_at), '%Y-%m') AS month,
              coalesce(sum(total_amount), 0) AS revenue,
              count() AS invoice_count
-	           FROM ${this.analyticsDb}.fact_accounting_invoices
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${provider}
 	             ${client}
 	             ${entity}
 	             ${time}
+	             ${arFilter}
+	             AND issued_at IS NOT NULL
 	           GROUP BY month ORDER BY month ASC LIMIT 18`,
           {
             externalOrgIds: scope.externalOrgIds,
@@ -6612,16 +9648,20 @@ export class AgentService {
              coalesce(sum(total_amount), 0) AS total_revenue,
              count() AS invoice_count,
              any(currency) AS currency,
-             countIf(lowerUTF8(status) = 'overdue') AS overdue_count
-	           FROM ${this.analyticsDb}.fact_accounting_invoices
-	           WHERE connection_id IN ({connectionIds:Array(String)})
+             countIf(
+               due_at IS NOT NULL AND due_at < now() AND lowerUTF8(status) IN ('authorised','sent','needtosend','notset','active','open')
+             ) AS overdue_count
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${provider}
 	             ${client}
 	             ${entity}
 	             ${time}
+	             ${arFilter}
+	             AND issued_at IS NOT NULL
 	           GROUP BY org_name, org_id, provider ORDER BY total_revenue DESC`,
           {
-            connectionIds: scope.connectionIds,
+            externalOrgIds: scope.externalOrgIds,
             ...(spec.providerHint ? { provider: spec.providerHint } : {}),
             ...(spec.clientFilter
               ? { clientName: spec.clientFilter.nameLower }
@@ -6639,15 +9679,17 @@ export class AgentService {
              coalesce(sum(total_amount), 0) AS status_total,
              coalesce(avg(total_amount), 0) AS avg_amount,
              coalesce(max(total_amount), 0) AS max_amount
-	           FROM ${this.analyticsDb}.fact_accounting_invoices
-	           WHERE connection_id IN ({connectionIds:Array(String)})
+	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${provider}
 	             ${client}
 	             ${entity}
 	             ${time}
+	             ${arFilter}
+	             AND issued_at IS NOT NULL
 	           GROUP BY status ORDER BY status_total DESC LIMIT 15`,
           {
-            connectionIds: scope.connectionIds,
+            externalOrgIds: scope.externalOrgIds,
             ...(spec.providerHint ? { provider: spec.providerHint } : {}),
             ...(spec.clientFilter
               ? { clientName: spec.clientFilter.nameLower }
@@ -6665,13 +9707,13 @@ export class AgentService {
              coalesce(sumIf(abs(total_amount), total_amount < 0), 0) AS total_outflow,
              count(DISTINCT toStartOfMonth(issued_at)) AS active_months
 	           FROM ${this.analyticsDb}.fact_accounting_invoices
-	           WHERE connection_id IN ({connectionIds:Array(String)})
+	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             ${provider}
 	             ${client}
 	             ${entity}
 	             ${time}`,
           {
-            connectionIds: scope.connectionIds,
+            externalOrgIds: scope.externalOrgIds,
             ...(spec.providerHint ? { provider: spec.providerHint } : {}),
             ...(spec.clientFilter
               ? { clientName: spec.clientFilter.nameLower }
@@ -6711,7 +9753,7 @@ export class AgentService {
                provider,
                org_id
              FROM ${this.analyticsDb}.fact_accounting_invoices
-             WHERE connection_id IN ({connectionIds:Array(String)})
+             WHERE org_id IN ({externalOrgIds:Array(String)})
                ${provider}
                ${client}
                ${entity}
@@ -6725,7 +9767,7 @@ export class AgentService {
                invoice_external_id,
                sum(amount) AS paid_to_date
              FROM ${this.analyticsDb}.fact_accounting_payment_applications
-             WHERE connection_id IN ({connectionIds:Array(String)})
+             WHERE org_id IN ({externalOrgIds:Array(String)})
                AND payment_at IS NOT NULL
                AND payment_at <= now()
                AND invoice_external_id != ''
@@ -6750,7 +9792,7 @@ export class AgentService {
              count(DISTINCT org_id) AS entity_count
            FROM per_invoice`,
           {
-            connectionIds: scope.connectionIds,
+            externalOrgIds: scope.externalOrgIds,
             ...(spec.providerHint ? { provider: spec.providerHint } : {}),
             ...(spec.clientFilter
               ? { clientName: spec.clientFilter.nameLower }
@@ -6771,12 +9813,13 @@ export class AgentService {
                count() AS invoice_count,
                countIf(lowerUTF8(status) = 'overdue') AS overdue_count,
                any(currency) AS currency
-	             FROM ${this.analyticsDb}.fact_accounting_invoices
+	             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
 	             WHERE org_id IN ({externalOrgIds:Array(String)})
 	               ${provider}
 	               ${client}
 	               ${entity}
 	               ${time}
+	               ${arFilter}
 	             GROUP BY client_name
 	             ORDER BY revenue DESC LIMIT 20`,
             {
@@ -6797,7 +9840,7 @@ export class AgentService {
              invoice_count,
              overdue_count,
              currency
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             AND client_name != ''
 	             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
@@ -6822,7 +9865,7 @@ export class AgentService {
             `SELECT
                coalesce(nullIf(contact_name, ''), 'Unknown') AS client_name,
                coalesce(nullIf(org_name, ''), org_id) AS org_name,
-               any(provider) AS provider,
+               any(provider) AS billing_provider,
                any(currency) AS currency,
                coalesce(sum(abs(total_amount)), 0) AS total_invoiced,
                coalesce(sumIf(total_amount, lowerUTF8(status) IN ('paid','voided','closed','active','open')), 0) AS total_revenue,
@@ -6846,12 +9889,13 @@ export class AgentService {
                  round(total_revenue / total_invoiced * 100, 1), 0) AS collection_rate_pct,
                if(total_invoiced > 0,
                  round(total_overdue / total_invoiced * 100, 1), 0) AS overdue_rate_pct
-	             FROM ${this.analyticsDb}.fact_accounting_invoices
+	             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
 	             WHERE org_id IN ({externalOrgIds:Array(String)})
 	               ${provider}
 	               ${client}
 	               ${entity}
 	               ${time}
+	               ${arFilter}
              GROUP BY client_name, org_name, org_id
              HAVING client_name != ''
              ORDER BY total_revenue DESC LIMIT 50`,
@@ -6892,7 +9936,7 @@ export class AgentService {
                round(total_revenue / total_invoiced * 100, 1), 0)     AS collection_rate_pct,
              if(total_invoiced > 0,
                round(total_overdue / total_invoiced * 100, 1), 0)     AS overdue_rate_pct
-	           FROM ${this.analyticsDb}.dim_clients FINAL
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
 	             AND client_name != ''
 	             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
@@ -7000,13 +10044,31 @@ Write your 2-3 sentence summary now.`;
     params: Record<string, unknown>,
   ): Promise<T[]> {
     await this.ensureAnalyticsSchema();
-    const result = await this.clickhouse.query({
-      query,
-      query_params: params,
-      format: 'JSONEachRow',
-      clickhouse_settings: SAFE_QUERY,
-    });
-    return (await result.json()) as T[];
+    try {
+      const result = await this.clickhouse.query({
+        query,
+        query_params: params,
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY,
+      });
+      return (await result.json()) as T[];
+    } catch (err: any) {
+      // Some deployments still have MergeTree tables, where FINAL is illegal.
+      // Retry once with FINAL stripped to avoid hard failures.
+      const code = err?.code ?? err?.cause?.code;
+      const message = String(err?.message ?? err?.cause?.message ?? '');
+      if (code === '181' || /doesn'?t support FINAL/i.test(message)) {
+        const stripped = query.replace(/\s+FINAL\b/gi, '');
+        const result = await this.clickhouse.query({
+          query: stripped,
+          query_params: params,
+          format: 'JSONEachRow',
+          clickhouse_settings: SAFE_QUERY,
+        });
+        return (await result.json()) as T[];
+      }
+      throw err;
+    }
   }
 
   private num(v: unknown): number {
@@ -7029,6 +10091,105 @@ Write your 2-3 sentence summary now.`;
       client_financial_profile: 'Client Financial Intelligence',
     };
     return labels[tool] ?? tool;
+  }
+
+  // ─── Dynamic SQL Generation ────────────────────────────────────────────────
+
+  private async generateDynamicSql(
+    intent: string,
+    title: string,
+    scope: OrgScope,
+    range?: TimeRange,
+  ): Promise<string> {
+    const timeHint = range
+      ? `Time filter requested: ${JSON.stringify(range)}`
+      : 'No specific time filter — use all available data';
+
+    const userPrompt = `Chart title: "${title}"
+Financial question: ${intent}
+${timeHint}
+Org IDs in scope: ${scope.externalOrgIds.slice(0, 3).join(', ')} (always use org_id IN ({externalOrgIds:Array(String)}) filter)
+
+Write ONE ClickHouse SELECT query that answers this question. Output SQL only.`;
+
+    const body = {
+      model: this.OLLAMA_MODEL,
+      messages: [
+        { role: 'system', content: DYNAMIC_SQL_SYSTEM },
+        { role: 'user', content: userPrompt },
+      ],
+      stream: false,
+      options: { temperature: 0, num_predict: 600 },
+    };
+
+    const res = await fetch(`${this.OLLAMA_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
+    const json = (await res.json()) as any;
+    const raw = (json.message?.content ?? '').replace(/```sql|```/gi, '').trim();
+
+    if (!raw) throw new Error('LLM returned empty SQL');
+    return this.validateAndScopeDynamicSql(raw, scope);
+  }
+
+  private validateAndScopeDynamicSql(sql: string, scope: OrgScope): string {
+    const normalized = sql.trim().replace(/;+$/, '').trim();
+
+    // Must be a SELECT
+    if (!/^\s*SELECT\b/i.test(normalized)) {
+      throw new Error('Dynamic SQL must start with SELECT');
+    }
+
+    // Block mutation statements
+    if (/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE)\b/i.test(normalized)) {
+      throw new Error('Dynamic SQL must not contain mutation statements');
+    }
+
+    // Block system table access
+    if (/\bsystem\s*\.\s*\w+/i.test(normalized) || /\binformation_schema\b/i.test(normalized)) {
+      throw new Error('Dynamic SQL must not access system tables');
+    }
+
+    // Must have LIMIT
+    if (!/\bLIMIT\s+\d+/i.test(normalized)) {
+      throw new Error('Dynamic SQL must include LIMIT clause');
+    }
+
+    // Must reference the connection_id filter (or we inject it)
+    if (!/{connectionIds:Array\(String\)}/.test(normalized)) {
+      throw new Error('Dynamic SQL missing connection_id scope filter');
+    }
+
+    return normalized;
+  }
+
+  private async executeDynamicSql(sql: string, scope: OrgScope): Promise<Record<string, unknown>[]> {
+    try {
+      const raw = String(sql ?? '').trim();
+      if (!raw) return [];
+      const lower = raw.toLowerCase();
+      // Safety: dynamic SQL MUST be read-only and MUST be tenant-scoped.
+      if (/\b(insert|update|delete|drop|alter|create|truncate|optimize|attach|detach)\b/i.test(lower)) {
+        this.logger.warn('[Agent:Dynamic] Rejected non-readonly SQL.');
+        return [];
+      }
+      // Enforce org scoping by requiring the externalOrgIds query param placeholder.
+      // We generate prompts that use: org_id IN ({externalOrgIds:Array(String)}).
+      if (!/\{externalorgids\s*:\s*array\s*\(\s*string\s*\)\s*\}/i.test(raw)) {
+        this.logger.warn('[Agent:Dynamic] Rejected SQL missing externalOrgIds scope.');
+        return [];
+      }
+      return await this.queryRows<Record<string, unknown>>(sql, {
+        externalOrgIds: scope.externalOrgIds,
+      });
+    } catch (err: any) {
+      this.logger.warn(`[Agent:Dynamic] SQL execution failed: ${err.message}`);
+      return [];
+    }
   }
 
   private buildToolPreview(result: ToolResult): string {
@@ -7071,12 +10232,16 @@ Write your 2-3 sentence summary now.`;
       return `AND ${col} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days))} DAY)`;
     if (range.kind === 'LAST_N_WEEKS')
       return `AND ${col} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks))} WEEK)`;
-    if (range.kind === 'LAST_N_MONTHS')
-      return `AND ${col} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months))} MONTH)`;
+    if (range.kind === 'LAST_N_MONTHS') {
+      const months = Math.max(1, Math.floor(range.months));
+      // Use calendar-month boundaries so "last 6 months" yields 6 month buckets
+      // (including the current month) when charting by month.
+      return `AND ${col} >= toStartOfMonth(addMonths(now(), -${months - 1}))`;
+    }
     if (range.kind === 'LAST_N_QUARTERS')
-      return `AND ${col} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters)) * 3} MONTH)`;
+      return `AND ${col} >= toStartOfQuarter(addMonths(now(), -${(Math.max(1, Math.floor(range.quarters)) - 1) * 3}))`;
     if (range.kind === 'LAST_N_YEARS')
-      return `AND ${col} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years))} YEAR)`;
+      return `AND ${col} >= toStartOfYear(addYears(now(), -${Math.max(1, Math.floor(range.years)) - 1}))`;
 
     return '';
   }

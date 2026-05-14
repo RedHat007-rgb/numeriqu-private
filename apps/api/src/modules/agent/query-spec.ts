@@ -16,7 +16,12 @@ export type DashboardFocus =
   | 'AR_RISK'
   | 'COLLECTIONS'
   | 'VENTURE'
-  | 'AUDIT';
+  | 'AUDIT'
+  | 'PNL'
+  | 'EXPENSE'
+  | 'MARGIN'
+  | 'EBITDA'
+  | 'GL';
 
 export type TopDefinition =
   | 'REVENUE_COLLECTED'
@@ -226,6 +231,17 @@ export function parseQuerySpec(raw: string): QuerySpec {
   const wantsCollections = /\b(collection|collections|collect|efficien)\b/.test(q);
   const wantsRevenue = /\b(revenue|growth|sales|momentum)\b/.test(q);
 
+  const wantsPnl =
+    /\b(p&l|pl\b|profit\s+and\s+loss|income\s+statement|net\s+income|net\s+profit)\b/.test(q) ||
+    /\b(profit|loss|profitability)\b/.test(q);
+  const wantsExpense =
+    /\b(expense|expenses|opex|operating\s+expense|cost\s+breakdown|spending|spend|overheads?|cogs|cost\s+of\s+goods|cost\s+of\s+sales|direct\s+cost)\b/.test(q);
+  const wantsMargin =
+    /\b(gross\s+margin|net\s+margin|margin\s+analysis|margin\s+trend|profitability|gross\s+profit|markup)\b/.test(q);
+  const wantsEbitda = /\bebitda\b/.test(q);
+  const wantsGl =
+    /\b(journal|journals|gl\b|general\s+ledger|journal\s+lines?|gl\s+entries|ledger\s+entries)\b/.test(q);
+
   // Top-N clients intent (supports digits and number-words).
   const topNMatch =
     q.match(/\btop\s+(\d+)\s+(clients|customers|contacts)\b/) ??
@@ -269,6 +285,11 @@ export function parseQuerySpec(raw: string): QuerySpec {
   let focus: DashboardFocus = 'REVENUE';
   if (wantsAudit) focus = 'AUDIT';
   else if (wantsVenture) focus = 'VENTURE';
+  else if (wantsEbitda) focus = 'EBITDA';
+  else if (wantsMargin) focus = 'MARGIN';
+  else if (wantsPnl) focus = 'PNL';
+  else if (wantsExpense) focus = 'EXPENSE';
+  else if (wantsGl) focus = 'GL';
   else if (wantsOverdue) focus = 'AR_RISK';
   else if (wantsCollections) focus = 'COLLECTIONS';
   else if (wantsRevenue) focus = 'REVENUE';

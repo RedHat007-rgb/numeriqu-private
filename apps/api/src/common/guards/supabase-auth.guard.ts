@@ -19,6 +19,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 export class SupabaseAuthGuard implements CanActivate {
   private readonly logger = new Logger(SupabaseAuthGuard.name);
   private readonly supabase: SupabaseClient;
+  private readonly timeoutMs: number;
 
   constructor() {
     this.supabase = createClient(
@@ -32,6 +33,8 @@ export class SupabaseAuthGuard implements CanActivate {
         },
       },
     );
+    const configured = Number(process.env.AUTH_GUARD_TIMEOUT_MS || 8000);
+    this.timeoutMs = Number.isFinite(configured) && configured > 0 ? configured : 8000;
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -48,10 +51,14 @@ export class SupabaseAuthGuard implements CanActivate {
     }
 
     try {
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('AUTH_TIMEOUT')), this.timeoutMs);
+      });
+
       const {
         data: { user },
         error,
-      } = await this.supabase.auth.getUser(token);
+      } = await Promise.race([this.supabase.auth.getUser(token), timeout]);
 
       if (error || !user) {
         this.logger.warn(`[Auth] Token validation failed: ${error?.message}`);
@@ -67,6 +74,10 @@ export class SupabaseAuthGuard implements CanActivate {
 
       return true;
     } catch (e: any) {
+      if (e instanceof Error && e.message === 'AUTH_TIMEOUT') {
+        this.logger.warn(`[Auth] Token validation timed out after ${this.timeoutMs}ms`);
+        throw new UnauthorizedException('Authentication timed out');
+      }
       if (e instanceof UnauthorizedException) throw e;
       this.logger.error(`[Auth] Unexpected error: ${e.message}`);
       throw new UnauthorizedException('Authentication failed');

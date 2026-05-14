@@ -49,7 +49,9 @@ export class AgentController {
       email: user.email,
     });
 
-    this.logger.log(`[Agent:SSE] tenant=${organization.id}: "${query.slice(0, 60)}"`);
+    this.logger.log(
+      `[Agent:SSE] tenant=${organization.id}: "${query.slice(0, 60)}"`,
+    );
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -68,12 +70,17 @@ export class AgentController {
         (res as any).flush?.();
       }
     } catch (error: any) {
-      this.logger.error(`[Agent:SSE:Fatal] Stream crashed: ${error.message}`, error.stack);
+      this.logger.error(
+        `[Agent:SSE:Fatal] Stream crashed: ${error.message}`,
+        error.stack,
+      );
       try {
         res.write(
           `data: ${JSON.stringify({ type: 'error', message: 'Analysis stream interrupted.' })}\n\n`,
         );
-      } catch { /* connection dead */ }
+      } catch {
+        /* connection dead */
+      }
     } finally {
       res.end();
     }
@@ -92,12 +99,16 @@ export class AgentController {
     });
 
     if (metric === 'venture') {
-      const profile = await this.financialData.getFinancialProfile(organization.id);
+      const profile = await this.financialData.getFinancialProfile(
+        organization.id,
+      );
       return { data: profile.ventureMetrics };
     }
 
     if (metric === 'revenue' && grouping === 'org') {
-      const profile = await this.financialData.getFinancialProfile(organization.id);
+      const profile = await this.financialData.getFinancialProfile(
+        organization.id,
+      );
       return {
         data: profile.connectedOrgs.map((org) => ({
           name: org.orgName,
@@ -108,10 +119,15 @@ export class AgentController {
 
     if (metric === 'invoices') {
       if (grouping === 'status') {
-        const profile = await this.financialData.getFinancialProfile(organization.id);
+        const profile = await this.financialData.getFinancialProfile(
+          organization.id,
+        );
         const map = new Map<string, number>();
         for (const stat of profile.invoiceStats.byStatusAndOrg) {
-          map.set(stat.status, (map.get(stat.status) ?? 0) + Math.abs(stat.totalAmount));
+          map.set(
+            stat.status,
+            (map.get(stat.status) ?? 0) + Math.abs(stat.totalAmount),
+          );
         }
         return {
           data: Array.from(map.entries()).map(([name, value]) => ({
@@ -120,14 +136,22 @@ export class AgentController {
           })),
         };
       }
-      return { data: await this.financialData.getInvoicesList(organization.id) };
+      return {
+        data: await this.financialData.getInvoicesList(organization.id),
+      };
     }
 
-    const trend = await this.financialData.getMonthlyRevenueTrend(organization.id);
+    const trend = await this.financialData.getMonthlyRevenueTrend(
+      organization.id,
+    );
     const periods = new Map<string, any>();
     for (const t of trend) {
-      const monthLabel = t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2);
-      const existing = periods.get(monthLabel) || { name: monthLabel, value: 0 };
+      const monthLabel =
+        t.month.split('-')[1] + '/' + t.month.split('-')[0].slice(2);
+      const existing = periods.get(monthLabel) || {
+        name: monthLabel,
+        value: 0,
+      };
       if (grouping === 'org') {
         existing[t.org_name] = Math.abs(parseFloat(t.revenue) || 0);
       } else {
@@ -146,7 +170,8 @@ export class AgentController {
       status: health.ollama ? 'operational' : 'degraded',
       advisory: health.ollama
         ? `Agent ready. Model: ${health.engine}`
-        : 'Ollama offline — check your Azure VM at ' + (process.env.OLLAMA_URL || 'http://localhost:11434'),
+        : 'Ollama offline — check your Azure VM at ' +
+          (process.env.OLLAMA_URL || 'http://localhost:11434'),
     };
   }
 
@@ -195,7 +220,10 @@ export class AgentController {
       id: user.id,
       email: user.email,
     });
-    const list = await this.persistence.listDashboards(organization.id, user.id);
+    const list = await this.persistence.listDashboards(
+      organization.id,
+      user.id,
+    );
     if (list.length === 0) return null;
     return this.persistence.getDashboard(list[0].id, organization.id);
   }

@@ -6,6 +6,7 @@ import {
   HttpException,
   HttpCode,
   HttpStatus,
+  Headers,
   Param,
   Patch,
   Post,
@@ -79,15 +80,28 @@ export class MessagingController {
   }
 
   @Get('conversations')
-  async conversations(@CurrentUser() user: AuthUser) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async conversations(
+    @CurrentUser() user: AuthUser,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.assertMessagingAllowed(context.organization.accountType);
     return this.messagingService.listConversations(context.organization.id, context.user.id);
   }
 
   @Post('conversations/dm')
-  async createDm(@CurrentUser() user: AuthUser, @Body() body: CreateDmDto) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async createDm(
+    @CurrentUser() user: AuthUser,
+    @Body() body: CreateDmDto,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.assertMessagingAllowed(context.organization.accountType);
     return this.messagingService.createDirectMessageConversation(
       context.organization.id,
@@ -97,8 +111,15 @@ export class MessagingController {
   }
 
   @Post('conversations/group')
-  async createGroup(@CurrentUser() user: AuthUser, @Body() body: CreateGroupDto) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async createGroup(
+    @CurrentUser() user: AuthUser,
+    @Body() body: CreateGroupDto,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.assertMessagingAllowed(context.organization.accountType);
     return this.messagingService.createGroupConversation(
       context.organization.id,
@@ -108,8 +129,15 @@ export class MessagingController {
   }
 
   @Get('conversations/:id/messages')
-  async messages(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async messages(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.assertMessagingAllowed(context.organization.accountType);
     return this.messagingService.listMessages(context.organization.id, context.user.id, conversationId);
   }
@@ -119,8 +147,12 @@ export class MessagingController {
     @CurrentUser() user: AuthUser,
     @Param('id') conversationId: string,
     @Body() body: SendMessageDto,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.assertMessagingAllowed(context.organization.accountType);
     return this.messagingService.sendMessage({
       organizationId: context.organization.id,
@@ -137,8 +169,12 @@ export class MessagingController {
     @CurrentUser() user: AuthUser,
     @Param('id') messageId: string,
     @Body() body: EditMessageDto,
+    @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.assertMessagingAllowed(context.organization.accountType);
     return this.messagingService.editMessage({
       organizationId: context.organization.id,
@@ -150,8 +186,15 @@ export class MessagingController {
 
   @Delete('messages/:id')
   @HttpCode(200)
-  async deleteMessage(@CurrentUser() user: AuthUser, @Param('id') messageId: string) {
-    const context = await this.orgContext.ensureContext({ id: user.id, email: user.email });
+  async deleteMessage(
+    @CurrentUser() user: AuthUser,
+    @Param('id') messageId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.orgContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
     this.assertMessagingAllowed(context.organization.accountType);
     return this.messagingService.softDeleteMessage({
       organizationId: context.organization.id,

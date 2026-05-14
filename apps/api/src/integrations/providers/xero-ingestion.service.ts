@@ -240,68 +240,164 @@ export class XeroIngestionService {
       }
     }
 
-    // Special handling      // Journals paged fetch (using direct API for reliability)
+    // P&L Report → synthetic journal lines
+    // Xero's raw Journals endpoint requires accounting.journals.read (unavailable on new apps).
+    // Instead we fetch the P&L Report which uses accounting.reports.read (already granted) and
+    // convert each account row + month period into a synthetic journal line entry so all
+    // existing P&L / expense / margin / EBITDA chart queries work without changes.
     try {
-      this.logger.debug(
-        `[Xero-Custom] Fetching Journals (Paged via Direct API)...`,
+      this.logger.debug(`[Xero-Custom] Fetching P&L Report (24 months)...`);
+      const reportRows = await this.fetchPnlReportLines(
+        accessToken,
+        xeroTenantId,
+        jobDetails,
       );
-      let offset = 0;
-      let moreJournals = true;
-      let totalIngested = 0;
-      while (moreJournals) {
-        try {
-          const response = await axios.get(
-            'https://api.xero.com/api.xro/2.0/Journals',
-            {
-              params: { offset },
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                'Xero-tenant-id': xeroTenantId,
-                Accept: 'application/json',
-              },
-            },
-          );
-
-          const journals = response.data.Journals || [];
-          if (journals.length === 0) {
-            moreJournals = false;
-          } else {
-            const committed = await this.appendRecords(
-              jobDetails,
-              'Journals',
-              journals,
-            );
-            totalIngested += committed;
-            totalRecords += committed;
-            offset += journals.length;
-            if (journals.length < 100) moreJournals = false; // Xero default page size is 100
-          }
-        } catch (error: any) {
-          if (error.response?.status === 401) {
-            this.logger.warn(
-              `[Xero-Custom] Journals fetch bypassed: Scope 'accounting.journals.read' missing from this connection. User re-authorization required for ledger-level data.`,
-            );
-            moreJournals = false;
-          } else {
-            const inspected = this.inspectError(error);
-            this.logger.error(
-              `[Xero-Custom] Failed to fetch Journals: ${inspected.message}`,
-            );
-            this.logger.error(inspected.details);
-            moreJournals = false;
-          }
-        }
+      if (reportRows.length > 0) {
+        const analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
+        // Wipe previous P&L report rows for this org so re-syncs are idempotent
+        const esc = (s: string) => s.replace(/'/g, "\\'");
+        await this.clickhouse.command({
+          query: `ALTER TABLE ${analyticsDb}.fact_accounting_journal_lines
+                  DELETE WHERE tenant_id = '${esc(jobDetails.tenantId)}'
+                    AND org_id = '${esc(jobDetails.orgId)}'
+                    AND source_type = 'ProfitAndLossReport'
+                  SETTINGS mutations_sync = 1`,
+        });
+        await this.clickhouse.insert({
+          table: `${analyticsDb}.fact_accounting_journal_lines`,
+          values: reportRows,
+          format: 'JSONEachRow',
+        });
+        totalRecords += reportRows.length;
+        this.logger.log(
+          `[Xero-Custom] P&L Report → ${reportRows.length} synthetic journal lines committed`,
+        );
+      } else {
+        this.logger.warn(`[Xero-Custom] P&L Report returned no rows`);
       }
-      this.logger.log(
-        `[Xero-Custom] Completed Journals sync (Total: ${totalIngested})`,
-      );
     } catch (error: any) {
       this.logger.error(
-        `[Xero-Custom] Critical failure in Journals sync: ${error.message}`,
+        `[Xero-Custom] P&L Report sync failed: ${error.message}`,
       );
     }
 
     return totalRecords;
+  }
+
+  // ── P&L Report → synthetic journal lines ─────────────────────────────────
+
+  private async fetchPnlReportLines(
+    accessToken: string,
+    xeroTenantId: string,
+    jobDetails: SyncJobConfig,
+  ): Promise<Record<string, unknown>[]> {
+    // Fetch 24 months of P&L, monthly granularity
+    const response = await axios.get(
+      'https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss',
+      {
+        params: { periods: 24, timeframe: 'MONTH', standardLayout: true },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Xero-tenant-id': xeroTenantId,
+          Accept: 'application/json',
+        },
+        timeout: 30000,
+      },
+    );
+
+    const report = response.data?.Reports?.[0];
+    if (!report) return [];
+
+    // Extract column headers → month labels (skip first "Account" column)
+    const headerRow = report.Rows?.find((r: any) => r.RowType === 'Header');
+    const headers: string[] = (headerRow?.Cells ?? [])
+      .slice(1)
+      .map((c: any) => c.Value as string);
+
+    // Parse a date string like "Jan 2026" → ISO date "2026-01-01"
+    const parseMonthLabel = (label: string): string | null => {
+      const months: Record<string, string> = {
+        Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+        Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
+      };
+      const m = label?.trim().match(/^([A-Za-z]{3})\s+(\d{4})$/);
+      if (!m) return null;
+      const month = months[m[1] ?? ''];
+      return month ? `${m[2]}-${month}-01` : null;
+    };
+
+    const periodDates = headers.map(parseMonthLabel);
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const rows: Record<string, unknown>[] = [];
+
+    // Xero P&L section titles map to account type categories
+    const sectionTypeMap: Record<string, string> = {
+      'Income': 'REVENUE',
+      'Revenue': 'REVENUE',
+      'Sales': 'REVENUE',
+      'Cost of Sales': 'COGS',
+      'Less Cost of Sales': 'COGS',
+      'Direct Costs': 'COGS',
+      'Operating Expenses': 'OPEX',
+      'Less Operating Expenses': 'OPEX',
+      'Expenses': 'OPEX',
+      'Other Income': 'OTHER_INCOME',
+      'Other Expenses': 'OTHER_EXPENSE',
+      'Depreciation': 'DEPRECIATION',
+    };
+
+    const walkSection = (section: any, sectionTitle: string) => {
+      const accountType = sectionTypeMap[sectionTitle] ?? 'OPEX';
+      for (const row of section.Rows ?? []) {
+        if (row.RowType !== 'Row') continue;
+        const cells: any[] = row.Cells ?? [];
+        const accountName: string = cells[0]?.Value ?? 'Unknown';
+        const accountId: string =
+          cells[0]?.Attributes?.find((a: any) => a.Id === 'account')?.Value ?? '';
+
+        cells.slice(1).forEach((cell: any, idx: number) => {
+          const dateStr = periodDates[idx];
+          if (!dateStr) return;
+          const rawAmt = String(cell?.Value ?? '0').replace(/,/g, '');
+          const amount = parseFloat(rawAmt);
+          if (!Number.isFinite(amount) || amount === 0) return;
+
+          // Sign convention: revenue is negative (credit), expenses positive (debit)
+          // Xero reports expenses as positive values in the P&L
+          const lineAmount =
+            accountType === 'REVENUE' ? -Math.abs(amount) : Math.abs(amount);
+
+          rows.push({
+            journal_id: `pnl_${jobDetails.orgId}_${dateStr}_${accountId || accountName}`,
+            journal_number: 0,
+            journal_date: `${dateStr} 00:00:00`,
+            source_type: 'ProfitAndLossReport',
+            source_id: `pnl_${dateStr}`,
+            line_id: `${jobDetails.orgId}_${dateStr}_${accountId || accountName}`,
+            account_id: accountId,
+            account_code: accountType,
+            account_name: accountName,
+            line_amount: lineAmount,
+            description: `${sectionTitle} — ${accountName}`,
+            tenant_id: jobDetails.tenantId,
+            user_id: jobDetails.userId,
+            connection_id: jobDetails.connectionId,
+            provider: 'xero',
+            org_id: jobDetails.orgId,
+            org_name: jobDetails.orgName,
+            updated_at: now,
+            synced_at: now,
+          });
+        });
+      }
+    };
+
+    for (const section of report.Rows ?? []) {
+      if (section.RowType !== 'Section') continue;
+      walkSection(section, section.Title ?? '');
+    }
+
+    return rows;
   }
 
   private async appendRecords(

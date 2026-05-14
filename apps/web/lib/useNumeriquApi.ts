@@ -13,12 +13,12 @@ import {
   type CurrentUserResponse,
   ApiError,
 } from "./api";
-import { getApiBaseURL } from "./api/base";
+import { getApiBaseURL, setSelectedOrganizationCookie, SELECTED_ORG_ID_KEY } from "./api/base";
 
 const DEV_TOKEN_KEY = "numeriqu.devToken";
 let sessionCache: CurrentUserResponse | null = null;
 let sessionKnown = false;
-let sessionInFlight: Promise<CurrentUserResponse | null> | null = null;
+let refreshSeq = 0;
 
 export function useNumeriquApi() {
   const [manualToken, setManualToken] = useState<string | null>(() => {
@@ -43,42 +43,99 @@ export function useNumeriquApi() {
     sessionKnown ? (sessionCache ? "authenticated" : "unauthenticated") : "loading",
   );
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(sessionCache);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  const refreshSession = useCallback(async () => {
-    setAuthState("loading");
-    if (!sessionInFlight) {
-      sessionInFlight = auth
-        .me()
-        .then((me) => {
-          sessionKnown = true;
-          sessionCache = me;
-          return me;
-        })
-        .catch((caught) => {
-          if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
-            sessionKnown = true;
-            sessionCache = null;
-            return null;
+  const refreshSession = useCallback(
+    async () => {
+      const seq = (refreshSeq += 1);
+
+      // Avoid UI flashing to "logged out" while a refresh is in-flight.
+      if (!sessionCache) setAuthState("loading");
+
+      const apply = (me: CurrentUserResponse | null) => {
+        // Ignore stale responses when a newer refresh was kicked off.
+        if (seq !== refreshSeq) return { me, applied: false as const };
+        sessionKnown = true;
+        sessionCache = me;
+        setCurrentUser(me);
+        setAuthState(me ? "authenticated" : "unauthenticated");
+        setAuthError(null);
+        return { me, applied: true as const, message: null as string | null };
+      };
+
+      const keepExistingSession = (message?: string) => {
+        // If we already have a session in memory, keep it rather than forcing the UI
+        // back to the auth screen on transient failures.
+        if (sessionCache) {
+          if (seq === refreshSeq) {
+            setCurrentUser(sessionCache);
+            setAuthState("authenticated");
+            if (message) setAuthError(message);
           }
-          sessionKnown = true;
-          sessionCache = null;
-          return null;
-        })
-        .finally(() => {
-          sessionInFlight = null;
-        });
-    }
-    const me = await sessionInFlight;
-    setCurrentUser(me);
-    setAuthState(me ? "authenticated" : "unauthenticated");
-  }, [auth]);
+          return { me: sessionCache, error: true as const, message: message ?? null };
+        }
+        // No cached session to fall back to: settle the UI out of the loading state.
+        if (seq === refreshSeq) {
+          setCurrentUser(null);
+          setAuthState("unauthenticated");
+          if (message) setAuthError(message);
+        }
+        return { me: null, error: true as const, message: message ?? null };
+      };
+
+      try {
+        const me = await auth.me();
+        return { ...apply(me), error: false as const };
+      } catch (caught) {
+        // Invalid org selection: if this was a normal refresh (not an explicit switch attempt),
+        // clear the stored workspace selection and retry once without an org override.
+        if (caught instanceof ApiError && caught.status === 403) {
+          try {
+            if (typeof window !== "undefined") {
+              window.localStorage.removeItem(SELECTED_ORG_ID_KEY);
+            }
+          } catch {
+            // ignore
+          }
+          try {
+            setSelectedOrganizationCookie(null);
+          } catch {
+            // ignore
+          }
+          try {
+            const me = await auth.me();
+            return { ...apply(me), error: false as const };
+          } catch (retryError) {
+            if (retryError instanceof ApiError && retryError.status === 401) {
+              return { ...apply(null), error: false as const };
+            }
+            // Don't treat non-auth errors as a logout if we have a usable session already.
+            if (seq === refreshSeq) sessionKnown = true;
+            return keepExistingSession(
+              retryError instanceof ApiError ? retryError.toUserMessage("Couldn't refresh session.") : "Couldn't refresh session.",
+            );
+          }
+        }
+
+        if (caught instanceof ApiError && caught.status === 401) {
+          return { ...apply(null), error: false as const };
+        }
+
+        if (seq === refreshSeq) sessionKnown = true;
+        return keepExistingSession(
+          caught instanceof ApiError ? caught.toUserMessage("Couldn't refresh session.") : "Couldn't refresh session.",
+        );
+      }
+    },
+    [auth],
+  );
 
   useEffect(() => {
     if (sessionKnown && manualToken === null) {
       setCurrentUser(sessionCache);
       setAuthState(sessionCache ? "authenticated" : "unauthenticated");
-      return;
     }
+    // Always revalidate so transient failures or stale org selections don't "stick" forever.
     void refreshSession();
   }, [refreshSession, manualToken]);
 
@@ -117,5 +174,6 @@ export function useNumeriquApi() {
     useDevToken,
     signOut,
     refreshSession,
+    authError,
   };
 }

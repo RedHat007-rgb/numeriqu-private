@@ -49,7 +49,7 @@ async function bootstrap() {
       callback(new Error(`Origin ${origin} is not allowed by CORS`));
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    allowedHeaders: 'Content-Type,Authorization',
+    allowedHeaders: 'Content-Type,Authorization,x-organization-id',
     credentials: true,
   });
 

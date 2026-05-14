@@ -47,6 +47,21 @@ const nextConfig = {
   },
   async rewrites() {
     return [
+      // Use a non-`/api/*` prefix to avoid aggressive extension/adblock rules.
+      {
+        source: "/_nq/:path*",
+        destination: `${apiProxyTarget}/:path*`,
+      },
+      // Stable proxy path that is unlikely to match adblock filters.
+      {
+        source: "/api/proxy/:path*",
+        destination: `${apiProxyTarget}/:path*`,
+      },
+      // Primary API proxy path (avoid adblock/extension rules that sometimes match "numeriqu").
+      {
+        source: "/api/app/:path*",
+        destination: `${apiProxyTarget}/:path*`,
+      },
       {
         source: "/api/numeriqu/:path*",
         destination: `${apiProxyTarget}/:path*`,

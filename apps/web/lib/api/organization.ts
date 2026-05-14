@@ -5,6 +5,7 @@ import type {
   OrganizationMember,
   OrganizationRole,
   PermissionCode,
+  WorkspaceSummary,
 } from "./types";
 
 export class OrganizationApi {
@@ -16,6 +17,10 @@ export class OrganizationApi {
 
   current() {
     return this.request<OrganizationContextResponse>("/organizations/current");
+  }
+
+  listWorkspaces() {
+    return this.request<WorkspaceSummary[]>("/organizations");
   }
 
   members() {

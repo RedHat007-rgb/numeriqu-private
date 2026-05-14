@@ -42,8 +42,23 @@ export class InlineTransformService {
   private async wipeSnapshot(table: string, whereClause: string): Promise<void> {
     // ClickHouse mutations are async by default; for sync we wait for completion so inserts
     // don't interleave with old rows and cause visible duplicates.
+    // Also remove historical rows where tenant_id was missing (older schema bugs / backfills).
+    // This prevents "old invoices re-appearing" across syncs when earlier snapshots were written
+    // with tenant_id='' and therefore never matched the normal wipe predicate.
+    const widened = (() => {
+      const m = whereClause.match(/\btenant_id\s*=\s*'([^']*)'\b/i);
+      if (!m) return whereClause;
+      const tenantId = m[1] ?? '';
+      if (!tenantId) return whereClause;
+      // Replace `tenant_id = 'X'` with `(tenant_id = 'X' OR tenant_id = '')`
+      return whereClause.replace(
+        /\btenant_id\s*=\s*'[^']*'\b/i,
+        `(tenant_id = '${tenantId}' OR tenant_id = '')`,
+      );
+    })();
+
     await this.chAnalytics.command({
-      query: `ALTER TABLE ${table} DELETE WHERE ${whereClause} SETTINGS mutations_sync = 1`,
+      query: `ALTER TABLE ${table} DELETE WHERE ${widened} SETTINGS mutations_sync = 1`,
     });
   }
 
@@ -61,25 +76,208 @@ export class InlineTransformService {
       `[Transform] ▶ Starting Gold Layer transform for [${provider.toUpperCase()}] org:${orgId}`,
     );
 
-    try {
-      await this.upsertFactInvoices(tenantId, orgId, provider);
-      await this.upsertFactPaymentApplications(tenantId, orgId, provider);
-      await this.upsertDimAccounts(tenantId, orgId, provider);
-      await this.refreshRevenueByMonth(tenantId, orgId, provider);
-      await this.upsertDimClients(tenantId, orgId, provider);
+    const steps = [
+      { name: 'upsertFactInvoices',             fn: () => this.upsertFactInvoices(tenantId, orgId, provider) },
+      { name: 'upsertFactPaymentApplications',  fn: () => this.upsertFactPaymentApplications(tenantId, orgId, provider) },
+      { name: 'upsertFactJournalLines',          fn: () => this.upsertFactJournalLines(tenantId, orgId, provider) },
+      { name: 'upsertDimAccounts',               fn: () => this.upsertDimAccounts(tenantId, orgId, provider) },
+      { name: 'refreshRevenueByMonth',           fn: () => this.refreshRevenueByMonth(tenantId, orgId, provider) },
+      { name: 'upsertDimClients',                fn: () => this.upsertDimClients(tenantId, orgId, provider) },
+    ];
 
-      const elapsed = Date.now() - start;
+    let failed = false;
+    for (const step of steps) {
+      try {
+        await step.fn();
+        this.logger.debug(`[Transform] ✓ ${step.name} OK`);
+      } catch (e: any) {
+        this.logger.error(
+          `[Transform] ✗ [${provider.toUpperCase()}] step ${step.name} FAILED for org:${orgId} — ${e.message}`,
+          e.stack,
+        );
+        failed = true;
+        // Continue remaining steps so a single bad step doesn't block e.g. journal lines
+      }
+    }
+
+    const elapsed = Date.now() - start;
+    if (!failed) {
       this.logger.log(
         `[Transform] ✅ [${provider.toUpperCase()}] Gold Layer ready in ${elapsed}ms | ` +
           `org: ${orgId} | tenant: ${tenantId}`,
       );
-    } catch (e: any) {
-      this.logger.error(
-        `[Transform] ✗ [${provider.toUpperCase()}] FAILED for org:${orgId} — ${e.message}`,
-        e.stack,
+    } else {
+      this.logger.warn(
+        `[Transform] ⚠ [${provider.toUpperCase()}] Completed with errors in ${elapsed}ms | ` +
+          `org: ${orgId} | tenant: ${tenantId}`,
       );
-      // Non-fatal: raw layer is intact. Next sync will re-trigger.
     }
+  }
+
+  /**
+   * Upsert fact_accounting_journal_lines (Xero only).
+   *
+   * Strategy: prefer raw GL Journals if available (accounting.journals.read scope).
+   * Fallback: derive synthetic P&L journal lines from ACCREC/ACCPAY invoices already
+   * in fact_accounting_invoices — ACCREC = revenue (credit), ACCPAY = expenses (debit).
+   * Also parses invoice LineItems JSON for account-level expense breakdown.
+   */
+  private async upsertFactJournalLines(
+    tenantId: string,
+    orgId: string,
+    provider: 'xero' | 'quickbooks',
+  ): Promise<void> {
+    if (provider !== 'xero') return;
+
+    const dest = `${this.analyticsDb}.fact_accounting_journal_lines`;
+
+    // Wipe only non-ProfitAndLossReport rows (those are managed by the ingestion service)
+    await this.wipeSnapshot(
+      dest,
+      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = 'xero' AND source_type != 'ProfitAndLossReport'`,
+    );
+
+    // ── Try raw GL Journals first (requires accounting.journals.read) ───────
+    let rawJournalCount = 0;
+    try {
+      const result = await this.chXero.query({
+        query: `SELECT count() AS cnt FROM ${this.xeroDb}.xero_raw
+                WHERE tenant_id = '${this.escape(tenantId)}'
+                  AND org_id    = '${this.escape(orgId)}'
+                  AND resource IN ('Journals','ManualJournals')`,
+        format: 'JSONEachRow',
+      });
+      const rows = await result.json() as { cnt: string }[];
+      rawJournalCount = Number(rows[0]?.cnt ?? 0);
+    } catch {
+      rawJournalCount = 0; // xero_raw not accessible — fall through to invoice fallback
+    }
+
+    if (rawJournalCount > 0) {
+      // GL journals available — use them for full double-entry accuracy
+      const COLS = `(
+        journal_id, journal_number, journal_date,
+        source_type, source_id, line_id,
+        account_id, account_code, account_name,
+        line_amount, description,
+        tenant_id, user_id, connection_id, provider,
+        org_id, org_name, updated_at, synced_at
+      )`;
+
+      await this.chAnalytics.command({ query: `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          coalesce(
+            nullIf(JSONExtractString(raw_data, 'JournalID'), ''),
+            nullIf(JSONExtractString(raw_data, 'journalID'), ''),
+            nullIf(JSONExtractString(raw_data, 'ManualJournalID'), ''),
+            nullIf(JSONExtractString(raw_data, 'manualJournalID'), ''),
+            source_id
+          ) AS journal_id,
+          toUInt64OrZero(coalesce(
+            nullIf(JSONExtractString(raw_data, 'JournalNumber'), ''),
+            toString(JSONExtractInt(raw_data, 'JournalNumber'))
+          )) AS journal_number,
+          parseDateTimeBestEffortOrNull(coalesce(
+            nullIf(JSONExtractString(raw_data, 'JournalDate'), ''),
+            nullIf(JSONExtractString(raw_data, 'journalDate'), ''),
+            nullIf(JSONExtractString(raw_data, 'Date'), '')
+          )) AS journal_date,
+          resource AS source_type, source_id,
+          toString(cityHash64(line_raw)) AS line_id,
+          coalesce(nullIf(JSONExtractString(line_raw,'AccountID'),''), nullIf(JSONExtractString(line_raw,'accountID'),'')) AS account_id,
+          coalesce(nullIf(JSONExtractString(line_raw,'AccountCode'),''), nullIf(JSONExtractString(line_raw,'accountCode'),'')) AS account_code,
+          coalesce(nullIf(JSONExtractString(line_raw,'AccountName'),''), nullIf(JSONExtractString(line_raw,'accountName'),'')) AS account_name,
+          toDecimal64OrZero(coalesce(
+            nullIf(JSONExtractString(line_raw,'LineAmount'),''),
+            toString(JSONExtractFloat(line_raw,'LineAmount'))
+          ), 4) AS line_amount,
+          coalesce(nullIf(JSONExtractString(line_raw,'Description'),''), nullIf(JSONExtractString(raw_data,'Narration'),'')) AS description,
+          tenant_id, user_id, connection_id, 'xero' AS provider, org_id, org_name, updated_at, synced_at
+        FROM (
+          SELECT source_id, any(tenant_id) AS tenant_id, any(user_id) AS user_id,
+            any(connection_id) AS connection_id, any(org_id) AS org_id, any(org_name) AS org_name,
+            resource, argMax(raw_data, updated_at) AS raw_data,
+            max(updated_at) AS updated_at, max(synced_at) AS synced_at
+          FROM ${this.xeroDb}.xero_raw
+          WHERE tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}'
+            AND resource IN ('Journals','ManualJournals')
+          GROUP BY source_id, resource
+        )
+        ARRAY JOIN if(
+          length(JSONExtractArrayRaw(raw_data,'JournalLines')) > 0,
+          JSONExtractArrayRaw(raw_data,'JournalLines'),
+          JSONExtractArrayRaw(raw_data,'journalLines')
+        ) AS line_raw
+      `});
+      this.logger.debug(`[Transform] fact_accounting_journal_lines upserted from GL Journals`);
+      return;
+    }
+
+    // ── Fallback: derive P&L from ACCREC / ACCPAY invoices ──────────────────
+    // Reads only from analytics.fact_accounting_invoices — no cross-DB permission needed.
+    this.logger.debug(`[Transform] No GL Journals — deriving P&L from invoices`);
+
+    const COLS = `(
+      journal_id, journal_number, journal_date,
+      source_type, source_id, line_id,
+      account_id, account_code, account_name,
+      line_amount, description,
+      tenant_id, user_id, connection_id, provider,
+      org_id, org_name, updated_at, synced_at
+    )`;
+
+    const baseWhere = `
+      tenant_id = '${this.escape(tenantId)}'
+      AND org_id = '${this.escape(orgId)}'
+      AND provider = 'xero'
+      AND lowerUTF8(status) NOT IN ('voided','deleted','draft')
+      AND total_amount > 0
+    `;
+
+    // Revenue: one line per ACCREC invoice
+    await this.chAnalytics.command({ query: `
+      INSERT INTO ${dest} ${COLS}
+      SELECT
+        invoice_id                     AS journal_id,
+        0                              AS journal_number,
+        issued_at                      AS journal_date,
+        'InvoiceRevenue'               AS source_type,
+        invoice_id                     AS source_id,
+        concat(invoice_id, '_rev')     AS line_id,
+        ''                             AS account_id,
+        'REVENUE'                      AS account_code,
+        'Sales Revenue'                AS account_name,
+        -total_amount                  AS line_amount,
+        concat('Revenue — ', coalesce(nullIf(contact_name,''), 'Client')) AS description,
+        tenant_id, user_id, connection_id, provider, org_id, org_name,
+        updated_at, updated_at AS synced_at
+      FROM ${this.analyticsDb}.fact_accounting_invoices
+      WHERE ${baseWhere} AND invoice_type = 'ACCREC'
+    `});
+
+    // Expenses: one line per ACCPAY invoice, grouped by contact as account proxy
+    await this.chAnalytics.command({ query: `
+      INSERT INTO ${dest} ${COLS}
+      SELECT
+        invoice_id                     AS journal_id,
+        0                              AS journal_number,
+        issued_at                      AS journal_date,
+        'InvoiceExpense'               AS source_type,
+        invoice_id                     AS source_id,
+        concat(invoice_id, '_exp')     AS line_id,
+        ''                             AS account_id,
+        'EXPENSE'                      AS account_code,
+        coalesce(nullIf(contact_name,''), 'Operating Expenses') AS account_name,
+        total_amount                   AS line_amount,
+        concat('Expense — ', coalesce(nullIf(contact_name,''), 'Supplier')) AS description,
+        tenant_id, user_id, connection_id, provider, org_id, org_name,
+        updated_at, updated_at AS synced_at
+      FROM ${this.analyticsDb}.fact_accounting_invoices
+      WHERE ${baseWhere} AND invoice_type = 'ACCPAY'
+    `});
+
+    this.logger.debug(`[Transform] fact_accounting_journal_lines derived from ACCREC/ACCPAY invoices`);
   }
 
   /**

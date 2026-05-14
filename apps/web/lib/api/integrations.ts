@@ -97,7 +97,7 @@ export async function getInviteDetails(token: string): Promise<InviteDetails> {
     process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
     process.env.NEXT_PUBLIC_API_URL?.trim() ||
     (typeof window !== "undefined"
-      ? `${window.location.origin}/api/numeriqu`
+      ? `${window.location.origin}/api/internal`
       : "http://127.0.0.1:3000");
 
   const res = await fetch(`${baseUrl}/org/invite/${token}`, { cache: "no-store" });

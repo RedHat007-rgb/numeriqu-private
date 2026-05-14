@@ -107,7 +107,7 @@ export function useIntegrations() {
         const next = await integrations.syncJobs();
         setJobs(next);
         const latest = next.find((job) => job.connectionId === connectionId);
-        if (latest && (latest.status === "completed" || latest.status === "failed")) {
+        if (latest && (latest.status === "SUCCEEDED" || latest.status === "FAILED")) {
           await refresh();
           return;
         }

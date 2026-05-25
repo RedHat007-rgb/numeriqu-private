@@ -54,11 +54,13 @@ jobs:
         run: |
           aws ecs describe-task-definition \
             --task-definition numeriqu-api \
-            --query taskDefinition > task-definition.json
+            --query taskDefinition \
+            | jq 'del(.taskDefinitionArn,.requiresAttributes,.compatibilities,.revision,.status,.registeredAt,.registeredBy,.enableFaultInjection)' \
+            > task-definition.json
 
       - name: Update image in task definition
         id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v2
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-definition.json
           container-name: ${{ env.CONTAINER_NAME }}

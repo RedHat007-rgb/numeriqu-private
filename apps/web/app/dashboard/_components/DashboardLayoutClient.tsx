@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 import { SELECTED_ORG_ID_KEY, setSelectedOrganizationCookie } from "../../../lib/api/base";
 import type { WorkspaceSummary } from "../../../lib/api/types";
@@ -43,12 +43,17 @@ function DashboardSkeleton() {
 }
 
 export function DashboardLayoutClient({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthenticated, signOut, useDevToken, loading, currentUser, organization, refreshSession, authError } = useNumeriquApi();
   const [tenantLabel, setTenantLabel] = useState<string>("Loading workspace...");
   const [userLabel, setUserLabel] = useState<string>("");
   const [toast, setToast] = useState<Toast>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+
+  // Retry counter for transient API failures — resets on successful auth
+  const retryCount = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const success = searchParams.get("success");
   const error = searchParams.get("error");
@@ -65,6 +70,50 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
       document.body.classList.remove("nq-app");
     };
   }, []);
+
+  // ── Auth guard ────────────────────────────────────────────────────────────────
+  // Only runs after loading completes. Handles three cases:
+  //   1. Authenticated → reset retry state, continue normally.
+  //   2. True 401 (authError is null) → redirect to /login.
+  //   3. Transient error (authError set) → silently retry up to 3 times with
+  //      exponential backoff before giving up and redirecting to /login.
+  useEffect(() => {
+    if (loading) return;
+
+    if (isAuthenticated) {
+      retryCount.current = 0;
+      return;
+    }
+
+    // Clear any pending retry timer
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+
+    // True session expiry (API returned 401, authError is null)
+    if (!authError) {
+      router.replace("/login");
+      return;
+    }
+
+    // Transient error (500, network blip, API restart, etc.)
+    // Retry up to 3 times with 2 s → 4 s → 6 s backoff before redirecting.
+    if (retryCount.current < 3) {
+      const delay = (retryCount.current + 1) * 2000;
+      retryTimer.current = setTimeout(() => {
+        retryCount.current += 1;
+        void refreshSession();
+      }, delay);
+    } else {
+      // Exhausted retries — send to login so user can re-authenticate
+      router.replace("/login");
+    }
+
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
+  }, [loading, isAuthenticated, authError, refreshSession, router]);
 
   useEffect(() => {
     if (loading) return;
@@ -145,7 +194,10 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
   };
 
   if (loading) return <DashboardSkeleton />;
-  if (!isAuthenticated) return <AuthPanel onDevToken={useDevToken} error={authError} />;
+
+  // Not authenticated: show skeleton while the auth-guard effect above handles
+  // retry / redirect. Never render AuthPanel inside the dashboard — that was the bug.
+  if (!isAuthenticated) return <DashboardSkeleton />;
 
   return (
     <DashboardShell

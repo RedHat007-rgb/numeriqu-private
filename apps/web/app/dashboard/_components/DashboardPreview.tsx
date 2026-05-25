@@ -284,9 +284,13 @@ function ChartInsight({ type, data }: { type: string; data: DataRow[] }) {
   }
 
   if (type === "bar") {
-    const vals = data.map((d) => Number(d.value) || 0);
+    // Support both single-series (d.value) and multi-series pivot charts
+    const seriesKey = hasFiniteValueKey(data, "value")
+      ? "value"
+      : (inferNumericSeriesKeys(data)[0] ?? "value");
+    const vals = data.map((d) => Number((d as any)[seriesKey]) || 0);
     const max = Math.max(...vals);
-    const maxEntry = data.find((d) => Number(d.value) === max);
+    const maxEntry = data.find((d) => Number((d as any)[seriesKey]) === max);
     if (!maxEntry || max === 0) return null;
     const name = String(maxEntry.name ?? "").slice(0, 20);
     return (
@@ -623,20 +627,22 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 	  }
 
 	  if (chart.type === "bar" || chart.type === "stacked_bar") {
+    // Detect multi-series FIRST (pivot data with one column per entity, no "value" key)
+    const rawSeriesKeys = inferNumericSeriesKeys(data);
+    const rawHasValueSeries = hasFiniteValueKey(data, "value");
+    const isActuallyMultiSeries = !rawHasValueSeries && rawSeriesKeys.length >= 1;
+
+    // Only use horizontal bars for single-series client ranking (NOT for multi-series pivots)
     const isClientGrouping = chart.config.grouping === "client";
-    const useHorizontalBars = isClientGrouping && data.length > 6;
+    const useHorizontalBars = isClientGrouping && !isActuallyMultiSeries && data.length > 6;
 
     const trimmed = useHorizontalBars
       ? data.slice(0, isExpanded ? 15 : 8)
       : data;
 
-    const seriesKeys = inferNumericSeriesKeys(trimmed);
-    const hasValueSeries = hasFiniteValueKey(trimmed, "value");
-	    const isMultiSeries =
-        !useHorizontalBars &&
-        chart.config.grouping === "month" &&
-        !hasValueSeries &&
-        seriesKeys.length >= 1;
+    const seriesKeys = isActuallyMultiSeries ? rawSeriesKeys : inferNumericSeriesKeys(trimmed);
+    const hasValueSeries = isActuallyMultiSeries ? false : hasFiniteValueKey(trimmed, "value");
+	    const isMultiSeries = !useHorizontalBars && isActuallyMultiSeries;
 	    const highlightMaxMin = Boolean(chart.config.display?.highlightMaxMin) && !isMultiSeries;
 	    const highlight = (() => {
 	      if (!highlightMaxMin) return null;
@@ -648,14 +654,16 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 	      return { max, min };
 	    })();
 
+    const needsRotatedLabels = !useHorizontalBars && trimmed.length > 5;
+
     const barHeight = useHorizontalBars
       ? Math.max(h, trimmed.length * (isExpanded ? 30 : 26) + 32)
-      : (isClientGrouping ? h + 40 : h);
+      : needsRotatedLabels ? h + 60 : h;
 
     const barMargin = useHorizontalBars
       ? { top: 6, right: 10, left: 8, bottom: 6 }
-      : isClientGrouping
-        ? { top: 8, right: 4, left: 12, bottom: 60 }
+      : needsRotatedLabels
+        ? { top: 8, right: 4, left: 12, bottom: 90 }
         : { top: 8, right: 4, left: 12, bottom: 0 };
 
     return (
@@ -706,22 +714,22 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 <XAxis
                   dataKey="name"
                   tick={
-                    isClientGrouping
+                    needsRotatedLabels
                       // eslint-disable-next-line @typescript-eslint/no-explicit-any
                       ? (props: any) => {
                           const x = Number(props.x ?? 0);
                           const y = Number(props.y ?? 0);
                           const label = String(props.payload?.value ?? "");
-                          const truncated = label.length > 14 ? label.slice(0, 13) + "…" : label;
+                          const truncated = label.length > 16 ? label.slice(0, 15) + "…" : label;
                           return (
                             <g transform={`translate(${x},${y})`}>
                               <text
                                 x={0}
                                 y={0}
-                                dy={12}
+                                dy={8}
                                 textAnchor="end"
-                                transform="rotate(-35)"
-                                style={{ ...tickStyle, fontSize: isExpanded ? 11 : 9 }}
+                                transform="rotate(-45)"
+                                style={{ ...tickStyle, fontSize: isExpanded ? 11 : 10 }}
                               >
                                 {truncated}
                               </text>
@@ -732,7 +740,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   }
                   tickLine={false}
                   axisLine={false}
-                  interval={0}
+                  interval={needsRotatedLabels ? 0 : "preserveStartEnd"}
                 />
                 <YAxis
                   tick={tickStyle}
@@ -1242,6 +1250,22 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 
 // ─── Chart Card ───────────────────────────────────────────────────────────────
 
+function getEmptyMessage(chart: Chart): string {
+  if (chart.config.orgName)
+    return `No invoices synced for "${chart.config.orgName}" in this scope yet`;
+  if (chart.config.grouping === 'vendor')
+    return 'Vendor data requires a QuickBooks or Xero sync with bill-level detail';
+  if (chart.config.grouping === 'department')
+    return 'Department data requires accounting sync with department tagging enabled';
+  if (chart.config.grouping === 'class')
+    return 'Class data requires QuickBooks sync with class tracking enabled';
+  if (chart.config.grouping === 'account' || chart.config.grouping === 'category') {
+    if (chart.config.metric === 'revenue')
+      return 'No revenue accounts found in this GL data — this dataset appears to be expense-only';
+  }
+  return 'No data for this scope yet';
+}
+
 function ChartCard({
   chart,
   data,
@@ -1289,10 +1313,8 @@ function ChartCard({
       <div className="min-h-0 flex-1 pointer-events-none">
         {isEmpty ? (
           <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl bg-bg-elevated/30">
-            <p className="text-xs text-text-muted">
-              {chart.config.orgName
-                ? `No invoices synced for “${chart.config.orgName}” in this scope yet`
-                : "No data for this scope yet"}
+            <p className="text-xs text-text-muted text-center px-4">
+              {getEmptyMessage(chart)}
             </p>
           </div>
         ) : (

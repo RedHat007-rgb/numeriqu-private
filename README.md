@@ -13,6 +13,7 @@ Org-first finance analytics + AI workspace.
 - Diagrams + key flows: `docs/architecture.md`
 - Schema overview: `docs/database-schema-numeriqu.md`
 - Decision log: `docs/architecture-log.md`
+- Cost categorisation (Admin/Marketing/etc): `docs/cost-classification.md`
 
 ## Local dev
 1. `cp .env.example .env` (fill required values)

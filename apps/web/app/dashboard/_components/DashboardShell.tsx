@@ -22,6 +22,39 @@ import { cn } from "../../../components/ui/cn";
 import { CommandPalette } from "./CommandPalette";
 import type { WorkspaceSummary } from "../../../lib/api/types";
 
+// ── Power BI Microsoft icon ───────────────────────────────────────────────────
+function PowerBIIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1" y="11" width="4" height="10" rx="1" fill="#F2C811" />
+      <rect x="7" y="7" width="4" height="14" rx="1" fill="#F2C811" opacity="0.85" />
+      <rect x="13" y="3" width="4" height="18" rx="1" fill="#F2C811" opacity="0.7" />
+      <rect x="19" y="6" width="4" height="15" rx="1" fill="#F2C811" opacity="0.55" />
+    </svg>
+  );
+}
+
+/** Builds the Microsoft OAuth authorize URL for Power BI */
+function buildMicrosoftLoginUrl(): string {
+  const clientId =
+    process.env.NEXT_PUBLIC_AZURE_CLIENT_ID ?? "00000000-0000-0000-0000-000000000000";
+  const redirectUri = encodeURIComponent(
+    (typeof window !== "undefined" ? window.location.origin : "") +
+      "/dashboard/powerbi/callback",
+  );
+  const scope = encodeURIComponent(
+    "https://analysis.windows.net/powerbi/api/.default offline_access openid profile",
+  );
+  return (
+    `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` +
+    `?client_id=${clientId}` +
+    `&response_type=code` +
+    `&redirect_uri=${redirectUri}` +
+    `&scope=${scope}` +
+    `&response_mode=query`
+  );
+}
+
 const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon: any }> = [
   { href: "/dashboard", label: "Overview", description: "What changed, at a glance", icon: LayoutDashboard },
   { href: "/dashboard/dashboards", label: "Dashboards", description: "Saved decision surfaces", icon: LineChart },
@@ -93,6 +126,53 @@ function NavLink({
         </div>
       ) : null}
     </Link>
+  );
+}
+
+/** Like NavLink but fires an onClick instead of navigating — used for Power BI / external OAuth */
+function NavButton({
+  label,
+  description,
+  icon: Icon,
+  collapsed,
+  onClick,
+}: {
+  label: string;
+  description: string;
+  icon: any;
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
+        collapsed && "justify-center px-2",
+        "text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary",
+      )}
+    >
+      <div
+        className={cn(
+          "flex size-9 items-center justify-center rounded-xl ring-1 transition-colors",
+          "bg-bg-surface ring-default text-text-muted group-hover:text-text-primary",
+        )}
+      >
+        <Icon className="size-4" />
+      </div>
+      {!collapsed ? (
+        <div className="min-w-0 flex-1 text-left">
+          <div className="flex items-center gap-2">
+            <span className="truncate font-semibold">{label}</span>
+            <span className="shrink-0 rounded bg-[#F2C811]/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#c9a800]">
+              Microsoft
+            </span>
+          </div>
+          <p className="mt-0.5 line-clamp-1 text-[11px] text-text-muted">{description}</p>
+        </div>
+      ) : null}
+    </button>
   );
 }
 
@@ -360,6 +440,15 @@ export function DashboardShell({
                   {visibleNavItems.map((item) => (
                     <NavLink key={item.href} {...item} collapsed={navCollapsed} />
                   ))}
+                  {/* ── Power BI ──────────────────────────────────────── */}
+                  <div className={cn("pt-1", !navCollapsed && "border-t border-default")} />
+                  <NavButton
+                    label="Power BI"
+                    description="Open your Power BI dashboards"
+                    icon={PowerBIIcon}
+                    collapsed={navCollapsed}
+                    onClick={() => { window.open(buildMicrosoftLoginUrl(), '_blank', 'noopener,noreferrer'); }}
+                  />
                 </nav>
               </aside>
             ) : null}
@@ -416,6 +505,22 @@ export function DashboardShell({
                     <span className="font-semibold">{item.label}</span>
                   </Link>
                 ))}
+                {/* ── Power BI ──────────────────────────────────────── */}
+                <div className="border-t border-default pt-1" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNavDrawerOpen(false);
+                    window.open(buildMicrosoftLoginUrl(), '_blank', 'noopener,noreferrer');
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary"
+                >
+                  <PowerBIIcon className="size-4" />
+                  <span className="font-semibold">Power BI</span>
+                  <span className="ml-auto shrink-0 rounded bg-[#F2C811]/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#c9a800]">
+                    Microsoft
+                  </span>
+                </button>
               </nav>
             </div>
           </div>

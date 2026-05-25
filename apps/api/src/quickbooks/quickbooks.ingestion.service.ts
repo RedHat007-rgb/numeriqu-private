@@ -380,9 +380,21 @@ export class QuickbooksIngestionService {
     } catch { /* non-fatal: column may already exist */ }
 
     try {
-      await this.clickhouse.command({
-        query: `ALTER TABLE ${qualifiedTable} UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
-      });
+      const [db, table] = qualifiedTable.split('.', 2);
+      if (db && table) {
+        const keyRes = await this.clickhouse.query({
+          query: `SELECT sorting_key FROM system.tables WHERE database = {db:String} AND name = {table:String}`,
+          query_params: { db, table },
+          format: 'JSONEachRow',
+        });
+        const keys: any[] = await keyRes.json();
+        const sortingKey = String(keys[0]?.sorting_key ?? '');
+        if (!/\btenant_id\b/i.test(sortingKey)) {
+          await this.clickhouse.command({
+            query: `ALTER TABLE ${qualifiedTable} UPDATE tenant_id = organization_id WHERE tenant_id = ''`,
+          });
+        }
+      }
     } catch { /* non-fatal: organization_id may not exist on fresh installs */ }
   }
 

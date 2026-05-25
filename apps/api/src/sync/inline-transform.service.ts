@@ -115,169 +115,366 @@ export class InlineTransformService {
   }
 
   /**
-   * Upsert fact_accounting_journal_lines (Xero only).
+   * Upsert fact_accounting_journal_lines for Xero and QuickBooks.
    *
-   * Strategy: prefer raw GL Journals if available (accounting.journals.read scope).
-   * Fallback: derive synthetic P&L journal lines from ACCREC/ACCPAY invoices already
-   * in fact_accounting_invoices — ACCREC = revenue (credit), ACCPAY = expenses (debit).
-   * Also parses invoice LineItems JSON for account-level expense breakdown.
+   * Xero strategy: prefer raw GL Journals (accounting.journals.read scope),
+   * with TrackingCategories mapped to department / class_name.
+   * Fallback: derive synthetic P&L lines from ACCREC/ACCPAY invoices.
+   *
+   * QuickBooks strategy: extract Bill line items (vendor expenses with
+   * department/class context) and JournalEntry lines (manual double-entry).
+   *
+   * All lines carry department, class_name, vendor_name, vendor_id,
+   * debit_amount, and credit_amount for full dimensional analytics.
    */
   private async upsertFactJournalLines(
     tenantId: string,
     orgId: string,
     provider: 'xero' | 'quickbooks',
   ): Promise<void> {
-    if (provider !== 'xero') return;
-
     const dest = `${this.analyticsDb}.fact_accounting_journal_lines`;
-
-    // Wipe only non-ProfitAndLossReport rows (those are managed by the ingestion service)
-    await this.wipeSnapshot(
-      dest,
-      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = 'xero' AND source_type != 'ProfitAndLossReport'`,
-    );
-
-    // ── Try raw GL Journals first (requires accounting.journals.read) ───────
-    let rawJournalCount = 0;
-    try {
-      const result = await this.chXero.query({
-        query: `SELECT count() AS cnt FROM ${this.xeroDb}.xero_raw
-                WHERE tenant_id = '${this.escape(tenantId)}'
-                  AND org_id    = '${this.escape(orgId)}'
-                  AND resource IN ('Journals','ManualJournals')`,
-        format: 'JSONEachRow',
-      });
-      const rows = await result.json() as { cnt: string }[];
-      rawJournalCount = Number(rows[0]?.cnt ?? 0);
-    } catch {
-      rawJournalCount = 0; // xero_raw not accessible — fall through to invoice fallback
-    }
-
-    if (rawJournalCount > 0) {
-      // GL journals available — use them for full double-entry accuracy
-      const COLS = `(
-        journal_id, journal_number, journal_date,
-        source_type, source_id, line_id,
-        account_id, account_code, account_name,
-        line_amount, description,
-        tenant_id, user_id, connection_id, provider,
-        org_id, org_name, updated_at, synced_at
-      )`;
-
-      await this.chAnalytics.command({ query: `
-        INSERT INTO ${dest} ${COLS}
-        SELECT
-          coalesce(
-            nullIf(JSONExtractString(raw_data, 'JournalID'), ''),
-            nullIf(JSONExtractString(raw_data, 'journalID'), ''),
-            nullIf(JSONExtractString(raw_data, 'ManualJournalID'), ''),
-            nullIf(JSONExtractString(raw_data, 'manualJournalID'), ''),
-            source_id
-          ) AS journal_id,
-          toUInt64OrZero(coalesce(
-            nullIf(JSONExtractString(raw_data, 'JournalNumber'), ''),
-            toString(JSONExtractInt(raw_data, 'JournalNumber'))
-          )) AS journal_number,
-          parseDateTimeBestEffortOrNull(coalesce(
-            nullIf(JSONExtractString(raw_data, 'JournalDate'), ''),
-            nullIf(JSONExtractString(raw_data, 'journalDate'), ''),
-            nullIf(JSONExtractString(raw_data, 'Date'), '')
-          )) AS journal_date,
-          resource AS source_type, source_id,
-          toString(cityHash64(line_raw)) AS line_id,
-          coalesce(nullIf(JSONExtractString(line_raw,'AccountID'),''), nullIf(JSONExtractString(line_raw,'accountID'),'')) AS account_id,
-          coalesce(nullIf(JSONExtractString(line_raw,'AccountCode'),''), nullIf(JSONExtractString(line_raw,'accountCode'),'')) AS account_code,
-          coalesce(nullIf(JSONExtractString(line_raw,'AccountName'),''), nullIf(JSONExtractString(line_raw,'accountName'),'')) AS account_name,
-          toDecimal64OrZero(coalesce(
-            nullIf(JSONExtractString(line_raw,'LineAmount'),''),
-            toString(JSONExtractFloat(line_raw,'LineAmount'))
-          ), 4) AS line_amount,
-          coalesce(nullIf(JSONExtractString(line_raw,'Description'),''), nullIf(JSONExtractString(raw_data,'Narration'),'')) AS description,
-          tenant_id, user_id, connection_id, 'xero' AS provider, org_id, org_name, updated_at, synced_at
-        FROM (
-          SELECT source_id, any(tenant_id) AS tenant_id, any(user_id) AS user_id,
-            any(connection_id) AS connection_id, any(org_id) AS org_id, any(org_name) AS org_name,
-            resource, argMax(raw_data, updated_at) AS raw_data,
-            max(updated_at) AS updated_at, max(synced_at) AS synced_at
-          FROM ${this.xeroDb}.xero_raw
-          WHERE tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}'
-            AND resource IN ('Journals','ManualJournals')
-          GROUP BY source_id, resource
-        )
-        ARRAY JOIN if(
-          length(JSONExtractArrayRaw(raw_data,'JournalLines')) > 0,
-          JSONExtractArrayRaw(raw_data,'JournalLines'),
-          JSONExtractArrayRaw(raw_data,'journalLines')
-        ) AS line_raw
-      `});
-      this.logger.debug(`[Transform] fact_accounting_journal_lines upserted from GL Journals`);
-      return;
-    }
-
-    // ── Fallback: derive P&L from ACCREC / ACCPAY invoices ──────────────────
-    // Reads only from analytics.fact_accounting_invoices — no cross-DB permission needed.
-    this.logger.debug(`[Transform] No GL Journals — deriving P&L from invoices`);
 
     const COLS = `(
       journal_id, journal_number, journal_date,
       source_type, source_id, line_id,
       account_id, account_code, account_name,
       line_amount, description,
+      department, class_name, vendor_name, vendor_id,
+      debit_amount, credit_amount,
       tenant_id, user_id, connection_id, provider,
       org_id, org_name, updated_at, synced_at
     )`;
 
-    const baseWhere = `
-      tenant_id = '${this.escape(tenantId)}'
-      AND org_id = '${this.escape(orgId)}'
-      AND provider = 'xero'
-      AND lowerUTF8(status) NOT IN ('voided','deleted','draft')
-      AND total_amount > 0
-    `;
+    if (provider === 'xero') {
+      // Wipe only non-ProfitAndLossReport rows (those are managed by the ingestion service)
+      await this.wipeSnapshot(
+        dest,
+        `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = 'xero' AND source_type != 'ProfitAndLossReport'`,
+      );
 
-    // Revenue: one line per ACCREC invoice
-    await this.chAnalytics.command({ query: `
-      INSERT INTO ${dest} ${COLS}
-      SELECT
-        invoice_id                     AS journal_id,
-        0                              AS journal_number,
-        issued_at                      AS journal_date,
-        'InvoiceRevenue'               AS source_type,
-        invoice_id                     AS source_id,
-        concat(invoice_id, '_rev')     AS line_id,
-        ''                             AS account_id,
-        'REVENUE'                      AS account_code,
-        'Sales Revenue'                AS account_name,
-        -total_amount                  AS line_amount,
-        concat('Revenue — ', coalesce(nullIf(contact_name,''), 'Client')) AS description,
-        tenant_id, user_id, connection_id, provider, org_id, org_name,
-        updated_at, updated_at AS synced_at
-      FROM ${this.analyticsDb}.fact_accounting_invoices
-      WHERE ${baseWhere} AND invoice_type = 'ACCREC'
-    `});
+      // ── Try raw GL Journals first (requires accounting.journals.read) ─────
+      let rawJournalCount = 0;
+      try {
+        const result = await this.chXero.query({
+          query: `SELECT count() AS cnt FROM ${this.xeroDb}.xero_raw
+                  WHERE tenant_id = '${this.escape(tenantId)}'
+                    AND org_id    = '${this.escape(orgId)}'
+                    AND resource IN ('Journals','ManualJournals')`,
+          format: 'JSONEachRow',
+        });
+        const rows = await result.json() as { cnt: string }[];
+        rawJournalCount = Number(rows[0]?.cnt ?? 0);
+      } catch {
+        rawJournalCount = 0;
+      }
 
-    // Expenses: one line per ACCPAY invoice, grouped by contact as account proxy
-    await this.chAnalytics.command({ query: `
-      INSERT INTO ${dest} ${COLS}
-      SELECT
-        invoice_id                     AS journal_id,
-        0                              AS journal_number,
-        issued_at                      AS journal_date,
-        'InvoiceExpense'               AS source_type,
-        invoice_id                     AS source_id,
-        concat(invoice_id, '_exp')     AS line_id,
-        ''                             AS account_id,
-        'EXPENSE'                      AS account_code,
-        coalesce(nullIf(contact_name,''), 'Operating Expenses') AS account_name,
-        total_amount                   AS line_amount,
-        concat('Expense — ', coalesce(nullIf(contact_name,''), 'Supplier')) AS description,
-        tenant_id, user_id, connection_id, provider, org_id, org_name,
-        updated_at, updated_at AS synced_at
-      FROM ${this.analyticsDb}.fact_accounting_invoices
-      WHERE ${baseWhere} AND invoice_type = 'ACCPAY'
-    `});
+      if (rawJournalCount > 0) {
+        await this.chAnalytics.command({ query: `
+          INSERT INTO ${dest} ${COLS}
+          SELECT
+            coalesce(
+              nullIf(JSONExtractString(raw_data, 'JournalID'), ''),
+              nullIf(JSONExtractString(raw_data, 'journalID'), ''),
+              nullIf(JSONExtractString(raw_data, 'ManualJournalID'), ''),
+              nullIf(JSONExtractString(raw_data, 'manualJournalID'), ''),
+              source_id
+            ) AS journal_id,
+            toUInt64OrZero(coalesce(
+              nullIf(JSONExtractString(raw_data, 'JournalNumber'), ''),
+              toString(JSONExtractInt(raw_data, 'JournalNumber'))
+            )) AS journal_number,
+            parseDateTimeBestEffortOrNull(coalesce(
+              nullIf(JSONExtractString(raw_data, 'JournalDate'), ''),
+              nullIf(JSONExtractString(raw_data, 'journalDate'), ''),
+              nullIf(JSONExtractString(raw_data, 'Date'), '')
+            )) AS journal_date,
+            resource AS source_type, source_id,
+            toString(cityHash64(line_raw)) AS line_id,
+            coalesce(nullIf(JSONExtractString(line_raw,'AccountID'),''), nullIf(JSONExtractString(line_raw,'accountID'),'')) AS account_id,
+            coalesce(nullIf(JSONExtractString(line_raw,'AccountCode'),''), nullIf(JSONExtractString(line_raw,'accountCode'),'')) AS account_code,
+            coalesce(nullIf(JSONExtractString(line_raw,'AccountName'),''), nullIf(JSONExtractString(line_raw,'accountName'),'')) AS account_name,
+            toDecimal64OrZero(coalesce(
+              nullIf(JSONExtractString(line_raw,'LineAmount'),''),
+              toString(JSONExtractFloat(line_raw,'LineAmount'))
+            ), 4) AS line_amount,
+            coalesce(nullIf(JSONExtractString(line_raw,'Description'),''), nullIf(JSONExtractString(raw_data,'Narration'),'')) AS description,
+            coalesce(
+              nullIf(JSONExtractString(arrayElement(JSONExtractArrayRaw(line_raw,'TrackingCategories'),1),'Option'),''),
+              nullIf(JSONExtractString(arrayElement(JSONExtractArrayRaw(line_raw,'trackingCategories'),1),'option'),''),
+              nullIf(JSONExtractString(arrayElement(JSONExtractArrayRaw(line_raw,'trackingCategories'),1),'Option'),''),
+              ''
+            ) AS department,
+            coalesce(
+              nullIf(JSONExtractString(arrayElement(JSONExtractArrayRaw(line_raw,'TrackingCategories'),2),'Option'),''),
+              nullIf(JSONExtractString(arrayElement(JSONExtractArrayRaw(line_raw,'trackingCategories'),2),'option'),''),
+              nullIf(JSONExtractString(arrayElement(JSONExtractArrayRaw(line_raw,'trackingCategories'),2),'Option'),''),
+              ''
+            ) AS class_name,
+            '' AS vendor_name,
+            '' AS vendor_id,
+            if(line_amount > 0, line_amount, toDecimal64(0,4)) AS debit_amount,
+            if(line_amount < 0, -line_amount, toDecimal64(0,4)) AS credit_amount,
+            tenant_id, user_id, connection_id, 'xero' AS provider, org_id, org_name, updated_at, synced_at
+          FROM (
+            SELECT source_id, any(tenant_id) AS tenant_id, any(user_id) AS user_id,
+              any(connection_id) AS connection_id, any(org_id) AS org_id, any(org_name) AS org_name,
+              resource, argMax(raw_data, r.updated_at) AS raw_data,
+              max(r.updated_at) AS updated_at, max(r.synced_at) AS synced_at
+            FROM ${this.xeroDb}.xero_raw AS r
+            WHERE tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}'
+              AND resource IN ('Journals','ManualJournals')
+            GROUP BY source_id, resource
+          )
+          ARRAY JOIN if(
+            length(JSONExtractArrayRaw(raw_data,'JournalLines')) > 0,
+            JSONExtractArrayRaw(raw_data,'JournalLines'),
+            JSONExtractArrayRaw(raw_data,'journalLines')
+          ) AS line_raw
+        `});
+        this.logger.debug(`[Transform] Xero fact_accounting_journal_lines upserted from GL Journals`);
+        return;
+      }
 
-    this.logger.debug(`[Transform] fact_accounting_journal_lines derived from ACCREC/ACCPAY invoices`);
+      // ── Fallback: derive P&L from ACCREC / ACCPAY invoices ────────────────
+      this.logger.debug(`[Transform] No Xero GL Journals — deriving P&L from invoices`);
+
+      const baseWhere = `
+        tenant_id = '${this.escape(tenantId)}'
+        AND org_id = '${this.escape(orgId)}'
+        AND provider = 'xero'
+        AND lowerUTF8(status) NOT IN ('voided','deleted','draft')
+        AND total_amount > 0
+      `;
+
+      await this.chAnalytics.command({ query: `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          invoice_id, 0, issued_at,
+          'InvoiceRevenue', invoice_id, concat(invoice_id, '_rev'),
+          '', 'REVENUE', 'Sales Revenue',
+          -total_amount,
+          concat('Revenue — ', coalesce(nullIf(contact_name,''), 'Client')),
+          '', '', '', '',
+          toDecimal64(0,4), toDecimal64(total_amount,4),
+          tenant_id, user_id, connection_id, provider, org_id, org_name,
+          updated_at, updated_at
+        FROM ${this.analyticsDb}.fact_accounting_invoices
+        WHERE ${baseWhere} AND invoice_type = 'ACCREC'
+      `});
+
+      await this.chAnalytics.command({ query: `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          invoice_id, 0, issued_at,
+          'InvoiceExpense', invoice_id, concat(invoice_id, '_exp'),
+          '', 'EXPENSE', coalesce(nullIf(contact_name,''), 'Operating Expenses'),
+          total_amount,
+          concat('Expense — ', coalesce(nullIf(contact_name,''), 'Supplier')),
+          '', '',
+          coalesce(nullIf(contact_name,''), ''), '',
+          toDecimal64(total_amount,4), toDecimal64(0,4),
+          tenant_id, user_id, connection_id, provider, org_id, org_name,
+          updated_at, updated_at
+        FROM ${this.analyticsDb}.fact_accounting_invoices
+        WHERE ${baseWhere} AND invoice_type = 'ACCPAY'
+      `});
+
+      this.logger.debug(`[Transform] Xero journal lines derived from ACCREC/ACCPAY invoices`);
+      return;
+    }
+
+    // ── QuickBooks ────────────────────────────────────────────────────────────
+    await this.wipeSnapshot(
+      dest,
+      `tenant_id = '${this.escape(tenantId)}' AND org_id = '${this.escape(orgId)}' AND provider = 'quickbooks'`,
+    );
+
+    // ── QB Bills → expense journal lines with vendor + department + class ────
+    try {
+      await this.chAnalytics.command({ query: `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          source_id                                                                        AS journal_id,
+          0                                                                                AS journal_number,
+          parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'TxnDate'))            AS journal_date,
+          'Bill'                                                                           AS source_type,
+          source_id                                                                        AS source_id,
+          toString(cityHash64(concat(source_id, line_raw)))                               AS line_id,
+          JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'AccountRef', 'value') AS account_id,
+          JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'AccountRef', 'value') AS account_code,
+          JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'AccountRef', 'name')  AS account_name,
+          toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4)                            AS line_amount,
+          concat('Bill — ', JSONExtractString(raw_data, 'VendorRef', 'name'))             AS description,
+          coalesce(
+            nullIf(JSONExtractString(raw_data, 'DepartmentRef', 'name'), ''),
+            nullIf(JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'DepartmentRef', 'name'), ''),
+            ''
+          )                                                                                AS department,
+          coalesce(
+            nullIf(JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'ClassRef', 'name'), ''),
+            ''
+          )                                                                                AS class_name,
+          JSONExtractString(raw_data, 'VendorRef', 'name')                                AS vendor_name,
+          JSONExtractString(raw_data, 'VendorRef', 'value')                               AS vendor_id,
+          toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4)                            AS debit_amount,
+          toDecimal64(0, 4)                                                                AS credit_amount,
+          tenant_id, user_id, connection_id, 'quickbooks' AS provider, org_id, org_name, updated_at, synced_at
+        FROM (
+          SELECT
+            source_id,
+            any(tenant_id) AS tenant_id,
+            any(user_id) AS user_id,
+            any(connection_id) AS connection_id,
+            any(org_id) AS org_id,
+            any(org_name) AS org_name,
+            argMax(raw_data, r.updated_at) AS raw_data,
+            max(r.updated_at) AS updated_at,
+            max(r.synced_at) AS synced_at
+          FROM ${this.qbDb}.quickbooks_raw AS r
+          WHERE resource = 'Bill'
+            AND tenant_id = '${this.escape(tenantId)}'
+            AND org_id    = '${this.escape(orgId)}'
+          GROUP BY source_id
+        )
+        ARRAY JOIN JSONExtractArrayRaw(raw_data, 'Line') AS line_raw
+        WHERE JSONExtractString(line_raw, 'DetailType') = 'AccountBasedExpenseLineDetail'
+          AND JSONExtractFloat(line_raw, 'Amount') > 0
+      `});
+      this.logger.debug(`[Transform] QB Bills → fact_accounting_journal_lines OK`);
+    } catch (e: any) {
+      this.logger.warn(`[Transform] QB Bills extraction failed: ${e?.message}`);
+    }
+
+    // ── QB JournalEntry → double-entry journal lines ──────────────────────────
+    try {
+      await this.chAnalytics.command({ query: `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          source_id                                                                                AS journal_id,
+          toUInt64OrZero(JSONExtractString(raw_data, 'DocNumber'))                                 AS journal_number,
+          parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'TxnDate'))                    AS journal_date,
+          'JournalEntry'                                                                           AS source_type,
+          source_id                                                                                AS source_id,
+          toString(cityHash64(concat(source_id, line_raw)))                                       AS line_id,
+          JSONExtractString(line_raw, 'JournalEntryLineDetail', 'AccountRef', 'value')             AS account_id,
+          JSONExtractString(line_raw, 'JournalEntryLineDetail', 'AccountRef', 'value')             AS account_code,
+          JSONExtractString(line_raw, 'JournalEntryLineDetail', 'AccountRef', 'name')              AS account_name,
+          if(
+            JSONExtractString(line_raw, 'JournalEntryLineDetail', 'PostingType') = 'Debit',
+            toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4),
+            -toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4)
+          )                                                                                        AS line_amount,
+          coalesce(nullIf(JSONExtractString(raw_data, 'PrivateNote'), ''),
+                   nullIf(JSONExtractString(raw_data, 'Memo'), ''), '')                           AS description,
+          coalesce(
+            nullIf(JSONExtractString(line_raw, 'JournalEntryLineDetail', 'DepartmentRef', 'name'), ''),
+            nullIf(JSONExtractString(raw_data, 'DepartmentRef', 'name'), ''),
+            ''
+          )                                                                                        AS department,
+          coalesce(
+            nullIf(JSONExtractString(line_raw, 'JournalEntryLineDetail', 'ClassRef', 'name'), ''),
+            ''
+          )                                                                                        AS class_name,
+          coalesce(
+            nullIf(JSONExtractString(line_raw, 'JournalEntryLineDetail', 'Entity', 'Name'), ''),
+            ''
+          )                                                                                        AS vendor_name,
+          ''                                                                                       AS vendor_id,
+          if(
+            JSONExtractString(line_raw, 'JournalEntryLineDetail', 'PostingType') = 'Debit',
+            toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4),
+            toDecimal64(0, 4)
+          )                                                                                        AS debit_amount,
+          if(
+            JSONExtractString(line_raw, 'JournalEntryLineDetail', 'PostingType') = 'Credit',
+            toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4),
+            toDecimal64(0, 4)
+          )                                                                                        AS credit_amount,
+          tenant_id, user_id, connection_id, 'quickbooks' AS provider, org_id, org_name, updated_at, synced_at
+        FROM (
+          SELECT
+            source_id,
+            any(tenant_id) AS tenant_id,
+            any(user_id) AS user_id,
+            any(connection_id) AS connection_id,
+            any(org_id) AS org_id,
+            any(org_name) AS org_name,
+            argMax(raw_data, r.updated_at) AS raw_data,
+            max(r.updated_at) AS updated_at,
+            max(r.synced_at) AS synced_at
+          FROM ${this.qbDb}.quickbooks_raw AS r
+          WHERE resource = 'JournalEntry'
+            AND tenant_id = '${this.escape(tenantId)}'
+            AND org_id    = '${this.escape(orgId)}'
+          GROUP BY source_id
+        )
+        ARRAY JOIN JSONExtractArrayRaw(raw_data, 'Line') AS line_raw
+        WHERE JSONExtractString(line_raw, 'DetailType') = 'JournalEntryLineDetail'
+          AND JSONExtractFloat(line_raw, 'Amount') > 0
+      `});
+      this.logger.debug(`[Transform] QB JournalEntries → fact_accounting_journal_lines OK`);
+    } catch (e: any) {
+      this.logger.warn(`[Transform] QB JournalEntry extraction failed: ${e?.message}`);
+    }
+
+    // ── QB Purchases → additional expense lines (credit card / cash expenses) ─
+    try {
+      await this.chAnalytics.command({ query: `
+        INSERT INTO ${dest} ${COLS}
+        SELECT
+          source_id                                                                           AS journal_id,
+          0                                                                                   AS journal_number,
+          parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'TxnDate'))               AS journal_date,
+          'Purchase'                                                                          AS source_type,
+          source_id                                                                           AS source_id,
+          toString(cityHash64(concat(source_id, line_raw)))                                  AS line_id,
+          JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'AccountRef', 'value') AS account_id,
+          JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'AccountRef', 'value') AS account_code,
+          JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'AccountRef', 'name')  AS account_name,
+          toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4)                               AS line_amount,
+          coalesce(nullIf(JSONExtractString(raw_data, 'PrivateNote'), ''),
+                   nullIf(JSONExtractString(raw_data, 'PaymentType'), ''), '')               AS description,
+          coalesce(
+            nullIf(JSONExtractString(raw_data, 'DepartmentRef', 'name'), ''),
+            nullIf(JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'DepartmentRef', 'name'), ''),
+            ''
+          )                                                                                   AS department,
+          coalesce(
+            nullIf(JSONExtractString(line_raw, 'AccountBasedExpenseLineDetail', 'ClassRef', 'name'), ''),
+            ''
+          )                                                                                   AS class_name,
+          coalesce(nullIf(JSONExtractString(raw_data, 'EntityRef', 'name'), ''), '')         AS vendor_name,
+          coalesce(nullIf(JSONExtractString(raw_data, 'EntityRef', 'value'), ''), '')        AS vendor_id,
+          toDecimal64(JSONExtractFloat(line_raw, 'Amount'), 4)                               AS debit_amount,
+          toDecimal64(0, 4)                                                                   AS credit_amount,
+          tenant_id, user_id, connection_id, 'quickbooks' AS provider, org_id, org_name, updated_at, synced_at
+        FROM (
+          SELECT
+            source_id,
+            any(tenant_id) AS tenant_id,
+            any(user_id) AS user_id,
+            any(connection_id) AS connection_id,
+            any(org_id) AS org_id,
+            any(org_name) AS org_name,
+            argMax(raw_data, r.updated_at) AS raw_data,
+            max(r.updated_at) AS updated_at,
+            max(r.synced_at) AS synced_at
+          FROM ${this.qbDb}.quickbooks_raw AS r
+          WHERE resource = 'Purchase'
+            AND tenant_id = '${this.escape(tenantId)}'
+            AND org_id    = '${this.escape(orgId)}'
+          GROUP BY source_id
+        )
+        ARRAY JOIN JSONExtractArrayRaw(raw_data, 'Line') AS line_raw
+        WHERE JSONExtractString(line_raw, 'DetailType') = 'AccountBasedExpenseLineDetail'
+          AND JSONExtractFloat(line_raw, 'Amount') > 0
+      `});
+      this.logger.debug(`[Transform] QB Purchases → fact_accounting_journal_lines OK`);
+    } catch (e: any) {
+      this.logger.warn(`[Transform] QB Purchases extraction failed: ${e?.message}`);
+    }
+
+    this.logger.debug(`[Transform] QB fact_accounting_journal_lines complete for org:${orgId.slice(0,8)}`);
   }
 
   /**
@@ -363,10 +560,10 @@ export class InlineTransformService {
             any(connection_id) AS connection_id,
             any(org_id) AS org_id,
             any(org_name) AS org_name,
-            argMax(raw_data, updated_at) AS raw_data,
-            max(updated_at) AS updated_at,
-            max(synced_at) AS synced_at
-          FROM ${this.xeroDb}.xero_raw
+            argMax(raw_data, r.updated_at) AS raw_data,
+            max(r.updated_at) AS updated_at,
+            max(r.synced_at) AS synced_at
+          FROM ${this.xeroDb}.xero_raw AS r
           WHERE resource = 'Invoices'
             AND tenant_id = '${this.escape(tenantId)}'
             AND org_id    = '${this.escape(orgId)}'
@@ -412,10 +609,10 @@ export class InlineTransformService {
             any(connection_id) AS connection_id,
             any(org_id) AS org_id,
             any(org_name) AS org_name,
-            argMax(raw_data, updated_at) AS raw_data,
-            max(updated_at) AS updated_at,
-            max(synced_at) AS synced_at
-          FROM ${this.qbDb}.quickbooks_raw
+            argMax(raw_data, r.updated_at) AS raw_data,
+            max(r.updated_at) AS updated_at,
+            max(r.synced_at) AS synced_at
+          FROM ${this.qbDb}.quickbooks_raw AS r
           WHERE resource = 'Invoice'
             AND tenant_id = '${this.escape(tenantId)}'
             AND org_id    = '${this.escape(orgId)}'
@@ -482,10 +679,10 @@ export class InlineTransformService {
           any(connection_id) AS connection_id,
           any(org_id) AS org_id,
           any(org_name) AS org_name,
-          argMax(raw_data, updated_at) AS raw_data,
-          max(updated_at) AS updated_at,
-          max(synced_at) AS synced_at
-        FROM ${this.xeroDb}.xero_raw
+          argMax(raw_data, r.updated_at) AS raw_data,
+          max(r.updated_at) AS updated_at,
+          max(r.synced_at) AS synced_at
+        FROM ${this.xeroDb}.xero_raw AS r
         WHERE resource = 'Payments'
           AND tenant_id = '${this.escape(tenantId)}'
           AND org_id    = '${this.escape(orgId)}'

@@ -18,8 +18,8 @@ RUN pnpm install --frozen-lockfile
 COPY packages/db ./packages/db/
 COPY apps/api ./apps/api/
 
-# Generate Prisma client (runs prisma generate from the schema)
-RUN cd /app/packages/db && npx prisma generate --schema=prisma/schema.prisma
+# Generate Prisma client (DIRECT_URL is required by prisma.config.ts but not used during generate)
+RUN cd /app/packages/db && DIRECT_URL=postgresql://dummy:dummy@localhost:5432/dummy npx prisma generate --schema=prisma/schema.prisma
 
 # Build NestJS
 WORKDIR /app/apps/api
@@ -41,7 +41,7 @@ COPY apps/api/package.json ./apps/api/
 RUN pnpm install --frozen-lockfile --prod
 
 # Generate Prisma client in production image too
-RUN cd /app/packages/db && npx prisma generate --schema=prisma/schema.prisma
+RUN cd /app/packages/db && DIRECT_URL=postgresql://dummy:dummy@localhost:5432/dummy npx prisma generate --schema=prisma/schema.prisma
 
 # Copy built API
 COPY --from=builder /app/apps/api/dist ./apps/api/dist

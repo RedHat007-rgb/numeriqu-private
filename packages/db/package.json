@@ -11,6 +11,7 @@
     "db:reset": "dotenv -e .env.local -- prisma migrate reset",
     "db:studio": "dotenv -e .env.local -- prisma studio",
     "db:seed": "dotenv -e .env.local -- prisma db seed",
+    "seed:sample-gl": "node scripts/seed-sample-gl-v2.cjs",
     "db:format": "prisma format",
     "build": "tsc -b"
   },

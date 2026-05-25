@@ -123,9 +123,15 @@ export class AnalyticsController {
         currency: org.currency,
       }));
 
-    const totalRevenue = monthlyChart.reduce((s, m) => s + (m.revenue || 0), 0);
-    const totalInvoices = monthlyChart.reduce((s, m) => s + (m.invoices || 0), 0);
-    const avgInvoiceValue = totalInvoices > 0 ? totalRevenue / totalInvoices : 0;
+    const chartRevenue = monthlyChart.reduce((s, m) => s + (m.revenue || 0), 0);
+    // profile.revenue.totalRevenue is authoritative (from GL trial balance for sample orgs,
+    // from invoice aggregation for real orgs). Fall back to chart sum only if profile has none.
+    const totalRevenue = profile.revenue.totalRevenue > 0 ? profile.revenue.totalRevenue : chartRevenue;
+    const chartInvoices = monthlyChart.reduce((s, m) => s + (m.invoices || 0), 0);
+    const totalInvoices = profile.revenue.totalInvoices > 0 ? profile.revenue.totalInvoices : chartInvoices;
+    const avgInvoiceValue = profile.revenue.avgInvoiceValue > 0
+      ? profile.revenue.avgInvoiceValue
+      : (totalInvoices > 0 ? totalRevenue / totalInvoices : 0);
 
     // Note: This repo does not yet have a verified expense/bills gold model.
     // We surface open invoice exposure separately so the UI can label it accurately.

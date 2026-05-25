@@ -103,6 +103,15 @@ export class AuthController {
     });
   }
 
+  @Post('demo-login')
+  @HttpCode(200)
+  async demoLogin(
+    @Body() body: { email: string },
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    return this.authService.demoLogin({ email: body.email ?? '', response });
+  }
+
   @Post('logout')
   @HttpCode(200)
   logout(@Res({ passthrough: true }) response: Response) {

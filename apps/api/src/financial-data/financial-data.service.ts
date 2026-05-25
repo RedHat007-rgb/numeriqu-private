@@ -33,8 +33,18 @@ export class FinancialDataService {
   }
 
   /**
+   * Detect whether a tenant is using the GL-based sample data org.
+   * Identified by connection metadata: { source: "sample_gl_v2" }
+   */
+  private isSampleGLOrg(activeConns: Array<{ metadata: any }>): boolean {
+    return activeConns.some(
+      (c) => (c.metadata as Record<string, any>)?.source === 'sample_gl_v2',
+    );
+  }
+
+  /**
    * Get the organization-level financial profile for a tenant.
-   * This is the "Ground Truth Block" injected into every LLM prompt.
+   * Routes to GL-based queries for sample orgs, invoice-based for real Xero/QB orgs.
    */
   async getFinancialProfile(tenantId: string): Promise<FinancialProfile> {
     this.logger.log(
@@ -46,6 +56,11 @@ export class FinancialDataService {
       where: { organizationId: tenantId, status: 'ACTIVE' },
       select: { externalOrganizationId: true, provider: true, metadata: true },
     });
+
+    // Route to GL-based queries for sample data orgs
+    if (this.isSampleGLOrg(activeConns)) {
+      return this.getSampleGLProfile(tenantId, activeConns);
+    }
 
     if (activeConns.length === 0) {
       return {
@@ -280,7 +295,7 @@ export class FinancialDataService {
           FROM ${this.dbName}.fact_accounting_invoices
           WHERE tenant_id = {tenantId:String}
             AND org_id IN ({activeOrgIds:Array(String)})
-            AND status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend')
+            AND status IN ('AUTHORISED', 'PAID', 'Paid', 'Closed', 'NotSet', 'NeedToSend', 'OVERDUE', 'Overdue', 'Open', 'SUBMITTED')
         `,
         query_params: { tenantId, activeOrgIds },
         format: 'JSONEachRow',
@@ -585,10 +600,15 @@ export class FinancialDataService {
     try {
       const activeConns = await prisma.erpConnection.findMany({
         where: { organizationId: tenantId, status: 'ACTIVE' },
-        select: { externalOrganizationId: true },
+        select: { externalOrganizationId: true, metadata: true },
       });
       const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
       if (activeOrgIds.length === 0) return [];
+
+      // Route to GL-based trend for sample orgs
+      if (this.isSampleGLOrg(activeConns)) {
+        return this.getSampleGLMonthlyRevenue(tenantId, activeOrgIds[0]);
+      }
 
       const time = this.timeWhere(range);
       const result = await this.clickhouse.query({
@@ -838,6 +858,237 @@ export class FinancialDataService {
         cashOnHand: 0,
         efficiencyMultiplier: 0,
       };
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // GL-BASED SAMPLE DATA QUERIES
+  // Used when the ERP connection metadata has { source: "sample_gl_v2" }.
+  // Queries analytics.sample_gl_dump + analytics.sample_trial_balance instead of
+  // the invoice-centric Gold Layer tables.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Full financial profile built from GL tables (sample org path).
+   * Mirrors the Power BI DAX measures exactly:
+   *   Revenue   = ABS(SUM(net_balance)) WHERE account_type = 'Income'
+   *   Expenses  = SUM(net_balance)      WHERE account_type = 'Expense'
+   *   COGS      = SUM(net_balance)      WHERE account_type = 'Cost of Goods Sold'
+   *   Cash      = SUM(net_balance)      WHERE account_type = 'Bank'
+   */
+  private async getSampleGLProfile(
+    tenantId: string,
+    activeConns: Array<{ externalOrganizationId: string; provider: string; metadata: any }>,
+  ): Promise<FinancialProfile> {
+    const orgId   = activeConns[0]?.externalOrganizationId ?? '';
+    const orgName = (activeConns[0]?.metadata as any)?.orgName ?? 'Sample Company 2024';
+
+    const [tbMetrics, monthlyTrend, deptBreakdown] = await Promise.all([
+      this.getSampleTrialBalanceMetrics(tenantId, orgId),
+      this.getSampleMonthlyTrend(tenantId, orgId),
+      this.getSampleDeptBreakdown(tenantId, orgId),
+    ]);
+
+    this.logger.log(`[GL] tbMetrics = ${JSON.stringify(tbMetrics)}`);
+
+    const revenue      = tbMetrics.revenue;
+    const expenses     = tbMetrics.expenses;
+    const cogs         = tbMetrics.cogs;
+    const cash         = tbMetrics.cash;
+    const netProfit    = revenue - expenses;
+    const profitMargin = revenue > 0 ? Math.round((netProfit / revenue) * 10000) / 100 : 0;
+    const runway       = expenses > 0 ? Math.round((cash / (expenses / 12)) * 10) / 10 : 99;
+
+    return {
+      tenantId,
+      revenue: {
+        totalRevenue:    revenue,
+        avgInvoiceValue: 0,
+        totalInvoices:   0,
+        minInvoice:      0,
+        maxInvoice:      0,
+        providerCount:   1,
+        orgCount:        1,
+        currencyCount:   1,
+      },
+      expenses: {
+        totalExpenses: expenses,
+        totalBills:    0,
+        overdueAmount: 0,
+        overdueCount:  0,
+      },
+      netProfit,
+      profitMargin,
+      invoiceStats: { byStatusAndOrg: [] },
+      accountSummary: { byTypeAndOrg: [] },
+      connectedOrgs: [{
+        provider:     'sample',
+        orgId,
+        orgName,
+        invoiceCount: 0,
+        totalRevenue: revenue,
+        currency:     'USD',
+      }],
+      budgetSummary: [],
+      bankSummary:   { total_transfers: 0, total_volume: cash },
+      ventureMetrics: {
+        burnRate:             Math.round(expenses / 12),
+        runwayMonths:         runway,
+        cashOnHand:           cash,
+        efficiencyMultiplier: expenses > 0 ? Math.round((revenue / expenses) * 100) / 100 : 0,
+      },
+      // Attach extra GL fields for the dashboard charts
+      glMonthlyTrend:  monthlyTrend,
+      glDeptBreakdown: deptBreakdown,
+      glCogs:          cogs,
+      computedAt: new Date().toISOString(),
+    } as any;
+  }
+
+  /** KPI aggregates from trial_balance — mirrors Power BI DAX Revenue / Expenses / COGS / Cash */
+  private async getSampleTrialBalanceMetrics(tenantId: string, orgId: string) {
+    try {
+      const res = await this.clickhouse.query({
+        query: `
+          SELECT
+            account_type,
+            ABS(sum(net_balance)) as total
+          FROM ${this.dbName}.sample_trial_balance
+          WHERE tenant_id = {tenantId:String}
+            AND org_id    = {orgId:String}
+          GROUP BY account_type
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      });
+      const rows: any[] = await res.json();
+      const get = (type: string) => parseFloat(rows.find((r: any) => r.account_type === type)?.total ?? 0) || 0;
+
+      return {
+        revenue:  get('Income'),
+        expenses: get('Expense'),
+        cogs:     get('Cost of Goods Sold'),
+        cash:     get('Bank'),
+        ar:       get('Accounts Receivable'),
+        ap:       get('Accounts Payable'),
+      };
+    } catch (e: any) {
+      this.logger.error(`[GL] Trial balance query failed: ${e.message}`);
+      return { revenue: 0, expenses: 0, cogs: 0, cash: 0, ar: 0, ap: 0 };
+    }
+  }
+
+  /** Monthly spend trend from GL transactions — mirrors Power BI Monthly Spend chart */
+  private async getSampleMonthlyTrend(tenantId: string, orgId: string): Promise<any[]> {
+    try {
+      const res = await this.clickhouse.query({
+        query: `
+          SELECT
+            toStartOfMonth(date) AS month,
+            department,
+            sum(debit) AS debit_total,
+            sum(credit) AS credit_total,
+            count(*) AS tx_count
+          FROM ${this.dbName}.sample_gl_dump
+          WHERE tenant_id = {tenantId:String}
+            AND org_id    = {orgId:String}
+            AND date IS NOT NULL
+          GROUP BY month, department
+          ORDER BY month ASC, department ASC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      });
+      const rows: any[] = await res.json();
+      return rows.map((r) => ({
+        month:      (r.month ?? '').slice(0, 7),
+        department: r.department,
+        debit:      parseFloat(r.debit_total)  || 0,
+        credit:     parseFloat(r.credit_total) || 0,
+        txCount:    parseInt(r.tx_count)       || 0,
+      }));
+    } catch (e: any) {
+      this.logger.error(`[GL] Monthly trend query failed: ${e.message}`);
+      return [];
+    }
+  }
+
+  /** Department spend breakdown — mirrors Power BI Spend by Department donut */
+  private async getSampleDeptBreakdown(tenantId: string, orgId: string): Promise<any[]> {
+    try {
+      const res = await this.clickhouse.query({
+        query: `
+          SELECT
+            department,
+            sum(debit) AS total_spend
+          FROM ${this.dbName}.sample_gl_dump
+          WHERE tenant_id = {tenantId:String}
+            AND org_id    = {orgId:String}
+            AND account_type = 'Expense'
+            AND department != ''
+          GROUP BY department
+          ORDER BY total_spend DESC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      });
+      const rows: any[] = await res.json();
+      return rows.map((r) => ({
+        department: r.department,
+        totalSpend: parseFloat(r.total_spend) || 0,
+      }));
+    } catch (e: any) {
+      this.logger.error(`[GL] Dept breakdown query failed: ${e.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Monthly revenue trend for sample GL org — uses credit amounts where account_type = 'Income'.
+   * Called by getMonthlyRevenueTrend() when the org is a sample GL org.
+   */
+  private async getSampleGLMonthlyRevenue(tenantId: string, orgId: string): Promise<any[]> {
+    try {
+      const res = await this.clickhouse.query({
+        query: `
+          SELECT
+            toStartOfMonth(date)    AS month,
+            ABS(sum(credit - debit)) AS revenue,
+            count(*)                AS invoice_count
+          FROM ${this.dbName}.sample_gl_dump
+          WHERE tenant_id = {tenantId:String}
+            AND org_id    = {orgId:String}
+            AND date IS NOT NULL
+            AND account_number IN (
+              SELECT account_number
+              FROM ${this.dbName}.sample_trial_balance
+              WHERE tenant_id  = {tenantId:String}
+                AND org_id     = {orgId:String}
+                AND account_type = 'Income'
+            )
+          GROUP BY month
+          ORDER BY month ASC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      });
+      const rows: any[] = await res.json();
+      return rows.map((r) => ({
+        month:         (r.month ?? '').slice(0, 7),
+        provider:      'sample',
+        org_id:        orgId,
+        org_name:      'Sample Company 2024',
+        revenue:       String(parseFloat(r.revenue) || 0),
+        invoice_count: String(parseInt(r.invoice_count) || 0),
+        currency:      'USD',
+      }));
+    } catch (e: any) {
+      this.logger.error(`[GL] Monthly revenue query failed: ${e.message}`);
+      return [];
     }
   }
 }

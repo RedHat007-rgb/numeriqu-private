@@ -15,6 +15,9 @@ type Step = "email" | "otp";
 
 const RESEND_COOLDOWN_SECONDS = 30;
 
+/** Emails that bypass OTP and go straight to the shared demo org */
+const DEMO_EMAIL_RE = /^demo[1-5]@numeriqu\.com$/;
+
 function normalizeOtp(value: string) {
   return value.replace(/\D/g, "").slice(0, 6);
 }
@@ -85,6 +88,8 @@ export default function LoginPage() {
   const [resendIn, setResendIn] = useState(0);
   const router = useRouter();
 
+  const isDemo = DEMO_EMAIL_RE.test(email.trim().toLowerCase());
+
   useEffect(() => {
     if (resendIn <= 0) return;
     const timer = setTimeout(() => setResendIn((value) => value - 1), 1000);
@@ -109,11 +114,41 @@ export default function LoginPage() {
     event.preventDefault();
     setError(null);
 
-    if (!/.+@.+\..+/.test(email)) {
+    const trimmed = email.trim().toLowerCase();
+
+    if (!/.+@.+\..+/.test(trimmed)) {
       setError("Enter a valid email address.");
       return;
     }
 
+    // ── Demo accounts: skip OTP entirely ──────────────────────────────────────
+    if (DEMO_EMAIL_RE.test(trimmed)) {
+      setLoading(true);
+      try {
+        const res = await fetch(`${getApiBaseURL()}/auth/demo-login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: trimmed }),
+          credentials: "include",
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            (json as any)?.message ?? mapAuthError(res.status, "Demo login failed.")
+          );
+        }
+        toast.success("Signed in as demo account.");
+        router.push("/dashboard");
+        router.refresh();
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Demo login failed.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // ── Normal OTP flow ───────────────────────────────────────────────────────
     setLoading(true);
     try {
       await sendOtp("send-otp");
@@ -248,9 +283,36 @@ export default function LoginPage() {
                 placeholder="name@company.com"
                 trailing={<MailCheck className="size-4" />}
               />
+
+              {/* Demo badge — shows when a demo email is typed */}
+              {isDemo && (
+                <p className="rounded-lg border border-accent-blue/30 bg-accent-blue/10 px-3 py-2 text-xs text-accent-blue">
+                  ✓ Demo account detected — no OTP required, instant access.
+                </p>
+              )}
+
               <Button type="submit" className="w-full" loading={loading}>
-                {loading ? "Sending OTP..." : "Send OTP"}
+                {loading
+                  ? isDemo ? "Signing in..." : "Sending OTP..."
+                  : isDemo ? "Sign in (no OTP)" : "Send OTP"}
               </Button>
+
+              {/* Demo quick-pick */}
+              <div className="border-t border-default pt-4">
+                <p className="mb-2 text-xs text-text-muted">Or try a demo account (no OTP):</p>
+                <div className="flex flex-wrap gap-2">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setEmail(`demo${n}@numeriqu.com`)}
+                      className="rounded-lg border border-default bg-bg-elevated/60 px-3 py-1.5 text-xs font-mono text-text-secondary transition-colors hover:border-accent-blue/50 hover:text-accent-blue"
+                    >
+                      demo{n}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </form>
           ) : (
             <form onSubmit={handleVerifyOtp} className="space-y-5" noValidate>

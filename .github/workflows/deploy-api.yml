@@ -9,7 +9,7 @@ on:
       - '.github/workflows/deploy-api.yml'
 
 env:
-  AWS_REGION: us-east-1                          # ← change to your region
+  AWS_REGION: us-east-2                          # Ohio
   ECR_REPOSITORY: numeriqu-api                   # ← ECR repo name (you'll create this)
   ECS_CLUSTER: numeriqu-cluster                  # ← ECS cluster name
   ECS_SERVICE: numeriqu-api-service              # ← ECS service name

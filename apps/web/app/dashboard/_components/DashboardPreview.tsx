@@ -38,6 +38,7 @@ import {
   ComposedChart,
   RadialBarChart,
   RadialBar,
+  LabelList,
 } from "recharts";
 import { ApiError, type TimeRange } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
@@ -521,15 +522,16 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             )}
 	            {isMultiSeries ? (
               <>
-                {seriesKeys.slice(0, 4).map((k, idx) => (
+                {seriesKeys.slice(0, 6).map((k, idx) => (
                   <Area
                     key={k}
                     type="monotone"
                     dataKey={k}
+                    name={k.replace(/_/g, " ")}
                     stroke={PIE_COLORS[idx % PIE_COLORS.length]}
                     strokeWidth={isExpanded ? 2.3 : 2}
                     fill={PIE_COLORS[idx % PIE_COLORS.length]}
-                    fillOpacity={0.12}
+                    fillOpacity={chart.type === "area" ? 0.18 : 0.08}
                     dot={false}
                     activeDot={{
                       r: 5,
@@ -540,9 +542,16 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   />
                 ))}
                 <Legend
-                  verticalAlign="top"
-                  height={24}
-                  wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
+                  verticalAlign="bottom"
+                  height={28}
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
+                  formatter={(value: string) => (
+                    <span style={{ color: "rgb(var(--color-text-secondary))" }}>
+                      {String(value).replace(/_/g, " ")}
+                    </span>
+                  )}
                 />
               </>
 	            ) : (
@@ -655,6 +664,14 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 	    })();
 
     const needsRotatedLabels = !useHorizontalBars && trimmed.length > 5;
+    const isStackedBarChart = chart.type === "stacked_bar" && isMultiSeries;
+    const displayKeys = isMultiSeries ? seriesKeys.slice(0, 8) : [];
+    const chartData = isStackedBarChart
+      ? trimmed.map((row) => ({
+          ...(row as any),
+          _total: displayKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0),
+        }))
+      : trimmed;
 
     const barHeight = useHorizontalBars
       ? Math.max(h, trimmed.length * (isExpanded ? 30 : 26) + 32)
@@ -664,12 +681,14 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       ? { top: 6, right: 10, left: 8, bottom: 6 }
       : needsRotatedLabels
         ? { top: 8, right: 4, left: 12, bottom: 90 }
-        : { top: 8, right: 4, left: 12, bottom: 0 };
+        : isStackedBarChart
+          ? { top: 20, right: 4, left: 12, bottom: 0 }
+          : { top: 8, right: 4, left: 12, bottom: 0 };
 
     return (
       <div style={{ height: barHeight, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={trimmed} margin={barMargin} layout={useHorizontalBars ? "vertical" : "horizontal"}>
+          <BarChart data={chartData} margin={barMargin} layout={useHorizontalBars ? "vertical" : "horizontal"}>
             <defs>
               <linearGradient id={`grad-bar-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="rgb(var(--color-accent-blue))" stopOpacity={1} />
@@ -761,20 +780,36 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             />
             {isMultiSeries ? (
               <>
-                {seriesKeys.slice(0, 6).map((k, idx) => (
+                {displayKeys.map((k, idx) => (
                   <Bar
                     key={k}
                     dataKey={k}
+                    name={k.replace(/_/g, " ")}
                     fill={PIE_COLORS[idx % PIE_COLORS.length]}
-                    radius={[6, 6, 0, 0]}
-                    maxBarSize={isExpanded ? 24 : 20}
-                    stackId={chart.type === "stacked_bar" ? "stack" : undefined}
+                    radius={isStackedBarChart ? [0, 0, 0, 0] : [4, 4, 0, 0]}
+                    maxBarSize={isStackedBarChart ? (isExpanded ? 48 : 36) : (isExpanded ? 20 : 16)}
+                    stackId={isStackedBarChart ? "stack" : undefined}
                   />
                 ))}
+                {isStackedBarChart && (
+                  <Bar dataKey="_total" stackId="stack" fill="transparent"
+                    maxBarSize={isExpanded ? 48 : 36} isAnimationActive={false}>
+                    <LabelList dataKey="_total" position="top"
+                      style={{ fill: "rgb(var(--color-text-muted))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
+                      formatter={(v: unknown) => fmtCurrency(Number(v) || 0)} />
+                  </Bar>
+                )}
                 <Legend
-                  verticalAlign="top"
-                  height={24}
-                  wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
+                  verticalAlign="bottom"
+                  height={28}
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
+                  formatter={(value: string) => (
+                    <span style={{ color: "rgb(var(--color-text-secondary))" }}>
+                      {String(value).replace(/_/g, " ")}
+                    </span>
+                  )}
                 />
               </>
 	            ) : (
@@ -811,6 +846,28 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       .filter((n) => n.name && Number.isFinite(n.size) && n.size > 0)
       .slice(0, 40);
 
+    const TreemapCell = ({ x, y, width, height, name, size, index }: any) => {
+      const color = PIE_COLORS[index % PIE_COLORS.length];
+      const showLabel = width > 60 && height > 30;
+      return (
+        <g>
+          <rect x={x} y={y} width={width} height={height} fill={color} stroke="rgb(var(--color-bg-card))" strokeWidth={2} rx={4} />
+          {showLabel && (
+            <>
+              <text x={x + width / 2} y={y + height / 2 - 6} textAnchor="middle" dominantBaseline="central"
+                fill="white" fontSize={Math.min(12, width / 8)} fontWeight={700} style={{ pointerEvents: "none" }}>
+                {String(name ?? "").length > 14 ? String(name).slice(0, 13) + "…" : name}
+              </text>
+              <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="central"
+                fill="rgba(255,255,255,0.85)" fontSize={Math.min(10, width / 9)} style={{ pointerEvents: "none" }}>
+                {fmtCurrency(size)}
+              </text>
+            </>
+          )}
+        </g>
+      );
+    };
+
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -821,6 +878,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             stroke="rgb(var(--color-bg-card))"
             fill="rgb(var(--color-accent-violet))"
             aspectRatio={4 / 3}
+            content={<TreemapCell />}
           />
         </ResponsiveContainer>
       </div>
@@ -828,61 +886,85 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   }
 
   if (chart.type === "scatter") {
-    const xKey = "date";
-    const yKey = "amount";
+    // Detect x/y keys from data: prefer explicit x/y, fall back to first two numeric keys
+    const firstRow = data[0] as any;
+    const hasXY = firstRow && typeof firstRow.x === "number" && typeof firstRow.y === "number";
+    const numKeys = inferNumericSeriesKeys(data);
+    const xKey = hasXY ? "x" : (numKeys[1] ?? numKeys[0] ?? "x");
+    const yKey = hasXY ? "y" : (numKeys[0] ?? "y");
+    const nameKey = firstRow && typeof firstRow.name === "string" ? "name" : undefined;
+
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart margin={{ top: 8, right: 10, left: 12, bottom: 24 }}>
             <CartesianGrid {...gridStyle} />
-            <XAxis dataKey={xKey} type="category" tick={tickStyle} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-            <YAxis
-              dataKey={yKey}
+            <XAxis
+              dataKey={xKey}
+              type="number"
+              name={xKey}
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v: number) =>
-                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
-              }
+              tickFormatter={(v: number) => fmtNumber(Number(v) || 0)}
+              label={{ value: xKey.replaceAll("_", " "), position: "insideBottom", offset: -8, fontSize: 10, fill: "rgb(var(--color-text-muted))" }}
+            />
+            <YAxis
+              dataKey={yKey}
+              type="number"
+              name={yKey}
+              tick={tickStyle}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v: number) => formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)}
               width={56}
               tickMargin={8}
             />
-            <Tooltip content={<CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
-            <Scatter data={data as any} fill="rgb(var(--color-accent-blue))" />
+            <Tooltip
+              cursor={{ strokeDasharray: "3 3" }}
+              content={({ payload }) => {
+                const d = payload?.[0]?.payload;
+                if (!d) return null;
+                return (
+                  <div className="rounded-xl border border-default bg-bg-card/95 p-3 shadow-2xl backdrop-blur-sm text-[11px]">
+                    {nameKey && <p className="font-bold text-text-primary mb-1">{d[nameKey]}</p>}
+                    {Object.entries(d).filter(([k]) => k !== nameKey && typeof d[k] === "number").map(([k, v]) => (
+                      <p key={k} className="text-text-secondary">{k.replaceAll("_", " ")}: {fmtCurrency(Number(v))}</p>
+                    ))}
+                  </div>
+                );
+              }}
+            />
+            <Scatter data={data as any} fill="rgb(var(--color-accent-violet))" fillOpacity={0.8} />
           </ScatterChart>
         </ResponsiveContainer>
       </div>
     );
   }
 
-	  if (chart.type === "pie") {
-	    const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
-	    const enriched = data.map((d) => ({ ...d, total }));
-	    const isDonut = chart.config.display?.donut ?? true;
+  if (chart.type === "pie") {
+    // Filter only positive values and find the label key (may be "name", "dept", "vendor", etc.)
+    const labelKey = (() => {
+      const row = data[0] as any;
+      if (!row) return "name";
+      if (typeof row.name === "string") return "name";
+      return Object.keys(row).find((k) => k !== "value" && typeof row[k] === "string") ?? "name";
+    })();
+    const cleaned = data
+      .map((d) => ({ ...d, name: String((d as any)[labelKey] ?? (d as any).name ?? ""), value: Number((d as any).value) || 0 }))
+      .filter((d) => d.value > 0);
+    const total = cleaned.reduce((s, d) => s + d.value, 0);
+    const enriched = cleaned.map((d) => ({ ...d, total }));
 
-    const renderLabel = ({
-      cx,
-      cy,
-      midAngle,
-      innerRadius,
-      outerRadius,
-      percent,
-    }: any) => {
-      if (percent < 0.07) return null;
+    const renderLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+      if (percent < 0.06) return null;
       const RADIAN = Math.PI / 180;
       const r = innerRadius + (outerRadius - innerRadius) * 0.55;
       const x = cx + r * Math.cos(-midAngle * RADIAN);
       const y = cy + r * Math.sin(-midAngle * RADIAN);
       return (
-        <text
-          x={x}
-          y={y}
-          fill="white"
-          textAnchor="middle"
-          dominantBaseline="central"
-          fontSize={isExpanded ? 12 : 10}
-          fontWeight="700"
-        >
+        <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
+          fontSize={isExpanded ? 12 : 10} fontWeight="700">
           {`${(percent * 100).toFixed(0)}%`}
         </text>
       );
@@ -891,39 +973,18 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-	          <PieChart>
-	            <Pie
-	              data={enriched}
-	              cx="45%"
-	              cy="50%"
-	              innerRadius={isDonut ? (isExpanded ? "35%" : "28%") : 0}
-	              outerRadius={isExpanded ? "65%" : "58%"}
-	              paddingAngle={3}
-	              dataKey="value"
-	              labelLine={false}
-	              label={renderLabel}
-            >
+          <PieChart>
+            <Pie data={enriched} cx="45%" cy="50%" innerRadius={0}
+              outerRadius={isExpanded ? "65%" : "58%"} paddingAngle={3}
+              dataKey="value" nameKey="name" labelLine={false} label={renderLabel}>
               {enriched.map((_, i) => (
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="none" />
               ))}
             </Pie>
-            <Tooltip
-              content={<PieTooltip metric={chart.config.metric} grouping={chart.config.grouping} />}
-            />
-            <Legend
-              layout="vertical"
-              align="right"
-              verticalAlign="middle"
-              iconType="circle"
-              iconSize={8}
+            <Tooltip content={<PieTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+            <Legend layout="vertical" align="right" verticalAlign="middle" iconType="circle" iconSize={8}
               formatter={(value: string) => (
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: "rgb(var(--color-text-secondary))",
-                    fontWeight: 600,
-                  }}
-                >
+                <span style={{ fontSize: isExpanded ? 11 : 10, color: "rgb(var(--color-text-secondary))", fontWeight: 600 }}>
                   {value}
                 </span>
               )}
@@ -937,35 +998,57 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   if (chart.type === "table") {
     const limit = isExpanded ? 25 : 10;
     const rows = data.slice(0, limit);
-    const cols = rows.length > 0 ? Object.keys(rows[0] ?? {}).slice(0, 7) : [];
+    const totalSpend = rows.reduce((s, r) => s + (Number((r as any).value) || 0), 0);
+    const cols = rows.length > 0 ? Object.keys(rows[0] ?? {}).slice(0, 8) : [];
+    const isCurrencyCol = (col: string) =>
+      col === "value" || /amount|spend|revenue|income|expense|total|cost|profit/i.test(col);
+    const isPercentCol = (col: string) => /pct|percent|share|ratio|rate/i.test(col);
+
+    const formatCell = (col: string, val: unknown, rowIdx: number): string => {
+      if (col === "rank") return String(rowIdx + 1);
+      const n = typeof val === "number" ? val : Number(val);
+      if (!Number.isFinite(n)) return String(val ?? "");
+      if (isPercentCol(col)) return `${n.toFixed(1)}%`;
+      if (isCurrencyCol(col)) return fmtCurrency(n);
+      return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2);
+    };
+
     return (
       <div style={{ height: h, width: "100%" }} className="overflow-hidden rounded-xl border border-default bg-bg-elevated/30">
         <div className="h-full overflow-auto">
           <table className="w-full text-left text-[11px]">
             <thead className="sticky top-0 bg-bg-elevated/80 backdrop-blur">
               <tr>
+                <th className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted w-8">#</th>
                 {cols.map((c) => (
                   <th key={c} className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted">
-                    {c.replaceAll("_", " ")}
+                    {c === "value" ? "Total Spend" : c.replaceAll("_", " ")}
                   </th>
                 ))}
+                {totalSpend > 0 && cols.includes("value") && (
+                  <th className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted">% Share</th>
+                )}
               </tr>
             </thead>
             <tbody>
               {rows.map((r, idx) => (
-                <tr key={idx} className="border-t border-default/50">
+                <tr key={idx} className="border-t border-default/50 hover:bg-bg-elevated/40 transition-colors">
+                  <td className="px-3 py-2 text-text-muted font-mono text-center">{idx + 1}</td>
                   {cols.map((c) => (
-                    <td key={c} className="px-3 py-2 text-text-secondary whitespace-nowrap">
-                      {String((r as any)?.[c] ?? "")}
+                    <td key={c} className={`px-3 py-2 whitespace-nowrap ${isCurrencyCol(c) ? "text-text-primary font-semibold" : "text-text-secondary"}`}>
+                      {formatCell(c, (r as any)?.[c], idx)}
                     </td>
                   ))}
+                  {totalSpend > 0 && cols.includes("value") && (
+                    <td className="px-3 py-2 text-text-muted font-mono">
+                      {totalSpend > 0 ? `${((Number((r as any).value) || 0) / totalSpend * 100).toFixed(1)}%` : "—"}
+                    </td>
+                  )}
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td className="px-3 py-3 text-text-muted" colSpan={cols.length || 1}>
-                    No rows
-                  </td>
+                  <td className="px-3 py-3 text-text-muted" colSpan={(cols.length || 1) + 2}>No rows</td>
                 </tr>
               )}
             </tbody>
@@ -978,18 +1061,59 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   // ── donut (pie with inner hole) ────────────────────────────────────────────
   if (chart.type === "donut") {
     const COLORS = ["#7C3AED","#0EA5E9","#10B981","#F59E0B","#EF4444","#8B5CF6","#06B6D4","#84CC16"];
-    const total = data.reduce((s, d) => s + (Number((d as any).value) || 0), 0);
-    void total;
+    // Detect label key — may be "name", "dept", "vendor", "cls", etc.
+    const labelKey = (() => {
+      const row = data[0] as any;
+      if (!row) return "name";
+      if (typeof row.name === "string") return "name";
+      return Object.keys(row).find((k) => k !== "value" && typeof row[k] === "string") ?? "name";
+    })();
+    // Filter negatives/zeros and normalise to {name, value}
+    const donutData = data
+      .map((d) => ({
+        name: String((d as any)[labelKey] ?? (d as any).name ?? ""),
+        value: Math.abs(Number((d as any).value) || 0),
+      }))
+      .filter((d) => d.value > 0);
+    const donutTotal = donutData.reduce((s, d) => s + d.value, 0);
+
+    const renderDonutLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+      if (percent < 0.07) return null;
+      const RADIAN = Math.PI / 180;
+      const r = innerRadius + (outerRadius - innerRadius) * 0.5;
+      const x = cx + r * Math.cos(-midAngle * RADIAN);
+      const y = cy + r * Math.sin(-midAngle * RADIAN);
+      return (
+        <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
+          fontSize={isExpanded ? 11 : 9} fontWeight="700">
+          {`${(percent * 100).toFixed(0)}%`}
+        </text>
+      );
+    };
+
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: h + (isExpanded ? 0 : 20), width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%"
-              innerRadius={isExpanded ? 70 : 50} outerRadius={isExpanded ? 120 : 85} paddingAngle={2}>
-              {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+            {donutTotal > 0 && (
+              <text x="50%" y={isExpanded ? "50%" : "46%"} textAnchor="middle" dominantBaseline="central"
+                fill="rgb(var(--color-text-primary))" fontSize={isExpanded ? 13 : 11} fontWeight={700}>
+                {fmtCurrency(donutTotal)}
+              </text>
+            )}
+            <Pie data={donutData} dataKey="value" nameKey="name" cx="50%" cy={isExpanded ? "50%" : "44%"}
+              innerRadius={isExpanded ? 70 : 52} outerRadius={isExpanded ? 120 : 88}
+              paddingAngle={2} labelLine={false} label={renderDonutLabel}>
+              {donutData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
             </Pie>
-            <Tooltip formatter={(v) => [fmtCurrency(Number(v) || 0), ""]} />
-            <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+            <Tooltip content={<PieTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+            <Legend iconType="circle" iconSize={8}
+              verticalAlign="bottom" align="center"
+              wrapperStyle={{ fontSize: isExpanded ? 11 : 10, paddingTop: 8 }}
+              formatter={(value: string) => (
+                <span style={{ color: "rgb(var(--color-text-secondary))", fontWeight: 600 }}>{value}</span>
+              )}
+            />
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -1251,8 +1375,10 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 // ─── Chart Card ───────────────────────────────────────────────────────────────
 
 function getEmptyMessage(chart: Chart): string {
+  if (chart.config.metric === 'dynamic')
+    return 'No data returned for this query — try rephrasing or check that your accounting data is synced';
   if (chart.config.orgName)
-    return `No invoices synced for "${chart.config.orgName}" in this scope yet`;
+    return `No data synced for "${chart.config.orgName}" in this scope yet`;
   if (chart.config.grouping === 'vendor')
     return 'Vendor data requires a QuickBooks or Xero sync with bill-level detail';
   if (chart.config.grouping === 'department')

@@ -337,11 +337,28 @@ const VALID_WIDGETS = [
   { type: 'line',         metric: 'expense_ratio', grouping: 'month' },
   { type: 'line',         metric: 'net_position', grouping: 'month' },
 
-  // ── Balance sheet: assets / liabilities
-  { type: 'donut',        metric: 'assets',       grouping: 'account_type' },
-  { type: 'pie',          metric: 'assets',       grouping: 'account_type' },
-  { type: 'donut',        metric: 'liabilities',  grouping: 'account_type' },
-  { type: 'pie',          metric: 'liabilities',  grouping: 'account_type' },
+  // ── Balance sheet: assets / liabilities / equity / balance_sheet summary
+  { type: 'donut',          metric: 'assets',         grouping: 'account_type' },
+  { type: 'pie',            metric: 'assets',         grouping: 'account_type' },
+  { type: 'bar',            metric: 'assets',         grouping: 'breakdown' },
+  { type: 'horizontal_bar', metric: 'assets',         grouping: 'breakdown' },
+  { type: 'donut',          metric: 'assets',         grouping: 'breakdown' },
+  { type: 'donut',          metric: 'liabilities',    grouping: 'account_type' },
+  { type: 'pie',            metric: 'liabilities',    grouping: 'account_type' },
+  { type: 'bar',            metric: 'liabilities',    grouping: 'breakdown' },
+  { type: 'horizontal_bar', metric: 'liabilities',    grouping: 'breakdown' },
+  { type: 'donut',          metric: 'liabilities',    grouping: 'breakdown' },
+  { type: 'bar',            metric: 'equity',         grouping: 'breakdown' },
+  { type: 'donut',          metric: 'equity',         grouping: 'breakdown' },
+  { type: 'bar',            metric: 'balance_sheet',  grouping: 'summary' },
+  { type: 'donut',          metric: 'balance_sheet',  grouping: 'summary' },
+  { type: 'table',          metric: 'trial_balance',  grouping: 'summary' },
+  { type: 'table',          metric: 'trial_balance',  grouping: 'list' },
+  { type: 'table',          metric: 'gl_dump',        grouping: 'detail' },
+  { type: 'bar',            metric: 'income',         grouping: 'breakdown' },
+  { type: 'donut',          metric: 'income',         grouping: 'breakdown' },
+  { type: 'bar',            metric: 'account_type',   grouping: 'breakdown' },
+  { type: 'donut',          metric: 'account_type',   grouping: 'breakdown' },
 
   // ── Account type treemap / top debits / top credits / scatter
   { type: 'treemap',      metric: 'accounts',     grouping: 'account_type' },
@@ -511,6 +528,7 @@ RULES:
 25. For clustered column comparing departments → stacked_bar/expense/department with breakdown.
 26. CRITICAL — For "income sources", "revenue by account", "revenue breakdown", "revenue by category", "income category", "where does revenue come from", "revenue split" → ALWAYS use metric="revenue", grouping="account" (e.g. horizontal_bar/revenue/account, bar/revenue/account, pie/revenue/account). NEVER use dynamic SQL for revenue breakdown.
 27. ANY question not in vocabulary → output type="bar", metric="dynamic", grouping="sql" — the backend will auto-generate ClickHouse SQL.
+28. CRITICAL — NEVER generate multiple widgets for the same chart broken out by year. A single chart request ("annual operating spend", "total expenses by department") = EXACTLY ONE widget covering ALL available data. Only split by year when the user explicitly says "compare years", "year over year", "by year", or "2023 vs 2024". "Annual" means the full dataset period, NOT one widget per calendar year.
 
 OUTPUT FORMAT (JSON only):
 {"candidates":[{"title":"...","tools":["tool1"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Trend"}]}]}
@@ -541,7 +559,9 @@ Q: "Create a bar chart showing total amount for Profit & Loss accounts" → {"ca
 Q: "Create an executive summary dashboard" → {"candidates":[{"title":"Executive CFO Dashboard","tools":["financial_summary","revenue_trend","client_financial_profile"],"widgets":[{"type":"kpi","metric":"summary","grouping":"overview","title":"Executive KPIs"},{"type":"line","metric":"revenue_vs_expense","grouping":"month","title":"Revenue vs Expenses Trend"},{"type":"line","metric":"net_income","grouping":"month","title":"Net Income Trend"},{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Revenue"},{"type":"bar","metric":"expense","grouping":"account","title":"Top Expense Accounts"},{"type":"table","metric":"pl","grouping":"summary","title":"P&L Statement"}]}]}
 Q: "Show me my revenue dashboard" → {"candidates":[{"title":"Revenue Dashboard","tools":["revenue_trend","financial_summary","client_financial_profile"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Trend"},{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Revenue"},{"type":"metric","metric":"pl_summary","grouping":"summary","title":"Revenue KPIs"}]}]}
 Q: "Compare top two clients revenue for last six months" → {"candidates":[{"title":"Top 2 Clients — Revenue by Month","tools":["client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":2,"title":"Top 2 Clients — Revenue by Month"}]}]}
-Q: "Show top 3 clients revenue by month for last year" → {"candidates":[{"title":"Top 3 Clients — Monthly Revenue","tools":["client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":3,"title":"Top 3 Clients — Revenue by Month"}]}]}`;
+Q: "Show top 3 clients revenue by month for last year" → {"candidates":[{"title":"Top 3 Clients — Monthly Revenue","tools":["client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":3,"title":"Top 3 Clients — Revenue by Month"}]}]}
+Q: "Create a pie chart showing the contribution of each department to annual operating spend" → {"candidates":[{"title":"Department Share of Annual Operating Spend","tools":["expense_trend"],"widgets":[{"type":"pie","metric":"expense","grouping":"department","title":"Department Share of Annual Operating Spend"}]}]}
+Q: "Show department breakdown of total expenses" → {"candidates":[{"title":"Expenses by Department","tools":["expense_trend"],"widgets":[{"type":"bar","metric":"expense","grouping":"department","title":"Total Expenses by Department"}]}]}`;
 
 const PLANNER_SCHEMA = {
   type: 'object',
@@ -834,7 +854,37 @@ const SMART_SQL_PLANNER_SYSTEM = `You are a world-class CFO analytics AI with li
 
 DATABASE SCHEMA — use EXACT view names and column names:
 
-TABLE analytics.v_fact_accounting_journal_lines_latest
+TABLE analytics.sample_trial_balance  ← USE THIS for P&L totals, balance sheet, account type queries
+  org_id (String)  account_number (String)  account_name (String)  account_type (String)
+  debit (Decimal18,4)  credit (Decimal18,4)  net_balance (Decimal18,4)
+  account_type VALUES: 'Bank' | 'Accounts Receivable (AR)' | 'Other Current Asset' | 'Fixed Asset' | 'Other Asset'
+                       'Accounts Payable (AP)' | 'Other Current Liability' | 'Long Term Liability'
+                       'Equity' | 'Income' | 'Cost of Goods Sold' | 'Expense'
+  ALWAYS filter: WHERE org_id IN ({externalOrgIds:Array(String)})
+  KEY FORMULAS (match Excel DAX exactly):
+    Revenue   = round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0)
+    COGS      = round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0)
+    OpEx      = round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0)
+    GrossProfit = Revenue - COGS
+    NetIncome   = GrossProfit - OpEx
+    TotalAssets = round(abs(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset'))), 0)
+    TotalLiab   = round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability'))), 0)
+    TotalEquity = round(abs(sumIf(toFloat64(net_balance), account_type = 'Equity')), 0)
+
+TABLE analytics.sample_gl_dump  ← USE THIS for vendor, department, class, journal-type, row-level GL queries
+  org_id (String)  date (Date)  transaction_id (String)  journal_type (String — AP|AS|EX|PR|TR)
+  account_number (String)  account_name (String)  account_type (String)
+  vendor_customer (String)  description (String)
+  debit (Decimal18,4)  credit (Decimal18,4)  running_balance (Decimal18,4)
+  department (String — 'Admin'|'Operations'|'Sales' ONLY — NO Finance)
+  class (String — 'General'|'Marketing'|'Product')
+  ALWAYS filter: WHERE org_id IN ({externalOrgIds:Array(String)})
+  account_type VALUES same as trial_balance above
+  VENDOR SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND vendor_customer != '' AND account_type IN ('Expense','Cost of Goods Sold')
+  DEPT SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND department != '' GROUP BY department
+  CLASS SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND class != '' GROUP BY class
+
+TABLE analytics.v_fact_accounting_journal_lines_latest  ← for time-series, trend queries
   journal_date (Nullable DateTime)  account_name (String)  account_code (String)
   line_amount (Decimal18,4)  — SIGN CONVENTION: positive = debit/expense, negative = credit/revenue
   source_type (String)  department (String)  class_name (String)  vendor_name (String)
@@ -854,6 +904,12 @@ TABLE analytics.v_dim_clients_latest
   invoice_count (UInt32)  paid_count (UInt32)  outstanding_count (UInt32)  overdue_count (UInt32)
   avg_invoice_amount (Float64)  first_invoice_date (Date)  last_invoice_date (Date)
   *** NOTE: column is total_revenue NOT total_paid ***
+
+TABLE SELECTION GUIDE (org_id filter required on ALL tables):
+  P&L totals / balance sheet / account type breakdown → analytics.sample_trial_balance (WHERE org_id IN ({externalOrgIds:Array(String)}))
+  Vendor spend / department spend / class spend / GL detail → analytics.sample_gl_dump (WHERE org_id IN ({externalOrgIds:Array(String)}))
+  Monthly trends / time-series → analytics.v_fact_accounting_journal_lines_latest (WHERE org_id IN ({externalOrgIds:Array(String)}))
+  Invoice analysis / client revenue → analytics.v_fact_accounting_invoices_latest (WHERE org_id IN ({externalOrgIds:Array(String)}))
 
 NON-NEGOTIABLE SQL RULES:
 1. EVERY query MUST include: WHERE org_id IN ({externalOrgIds:Array(String)})
@@ -896,17 +952,36 @@ NON-NEGOTIABLE SQL RULES:
     CORRECT: SELECT COALESCE(NULLIF(department,''),'Other') AS dept ... GROUP BY COALESCE(NULLIF(department,''),'Other')
     Rule: department → alias AS dept | vendor_name → alias AS vendor | class_name → alias AS class_label
 19. CRITICAL — For department/vendor breakdown over time (stacked/grouped bars): use sumIf() pivot.
-    Known departments: Admin, Finance, Operations, Sales.
-    Known vendors (Operations): Shanghai Manufacturing Co, Pacific Supply Chain, FastFreight Logistics.
-    CORRECT stacked bar by department:
+    Known departments: READ LIVE DATA CONTEXT above for actual department names. NEVER hardcode departments not listed in LIVE DATA. NEVER add 'Finance' or any other department unless it appears in the LIVE DATA departments list.
+    CORRECT stacked bar by department (replace Admin/Operations/Sales with ACTUAL departments from LIVE DATA):
       SELECT formatDateTime(toStartOfMonth(journal_date), '%b %Y') AS name,
              round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Admin'), 0) AS admin,
              round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Operations'), 0) AS operations,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Sales'), 0) AS sales,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Finance'), 0) AS finance
+             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Sales'), 0) AS sales
       FROM analytics.v_fact_accounting_journal_lines_latest
       WHERE org_id IN ({externalOrgIds:Array(String)}) AND journal_date >= addMonths(now(), -12)
       GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date) ASC LIMIT 24
+20. TIME SCOPING — "annual operating spend" / "for the year" = last 12 months: WHERE journal_date >= addMonths(now(), -12). "This year" = WHERE toYear(journal_date) = toYear(now()). Never return all-time data when user says "annual" or "for the year".
+21. SOURCE TYPES — the source_type column cleanly separates entry types. ALWAYS use it:
+    • source_type = 'REV'  → Revenue/income accounts (Product Sales, Service Revenue, etc.) — line_amount is NEGATIVE (credit)
+    • source_type = 'OPEX' → Operating expenses — line_amount is POSITIVE (debit)
+    • source_type = 'COGS' → Cost of goods sold — line_amount is POSITIVE (debit)
+    • source_type = 'GL'   → Balance sheet / adjusting entries (Accounts Payable, Accrued Payroll, Inventory) — EXCLUDE from P&L queries
+    REVENUE: Use WHERE source_type = 'REV' for revenue. Value = abs(sum(line_amount)) or sumIf(-toFloat64(line_amount), line_amount < 0).
+    NEVER use bare line_amount < 0 for revenue — it picks up AP and Accrued Payroll (which are GL type, not REV).
+    OPERATING EXPENSES: Use WHERE source_type IN ('OPEX') or IN ('OPEX','COGS') for total cost.
+    VENDOR SPEND: Use source_type IN ('OPEX','COGS') to show real vendor operating costs (exclude GL inventory purchases).
+22. FINAL OUTPUT COLUMNS must always be: "name" (the label/dimension) and "value" (the metric). For single-dimension charts: wrap in subquery if needed. Example: SELECT dept AS name, spend AS value FROM (SELECT COALESCE(NULLIF(department,''),'Other') AS dept, round(sumIf(toFloat64(line_amount), line_amount > 0), 0) AS spend FROM ... GROUP BY COALESCE(...)) LIMIT 100. For scatter: columns x, y, z (optional size), name (label). For multi-series pivot: one "name" column + one column per series entity.
+23. SCATTER CHARTS: output columns must be x (numeric X axis), y (numeric Y axis), name (label).
+    Example — expense vs revenue by department:
+      SELECT COALESCE(NULLIF(department,''),'Other') AS name,
+             round(sumIf(toFloat64(line_amount), source_type IN ('OPEX','COGS') AND line_amount > 0), 0) AS x,
+             round(abs(sumIf(toFloat64(line_amount), source_type = 'REV')), 0) AS y
+      FROM analytics.v_fact_accounting_journal_lines_latest
+      WHERE org_id IN ({externalOrgIds:Array(String)})
+      GROUP BY COALESCE(NULLIF(department,''),'Other')
+      HAVING x > 0 OR y > 0 LIMIT 20
+24. USER TYPOS: understand user intent even with spelling errors — "grpah" = chart, "monthy" = monthly, "departemnt" = department, "expnese" = expense. Always infer the intended meaning.
 
 CHART TYPE REFERENCE:
   line bar stacked_bar area waterfall pie donut treemap scatter horizontal_bar
@@ -925,15 +1000,30 @@ OUTPUT FORMAT — JSON only, no explanation, no markdown:
   ]
 }
 
+25. SAMPLE TABLE RULES — org_id filter required on both sample tables:
+    analytics.sample_trial_balance and analytics.sample_gl_dump BOTH have org_id. ALWAYS add WHERE org_id IN ({externalOrgIds:Array(String)}).
+    For P&L / balance sheet: ALWAYS use analytics.sample_trial_balance with org_id filter
+    For vendor/dept/class/GL detail: ALWAYS use analytics.sample_gl_dump with org_id filter
+    For monthly trends / time-series: use analytics.v_fact_accounting_journal_lines_latest (also with org_id filter)
+    DEPARTMENT VALUES (sample_gl_dump): 'Admin', 'Operations', 'Sales' — ONLY these three. NEVER 'Finance'.
+    CLASS VALUES (sample_gl_dump): 'General', 'Marketing', 'Product'
+    JOURNAL_TYPE VALUES (sample_gl_dump): 'AP', 'AS', 'EX', 'PR', 'TR'
+
 INTELLIGENCE RULES:
 - Read LIVE DATA below — use actual account names, departments, vendors in titles and WHERE clauses
 - Title charts with specific names: "Monthly Rent vs Marketing Spend" not "Expense Chart"
-- For "by department": GROUP BY COALESCE(NULLIF(department,''),'Other')
-- For "by vendor": GROUP BY COALESCE(NULLIF(vendor_name,''),'Other')
+- For P&L totals → use analytics.sample_trial_balance WHERE org_id IN ({externalOrgIds:Array(String)}) with account_type filters (see KEY FORMULAS above)
+- For vendor spend → SELECT vendor_customer, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND vendor_customer != '' GROUP BY vendor_customer
+- For department spend → SELECT department, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND department != '' GROUP BY department
+- For class spend → SELECT class, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND class != '' GROUP BY class
+- For "by department": departments are EXACTLY 'Admin', 'Operations', 'Sales' — no Finance, no Other
+- For "by vendor": use vendor_customer from analytics.sample_gl_dump NOT vendor_name from journal lines
 - For "by account": GROUP BY account_name ORDER BY value DESC LIMIT 20
 - For revenue+expense comparison: multi-series with two value columns
 - Max 6 charts per dashboard — pick what genuinely answers the question
-- ZERO hallucination: only columns listed above, only views listed above`;
+- ZERO hallucination: only columns listed above, only views listed above
+- FINAL column names MUST be "name" and "value" (not "dept", "vendor", "cls", etc.) for single-dimension charts
+- ZERO Finance: NEVER add a Finance department — it does not exist in the data`;
 
 // ─── AgentService ─────────────────────────────────────────────────────────────
 
@@ -4463,6 +4553,8 @@ export class AgentService {
 
     const jDb  = this.analyticsDb;
     const jTbl = `${jDb}.v_fact_accounting_journal_lines_enriched_latest`;
+    const tbTbl = `${jDb}.sample_trial_balance`;
+    const glTbl = `${jDb}.sample_gl_dump`;
 
     // ── expense/month (line or bar) ───────────────────────────────────────────
     if (metric === 'expense' && grouping === 'month') {
@@ -4991,40 +5083,227 @@ export class AgentService {
       return { data: Array.from(map.values()).sort((a, b) => a._sort.localeCompare(b._sort)).map(({ _sort: _s, ...rest }) => rest) };
     }
 
-    // ── pl/summary (table) — full P&L by account ─────────────────────────────
-    if (metric === 'pl' && grouping === 'summary') {
+    // ── balance_sheet/summary — total assets, liabilities, equity from trial balance ──
+    if (metric === 'balance_sheet' && grouping === 'summary') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      const [revSummary, plRows] = await Promise.all([
+      const [assetRows, liabRows, equityRows] = await Promise.all([
         this.queryRows<any>(
-          `SELECT round(sum(total_amount), 0) AS total_revenue
-           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL`,
-          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+          `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             AND account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset')
+           ORDER BY value DESC LIMIT 50`,
+          { externalOrgIds: scope.externalOrgIds },
         ),
         this.queryRows<any>(
-          `SELECT
-             account_name,
-             if(${COGS_MATCH}, 'Cost of Sales', 'Operating Expense') AS category,
-             round(sum(line_amount), 0) AS amount
-           FROM ${jTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
-             AND line_amount > 0 AND journal_date IS NOT NULL
-             AND account_name != ''
-             ${jTime} ${BS_EXCL}
-           GROUP BY account_name, category
-           HAVING amount > 0
-           ORDER BY category ASC, amount DESC
-           LIMIT 50`,
-          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+          `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             AND account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability')
+           ORDER BY value DESC LIMIT 50`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+        this.queryRows<any>(
+          `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             AND account_type = 'Equity'
+           ORDER BY value DESC LIMIT 20`,
+          { externalOrgIds: scope.externalOrgIds },
         ),
       ]);
-      const totalRevenue = this.num((revSummary[0] as any)?.total_revenue ?? 0);
-      const totalExpenses = plRows.reduce((s: number, r: any) => s + this.num(r.amount), 0);
-      const rows: Array<{ category: string; account: string; amount: number }> = [
-        { category: 'Revenue', account: 'Total Revenue (from invoices)', amount: totalRevenue },
-        ...plRows.map((r: any) => ({ category: String(r.category), account: String(r.account_name), amount: this.num(r.amount) })),
-        { category: 'Net Income', account: 'Net Income', amount: Math.round(totalRevenue - totalExpenses) },
-      ];
+      const totalAssets = assetRows.reduce((s: number, r: any) => s + this.num(r.value), 0);
+      const totalLiab = liabRows.reduce((s: number, r: any) => s + this.num(r.value), 0);
+      const totalEquity = equityRows.reduce((s: number, r: any) => s + this.num(r.value), 0);
+      return {
+        data: [
+          { name: 'Total Assets',      value: totalAssets },
+          { name: 'Total Liabilities', value: totalLiab },
+          { name: 'Total Equity',      value: totalEquity },
+        ],
+      };
+    }
+
+    // ── assets/breakdown — asset accounts from trial balance ─────────────────
+    if (metric === 'assets' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset')
+           AND abs(toFloat64(net_balance)) > 0
+         ORDER BY value DESC LIMIT 50`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value), type: String(r.account_type) })) };
+    }
+
+    // ── liabilities/breakdown — liability accounts from trial balance ─────────
+    if (metric === 'liabilities' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability')
+           AND abs(toFloat64(net_balance)) > 0
+         ORDER BY value DESC LIMIT 50`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value), type: String(r.account_type) })) };
+    }
+
+    // ── equity/breakdown — equity accounts from trial balance ─────────────────
+    if (metric === 'equity' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND account_type = 'Equity' AND abs(toFloat64(net_balance)) > 0
+         ORDER BY value DESC LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+    }
+
+    // ── trial_balance/summary — full trial balance table ──────────────────────
+    if (metric === 'trial_balance' && (grouping === 'summary' || grouping === 'list')) {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT account_number, account_name, account_type,
+                round(toFloat64(debit), 2) AS debit,
+                round(toFloat64(credit), 2) AS credit,
+                round(toFloat64(net_balance), 2) AS net_balance
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+         ORDER BY account_type, account_number LIMIT 100`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return {
+        data: rows.map((r: any) => ({
+          accountNumber: String(r.account_number),
+          name: String(r.account_name),
+          type: String(r.account_type),
+          debit: this.num(r.debit),
+          credit: this.num(r.credit),
+          balance: this.num(r.net_balance),
+        })),
+      };
+    }
+
+    // ── income/breakdown — income + COGS accounts from trial balance ──────────
+    if (metric === 'income' && (grouping === 'breakdown' || grouping === 'account' || grouping === 'summary')) {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND account_type IN ('Income','Cost of Goods Sold')
+           AND abs(toFloat64(net_balance)) > 0
+         ORDER BY account_type ASC, value DESC LIMIT 30`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value), type: String(r.account_type) })) };
+    }
+
+    // ── account_type/breakdown — any account type breakdown from trial balance ─
+    if (metric === 'account_type' && (grouping === 'breakdown' || grouping === 'summary' || grouping === 'account')) {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT account_type AS name, round(sum(abs(toFloat64(net_balance))), 0) AS value
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+         GROUP BY account_type
+         ORDER BY value DESC LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+    }
+
+    // ── gl_dump/detail — full GL dump from sample_gl_dump ─────────────────────
+    if (metric === 'gl_dump' && (grouping === 'detail' || grouping === 'list')) {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `SELECT
+           toString(date) AS date,
+           transaction_id,
+           journal_type,
+           account_number,
+           account_name,
+           account_type,
+           vendor_customer,
+           description,
+           round(toFloat64(debit), 2) AS debit,
+           round(toFloat64(credit), 2) AS credit,
+           department,
+           class
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+         ORDER BY date ASC LIMIT 500`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      return {
+        data: rows.map((r: any) => ({
+          date: String(r.date),
+          transactionId: String(r.transaction_id),
+          journalType: String(r.journal_type),
+          accountNumber: String(r.account_number),
+          name: String(r.account_name),
+          accountType: String(r.account_type),
+          vendor: String(r.vendor_customer),
+          description: String(r.description),
+          debit: this.num(r.debit),
+          credit: this.num(r.credit),
+          department: String(r.department),
+          class: String(r.class),
+        })),
+      };
+    }
+
+    // ── pl/summary (table/waterfall) — full P&L from sample_trial_balance ──────
+    if (metric === 'pl' && grouping === 'summary') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Use sample_trial_balance as authoritative source (exact Excel data)
+      const [tbSummary, tbAccounts] = await Promise.all([
+        this.queryRows<any>(
+          `SELECT
+             round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS total_revenue,
+             round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS total_cogs,
+             round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0) AS total_expenses
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+        this.queryRows<any>(
+          `SELECT account_name,
+                  account_type,
+                  round(abs(toFloat64(net_balance)), 0) AS amount,
+                  multiIf(account_type = 'Income', 'Revenue',
+                          account_type = 'Cost of Goods Sold', 'Cost of Sales',
+                          account_type = 'Expense', 'Operating Expense', 'Other') AS category
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             AND account_type IN ('Income','Cost of Goods Sold','Expense')
+             AND abs(toFloat64(net_balance)) > 0
+           ORDER BY category ASC, amount DESC LIMIT 50`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+      ]);
+      const totalRevenue = this.num((tbSummary[0] as any)?.total_revenue ?? 0);
+      const totalCogs    = this.num((tbSummary[0] as any)?.total_cogs ?? 0);
+      const totalOpex    = this.num((tbSummary[0] as any)?.total_expenses ?? 0);
+      const grossProfit  = totalRevenue - totalCogs;
+      const netIncome    = grossProfit - totalOpex;
+      const rows: Array<{ name: string; value: number }> = [
+        { name: 'Revenue',              value: totalRevenue },
+        ...(totalCogs > 0    ? [{ name: 'Cost of Goods Sold',  value: -totalCogs }]  : []),
+        { name: 'Gross Profit',         value: grossProfit },
+        ...(totalOpex > 0    ? [{ name: 'Operating Expenses',  value: -totalOpex }]  : []),
+        { name: 'Net Income',           value: netIncome },
+      ].filter(r => r.value !== 0);
+      void tbAccounts; // available for future table variant
       return { data: rows };
     }
 
@@ -5091,35 +5370,27 @@ export class AgentService {
       };
     }
 
-    // ── pl_summary/summary (metric tile) — P&L KPIs ──────────────────────────
+    // ── pl_summary/summary (metric tile) — P&L KPIs from sample_trial_balance ──
     if (metric === 'pl_summary' && grouping === 'summary') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      const [revRows, expRows] = await Promise.all([
-        this.queryRows<any>(
-          `SELECT round(sum(total_amount), 0) AS rev
-           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${time} ${arFilter} AND issued_at IS NOT NULL`,
-          { externalOrgIds: scope.externalOrgIds, ...entityParam },
-        ),
-        this.queryRows<any>(
-          `SELECT
-             round(sum(line_amount), 0) AS total_exp,
-             round(sumIf(line_amount, ${COGS_MATCH}), 0) AS total_cogs
-           FROM ${jTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
-             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} ${BS_EXCL}`,
-          { externalOrgIds: scope.externalOrgIds, ...entityParam },
-        ),
-      ]);
-      const rev  = this.num((revRows[0] as any)?.rev ?? 0);
-      const exp  = this.num((expRows[0] as any)?.total_exp ?? 0);
-      const cogs = this.num((expRows[0] as any)?.total_cogs ?? 0);
+      const tbRows = await this.queryRows<any>(
+        `SELECT
+           round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS total_revenue,
+           round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS total_cogs,
+           round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0) AS total_expenses
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      const rev  = this.num((tbRows[0] as any)?.total_revenue ?? 0);
+      const cogs = this.num((tbRows[0] as any)?.total_cogs ?? 0);
+      const exp  = this.num((tbRows[0] as any)?.total_expenses ?? 0);
       const gp   = rev - cogs;
-      const ni   = rev - exp;
+      const ni   = gp - exp;
       return {
         data: [
           { label: 'Total Revenue',    value: rev,  format: 'currency' },
-          { label: 'Total Expenses',   value: exp,  format: 'currency' },
+          { label: 'Total Expenses',   value: exp + cogs, format: 'currency' },
           { label: 'Gross Profit',     value: gp,   format: 'currency' },
           { label: 'Net Income',       value: ni,   format: 'currency' },
           { label: 'Gross Margin',     value: rev > 0 ? Math.round((gp / rev) * 1000) / 10 : 0, format: 'percent' },
@@ -5128,33 +5399,30 @@ export class AgentService {
       };
     }
 
-    // ── expense_summary/summary (metric tile) — expense KPIs ─────────────────
+    // ── expense_summary/summary (metric tile) — expense KPIs from trial_balance ─
     if (metric === 'expense_summary' && grouping === 'summary') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const [expRows, topRows] = await Promise.all([
         this.queryRows<any>(
           `SELECT
-             round(sum(line_amount), 0) AS total_exp,
-             round(sumIf(line_amount, ${COGS_MATCH}), 0) AS total_cogs,
-             round(sumIf(line_amount, NOT ${COGS_MATCH}), 0) AS total_opex
-           FROM ${jTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
-             AND line_amount > 0 AND journal_date IS NOT NULL ${jTime} ${BS_EXCL}`,
-          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+             round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS total_cogs,
+             round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0) AS total_opex
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
         ),
         this.queryRows<any>(
-          `SELECT account_name, round(sum(line_amount), 0) AS amt
-           FROM ${jTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity}
-             AND line_amount > 0 AND journal_date IS NOT NULL AND account_name != ''
-             ${jTime} ${BS_EXCL}
-           GROUP BY account_name ORDER BY amt DESC LIMIT 1`,
-          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+          `SELECT account_name, round(abs(toFloat64(net_balance)), 0) AS amt
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             AND account_type IN ('Expense','Cost of Goods Sold')
+           ORDER BY amt DESC LIMIT 1`,
+          { externalOrgIds: scope.externalOrgIds },
         ),
       ]);
-      const totalExp  = this.num((expRows[0] as any)?.total_exp ?? 0);
       const totalCogs = this.num((expRows[0] as any)?.total_cogs ?? 0);
       const totalOpex = this.num((expRows[0] as any)?.total_opex ?? 0);
+      const totalExp  = totalCogs + totalOpex;
       const topAcct   = String((topRows[0] as any)?.account_name ?? 'N/A');
       const topAmt    = this.num((topRows[0] as any)?.amt ?? 0);
       return {
@@ -5526,11 +5794,19 @@ export class AgentService {
     // ── kpi/summary/overview (multi-KPI cards) ────────────────────────────────
     if (metric === 'summary' && grouping === 'overview') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_enriched_latest`;
-      const [invRows, expRows] = await Promise.all([
+      // Use sample_trial_balance for authoritative P&L figures
+      const [tbRows, invRows] = await Promise.all([
         this.queryRows<any>(
           `SELECT
-             round(sum(total_amount), 0) AS total_revenue,
+             round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS total_revenue,
+             round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS total_cogs,
+             round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0) AS total_opex
+           FROM ${this.analyticsDb}.sample_trial_balance
+           WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        ),
+        this.queryRows<any>(
+          `SELECT
              count() AS invoice_count,
              round(avg(total_amount), 0) AS avg_invoice,
              round(sumIf(total_amount, due_at IS NOT NULL AND due_at < now()), 0) AS overdue
@@ -5539,25 +5815,23 @@ export class AgentService {
              AND invoice_external_id != '' ${arFilter} AND total_amount > 0`,
           { externalOrgIds: scope.externalOrgIds },
         ),
-        this.queryRows<any>(
-          `SELECT round(abs(sum(toFloat64(line_amount))), 0) AS total_expenses
-           FROM ${jTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
-          { externalOrgIds: scope.externalOrgIds },
-        ),
       ]);
-      const revenue = this.num((invRows[0] as any)?.total_revenue ?? 0);
-      const expenses = this.num((expRows[0] as any)?.total_expenses ?? 0);
+      const revenue  = this.num((tbRows[0] as any)?.total_revenue ?? 0);
+      const cogs     = this.num((tbRows[0] as any)?.total_cogs ?? 0);
+      const opex     = this.num((tbRows[0] as any)?.total_opex ?? 0);
+      const expenses = cogs + opex;
+      const netProfit = revenue - expenses;
       const invoiceCount = this.num((invRows[0] as any)?.invoice_count ?? 0);
-      const avgInvoice = this.num((invRows[0] as any)?.avg_invoice ?? 0);
-      const overdue = this.num((invRows[0] as any)?.overdue ?? 0);
+      const avgInvoice   = this.num((invRows[0] as any)?.avg_invoice ?? 0);
+      const overdue      = this.num((invRows[0] as any)?.overdue ?? 0);
       return {
         data: [
-          { label: 'Total Revenue',     value: revenue,            format: 'currency', icon: 'revenue'  },
-          { label: 'Total Expenses',    value: expenses,           format: 'currency', icon: 'expenses' },
-          { label: 'Net Profit',        value: revenue - expenses, format: 'currency', icon: 'profit'   },
-          { label: 'Avg Invoice Value', value: avgInvoice,         format: 'currency', icon: 'invoice'  },
-          { label: 'Invoice Count',     value: invoiceCount,       format: 'number',   icon: 'count'    },
-          { label: 'Overdue Amount',    value: overdue,            format: 'currency', icon: 'overdue'  },
+          { label: 'Total Revenue',     value: revenue,     format: 'currency', icon: 'revenue'  },
+          { label: 'Total Expenses',    value: expenses,    format: 'currency', icon: 'expenses' },
+          { label: 'Net Profit',        value: netProfit,   format: 'currency', icon: 'profit'   },
+          { label: 'Avg Invoice Value', value: avgInvoice,  format: 'currency', icon: 'invoice'  },
+          { label: 'Invoice Count',     value: invoiceCount,format: 'number',   icon: 'count'    },
+          { label: 'Overdue Amount',    value: overdue,     format: 'currency', icon: 'overdue'  },
         ],
       };
     }
@@ -5605,7 +5879,23 @@ export class AgentService {
     // Falls back to account_name grouping when department data is not populated.
     if (metric === 'expense' && grouping === 'department') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Use sample_gl_dump for exact department data (Admin, Operations, Sales only — no Finance)
       const deptRows = await this.queryRows<any>(
+        `SELECT
+           department AS name,
+           round(sum(toFloat64(debit)), 0) AS value
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND department != '' AND account_type IN ('Expense','Cost of Goods Sold')
+         GROUP BY department HAVING value > 0
+         ORDER BY value DESC LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (deptRows.length > 0) {
+        return { data: deptRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      }
+      // Fallback to journal lines if gl_dump has no data
+      const fallbackRows = await this.queryRows<any>(
         `SELECT
            department AS name,
            round(sum(line_amount), 0) AS value
@@ -5616,13 +5906,29 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: deptRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
     }
 
     // ── expense/class (bar, pie, treemap) ─────────────────────────────────────
     if (metric === 'expense' && grouping === 'class') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Use sample_gl_dump for exact class data (General, Marketing, Product)
       const classRows = await this.queryRows<any>(
+        `SELECT
+           class AS name,
+           round(sum(toFloat64(debit)), 0) AS value
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND class != '' AND account_type IN ('Expense','Cost of Goods Sold')
+         GROUP BY class HAVING value > 0
+         ORDER BY value DESC LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (classRows.length > 0) {
+        return { data: classRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      }
+      // Fallback to journal lines if gl_dump has no class data
+      const fallbackRows = await this.queryRows<any>(
         `SELECT
            class_name AS name,
            round(sum(line_amount), 0) AS value
@@ -5633,15 +5939,38 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: classRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
     }
 
     // ── expense/vendor (horizontal_bar, pareto, table, scatter) ──────────────
-    // Only uses real vendor_name data. When vendor data is not populated (e.g. test/seeded
-    // data), returns empty with _noVendorData flag so the UI can show an honest message.
+    // Primary: sample_gl_dump.vendor_customer (exact Excel data, 24 real vendors)
     if (metric === 'expense' && grouping === 'vendor') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const limit = Math.max(5, Math.min(50, requestedTopN ?? 20));
+      const glVendorRows = await this.queryRows<any>(
+        `SELECT
+           vendor_customer AS name,
+           round(sum(toFloat64(debit)), 0) AS value,
+           count() AS transaction_count,
+           round(avg(toFloat64(debit)), 0) AS avg_amount
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND vendor_customer != '' AND account_type IN ('Expense','Cost of Goods Sold')
+         GROUP BY vendor_customer HAVING value > 0
+         ORDER BY value DESC LIMIT ${limit}`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (glVendorRows.length > 0) {
+        return {
+          data: glVendorRows.map((r: any) => ({
+            name: String(r.name),
+            value: this.num(r.value),
+            transactions: this.num(r.transaction_count),
+            avgAmount: this.num(r.avg_amount),
+          })),
+        };
+      }
+      // Fallback: journal lines vendor data
       const vendorRows = await this.queryRowsWithTimeFallback<any>(
         (t) => `SELECT
            vendor_name AS name,
@@ -5666,8 +5995,6 @@ export class AgentService {
           })),
         };
       }
-      // Vendor names not available — return empty so the UI shows an honest state,
-      // not a mislabelled account chart.
       return { data: [], _noVendorData: true } as any;
     }
 
@@ -5676,28 +6003,35 @@ export class AgentService {
     // Only include accounts that are clearly revenue/income — never liabilities (AP, payables, accruals).
     if (metric === 'revenue' && (grouping === 'account' || grouping === 'category' || grouping === 'account_name')) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Use source_type = 'REV' to reliably identify revenue — avoids AP/Payroll contamination
       const revRows = await this.queryRows<any>(
         `SELECT
            account_name AS name,
            round(abs(sum(line_amount)), 0) AS value
          FROM ${jTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
-           AND line_amount < 0 AND journal_date IS NOT NULL AND account_name != ''
-           AND (lowerUTF8(account_name) LIKE '%revenue%'
-             OR lowerUTF8(account_name) LIKE '%income%'
-             OR lowerUTF8(account_name) LIKE '%product sales%'
-             OR lowerUTF8(account_name) LIKE '%consulting%'
-             OR lowerUTF8(account_name) LIKE '%service fee%'
-             OR lowerUTF8(account_name) LIKE '%subscription%')
-           AND lowerUTF8(account_name) NOT LIKE '%payable%'
-           AND lowerUTF8(account_name) NOT LIKE '%accrued%'
-           AND lowerUTF8(account_name) NOT LIKE '%liability%'
-           AND lowerUTF8(account_name) NOT LIKE '%payroll%'
+           AND source_type = 'REV' AND journal_date IS NOT NULL AND account_name != ''
          GROUP BY name HAVING value > 0
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      // If no revenue accounts found, return empty — don't show liabilities as "income"
+      // Fallback: if no REV source_type rows, use account name matching (older data formats)
+      if (revRows.length === 0) {
+        const fallbackRows = await this.queryRows<any>(
+          `SELECT account_name AS name, round(abs(sum(line_amount)), 0) AS value
+           FROM ${jTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
+             AND line_amount < 0 AND journal_date IS NOT NULL AND account_name != ''
+             AND (lowerUTF8(account_name) LIKE '%revenue%' OR lowerUTF8(account_name) LIKE '%income%'
+               OR lowerUTF8(account_name) LIKE '%product sales%' OR lowerUTF8(account_name) LIKE '%consulting%')
+             AND lowerUTF8(account_name) NOT LIKE '%payable%'
+             AND lowerUTF8(account_name) NOT LIKE '%accrued%'
+             AND lowerUTF8(account_name) NOT LIKE '%payroll%'
+           GROUP BY name HAVING value > 0 ORDER BY value DESC LIMIT 20`,
+          { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        );
+        return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      }
       return { data: revRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
     }
 
@@ -5706,12 +6040,12 @@ export class AgentService {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const deptRows = await this.queryRows<any>(
         `SELECT
-           department AS name,
+           COALESCE(NULLIF(department,''),'Other') AS name,
            round(abs(sum(line_amount)), 0) AS value
          FROM ${jTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
-           AND line_amount < 0 AND journal_date IS NOT NULL AND department != ''
-         GROUP BY name HAVING value > 0
+           AND source_type = 'REV' AND journal_date IS NOT NULL
+         GROUP BY COALESCE(NULLIF(department,''),'Other') HAVING value > 0
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
@@ -9047,71 +9381,121 @@ export class AgentService {
     const orgWhere = `org_id IN ({externalOrgIds:Array(String)})`;
 
     try {
-      const [dateRange, departments, vendors, expenseAccts, revenueAccts, jTypes, invoiceSummary, topClients] =
-        await Promise.allSettled([
-          this.queryRows<any>(
-            `SELECT formatDateTime(min(journal_date), '%Y-%m') AS from_d,
-                    formatDateTime(max(journal_date), '%Y-%m') AS to_d,
-                    count() AS cnt
-             FROM ${db}.v_fact_accounting_journal_lines_latest
-             WHERE ${orgWhere} AND journal_date IS NOT NULL`,
-            params,
-          ),
-          this.queryRows<any>(
-            `SELECT DISTINCT COALESCE(NULLIF(department,''),'(none)') AS dept
-             FROM ${db}.v_fact_accounting_journal_lines_latest
-             WHERE ${orgWhere} AND department != ''
-             ORDER BY dept LIMIT 20`,
-            params,
-          ),
-          this.queryRows<any>(
-            `SELECT COALESCE(NULLIF(vendor_name,''),'Other') AS vname,
-                    round(sumIf(toFloat64(line_amount), line_amount > 0), 0) AS spend
-             FROM ${db}.v_fact_accounting_journal_lines_latest
-             WHERE ${orgWhere} AND vendor_name != ''
-             GROUP BY vname ORDER BY spend DESC LIMIT 12`,
-            params,
-          ),
-          this.queryRows<any>(
-            `SELECT account_name,
-                    round(sumIf(toFloat64(line_amount), line_amount > 0), 0) AS total
-             FROM ${db}.v_fact_accounting_journal_lines_latest
-             WHERE ${orgWhere} AND line_amount > 0 AND account_name != ''
-             GROUP BY account_name ORDER BY total DESC LIMIT 15`,
-            params,
-          ),
-          this.queryRows<any>(
-            `SELECT account_name,
-                    round(abs(sumIf(toFloat64(line_amount), line_amount < 0)), 0) AS total
-             FROM ${db}.v_fact_accounting_journal_lines_latest
-             WHERE ${orgWhere} AND line_amount < 0 AND account_name != ''
-             GROUP BY account_name ORDER BY total DESC LIMIT 10`,
-            params,
-          ),
-          this.queryRows<any>(
-            `SELECT DISTINCT source_type
-             FROM ${db}.v_fact_accounting_journal_lines_latest
-             WHERE ${orgWhere} AND source_type != ''
-             ORDER BY source_type LIMIT 15`,
-            params,
-          ),
-          this.queryRows<any>(
-            `SELECT count() AS inv_count,
-                    round(coalesce(sum(total_amount), 0), 0) AS inv_revenue,
-                    formatDateTime(min(issued_at), '%Y-%m') AS from_d,
-                    formatDateTime(max(issued_at), '%Y-%m') AS to_d
-             FROM ${db}.v_fact_accounting_invoices_latest
-             WHERE ${orgWhere} AND issued_at IS NOT NULL AND total_amount > 0`,
-            params,
-          ),
-          this.queryRows<any>(
-            `SELECT client_name, round(total_invoiced, 0) AS billed
-             FROM ${db}.v_dim_clients_latest
-             WHERE ${orgWhere} AND client_name != ''
-             ORDER BY total_invoiced DESC LIMIT 8`,
-            params,
-          ),
-        ]);
+      const [
+        dateRange, departments, vendors, expenseAccts, revenueAccts, jTypes, invoiceSummary, topClients,
+        tbSummary, tbAccounts, glDepts, glClasses, glVendors, glJournalTypes,
+      ] = await Promise.allSettled([
+        // ── Journal lines (v_fact) ──────────────────────────────────────────────
+        this.queryRows<any>(
+          `SELECT formatDateTime(min(journal_date), '%Y-%m') AS from_d,
+                  formatDateTime(max(journal_date), '%Y-%m') AS to_d,
+                  count() AS cnt
+           FROM ${db}.v_fact_accounting_journal_lines_latest
+           WHERE ${orgWhere} AND journal_date IS NOT NULL`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT DISTINCT COALESCE(NULLIF(department,''),'(none)') AS dept
+           FROM ${db}.v_fact_accounting_journal_lines_latest
+           WHERE ${orgWhere} AND department != ''
+           ORDER BY dept LIMIT 20`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT COALESCE(NULLIF(vendor_name,''),'Other') AS vname,
+                  round(sum(toFloat64(line_amount)), 0) AS spend
+           FROM ${db}.v_fact_accounting_journal_lines_latest
+           WHERE ${orgWhere} AND source_type IN ('OPEX','COGS') AND vendor_name != ''
+             AND lowerUTF8(vendor_name) NOT IN ('payroll')
+           GROUP BY vname ORDER BY spend DESC LIMIT 12`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT account_name,
+                  round(sum(toFloat64(line_amount)), 0) AS total
+           FROM ${db}.v_fact_accounting_journal_lines_latest
+           WHERE ${orgWhere} AND source_type IN ('OPEX','COGS') AND account_name != ''
+           GROUP BY account_name ORDER BY total DESC LIMIT 15`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT account_name,
+                  round(abs(sum(toFloat64(line_amount))), 0) AS total
+           FROM ${db}.v_fact_accounting_journal_lines_latest
+           WHERE ${orgWhere} AND source_type = 'REV' AND account_name != ''
+           GROUP BY account_name ORDER BY total DESC LIMIT 10`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT DISTINCT source_type
+           FROM ${db}.v_fact_accounting_journal_lines_latest
+           WHERE ${orgWhere} AND source_type != ''
+           ORDER BY source_type LIMIT 15`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT count() AS inv_count,
+                  round(coalesce(sum(total_amount), 0), 0) AS inv_revenue,
+                  formatDateTime(min(issued_at), '%Y-%m') AS from_d,
+                  formatDateTime(max(issued_at), '%Y-%m') AS to_d
+           FROM ${db}.v_fact_accounting_invoices_latest
+           WHERE ${orgWhere} AND issued_at IS NOT NULL AND total_amount > 0`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT client_name, round(total_invoiced, 0) AS billed
+           FROM ${db}.v_dim_clients_latest
+           WHERE ${orgWhere} AND client_name != ''
+           ORDER BY total_invoiced DESC LIMIT 8`,
+          params,
+        ),
+        // ── sample_trial_balance (authoritative P&L / Balance Sheet totals) ────
+        this.queryRows<any>(
+          `SELECT
+             round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS revenue,
+             round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS cogs,
+             round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0) AS opex,
+             round(abs(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset'))), 0) AS total_assets,
+             round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability'))), 0) AS total_liabilities,
+             round(abs(sumIf(toFloat64(net_balance), account_type = 'Equity')), 0) AS total_equity
+           FROM ${db}.sample_trial_balance
+           WHERE ${orgWhere}`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT account_type, account_name, round(abs(toFloat64(net_balance)), 0) AS balance
+           FROM ${db}.sample_trial_balance
+           WHERE ${orgWhere}
+           ORDER BY account_type, balance DESC LIMIT 46`,
+          params,
+        ),
+        // ── sample_gl_dump (exact department / class / vendor data) ─────────────
+        this.queryRows<any>(
+          `SELECT department, round(sum(toFloat64(debit)), 0) AS spend
+           FROM ${db}.sample_gl_dump
+           WHERE ${orgWhere} AND department != ''
+           GROUP BY department ORDER BY spend DESC LIMIT 10`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT class, round(sum(toFloat64(debit)), 0) AS spend
+           FROM ${db}.sample_gl_dump
+           WHERE ${orgWhere} AND class != ''
+           GROUP BY class ORDER BY spend DESC LIMIT 10`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT vendor_customer AS vname, round(sum(toFloat64(debit)), 0) AS spend
+           FROM ${db}.sample_gl_dump
+           WHERE ${orgWhere} AND vendor_customer != '' AND account_type IN ('Expense','Cost of Goods Sold')
+           GROUP BY vendor_customer ORDER BY spend DESC LIMIT 15`,
+          params,
+        ),
+        this.queryRows<any>(
+          `SELECT DISTINCT journal_type FROM ${db}.sample_gl_dump WHERE ${orgWhere} ORDER BY journal_type LIMIT 10`,
+          params,
+        ),
+      ]);
 
       const dr    = dateRange.status       === 'fulfilled' ? dateRange.value[0]  : null;
       const depts = departments.status     === 'fulfilled' ? departments.value.map((r: any) => r.dept).filter(Boolean) : [];
@@ -9121,31 +9505,78 @@ export class AgentService {
       const jtps  = jTypes.status          === 'fulfilled' ? jTypes.value.map((r: any) => r.source_type).filter(Boolean) : [];
       const inv   = invoiceSummary.status  === 'fulfilled' ? invoiceSummary.value[0] : null;
       const clts  = topClients.status      === 'fulfilled' ? topClients.value     : [];
+      const tb    = tbSummary.status       === 'fulfilled' ? tbSummary.value[0]   : null;
+      const tbAc  = tbAccounts.status      === 'fulfilled' ? tbAccounts.value     : [];
+      const glDs  = glDepts.status         === 'fulfilled' ? glDepts.value        : [];
+      const glCs  = glClasses.status       === 'fulfilled' ? glClasses.value      : [];
+      const glVs  = glVendors.status       === 'fulfilled' ? glVendors.value      : [];
+      const glJts = glJournalTypes.status  === 'fulfilled' ? glJournalTypes.value.map((r: any) => r.journal_type).filter(Boolean) : [];
 
       const lines: string[] = ['LIVE DATA CONTEXT — use these real values in SQL and chart titles:'];
 
+      // ── Trial Balance P&L totals (authoritative) ──────────────────────────────
+      if (tb) {
+        const rev   = this.num(tb.revenue);
+        const cogs  = this.num(tb.cogs);
+        const opex  = this.num(tb.opex);
+        const gp    = rev - cogs;
+        const ni    = gp - opex;
+        lines.push(`• AUTHORITATIVE P&L (from sample_trial_balance): Revenue=$${this.fmtK(rev)} | COGS=$${this.fmtK(cogs)} | Operating Expenses=$${this.fmtK(opex)} | Gross Profit=$${this.fmtK(gp)} | Net Income=$${this.fmtK(ni)}`);
+        lines.push(`• AUTHORITATIVE Balance Sheet: Total Assets=$${this.fmtK(this.num(tb.total_assets))} | Total Liabilities=$${this.fmtK(this.num(tb.total_liabilities))} | Total Equity=$${this.fmtK(this.num(tb.total_equity))}`);
+      }
+
+      // ── Trial Balance accounts by type ────────────────────────────────────────
+      if (tbAc.length > 0) {
+        const byType = new Map<string, Array<{name: string; balance: number}>>();
+        for (const r of tbAc) {
+          const at = String(r.account_type);
+          if (!byType.has(at)) byType.set(at, []);
+          byType.get(at)!.push({ name: String(r.account_name), balance: this.num(r.balance) });
+        }
+        const typeLines: string[] = [];
+        for (const [at, accts] of byType.entries()) {
+          typeLines.push(`${at}: ${accts.slice(0,5).map(a => `${a.name} ($${this.fmtK(a.balance)})`).join(', ')}`);
+        }
+        lines.push(`• sample_trial_balance account types → ${typeLines.join(' | ')}`);
+      }
+
+      // ── GL dump context ────────────────────────────────────────────────────────
+      if (glDs.length > 0) {
+        const ds = glDs.map((r: any) => `${r.department} ($${this.fmtK(this.num(r.spend))})`).join(', ');
+        lines.push(`• sample_gl_dump departments (exact, NO Finance): ${ds}`);
+      }
+      if (glCs.length > 0) {
+        const cs = glCs.map((r: any) => `${r.class} ($${this.fmtK(this.num(r.spend))})`).join(', ');
+        lines.push(`• sample_gl_dump classes: ${cs}`);
+      }
+      if (glVs.length > 0) {
+        const vs = glVs.slice(0, 12).map((r: any) => `${r.vname} ($${this.fmtK(this.num(r.spend))})`).join(' | ');
+        lines.push(`• Top vendors (sample_gl_dump.vendor_customer): ${vs}`);
+      }
+      if (glJts.length > 0) {
+        lines.push(`• sample_gl_dump journal_type values: ${glJts.join(', ')}`);
+      }
+
+      // ── Journal lines / invoice context ───────────────────────────────────────
       if (dr?.cnt > 0)
         lines.push(`• GL journal entries: ${dr.cnt} rows | Period: ${dr.from_d} → ${dr.to_d}`);
       if (this.num(inv?.inv_count) > 0)
         lines.push(`• Invoices: ${inv.inv_count} total | Revenue: $${this.fmtK(this.num(inv.inv_revenue))} | Period: ${inv.from_d} → ${inv.to_d}`);
-
       if (depts.length > 0)
-        lines.push(`• Departments (use exact names): ${depts.join(', ')}`);
-
+        lines.push(`• Departments in journal lines (use exact names): ${depts.join(', ')}`);
       if (jtps.length > 0)
-        lines.push(`• Journal types / source_type values: ${jtps.join(', ')}`);
-
+        lines.push(`• Journal source_type values: ${jtps.join(', ')}`);
       if (expAs.length > 0) {
         const top = expAs.slice(0, 10).map((a: any) => `${a.account_name} ($${this.fmtK(this.num(a.total))})`).join(' | ');
-        lines.push(`• Top expense accounts (line_amount > 0): ${top}`);
+        lines.push(`• Top expense accounts (source_type IN ('OPEX','COGS'), line_amount > 0): ${top}`);
       }
       if (revAs.length > 0) {
         const top = revAs.slice(0, 8).map((a: any) => `${a.account_name} ($${this.fmtK(this.num(a.total))})`).join(' | ');
-        lines.push(`• Revenue accounts (line_amount < 0, abs): ${top}`);
+        lines.push(`• Revenue accounts (source_type = 'REV', use abs(line_amount)): ${top}`);
       }
       if (vends.length > 0) {
         const top = vends.slice(0, 10).map((v: any) => `${v.vname} ($${this.fmtK(this.num(v.spend))})`).join(' | ');
-        lines.push(`• Top vendors by spend: ${top}`);
+        lines.push(`• Top vendors in journal lines (secondary): ${top}`);
       }
       if (clts.length > 0) {
         const top = clts.slice(0, 6).map((c: any) => `${c.client_name} ($${this.fmtK(this.num(c.billed))})`).join(' | ');
@@ -9892,6 +10323,32 @@ export class AgentService {
     scope?: OrgScope,
     range?: TimeRange,
   ): Promise<AgentPlan> {
+    // Fast deterministic routing — bypass both the Smart SQL planner and Ollama
+    // for well-known query patterns to guarantee consistent, correct output.
+    const preRouted = this.preRouteQuery(query);
+    if (preRouted && preRouted.length > 0) {
+      this.logger.log(`[plan] pre-route matched — ${preRouted.length} widget(s), bypassing LLM`);
+      const widgets = preRouted.map((w, i) => ({
+        title: w.title,
+        description: '',
+        type: w.type as AgentPlan['dashboard']['widgets'][number]['type'],
+        metric: w.metric,
+        grouping: w.grouping,
+        display_order: i,
+        data: [],
+      }));
+      return {
+        tools_to_execute: this.selectToolsForQuery(query),
+        should_generate_dashboard: true,
+        dashboard: {
+          title: this.deriveQueryTitle(query),
+          description: 'AI-generated financial intelligence dashboard',
+          widgets,
+        },
+        analysis_focus: query,
+      };
+    }
+
     const spec = parseQuerySpec(query);
     const constraints = this.parseExplicitChartConstraints(query);
     const compareClients = this.extractCompareClients(query);
@@ -11910,6 +12367,7 @@ Output SQL ONLY — no explanation, no markdown.`;
     const hasDebitCredit = /debits?.*credits?|credits?.*debits?/.test(q);
     const hasAsset      = /\bassets?\b/.test(q);
     const hasLiability  = /\bliabilit/.test(q);
+    const hasEquity     = /\bequity\b|\bowner.s.equity\b|\bretained.earnings?\b/.test(q);
     const hasGrossProfit = /gross.profit/.test(q);
     const hasNetMargin  = /net.margin|margin.percent/.test(q);
     const hasExpenseRatio = /expense.ratio/.test(q);
@@ -11917,12 +12375,46 @@ Output SQL ONLY — no explanation, no markdown.`;
     const hasPLFlow     = /revenue.*gross.profit|flows.into|revenue.*net.income/.test(q);
     const hasVsRevenue  = /versus.revenue|vs.revenue|compared.to.revenue|spend.vs.revenue|revenue.generated/.test(q);
     const hasAccount    = /\bby\s+account\b|\baccount\s+name\b|\bper\s+account\b/.test(q) && !hasAccountType;
+    const hasBalanceSheet = /balance.sheet|financial.position|net.worth/.test(q);
+    const hasTotalAssets = /total.assets?|assets?.total/.test(q);
+    const hasTotalLiab   = /total.liabilit|liabilit.total/.test(q);
+    const hasNetIncome   = /\bnet.income\b|\bnet.profit\b|\bbottom.line\b/.test(q);
+    const hasTrialBalance = /trial.balance/.test(q);
+    const hasGLDump      = /\bgl.dump\b|\bgeneral.ledger.dump\b|\bgl.entries\b/.test(q);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // WATERFALL — highest priority (explicit chart type)
     // ═══════════════════════════════════════════════════════════════════════════
     if (isWaterfall)
       return [{ type: 'waterfall', metric: 'pl', grouping: 'summary', title: 'P&L Waterfall — Revenue to Net Income' }];
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TRIAL BALANCE / GL DUMP — direct table queries
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (hasTrialBalance)
+      return [{ type: 'table', metric: 'trial_balance', grouping: 'summary', title: 'Trial Balance — All Accounts' }];
+    if (hasGLDump)
+      return [{ type: 'table', metric: 'gl_dump', grouping: 'detail', title: 'General Ledger — All Transactions' }];
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BALANCE SHEET queries (total assets / liabilities / equity)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (hasBalanceSheet)
+      return [
+        { type: isDonut ? 'donut' : 'bar', metric: 'balance_sheet', grouping: 'summary', title: 'Balance Sheet — Assets, Liabilities & Equity' },
+      ];
+    if (hasTotalAssets)
+      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'assets', grouping: 'breakdown', title: 'Asset Breakdown by Account' }];
+    if (hasTotalLiab)
+      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'liabilities', grouping: 'breakdown', title: 'Liability Breakdown by Account' }];
+    if (hasEquity && !hasExpense)
+      return [{ type: isDonut ? 'donut' : 'bar', metric: 'equity', grouping: 'breakdown', title: 'Equity Accounts Breakdown' }];
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NET INCOME — from trial balance (authoritative)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (hasNetIncome && !hasTime)
+      return [{ type: 'metric', metric: 'pl_summary', grouping: 'summary', title: 'P&L KPI Summary — Revenue, Gross Profit, Net Income' }];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // VENDOR queries
@@ -11946,6 +12438,8 @@ Output SQL ONLY — no explanation, no markdown.`;
     // DEPARTMENT queries
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasDept) {
+      // "scatter of expense vs revenue" → let LLM generate proper x=expense, y=revenue SQL
+      if (isScatter && hasVsRevenue) return null;
       if (isScatter)   return [{ type: 'scatter',        metric: 'expense',             grouping: 'dept_stats',       title: 'Departments — Spend vs Vendors vs Transactions' }];
       if (hasVsRevenue)return [{ type: 'stacked_bar',    metric: 'revenue_vs_expense',  grouping: 'department',       title: 'Department Spend vs Revenue Generated' }];
       if (isStackedArea) return [{ type: 'area',         metric: 'expense',             grouping: 'month_department', title: 'Cumulative Departmental Spend Across the Year' }];
@@ -11982,13 +12476,13 @@ Output SQL ONLY — no explanation, no markdown.`;
     if (hasNetPosition) return [{ type: 'line', metric: 'net_position', grouping: 'month', title: 'Monthly Balance — Debits Minus Credits' }];
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // ASSET / LIABILITY queries (Balance Sheet)
+    // ASSET / LIABILITY queries (Balance Sheet) — from sample_trial_balance
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasAsset && !hasExpense)
-      return [{ type: isDonut ? 'donut' : 'pie', metric: 'assets', grouping: 'account_type', title: 'Asset Composition by Account Type' }];
+      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'assets', grouping: 'breakdown', title: 'Asset Breakdown — Bank, AR, Fixed Assets' }];
 
     if (hasLiability)
-      return [{ type: isDonut ? 'donut' : 'pie', metric: 'liabilities', grouping: 'account_type', title: 'Liability Distribution by Account Type' }];
+      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'liabilities', grouping: 'breakdown', title: 'Liability Breakdown — AP, Current & Long-Term' }];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // DEBIT / CREDIT / ACCOUNT TYPE queries

@@ -6121,19 +6121,135 @@ export class AgentService {
     // ── expense/month_department (stacked_bar — multi-series by department) ───
     if (metric === 'expense' && grouping === 'month_department') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      const rows = await this.queryRows<any>(
-        `SELECT
-           formatDateTime(toStartOfMonth(journal_date), '%b %y') AS month,
-           toStartOfMonth(journal_date) AS month_start,
-           coalesce(nullIf(department, ''), 'Unassigned') AS dept,
-           round(sum(line_amount), 0) AS value
-         FROM ${jTbl}
-         WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
-           AND line_amount > 0 AND journal_date IS NOT NULL ${BS_EXCL}
-         GROUP BY month, month_start, dept
-         ORDER BY month_start ASC, value DESC`,
-        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      // Prefer sample_gl_dump when it has data:
+      // - It's the authoritative source for the sample company.
+      // - It guarantees the real department list (Admin/Operations/Sales) and prevents
+      //   synthetic departments (e.g. Finance) from showing up via journal-line fallbacks.
+      //
+      // When the request is "last N months", anchor the window to the latest date
+      // present in the dataset (not "now") so sample data still produces a trend.
+      const maxDateRows = await this.queryRows<any>(
+        `SELECT max(date) AS max_date
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND date IS NOT NULL`,
+        { externalOrgIds: scope.externalOrgIds },
       );
+
+      const maxDate = String((maxDateRows[0] as any)?.max_date ?? '').slice(0, 10);
+      const hasMaxDate = /^\d{4}-\d{2}-\d{2}$/.test(maxDate);
+
+      const isoDate = (d: Date) =>
+        `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(
+          d.getUTCDate(),
+        ).padStart(2, '0')}`;
+
+      const addMonthsUtc = (yyyyMmDd: string, deltaMonths: number) => {
+        const [y, m, day] = yyyyMmDd.split('-').map((n) => Number(n));
+        const base = new Date(Date.UTC(y, (m ?? 1) - 1, day ?? 1));
+        base.setUTCMonth(base.getUTCMonth() + deltaMonths);
+        return isoDate(base);
+      };
+
+      const startOfMonthUtc = (yyyyMmDd: string) => {
+        const [y, m] = yyyyMmDd.split('-').map((n) => Number(n));
+        return isoDate(new Date(Date.UTC(y, (m ?? 1) - 1, 1)));
+      };
+
+      const startOfQuarterUtc = (yyyyMmDd: string) => {
+        const [y, m] = yyyyMmDd.split('-').map((n) => Number(n));
+        const quarterStartMonth = Math.floor(((m ?? 1) - 1) / 3) * 3 + 1; // 1,4,7,10
+        return isoDate(new Date(Date.UTC(y, quarterStartMonth - 1, 1)));
+      };
+
+      const startOfYearUtc = (yyyyMmDd: string) => {
+        const [y] = yyyyMmDd.split('-').map((n) => Number(n));
+        return isoDate(new Date(Date.UTC(y, 0, 1)));
+      };
+
+      const glTimeParts: string[] = [];
+      const glParams: Record<string, unknown> = { externalOrgIds: scope.externalOrgIds };
+
+      if (hasMaxDate && range?.kind) {
+        if (range.kind === 'BETWEEN_DATES') {
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.start = range.start;
+          glParams.end = range.end;
+        } else if (range.kind === 'SINCE_DATE') {
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.start = range.start;
+          glParams.end = maxDate;
+        } else if (range.kind === 'LAST_N_DAYS') {
+          glTimeParts.push('AND date >= addDays(toDate({end:String}), -{days:Int32}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.days = Math.max(1, Math.min(3650, range.days));
+        } else if (range.kind === 'LAST_N_WEEKS') {
+          glTimeParts.push('AND date >= addDays(toDate({end:String}), -{days:Int32}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.days = Math.max(1, Math.min(520, range.weeks)) * 7;
+        } else if (range.kind === 'LAST_N_MONTHS') {
+          const months = Math.max(1, Math.min(240, range.months));
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.start = addMonthsUtc(maxDate, -months);
+        } else if (range.kind === 'LAST_N_QUARTERS') {
+          const quarters = Math.max(1, Math.min(80, range.quarters));
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.start = addMonthsUtc(maxDate, -(quarters * 3));
+        } else if (range.kind === 'LAST_N_YEARS') {
+          const years = Math.max(1, Math.min(30, range.years));
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.start = addMonthsUtc(maxDate, -(years * 12));
+        } else if (range.kind === 'MTD') {
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.start = startOfMonthUtc(maxDate);
+        } else if (range.kind === 'QTD') {
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.start = startOfQuarterUtc(maxDate);
+        } else if (range.kind === 'YTD') {
+          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glParams.end = maxDate;
+          glParams.start = startOfYearUtc(maxDate);
+        }
+      }
+
+      const glTime = glTimeParts.length ? `\n           ${glTimeParts.join('\n           ')}` : '';
+      const glRows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(date), '%b %y') AS month,
+           toStartOfMonth(date) AS month_start,
+           department AS dept,
+           round(sum(toFloat64(debit)), 0) AS value
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND department != ''
+           AND account_type IN ('Expense','Cost of Goods Sold')
+           AND date IS NOT NULL
+           ${glTime}
+         GROUP BY month, month_start, dept
+         HAVING value > 0
+         ORDER BY month_start ASC, value DESC`,
+        glParams,
+      );
+
+      const rows = glRows.length
+        ? glRows
+        : await this.queryRows<any>(
+            `SELECT
+               formatDateTime(toStartOfMonth(journal_date), '%b %y') AS month,
+               toStartOfMonth(journal_date) AS month_start,
+               coalesce(nullIf(department, ''), 'Unassigned') AS dept,
+               round(sum(line_amount), 0) AS value
+             FROM ${jTbl}
+             WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
+               AND line_amount > 0 AND journal_date IS NOT NULL ${BS_EXCL}
+             GROUP BY month, month_start, dept
+             ORDER BY month_start ASC, value DESC`,
+            { externalOrgIds: scope.externalOrgIds, ...entityParam },
+          );
       // pivot: [{month, Dept1: val, Dept2: val, ...}]
       const monthMap = new Map<string, { sort: string; [key: string]: any }>();
       const depts = new Set<string>();

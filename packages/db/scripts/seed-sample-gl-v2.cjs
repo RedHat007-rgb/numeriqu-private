@@ -174,9 +174,14 @@ function str(v)  { return v == null ? "" : String(v).trim(); }
 function num(v)  { const n = Number(v); return isFinite(n) ? n : 0; }
 function dateStr(v) {
   if (!v) return null;
-  const d = new Date(v);
+  // The Excel extractor emits values like "2024-01-05T00:00:00" (no timezone).
+  // Parsing that as a JS Date will interpret it in local time and `toISOString()`
+  // can shift the day depending on timezone. Preserve the original calendar date.
+  const s = String(v);
+  if (/^\\d{4}-\\d{2}-\\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
   if (isNaN(d.valueOf())) return null;
-  return d.toISOString().slice(0, 10); // Date-only: YYYY-MM-DD
+  return d.toISOString().slice(0, 10); // fallback
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────

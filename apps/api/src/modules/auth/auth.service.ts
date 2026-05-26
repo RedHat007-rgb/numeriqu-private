@@ -21,6 +21,7 @@ const DEMO_EMAILS = new Set([
 ]);
 
 const SAMPLE_ORG_SLUG = 'sample-company-2024';
+const SAMPLE_ORG_NAME = 'Sample Company 2024';
 
 @Injectable()
 export class AuthService {
@@ -101,17 +102,19 @@ export class AuthService {
     // Create / retrieve Supabase session — no OTP required
     const session = await this.supabaseService.createSessionForEmail(normalized);
 
-    // Find the shared sample org
-    const sampleOrg = await prisma.organization.findUnique({
-      where: { slug: SAMPLE_ORG_SLUG },
+    // Find or create the shared sample org (do not hard-depend on seed scripts).
+    const sampleOrgSlug = (process.env.DEMO_ORG_SLUG || SAMPLE_ORG_SLUG).trim();
+    const sampleOrgName = (process.env.DEMO_ORG_NAME || SAMPLE_ORG_NAME).trim();
+    const sampleOrg = await prisma.organization.upsert({
+      where: { slug: sampleOrgSlug },
+      create: {
+        slug: sampleOrgSlug,
+        name: sampleOrgName,
+        createdById: session.user.id,
+      },
+      // Keep name in sync if someone reset the DB but reused the slug.
+      update: { name: sampleOrgName },
     });
-    if (!sampleOrg) {
-      this.logger.error('[Demo] Sample org not found — run seed:sample-gl first');
-      throw new InternalServerErrorException({
-        message: 'Demo data not initialized yet. Contact the admin.',
-        code: 'NO_SAMPLE_ORG',
-      });
-    }
 
     // Ensure demo user is a member of the sample org
     await prisma.organizationMembership.upsert({
@@ -124,12 +127,29 @@ export class AuthService {
       create: {
         organizationId: sampleOrg.id,
         userId: session.user.id,
-        role: 'USER',
+        role: 'ADMIN',
         canViewDashboard: true,
-        canCreateDashboard: false,
-        canShareDashboard: false,
+        canCreateDashboard: true,
+        canShareDashboard: true,
       },
-      update: { leftAt: null },
+      update: {
+        role: 'ADMIN',
+        canViewDashboard: true,
+        canCreateDashboard: true,
+        canShareDashboard: true,
+        leftAt: null,
+      },
+    });
+
+    // Demo users should only operate inside the shared sample org.
+    // Mark any other active memberships as left so the UI doesn't route them elsewhere.
+    await prisma.organizationMembership.updateMany({
+      where: {
+        userId: session.user.id,
+        organizationId: { not: sampleOrg.id },
+        leftAt: null,
+      },
+      data: { leftAt: new Date() },
     });
 
     // Set the same httpOnly cookies as the normal OTP flow
@@ -143,6 +163,15 @@ export class AuthService {
     });
     response.cookie('numeriqu_refresh_token', session.refreshToken, {
       httpOnly: true,
+      secure,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+
+    // Also set the selected org cookie so the UI is scoped immediately.
+    response.cookie('nq_organization_id', encodeURIComponent(sampleOrg.id), {
+      httpOnly: false,
       secure,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000,

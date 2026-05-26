@@ -12,6 +12,7 @@
     "db:studio": "dotenv -e .env.local -- prisma studio",
     "db:seed": "dotenv -e .env.local -- prisma db seed",
     "seed:sample-gl": "node scripts/seed-sample-gl-v2.cjs",
+    "seed:demo-users-sample-org": "node scripts/seed-demo-users-sample-org.cjs --only-sample-org",
     "db:format": "prisma format",
     "build": "tsc -b"
   },

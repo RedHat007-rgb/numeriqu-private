@@ -2,6 +2,10 @@
  * Seeds fact_accounting_invoices for org_id=sample_gl_2024
  * Derives amounts from the same revenue+COGS weights used in seed-revenue-entries.cjs
  * so that invoice totals match the GL journal entries (no inconsistency).
+ *
+ * NOTE (2026-05-26): This script generates SYNTHETIC clients/invoices (not present in the Excel).
+ * To keep the sample data Excel-only (no extra clients), this script is disabled by default.
+ * Run with `--synthetic` ONLY if you explicitly want synthetic invoice/client data.
  */
 const { createClient } = require('@clickhouse/client');
 const dotenv = require('dotenv');
@@ -163,6 +167,14 @@ function makeRows() {
 }
 
 async function main() {
+  if (!process.argv.includes('--synthetic')) {
+    console.log(
+      'Skipping invoice seeding: this script generates synthetic clients not present in the Excel. ' +
+        'If you really want synthetic invoices, re-run with `--synthetic`.',
+    );
+    return;
+  }
+
   const wipe = process.argv.includes('--wipe');
 
   const ch = createClient({
@@ -173,7 +185,7 @@ async function main() {
 
   if (wipe) {
     console.log('Wiping existing invoice rows for sample_gl_2024...');
-    await ch.exec({ query: `ALTER TABLE analytics.fact_accounting_invoices DELETE WHERE org_id = 'sample_gl_2024'` });
+    await ch.command({ query: `ALTER TABLE analytics.fact_accounting_invoices DELETE WHERE org_id = 'sample_gl_2024'` });
     // Small wait for mutation
     await new Promise(r => setTimeout(r, 2000));
   }

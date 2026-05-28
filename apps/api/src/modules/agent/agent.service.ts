@@ -7,10 +7,16 @@ import {
 import type { ClickHouseClient } from '@clickhouse/client';
 import { OrganizationContextService } from '../org-context/org-context.service';
 import { parseQuerySpec, type QuerySpec, type TimeRange } from './query-spec';
+import {
+  rewriteRelativeNowToAsOf,
+  sqlUsesNowOrToday,
+  validateDynamicSql,
+} from './dynamic-sql';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface OrgScope {
+  tenantId: string;
   connectionIds: string[];
   externalOrgIds: string[];
 }
@@ -830,7 +836,9 @@ TASK: Given a financial question and a chart title, write ONE ClickHouse SELECT 
 
 RULES:
 1. Output ONLY the raw SQL — no explanation, no markdown, no code fences
-2. Always include: WHERE org_id IN ({externalOrgIds:Array(String)})
+2. Always include BOTH scope filters:
+   - tenant_id = {tenantId:String}
+   - org_id IN ({externalOrgIds:Array(String)})
 3. Always include LIMIT (use 100 for aggregates, 500 for lists)
 4. The query MUST return at least a "name" column (dimension label) and a "value" column (primary metric)
 5. Additional numeric columns are allowed for multi-series charts
@@ -857,18 +865,18 @@ DATABASE SCHEMA — use EXACT view names and column names:
 TABLE analytics.sample_trial_balance  ← USE THIS for P&L totals, balance sheet, account type queries
   org_id (String)  account_number (String)  account_name (String)  account_type (String)
   debit (Decimal18,4)  credit (Decimal18,4)  net_balance (Decimal18,4)
-  account_type VALUES: 'Bank' | 'Accounts Receivable (AR)' | 'Other Current Asset' | 'Fixed Asset' | 'Other Asset'
-                       'Accounts Payable (AP)' | 'Other Current Liability' | 'Long Term Liability'
+  account_type VALUES: 'Bank' | 'Accounts Receivable' | 'Other Current Asset' | 'Fixed Asset' | 'Other Asset'
+                       'Accounts Payable' | 'Other Current Liability' | 'Long Term Liability'
                        'Equity' | 'Income' | 'Cost of Goods Sold' | 'Expense'
-  ALWAYS filter: WHERE org_id IN ({externalOrgIds:Array(String)})
+  ALWAYS filter: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
   KEY FORMULAS (match Excel DAX exactly):
     Revenue   = round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0)
     COGS      = round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0)
     OpEx      = round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0)
     GrossProfit = Revenue - COGS
     NetIncome   = GrossProfit - OpEx
-    TotalAssets = round(abs(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset'))), 0)
-    TotalLiab   = round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability'))), 0)
+    TotalAssets = round(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable','Other Current Asset','Fixed Asset','Other Asset')), 0)
+    TotalLiab   = round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable','Other Current Liability','Long Term Liability'))), 0)
     TotalEquity = round(abs(sumIf(toFloat64(net_balance), account_type = 'Equity')), 0)
 
 TABLE analytics.sample_gl_dump  ← USE THIS for vendor, department, class, journal-type, row-level GL queries
@@ -878,11 +886,13 @@ TABLE analytics.sample_gl_dump  ← USE THIS for vendor, department, class, jour
   debit (Decimal18,4)  credit (Decimal18,4)  running_balance (Decimal18,4)
   department (String — 'Admin'|'Operations'|'Sales' ONLY — NO Finance)
   class (String — 'General'|'Marketing'|'Product')
-  ALWAYS filter: WHERE org_id IN ({externalOrgIds:Array(String)})
+  ALWAYS filter: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
   account_type VALUES same as trial_balance above
-  VENDOR SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND vendor_customer != '' AND account_type IN ('Expense','Cost of Goods Sold')
-  DEPT SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND department != '' GROUP BY department
-  CLASS SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND class != '' GROUP BY class
+  VENDOR SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND vendor_customer != '' AND toFloat64(debit) > 0  ← ALL debits, NO filter (Power BI Total Vendor Spend = 1,307,246)
+  DEPT SPEND:   sum(toFloat64(debit)) WHERE org_id IN (...) AND department != '' AND toFloat64(debit) > 0 GROUP BY department  ← ALL debits (Power BI "Spend by Dept": Admin=374,580 Ops=716,470 Sales=216,196)
+  CLASS SPEND:  sum(toFloat64(debit)) WHERE org_id IN (...) AND class != '' AND toFloat64(debit) > 0 GROUP BY class  ← ALL debits
+  MONTHLY DEPT: GROUP BY toStartOfMonth(date), department — use ALL debits (Power BI "Monthly spend by Department" = Total Debits)
+  NOTE: GL dump has NO Income entries. For revenue, use sample_trial_balance credit column (account_type='Income')
 
 TABLE analytics.v_fact_accounting_journal_lines_latest  ← for time-series, trend queries
   journal_date (Nullable DateTime)  account_name (String)  account_code (String)
@@ -905,14 +915,14 @@ TABLE analytics.v_dim_clients_latest
   avg_invoice_amount (Float64)  first_invoice_date (Date)  last_invoice_date (Date)
   *** NOTE: column is total_revenue NOT total_paid ***
 
-TABLE SELECTION GUIDE (org_id filter required on ALL tables):
-  P&L totals / balance sheet / account type breakdown → analytics.sample_trial_balance (WHERE org_id IN ({externalOrgIds:Array(String)}))
-  Vendor spend / department spend / class spend / GL detail → analytics.sample_gl_dump (WHERE org_id IN ({externalOrgIds:Array(String)}))
-  Monthly trends / time-series → analytics.v_fact_accounting_journal_lines_latest (WHERE org_id IN ({externalOrgIds:Array(String)}))
-  Invoice analysis / client revenue → analytics.v_fact_accounting_invoices_latest (WHERE org_id IN ({externalOrgIds:Array(String)}))
+TABLE SELECTION GUIDE (tenant_id + org_id scope required on ALL tables):
+  P&L totals / balance sheet / account type breakdown → analytics.sample_trial_balance (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
+  Vendor spend / department spend / class spend / GL detail → analytics.sample_gl_dump (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
+  Monthly trends / time-series → analytics.v_fact_accounting_journal_lines_latest (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
+  Invoice analysis / client revenue → analytics.v_fact_accounting_invoices_latest (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
 
 NON-NEGOTIABLE SQL RULES:
-1. EVERY query MUST include: WHERE org_id IN ({externalOrgIds:Array(String)})
+1. EVERY query MUST include: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 2. EVERY query MUST include LIMIT (100 for aggregates, 500 for row-level lists)
 3. Standard output columns: "name" = label/dimension, "value" = primary numeric metric
 4. CRITICAL — ClickHouse GROUP BY + ORDER BY: ALWAYS use the RAW EXPRESSION, NEVER the alias.
@@ -1035,6 +1045,10 @@ export class AgentService {
   private readonly analyticsDb: string;
   private analyticsSchemaEnsured = false;
   private analyticsSchemaEnsurePromise: Promise<void> | null = null;
+  private readonly asOfCache = new Map<
+    string,
+    { asOfIso: string | null; expiresAt: number }
+  >();
 
   constructor(
     @Inject(PRISMA_TOKEN) private readonly prisma: PrismaClient,
@@ -1045,6 +1059,122 @@ export class AgentService {
     this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
     this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3:latest';
     this.analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
+  }
+
+  private scopeKey(scope: OrgScope): string {
+    const orgs = (scope.externalOrgIds ?? []).slice().sort().join(',');
+    return `${scope.tenantId}::${orgs}`;
+  }
+
+  private isStaleAsOf(asOfIso: string): boolean {
+    // If data is materially in the past, treat asOf as the "now" anchor for demo/stale datasets.
+    // This avoids empty "last N months" and nonsensical "everything is overdue" in seeded sample data.
+    const d = new Date(`${asOfIso}T00:00:00Z`);
+    if (Number.isNaN(d.valueOf())) return false;
+    const ageDays = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24);
+    return ageDays >= 45;
+  }
+
+  private async resolveAsOfIso(scope: OrgScope): Promise<string | null> {
+    if (!scope.externalOrgIds || scope.externalOrgIds.length === 0) return null;
+    const key = this.scopeKey(scope);
+    const cached = this.asOfCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.asOfIso;
+
+    try {
+      const rows = await this.queryRows<{ as_of: string | null }>(
+        `SELECT
+           formatDateTime(max(max_dt), '%Y-%m-%d') AS as_of
+         FROM (
+           SELECT max(issued_at) AS max_dt
+           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+             AND issued_at IS NOT NULL
+           UNION ALL
+           SELECT max(journal_date) AS max_dt
+           FROM ${this.analyticsDb}.v_fact_accounting_journal_lines_latest
+           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+             AND journal_date IS NOT NULL
+           UNION ALL
+           SELECT toDateTime(max(date)) AS max_dt
+           FROM ${this.analyticsDb}.sample_gl_dump
+           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+             AND date IS NOT NULL
+         )`,
+        { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
+      );
+      const asOfIso = (rows?.[0]?.as_of ?? null) || null;
+      this.asOfCache.set(key, {
+        asOfIso,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
+      return asOfIso;
+    } catch {
+      this.asOfCache.set(key, {
+        asOfIso: null,
+        expiresAt: Date.now() + 2 * 60 * 1000,
+      });
+      return null;
+    }
+  }
+
+  private detectUnsupportedOrAmbiguousAsk(
+    queryText: string,
+  ): ClarificationPrompt | null {
+    const q = String(queryText ?? '').trim().toLowerCase();
+    if (!q) return null;
+
+    // Budget / plan / target / variance needs a budget dataset.
+    if (
+      /\b(budget|budgeted|plan\b|planned|target|variance|vs\.?\s*budget|plan\s+vs\s+actual|actuals?\s+vs\s+plan)\b/i.test(
+        q,
+      )
+    ) {
+      return {
+        reason: 'BUDGET_DATA_REQUIRED',
+        question:
+          'Budget/plan variance needs a budget dataset. What do you want me to do?',
+        options: [
+          {
+            label: 'Show actuals only (no budget)',
+            value:
+              'Proceed with actuals only (ignore budget/plan) and build the best possible dashboard from available ClickHouse data.',
+          },
+          {
+            label: 'Wait for budget upload',
+            value:
+              'I will upload/provide a budget table (by month + account/department) and then re-run this variance analysis.',
+          },
+        ],
+      };
+    }
+
+    // Forecasting is possible, but requires choosing a method + horizon.
+    if (
+      /\b(forecast|projection|projected|predict|prediction|what[- ]if|scenario)\b/i.test(
+        q,
+      )
+    ) {
+      return {
+        reason: 'FORECAST_METHOD_REQUIRED',
+        question:
+          'Forecasting needs a method + horizon. What kind of forecast do you want?',
+        options: [
+          {
+            label: 'Simple trend forecast',
+            value:
+              'Forecast next 3 months using a simple trend on historical monthly revenue (invoices/journals).',
+          },
+          {
+            label: 'No forecast (historical only)',
+            value:
+              'Skip forecasting and only show historical actuals with trends and drivers.',
+          },
+        ],
+      };
+    }
+
+    return null;
   }
 
   private async ensureAnalyticsSchema(): Promise<void> {
@@ -1549,17 +1679,26 @@ export class AgentService {
     const scope = await this.getOrgScope(organizationId, role, orgId);
     if (scope.externalOrgIds.length === 0) return { data: [] };
 
+    const asOfIso = await this.resolveAsOfIso(scope);
+    const asOfExpr =
+      asOfIso && this.isStaleAsOf(asOfIso)
+        ? `toDateTime('${asOfIso} 23:59:59')`
+        : 'now()';
+
     // Dynamic SQL widget — look up stored SQL from the widget's queryConfig and execute it
     if (metric === 'dynamic' && widgetId) {
       try {
         const widget = await this.prisma.dashboardWidget.findFirst({
           where: { id: widgetId, organizationId },
-          select: { queryConfig: true },
+          select: { queryConfig: true, chartType: true },
         });
         const cfg = widget?.queryConfig as Record<string, unknown> | null;
         const sql = typeof cfg?.dynamicSql === 'string' ? cfg.dynamicSql : null;
         if (sql) {
-          const data = await this.executeDynamicSql(sql, scope);
+          const chartType = (widget?.chartType ?? null) as ChartType | null;
+          const data = await this.executeDynamicSql(sql, scope, {
+            chartType: chartType ?? undefined,
+          });
           return { data };
         }
       } catch (err: any) {
@@ -1570,7 +1709,7 @@ export class AgentService {
     // Enforce member scoping on read endpoints too: never mix entities for non-admins.
     if (role !== 'ADMIN' && !orgId && scope.externalOrgIds.length > 1)
       return { data: [] };
-    const time = this.timeWhereOn('issued_at', range);
+    const time = this.timeWhereOn('issued_at', range, asOfExpr);
     const provider = providerHint
       ? `AND lowerUTF8(provider) = {provider:String}`
       : '';
@@ -1617,7 +1756,7 @@ export class AgentService {
       ) {
         return `toDateTime('${range.end} 23:59:59')`;
       }
-      return 'now()';
+      return asOfExpr;
     })();
     const requestedTopN = (() => {
       if (typeof topN !== 'number' || !Number.isFinite(topN)) return null;
@@ -2208,13 +2347,13 @@ export class AgentService {
         `WITH scoped AS (
            SELECT
              abs(toFloat64(total_amount)) AS amount
-           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-           WHERE org_id IN ({externalOrgIds:Array(String)})
-             ${provider}
-             ${client}
-             ${entity}
-             ${time}
-             ${arFilter}
+		             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+		             WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		               ${provider}
+		               ${client}
+		               ${entity}
+		               ${time}
+		               ${arFilter}
              AND issued_at IS NOT NULL
          )
          SELECT
@@ -4559,6 +4698,23 @@ export class AgentService {
     // ── expense/month (line or bar) ───────────────────────────────────────────
     if (metric === 'expense' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Primary: sample_gl_dump ALL debits by month (Power BI "Monthly Spend Trend" = Total Debits)
+      const glMonthRows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(date), '%b %y') AS month,
+           toStartOfMonth(date) AS month_start,
+           round(sum(toFloat64(debit)), 0) AS total_expense
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND toFloat64(debit) > 0 AND date IS NOT NULL
+         GROUP BY month, month_start
+         ORDER BY month_start ASC LIMIT 36`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (glMonthRows.length > 0) {
+        return { data: (glMonthRows as any[]).map((r) => ({ name: String(r.month), value: this.num(r.total_expense) })) };
+      }
+      // Fallback: journal lines for non-sample orgs
       const rows = await this.queryRowsWithTimeFallback<any>(
         (t) => `SELECT
            formatDateTime(toStartOfMonth(journal_date), '%m/%y') AS month,
@@ -4816,6 +4972,36 @@ export class AgentService {
     // ── net_income/month (line or bar) ────────────────────────────────────────
     if (metric === 'net_income' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Primary: sample_gl_dump — monthly net income = annual rev / 12 - monthly (COGS + OpEx)
+      const glMonthlyRows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(date), '%b %y') AS month,
+           toStartOfMonth(date) AS month_start,
+           round(sumIf(toFloat64(debit), account_type = 'Cost of Goods Sold'), 0) AS cogs,
+           round(sumIf(toFloat64(debit), account_type = 'Expense'), 0) AS opex
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND date IS NOT NULL
+         GROUP BY month, month_start
+         ORDER BY month_start ASC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (glMonthlyRows.length > 0) {
+        const annualRevRows = await this.queryRows<any>(
+          `SELECT round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev FROM ${tbTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        );
+        const annualRev = this.num((annualRevRows[0] as any)?.rev ?? 0);
+        const monthCount = glMonthlyRows.length || 12;
+        const monthlyRev = Math.round(annualRev / monthCount);
+        return {
+          data: (glMonthlyRows as any[]).map((r) => ({
+            name: String(r.month),
+            value: Math.round(monthlyRev - this.num(r.cogs) - this.num(r.opex)),
+            _sort: String(r.month_start),
+          })).sort((a, b) => a._sort.localeCompare(b._sort)).map(({ _sort: _s, ...rest }) => rest),
+        };
+      }
+      // Fallback: invoices + journal lines
       const [revRows, expRows] = await Promise.all([
         this.queryRows<any>(
           `SELECT
@@ -5049,6 +5235,39 @@ export class AgentService {
     // ── revenue_vs_expense/month (line) — dual series ─────────────────────────
     if (metric === 'revenue_vs_expense' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Primary: sample_gl_dump — Revenue = Income credits, Expense = Expense type debits
+      // (GL dump has no Income entries; use Expense debits only for the expense side)
+      const glCombinedRows = await this.queryRows<any>(
+        `SELECT
+           formatDateTime(toStartOfMonth(date), '%b %y') AS month,
+           toStartOfMonth(date) AS month_start,
+           round(sumIf(toFloat64(debit), account_type = 'Expense'), 0) AS exp,
+           round(sumIf(toFloat64(debit), account_type = 'Cost of Goods Sold'), 0) AS cogs
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND date IS NOT NULL
+         GROUP BY month, month_start
+         ORDER BY month_start ASC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (glCombinedRows.length > 0) {
+        // Distribute annual revenue evenly across months (GL dump has no monthly revenue)
+        const annualRevRows = await this.queryRows<any>(
+          `SELECT round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev FROM ${tbTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        );
+        const annualRev = this.num((annualRevRows[0] as any)?.rev ?? 0);
+        const monthCount = glCombinedRows.length || 12;
+        const monthlyRev = Math.round(annualRev / monthCount);
+        return {
+          data: (glCombinedRows as any[]).map((r) => ({
+            name: String(r.month),
+            Revenue: monthlyRev,
+            Expense: this.num(r.exp) + this.num(r.cogs),
+            _sort: String(r.month_start),
+          })).sort((a, b) => a._sort.localeCompare(b._sort)).map(({ _sort: _s, ...rest }) => rest),
+        };
+      }
+      // Fallback: invoices + journal lines
       const [revRows, expRows] = await Promise.all([
         this.queryRows<any>(
           `SELECT
@@ -5084,37 +5303,24 @@ export class AgentService {
     }
 
     // ── balance_sheet/summary — total assets, liabilities, equity from trial balance ──
+    // Mirrors Power BI DAX exactly:
+    //   TotalAssets = SUM(net_balance) WHERE type IN {Bank,AR,OCA,Fixed,OA}  (no ABS — assets have +ve net)
+    //   TotalLiab   = ABS(SUM(net_balance)) WHERE type IN {AP,OCL,LTL}
+    //   TotalEquity = ABS(SUM(net_balance)) WHERE type = Equity
     if (metric === 'balance_sheet' && grouping === 'summary') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      const [assetRows, liabRows, equityRows] = await Promise.all([
-        this.queryRows<any>(
-          `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
-           FROM ${tbTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)})
-             AND account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset')
-           ORDER BY value DESC LIMIT 50`,
-          { externalOrgIds: scope.externalOrgIds },
-        ),
-        this.queryRows<any>(
-          `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
-           FROM ${tbTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)})
-             AND account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability')
-           ORDER BY value DESC LIMIT 50`,
-          { externalOrgIds: scope.externalOrgIds },
-        ),
-        this.queryRows<any>(
-          `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
-           FROM ${tbTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)})
-             AND account_type = 'Equity'
-           ORDER BY value DESC LIMIT 20`,
-          { externalOrgIds: scope.externalOrgIds },
-        ),
-      ]);
-      const totalAssets = assetRows.reduce((s: number, r: any) => s + this.num(r.value), 0);
-      const totalLiab = liabRows.reduce((s: number, r: any) => s + this.num(r.value), 0);
-      const totalEquity = equityRows.reduce((s: number, r: any) => s + this.num(r.value), 0);
+      const bsRows = await this.queryRows<any>(
+        `SELECT
+           round(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable','Other Current Asset','Fixed Asset','Other Asset')), 0) AS total_assets,
+           round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable','Other Current Liability','Long Term Liability'))), 0) AS total_liabilities,
+           round(abs(sumIf(toFloat64(net_balance), account_type = 'Equity')), 0) AS total_equity
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      const totalAssets  = this.num((bsRows[0] as any)?.total_assets ?? 0);
+      const totalLiab    = this.num((bsRows[0] as any)?.total_liabilities ?? 0);
+      const totalEquity  = this.num((bsRows[0] as any)?.total_equity ?? 0);
       return {
         data: [
           { name: 'Total Assets',      value: totalAssets },
@@ -5125,33 +5331,38 @@ export class AgentService {
     }
 
     // ── assets/breakdown — asset accounts from trial balance ─────────────────
+    // Mirrors Power BI DAX: Total Assets = SUM(net_balance) per account_type — NO ABS per row
+    // Fixed Assets net of depreciation: SUM(+85k+62k+38.5k-45.2k) = 140,300 (not 230,700)
     if (metric === 'assets' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
-        `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+        `SELECT account_type AS name, round(sum(toFloat64(net_balance)), 0) AS value
          FROM ${tbTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)})
-           AND account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset')
-           AND abs(toFloat64(net_balance)) > 0
-         ORDER BY value DESC LIMIT 50`,
+           AND account_type IN ('Bank','Accounts Receivable','Other Current Asset','Fixed Asset','Other Asset')
+         GROUP BY account_type
+         HAVING round(sum(toFloat64(net_balance)), 0) > 0
+         ORDER BY value DESC LIMIT 10`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value), type: String(r.account_type) })) };
+      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
     }
 
     // ── liabilities/breakdown — liability accounts from trial balance ─────────
+    // Mirrors Power BI DAX: Total Liabilities = ABS(SUM(net_balance)) per account_type
     if (metric === 'liabilities' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
-        `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
+        `SELECT account_type AS name, round(abs(sum(toFloat64(net_balance))), 0) AS value
          FROM ${tbTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)})
-           AND account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability')
-           AND abs(toFloat64(net_balance)) > 0
-         ORDER BY value DESC LIMIT 50`,
+           AND account_type IN ('Accounts Payable','Other Current Liability','Long Term Liability')
+         GROUP BY account_type
+         HAVING round(abs(sum(toFloat64(net_balance))), 0) > 0
+         ORDER BY value DESC LIMIT 10`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value), type: String(r.account_type) })) };
+      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
     }
 
     // ── equity/breakdown — equity accounts from trial balance ─────────────────
@@ -5880,13 +6091,15 @@ export class AgentService {
     if (metric === 'expense' && grouping === 'department') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       // Use sample_gl_dump for exact department data (Admin, Operations, Sales only — no Finance)
+      // Power BI "Spend by Department" = _measures.Total Debits = SUM(gl_dump[Debit])
+      // ALL debits, NO account_type filter → Admin=374,580 Operations=716,470 Sales=216,196
       const deptRows = await this.queryRows<any>(
         `SELECT
            department AS name,
            round(sum(toFloat64(debit)), 0) AS value
          FROM ${glTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)})
-           AND department != '' AND account_type IN ('Expense','Cost of Goods Sold')
+           AND department != '' AND toFloat64(debit) > 0
          GROUP BY department HAVING value > 0
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds },
@@ -5913,13 +6126,15 @@ export class AgentService {
     if (metric === 'expense' && grouping === 'class') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       // Use sample_gl_dump for exact class data (General, Marketing, Product)
+      // Power BI "Spend by Class" = _measures.Total Debits = SUM(gl_dump[Debit])
+      // ALL debits, NO account_type filter
       const classRows = await this.queryRows<any>(
         `SELECT
            class AS name,
            round(sum(toFloat64(debit)), 0) AS value
          FROM ${glTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)})
-           AND class != '' AND account_type IN ('Expense','Cost of Goods Sold')
+           AND class != '' AND toFloat64(debit) > 0
          GROUP BY class HAVING value > 0
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds },
@@ -5947,6 +6162,8 @@ export class AgentService {
     if (metric === 'expense' && grouping === 'vendor') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const limit = Math.max(5, Math.min(50, requestedTopN ?? 20));
+      // Power BI: Total Vendor Spend = SUM(gl_dump[Debit]) — ALL debits, NO account_type filter
+      // Includes Payroll ($280,596), COGS suppliers, and Expense vendors → total 1,307,246
       const glVendorRows = await this.queryRows<any>(
         `SELECT
            vendor_customer AS name,
@@ -5955,7 +6172,7 @@ export class AgentService {
            round(avg(toFloat64(debit)), 0) AS avg_amount
          FROM ${glTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)})
-           AND vendor_customer != '' AND account_type IN ('Expense','Cost of Goods Sold')
+           AND vendor_customer != '' AND toFloat64(debit) > 0
          GROUP BY vendor_customer HAVING value > 0
          ORDER BY value DESC LIMIT ${limit}`,
         { externalOrgIds: scope.externalOrgIds },
@@ -5999,11 +6216,23 @@ export class AgentService {
     }
 
     // ── revenue/account | revenue/category (bar, pie) ───────────────────────
-    // line_amount < 0 = credit = revenue in double-entry GL.
-    // Only include accounts that are clearly revenue/income — never liabilities (AP, payables, accruals).
+    // Mirrors Power BI DAX exactly: use sample_trial_balance credit column per account name
+    // Product Sales=980,400  Service Revenue=215,600  Consulting=87,300  Other Income=12,800
     if (metric === 'revenue' && (grouping === 'account' || grouping === 'category' || grouping === 'account_name')) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      // Use source_type = 'REV' to reliably identify revenue — avoids AP/Payroll contamination
+      // Primary: sample_trial_balance credit column — exact match to Power BI
+      const tbRevRows = await this.queryRows<any>(
+        `SELECT account_name AS name, round(toFloat64(credit), 0) AS value
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+           AND account_type = 'Income' AND toFloat64(credit) > 0
+         ORDER BY value DESC LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (tbRevRows.length > 0) {
+        return { data: tbRevRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      }
+      // Fallback: journal lines (for non-sample orgs)
       const revRows = await this.queryRows<any>(
         `SELECT
            account_name AS name,
@@ -6015,24 +6244,23 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      // Fallback: if no REV source_type rows, use account name matching (older data formats)
-      if (revRows.length === 0) {
-        const fallbackRows = await this.queryRows<any>(
-          `SELECT account_name AS name, round(abs(sum(line_amount)), 0) AS value
-           FROM ${jTbl}
-           WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
-             AND line_amount < 0 AND journal_date IS NOT NULL AND account_name != ''
-             AND (lowerUTF8(account_name) LIKE '%revenue%' OR lowerUTF8(account_name) LIKE '%income%'
-               OR lowerUTF8(account_name) LIKE '%product sales%' OR lowerUTF8(account_name) LIKE '%consulting%')
-             AND lowerUTF8(account_name) NOT LIKE '%payable%'
-             AND lowerUTF8(account_name) NOT LIKE '%accrued%'
-             AND lowerUTF8(account_name) NOT LIKE '%payroll%'
-           GROUP BY name HAVING value > 0 ORDER BY value DESC LIMIT 20`,
-          { externalOrgIds: scope.externalOrgIds, ...entityParam },
-        );
-        return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      if (revRows.length > 0) {
+        return { data: revRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
       }
-      return { data: revRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      const fallbackRows = await this.queryRows<any>(
+        `SELECT account_name AS name, round(abs(sum(line_amount)), 0) AS value
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
+           AND line_amount < 0 AND journal_date IS NOT NULL AND account_name != ''
+           AND (lowerUTF8(account_name) LIKE '%revenue%' OR lowerUTF8(account_name) LIKE '%income%'
+             OR lowerUTF8(account_name) LIKE '%product sales%' OR lowerUTF8(account_name) LIKE '%consulting%')
+           AND lowerUTF8(account_name) NOT LIKE '%payable%'
+           AND lowerUTF8(account_name) NOT LIKE '%accrued%'
+           AND lowerUTF8(account_name) NOT LIKE '%payroll%'
+         GROUP BY name HAVING value > 0 ORDER BY value DESC LIMIT 20`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      );
+      return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
     }
 
     // ── revenue/department (bar, pie) ─────────────────────────────────────────
@@ -6217,6 +6445,8 @@ export class AgentService {
       }
 
       const glTime = glTimeParts.length ? `\n           ${glTimeParts.join('\n           ')}` : '';
+      // Power BI "Monthly spend by Department" uses _measures.Total Debits = SUM(gl_dump[Debit])
+      // ALL debits, NO account_type filter (includes Inventory, Payroll, Expenses)
       const glRows = await this.queryRows<any>(
         `SELECT
            formatDateTime(toStartOfMonth(date), '%b %y') AS month,
@@ -6226,7 +6456,7 @@ export class AgentService {
          FROM ${glTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)})
            AND department != ''
-           AND account_type IN ('Expense','Cost of Goods Sold')
+           AND toFloat64(debit) > 0
            AND date IS NOT NULL
            ${glTime}
          GROUP BY month, month_start, dept
@@ -7118,6 +7348,53 @@ export class AgentService {
         activeDashboardTitle: activeDashboard?.title ?? null,
       });
 
+      const unsupported = this.detectUnsupportedOrAmbiguousAsk(queryText);
+      if (unsupported) {
+        await logEvent('NEEDS_INPUT', { reason: unsupported.reason });
+
+        const questionText = [
+          unsupported.question,
+          '',
+          ...unsupported.options.map((o, i) => `${i + 1}) ${o.label}`),
+        ].join('\n');
+
+        await this.prisma.agentChatMessage.create({
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'assistant',
+            content: questionText,
+          },
+        });
+
+        await this.prisma.agentDashboardRequest.update({
+          where: { id: request.id },
+          data: { status: 'NEEDS_INPUT', completedAt: new Date() },
+        });
+        await this.prisma.agentRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'NEEDS_INPUT',
+            completedAt: new Date(),
+            latencyMs: Date.now() - runStartedAt,
+          },
+        });
+
+        yield this.chunk(
+          'clarify',
+          unsupported as unknown as Record<string, unknown>,
+        );
+        yield this.chunk('done', {
+          metrics: {
+            sessionId: currentSession.id,
+            intent,
+            needsInput: true,
+            reason: unsupported.reason,
+          },
+        });
+        return;
+      }
+
       // ── PHASE 1: Planning ──────────────────────────────────────────────
       yield this.chunk('status', {
         message:
@@ -7156,7 +7433,11 @@ export class AgentService {
           !/\buse\s+entity\s*:/i.test(queryText)
         ) {
           const options = (
-            await this.listEntitiesForScope(scope.connectionIds, spec.providerHint)
+            await this.listEntitiesForScope(
+              scope.tenantId,
+              scope.connectionIds,
+              spec.providerHint,
+            )
           ).slice(0, 8);
 
           if (options.length >= 2) {
@@ -7291,6 +7572,7 @@ export class AgentService {
         // Enforce member scoping: non-admin users must pick exactly one entity.
         if (role !== 'ADMIN' && !spec.entityFilter) {
           const entities = await this.listEntitiesForScope(
+            scope.tenantId,
             scope.connectionIds,
             spec.providerHint,
           );
@@ -7476,7 +7758,11 @@ export class AgentService {
           const scopeForPick: OrgScope =
             spec.entityFilter?.orgId &&
             scope.externalOrgIds.includes(spec.entityFilter.orgId)
-              ? { connectionIds: scope.connectionIds, externalOrgIds: [spec.entityFilter.orgId] }
+              ? {
+                  tenantId: scope.tenantId,
+                  connectionIds: scope.connectionIds,
+                  externalOrgIds: [spec.entityFilter.orgId],
+                }
               : scope;
 
           if (scopeForPick.externalOrgIds.length > 0 && (!hasA || !hasB)) {
@@ -7485,12 +7771,15 @@ export class AgentService {
                  coalesce(nullIf(client_name, ''), '') AS client_name,
                  sum(total_invoiced) AS total_invoiced
                FROM ${this.analyticsDb}.v_dim_clients_latest
-               WHERE org_id IN ({externalOrgIds:Array(String)})
+               WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
                  AND client_name != ''
                GROUP BY client_name
                ORDER BY total_invoiced DESC
                LIMIT 25`,
-              { externalOrgIds: scopeForPick.externalOrgIds },
+              {
+                tenantId: scopeForPick.tenantId,
+                externalOrgIds: scopeForPick.externalOrgIds,
+              },
             );
             const clients = rows
               .map((r) => String(r.client_name ?? '').trim())
@@ -7650,7 +7939,11 @@ export class AgentService {
         const scopeForClient: OrgScope =
           spec.entityFilter?.orgId &&
           scope.externalOrgIds.includes(spec.entityFilter.orgId)
-            ? { connectionIds: scope.connectionIds, externalOrgIds: [spec.entityFilter.orgId] }
+            ? {
+                tenantId: scope.tenantId,
+                connectionIds: scope.connectionIds,
+                externalOrgIds: [spec.entityFilter.orgId],
+              }
             : scope;
 
         const clientResolution = shouldResolveSingleClient
@@ -9343,6 +9636,7 @@ export class AgentService {
         resolvedScope.externalOrgIds.length > 0
           ? resolvedScope.externalOrgIds
           : ['__none__'];
+      const tenantId = resolvedScope.tenantId;
       const time = this.timeWhereOn('issued_at', range);
       const client = clientFilter
         ? `AND lowerUTF8(contact_name) = {clientName:String}`
@@ -9369,42 +9663,44 @@ export class AgentService {
              round(coalesce(sumIf(total_amount,
                lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
                AND due_at IS NOT NULL AND due_at < now()), 0), 0)                  AS total_overdue
-	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             ${client}
-	             ${entity}
-	             AND issued_at IS NOT NULL
-	             ${time}`,
-	          {
-	            externalOrgIds: orgIds,
-	            ...clientParam,
-	            ...entityParam,
-	          },
+		           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             ${client}
+		             ${entity}
+		             AND issued_at IS NOT NULL
+		             ${time}`,
+		          {
+		            tenantId,
+		            externalOrgIds: orgIds,
+		            ...clientParam,
+		            ...entityParam,
+		          },
+		        ),
+	        this.queryRows<any>(
+	          `SELECT client_name, round(total_invoiced, 0) AS billed, round(total_overdue, 0) AS overdue
+	           FROM ${this.analyticsDb}.v_dim_clients_latest
+	           WHERE tenant_id = {tenantId:String} AND org_id IN ({orgIds:Array(String)}) AND client_name != ''
+	           ${clientDim}
+	           ${entityFilter ? `AND org_id = {orgId:String}` : ''}
+	           ORDER BY total_invoiced DESC
+	           LIMIT ${clientFilter ? 1 : 5}`,
+	          { tenantId, orgIds, ...clientParam, ...entityParam },
 	        ),
-        this.queryRows<any>(
-          `SELECT client_name, round(total_invoiced, 0) AS billed, round(total_overdue, 0) AS overdue
-           FROM ${this.analyticsDb}.v_dim_clients_latest
-           WHERE org_id IN ({orgIds:Array(String)}) AND client_name != ''
-           ${clientDim}
-           ${entityFilter ? `AND org_id = {orgId:String}` : ''}
-           ORDER BY total_invoiced DESC
-           LIMIT ${clientFilter ? 1 : 5}`,
-          { orgIds, ...clientParam, ...entityParam },
-        ),
-        this.queryRows<any>(
-          `SELECT coalesce(org_name, org_id) AS org_name, count() AS invoice_count
-	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             ${client}
-	             ${entity}
-	             ${time}
-	           GROUP BY org_name ORDER BY invoice_count DESC LIMIT 5`,
-	          {
-	            externalOrgIds: orgIds,
-	            ...clientParam,
-	            ...entityParam,
-	          },
-	        ),
+	        this.queryRows<any>(
+	          `SELECT coalesce(org_name, org_id) AS org_name, count() AS invoice_count
+		           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             ${client}
+		             ${entity}
+		             ${time}
+		           GROUP BY org_name ORDER BY invoice_count DESC LIMIT 5`,
+		          {
+		            tenantId,
+		            externalOrgIds: orgIds,
+		            ...clientParam,
+		            ...entityParam,
+		          },
+		        ),
         // Journal lines context — expenses, P&L signals
         this.queryRows<any>(
           `SELECT
@@ -9417,7 +9713,7 @@ export class AgentService {
              count(DISTINCT account_name) AS expense_account_count,
              count(DISTINCT journal_id)   AS journal_count
            FROM ${this.analyticsDb}.v_fact_accounting_journal_lines_enriched_latest
-           WHERE org_id IN ({orgIds:Array(String)})
+           WHERE tenant_id = {tenantId:String} AND org_id IN ({orgIds:Array(String)})
              ${entityFilter ? `AND org_id = {orgId:String}` : ''}
              AND line_amount > 0
              AND journal_date IS NOT NULL
@@ -9429,7 +9725,7 @@ export class AgentService {
                OR lowerUTF8(account_name) LIKE '%gst%'     OR lowerUTF8(account_name) LIKE '%vat%'
                OR lowerUTF8(account_name) LIKE '%rounding%'
              )`,
-          { orgIds, ...entityParam },
+          { tenantId, orgIds, ...entityParam },
         ).catch(() => [] as any[]),
       ]);
 
@@ -9493,8 +9789,11 @@ export class AgentService {
   private async introspectLiveSchema(scope: OrgScope): Promise<string> {
     if (scope.externalOrgIds.length === 0) return '';
     const db = this.analyticsDb;
-    const params = { externalOrgIds: scope.externalOrgIds };
-    const orgWhere = `org_id IN ({externalOrgIds:Array(String)})`;
+    const params = {
+      tenantId: scope.tenantId,
+      externalOrgIds: scope.externalOrgIds,
+    };
+    const orgWhere = `tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})`;
 
     try {
       const [
@@ -9571,8 +9870,8 @@ export class AgentService {
              round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS revenue,
              round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS cogs,
              round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0) AS opex,
-             round(abs(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable (AR)','Other Current Asset','Fixed Asset','Other Asset'))), 0) AS total_assets,
-             round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable (AP)','Other Current Liability','Long Term Liability'))), 0) AS total_liabilities,
+             round(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable','Other Current Asset','Fixed Asset','Other Asset')), 0) AS total_assets,
+             round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable','Other Current Liability','Long Term Liability'))), 0) AS total_liabilities,
              round(abs(sumIf(toFloat64(net_balance), account_type = 'Equity')), 0) AS total_equity
            FROM ${db}.sample_trial_balance
            WHERE ${orgWhere}`,
@@ -9587,9 +9886,10 @@ export class AgentService {
         ),
         // ── sample_gl_dump (exact department / class / vendor data) ─────────────
         this.queryRows<any>(
+          // Power BI Dept filter: account_type = 'Expense' ONLY (not COGS)
           `SELECT department, round(sum(toFloat64(debit)), 0) AS spend
            FROM ${db}.sample_gl_dump
-           WHERE ${orgWhere} AND department != ''
+           WHERE ${orgWhere} AND department != '' AND account_type = 'Expense'
            GROUP BY department ORDER BY spend DESC LIMIT 10`,
           params,
         ),
@@ -9601,9 +9901,10 @@ export class AgentService {
           params,
         ),
         this.queryRows<any>(
+          // Power BI Total Vendor Spend = SUM(debit) ALL types — no account_type filter
           `SELECT vendor_customer AS vname, round(sum(toFloat64(debit)), 0) AS spend
            FROM ${db}.sample_gl_dump
-           WHERE ${orgWhere} AND vendor_customer != '' AND account_type IN ('Expense','Cost of Goods Sold')
+           WHERE ${orgWhere} AND vendor_customer != '' AND toFloat64(debit) > 0
            GROUP BY vendor_customer ORDER BY spend DESC LIMIT 15`,
           params,
         ),
@@ -9790,14 +10091,6 @@ export class AgentService {
         const c = parsed.charts[i];
         if (!c?.sql || !c?.type || !c?.title) continue;
 
-        let sql: string | null = null;
-        try {
-          sql = this.validateAndScopeDynamicSql(String(c.sql).trim().replace(/;+$/, ''), scope);
-        } catch (e: any) {
-          this.logger.warn(`[SmartPlan] Widget ${i} SQL invalid: ${e.message}`);
-          continue;
-        }
-
         const chartType = (() => {
           const valid: ChartType[] = [
             'line','bar','pie','donut','metric','kpi','table','area','treemap',
@@ -9806,6 +10099,18 @@ export class AgentService {
           ];
           return valid.includes(c.type as ChartType) ? (c.type as ChartType) : 'bar';
         })();
+
+        let sql: string | null = null;
+        try {
+          sql = this.validateAndScopeDynamicSql(
+            String(c.sql).trim().replace(/;+$/, ''),
+            scope,
+            { chartType },
+          );
+        } catch (e: any) {
+          this.logger.warn(`[SmartPlan] Widget ${i} SQL invalid: ${e.message}`);
+          continue;
+        }
 
         widgets.push({
           title: String(c.title ?? '').slice(0, 80),
@@ -10044,6 +10349,7 @@ export class AgentService {
   }
 
   private async listEntitiesForScope(
+    tenantId: string,
     connectionIds: string[],
     providerHint?: 'xero' | 'quickbooks',
   ): Promise<Array<{ orgId: string; orgName: string; provider: string }>> {
@@ -10092,11 +10398,11 @@ export class AgentService {
              any(coalesce(nullIf(org_name, ''), org_id)) AS org_name,
              sum(abs(toFloat64(total_amount))) AS total_amount
            FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-           WHERE org_id IN ({orgIds:Array(String)})
+           WHERE tenant_id = {tenantId:String} AND org_id IN ({orgIds:Array(String)})
            GROUP BY org_id
            ORDER BY total_amount DESC
            LIMIT 500`,
-          { orgIds: opaqueOrgIds },
+          { tenantId, orgIds: opaqueOrgIds },
         );
         const map = new Map<string, string>();
         for (const r of rows) {
@@ -10171,12 +10477,12 @@ export class AgentService {
          coalesce(nullIf(client_name, ''), '') AS client_name,
          sum(total_invoiced) AS total_invoiced
        FROM ${this.analyticsDb}.v_dim_clients_latest
-       WHERE org_id IN ({externalOrgIds:Array(String)})
+       WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
          AND client_name != ''
        GROUP BY client_name
        ORDER BY total_invoiced DESC
        LIMIT 500`,
-      { externalOrgIds: scope.externalOrgIds },
+      { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
     );
 
     const scored = candidates
@@ -10222,6 +10528,7 @@ export class AgentService {
     // Prefer Prisma connections list (stable even if invoices are empty / not yet synced),
     // but enrich opaque ids with org_name from live invoice data when possible.
     const connCandidates = await this.listEntitiesForScope(
+      scope.tenantId,
       scope.connectionIds,
       providerHint,
     );
@@ -11845,7 +12152,12 @@ export class AgentService {
       return {
         message: 'No active ERP connections — sync integrations first.',
       };
-    const time = this.timeWhereOn('issued_at', spec.timeRange);
+    const asOfIso = await this.resolveAsOfIso(scope);
+    const asOfExpr =
+      asOfIso && this.isStaleAsOf(asOfIso)
+        ? `toDateTime('${asOfIso} 23:59:59')`
+        : 'now()';
+    const time = this.timeWhereOn('issued_at', spec.timeRange, asOfExpr);
     const provider = spec.providerHint
       ? `AND lowerUTF8(provider) = {provider:String}`
       : '';
@@ -11864,24 +12176,25 @@ export class AgentService {
              formatDateTime(toStartOfMonth(issued_at), '%Y-%m') AS month,
              coalesce(sum(total_amount), 0) AS revenue,
              count() AS invoice_count
-	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             ${provider}
-	             ${client}
-	             ${entity}
-	             ${time}
-	             ${arFilter}
-	             AND issued_at IS NOT NULL
-	           GROUP BY month ORDER BY month ASC LIMIT 18`,
-          {
-            externalOrgIds: scope.externalOrgIds,
-            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-            ...(spec.clientFilter
-              ? { clientName: spec.clientFilter.nameLower }
-              : {}),
-            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-          },
-        );
+		           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             ${provider}
+		             ${client}
+		             ${entity}
+		             ${time}
+		             ${arFilter}
+		             AND issued_at IS NOT NULL
+		           GROUP BY month ORDER BY month ASC LIMIT 18`,
+	          {
+	            tenantId: scope.tenantId,
+	            externalOrgIds: scope.externalOrgIds,
+	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+	            ...(spec.clientFilter
+	              ? { clientName: spec.clientFilter.nameLower }
+	              : {}),
+	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	          },
+	        );
       }
 
       case 'entity_comparison': {
@@ -11892,27 +12205,28 @@ export class AgentService {
              coalesce(sum(total_amount), 0) AS total_revenue,
              count() AS invoice_count,
              any(currency) AS currency,
-             countIf(
-               due_at IS NOT NULL AND due_at < now() AND lowerUTF8(status) IN ('authorised','sent','needtosend','notset','active','open')
-             ) AS overdue_count
-	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             ${provider}
-	             ${client}
-	             ${entity}
-	             ${time}
-	             ${arFilter}
-	             AND issued_at IS NOT NULL
-	           GROUP BY org_name, org_id, provider ORDER BY total_revenue DESC`,
-          {
-            externalOrgIds: scope.externalOrgIds,
-            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-            ...(spec.clientFilter
-              ? { clientName: spec.clientFilter.nameLower }
-              : {}),
-            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-          },
-        );
+	             countIf(
+	               due_at IS NOT NULL AND due_at < ${asOfExpr} AND lowerUTF8(status) IN ('authorised','sent','needtosend','notset','active','open')
+	             ) AS overdue_count
+		           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             ${provider}
+		             ${client}
+		             ${entity}
+		             ${time}
+		             ${arFilter}
+		             AND issued_at IS NOT NULL
+		           GROUP BY org_name, org_id, provider ORDER BY total_revenue DESC`,
+	          {
+	            tenantId: scope.tenantId,
+	            externalOrgIds: scope.externalOrgIds,
+	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+	            ...(spec.clientFilter
+	              ? { clientName: spec.clientFilter.nameLower }
+	              : {}),
+	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	          },
+	        );
       }
 
       case 'invoice_breakdown': {
@@ -11923,24 +12237,25 @@ export class AgentService {
              coalesce(sum(total_amount), 0) AS status_total,
              coalesce(avg(total_amount), 0) AS avg_amount,
              coalesce(max(total_amount), 0) AS max_amount
-	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             ${provider}
-	             ${client}
-	             ${entity}
-	             ${time}
-	             ${arFilter}
-	             AND issued_at IS NOT NULL
-	           GROUP BY status ORDER BY status_total DESC LIMIT 15`,
-          {
-            externalOrgIds: scope.externalOrgIds,
-            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-            ...(spec.clientFilter
-              ? { clientName: spec.clientFilter.nameLower }
-              : {}),
-            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-          },
-        );
+		           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             ${provider}
+		             ${client}
+		             ${entity}
+		             ${time}
+		             ${arFilter}
+		             AND issued_at IS NOT NULL
+		           GROUP BY status ORDER BY status_total DESC LIMIT 15`,
+	          {
+	            tenantId: scope.tenantId,
+	            externalOrgIds: scope.externalOrgIds,
+	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+	            ...(spec.clientFilter
+	              ? { clientName: spec.clientFilter.nameLower }
+	              : {}),
+	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	          },
+	        );
       }
 
       case 'venture_metrics': {
@@ -11950,21 +12265,22 @@ export class AgentService {
              coalesce(sumIf(total_amount, lowerUTF8(status) NOT IN ('paid','closed')), 0) AS open_ar,
              coalesce(sumIf(abs(total_amount), total_amount < 0), 0) AS total_outflow,
              count(DISTINCT toStartOfMonth(issued_at)) AS active_months
-	           FROM ${this.analyticsDb}.fact_accounting_invoices
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             ${provider}
-	             ${client}
-	             ${entity}
-	             ${time}`,
-          {
-            externalOrgIds: scope.externalOrgIds,
-            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-            ...(spec.clientFilter
-              ? { clientName: spec.clientFilter.nameLower }
-              : {}),
-            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-          },
-        );
+		           FROM ${this.analyticsDb}.fact_accounting_invoices
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             ${provider}
+		             ${client}
+		             ${entity}
+		             ${time}`,
+	          {
+	            tenantId: scope.tenantId,
+	            externalOrgIds: scope.externalOrgIds,
+	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+	            ...(spec.clientFilter
+	              ? { clientName: spec.clientFilter.nameLower }
+	              : {}),
+	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	          },
+	        );
         const r = rows[0] ?? {};
         const revenue = this.num(r.total_revenue);
         const outflow = this.num(r.total_outflow);
@@ -11986,9 +12302,9 @@ export class AgentService {
         };
       }
 
-      case 'financial_summary': {
-        const rows = await this.queryRows<any>(
-          `WITH invoices AS (
+	      case 'financial_summary': {
+	        const rows = await this.queryRows<any>(
+	          `WITH invoices AS (
              SELECT
                invoice_external_id,
                toDecimal64(total_amount, 4) AS total_amount,
@@ -11996,12 +12312,12 @@ export class AgentService {
                due_at,
                provider,
                org_id
-             FROM ${this.analyticsDb}.fact_accounting_invoices
-             WHERE org_id IN ({externalOrgIds:Array(String)})
-               ${provider}
-               ${client}
-               ${entity}
-               ${time}
+	             FROM ${this.analyticsDb}.fact_accounting_invoices
+	             WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+	               ${provider}
+	               ${client}
+	               ${entity}
+	               ${time}
                ${arFilter}
                AND issued_at IS NOT NULL
                AND invoice_external_id != ''
@@ -12010,12 +12326,12 @@ export class AgentService {
              SELECT
                invoice_external_id,
                sum(amount) AS paid_to_date
-             FROM ${this.analyticsDb}.fact_accounting_payment_applications
-             WHERE org_id IN ({externalOrgIds:Array(String)})
-               AND payment_at IS NOT NULL
-               AND payment_at <= now()
-               AND invoice_external_id != ''
-             GROUP BY invoice_external_id
+	             FROM ${this.analyticsDb}.fact_accounting_payment_applications
+	             WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+	               AND payment_at IS NOT NULL
+	               AND payment_at <= ${asOfExpr}
+	               AND invoice_external_id != ''
+	             GROUP BY invoice_external_id
            ),
            per_invoice AS (
              SELECT
@@ -12035,15 +12351,16 @@ export class AgentService {
              count(DISTINCT provider) AS provider_count,
              count(DISTINCT org_id) AS entity_count
            FROM per_invoice`,
-          {
-            externalOrgIds: scope.externalOrgIds,
-            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-            ...(spec.clientFilter
-              ? { clientName: spec.clientFilter.nameLower }
-              : {}),
-            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-          },
-        );
+	          {
+	            tenantId: scope.tenantId,
+	            externalOrgIds: scope.externalOrgIds,
+	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+	            ...(spec.clientFilter
+	              ? { clientName: spec.clientFilter.nameLower }
+	              : {}),
+	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	          },
+	        );
         return rows[0] ?? {};
       }
 
@@ -12057,24 +12374,25 @@ export class AgentService {
                count() AS invoice_count,
                countIf(lowerUTF8(status) = 'overdue') AS overdue_count,
                any(currency) AS currency
-	             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
-	             WHERE org_id IN ({externalOrgIds:Array(String)})
-	               ${provider}
-	               ${client}
-	               ${entity}
-	               ${time}
-	               ${arFilter}
-	             GROUP BY client_name
-	             ORDER BY revenue DESC LIMIT 20`,
-            {
-              externalOrgIds: scope.externalOrgIds,
-              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-              ...(spec.clientFilter
-                ? { clientName: spec.clientFilter.nameLower }
-                : {}),
-              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-            },
-          );
+		             FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
+		             WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		               ${provider}
+		               ${client}
+		               ${entity}
+		               ${time}
+		               ${arFilter}
+		             GROUP BY client_name
+		             ORDER BY revenue DESC LIMIT 20`,
+	            {
+	              tenantId: scope.tenantId,
+	              externalOrgIds: scope.externalOrgIds,
+	              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+	              ...(spec.clientFilter
+	                ? { clientName: spec.clientFilter.nameLower }
+	                : {}),
+	              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	            },
+	          );
         }
         return this.queryRows<any>(
           `SELECT
@@ -12084,20 +12402,21 @@ export class AgentService {
              invoice_count,
              overdue_count,
              currency
-	           FROM ${this.analyticsDb}.v_dim_clients_latest
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             AND client_name != ''
-	             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
-	             ${spec.clientFilter ? `AND lowerUTF8(client_name) = {clientName:String}` : ''}
-	           ORDER BY total_revenue DESC LIMIT 20`,
-          {
-            externalOrgIds: scope.externalOrgIds,
-            ...(spec.clientFilter
-              ? { clientName: spec.clientFilter.nameLower }
-              : {}),
-            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-          },
-        );
+		           FROM ${this.analyticsDb}.v_dim_clients_latest
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             AND client_name != ''
+		             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
+		             ${spec.clientFilter ? `AND lowerUTF8(client_name) = {clientName:String}` : ''}
+		           ORDER BY total_revenue DESC LIMIT 20`,
+	          {
+	            tenantId: scope.tenantId,
+	            externalOrgIds: scope.externalOrgIds,
+	            ...(spec.clientFilter
+	              ? { clientName: spec.clientFilter.nameLower }
+	              : {}),
+	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	          },
+	        );
       }
 
       case 'client_financial_profile': {
@@ -12113,18 +12432,18 @@ export class AgentService {
                any(currency) AS currency,
                coalesce(sum(abs(total_amount)), 0) AS total_invoiced,
                coalesce(sumIf(total_amount, lowerUTF8(status) IN ('paid','voided','closed','active','open')), 0) AS total_revenue,
-               coalesce(sumIf(total_amount,
-                 lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
-                 AND (due_at IS NULL OR due_at >= now())), 0) AS total_outstanding,
-               coalesce(sumIf(total_amount,
-                 lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
-                 AND due_at IS NOT NULL AND due_at < now()), 0) AS total_overdue,
+	               coalesce(sumIf(total_amount,
+	                 lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
+	                 AND (due_at IS NULL OR due_at >= ${asOfExpr})), 0) AS total_outstanding,
+	               coalesce(sumIf(total_amount,
+	                 lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
+	                 AND due_at IS NOT NULL AND due_at < ${asOfExpr}), 0) AS total_overdue,
                count() AS invoice_count,
                countIf(lowerUTF8(status) IN ('paid','voided','closed','active','open')) AS paid_count,
-               countIf(lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
-                 AND (due_at IS NULL OR due_at >= now())) AS outstanding_count,
-               countIf(lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
-                 AND due_at IS NOT NULL AND due_at < now()) AS overdue_count,
+	               countIf(lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
+	                 AND (due_at IS NULL OR due_at >= ${asOfExpr})) AS outstanding_count,
+	               countIf(lowerUTF8(status) IN ('authorised','sent','needtosend','notset')
+	                 AND due_at IS NOT NULL AND due_at < ${asOfExpr}) AS overdue_count,
                countIf(lowerUTF8(status) = 'draft') AS draft_count,
                round(avg(abs(total_amount)), 2) AS avg_invoice_amount,
                formatDateTime(min(issued_at), '%Y-%m-%d') AS first_invoice_date,
@@ -12143,15 +12462,16 @@ export class AgentService {
              GROUP BY client_name, org_name, org_id
              HAVING client_name != ''
              ORDER BY total_revenue DESC LIMIT 50`,
-            {
-              externalOrgIds: scope.externalOrgIds,
-              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-              ...(spec.clientFilter
-                ? { clientName: spec.clientFilter.nameLower }
-                : {}),
-              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-            },
-          );
+	            {
+	              tenantId: scope.tenantId,
+	              externalOrgIds: scope.externalOrgIds,
+	              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+	              ...(spec.clientFilter
+	                ? { clientName: spec.clientFilter.nameLower }
+	                : {}),
+	              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	            },
+	          );
         }
         return this.queryRows<any>(
           `SELECT
@@ -12180,20 +12500,21 @@ export class AgentService {
                round(total_revenue / total_invoiced * 100, 1), 0)     AS collection_rate_pct,
              if(total_invoiced > 0,
                round(total_overdue / total_invoiced * 100, 1), 0)     AS overdue_rate_pct
-	           FROM ${this.analyticsDb}.v_dim_clients_latest
-	           WHERE org_id IN ({externalOrgIds:Array(String)})
-	             AND client_name != ''
-	             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
-	             ${spec.clientFilter ? `AND lowerUTF8(client_name) = {clientName:String}` : ''}
-	           ORDER BY total_invoiced DESC LIMIT 50`,
-          {
-            externalOrgIds: scope.externalOrgIds,
-            ...(spec.clientFilter
-              ? { clientName: spec.clientFilter.nameLower }
-              : {}),
-            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-          },
-        );
+		           FROM ${this.analyticsDb}.v_dim_clients_latest
+		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+		             AND client_name != ''
+		             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
+		             ${spec.clientFilter ? `AND lowerUTF8(client_name) = {clientName:String}` : ''}
+		           ORDER BY total_invoiced DESC LIMIT 50`,
+	          {
+	            tenantId: scope.tenantId,
+	            externalOrgIds: scope.externalOrgIds,
+	            ...(spec.clientFilter
+	              ? { clientName: spec.clientFilter.nameLower }
+	              : {}),
+	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+	          },
+	        );
       }
 
       default:
@@ -12259,6 +12580,7 @@ Write your 2-3 sentence summary now.`;
       .filter((v): v is string => Boolean(v));
     const allConnectionIds = conns.map((c) => c.id);
     const all: OrgScope = {
+      tenantId: organizationId,
       connectionIds: allConnectionIds,
       externalOrgIds: allExternal,
     };
@@ -12268,7 +12590,11 @@ Write your 2-3 sentence summary now.`;
       const filteredConnectionIds = conns
         .filter((c) => c.externalOrganizationId === orgId)
         .map((c) => c.id);
-      return { connectionIds: filteredConnectionIds, externalOrgIds: [orgId] };
+      return {
+        tenantId: organizationId,
+        connectionIds: filteredConnectionIds,
+        externalOrgIds: [orgId],
+      };
     }
 
     // Admins can mix entities; members must be entity-scoped (single org_id at a time).
@@ -12280,7 +12606,11 @@ Write your 2-3 sentence summary now.`;
     const filteredConnectionIds = conns
       .filter((c) => c.externalOrganizationId === target)
       .map((c) => c.id);
-    return { connectionIds: filteredConnectionIds, externalOrgIds: [target] };
+    return {
+      tenantId: organizationId,
+      connectionIds: filteredConnectionIds,
+      externalOrgIds: [target],
+    };
   }
 
   private async queryRows<T>(
@@ -12367,7 +12697,8 @@ Write your 2-3 sentence summary now.`;
     const userPrompt = `Chart title: "${title}"
 Financial question: ${intent}
 ${timeHint}
-Org IDs in scope: ${scope.externalOrgIds.slice(0, 3).join(', ')} (always use org_id IN ({externalOrgIds:Array(String)}) filter)
+Tenant in scope: ${scope.tenantId} (always filter tenant_id = {tenantId:String})
+Org IDs in scope: ${scope.externalOrgIds.slice(0, 3).join(', ')} (always filter org_id IN ({externalOrgIds:Array(String)}))
 
 Write ONE ClickHouse SELECT query that answers this question. Output SQL only.`;
 
@@ -12407,7 +12738,8 @@ Write ONE ClickHouse SELECT query that answers this question. Output SQL only.`;
 
     const userPrompt = `Metric: "${metric}", Grouping: "${grouping}"
 ${timeHint}
-Org IDs in scope: ${scope.externalOrgIds.slice(0, 3).join(', ')} (always filter with org_id IN ({externalOrgIds:Array(String)}))
+Tenant in scope: ${scope.tenantId} (always filter tenant_id = {tenantId:String})
+Org IDs in scope: ${scope.externalOrgIds.slice(0, 3).join(', ')} (always filter org_id IN ({externalOrgIds:Array(String)}))
 
 Write ONE ClickHouse SELECT query that answers this financial metric question.
 Return columns named "name" (dimension label string) and "value" (numeric metric).
@@ -12439,6 +12771,7 @@ Output SQL ONLY — no explanation, no markdown.`;
       if (/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)\b/i.test(raw)) return null;
       if (!/\bLIMIT\s+\d+/i.test(raw)) return null;
       if (!/{externalOrgIds\s*:\s*Array\s*\(\s*String\s*\)}/i.test(raw)) return null;
+      if (!/{tenantId\s*:\s*String}/i.test(raw)) return null;
 
       return raw.trim().replace(/;+$/, '').trim();
     } catch (err: any) {
@@ -12688,68 +13021,63 @@ Output SQL ONLY — no explanation, no markdown.`;
     return fixed;
   }
 
-  private validateAndScopeDynamicSql(sql: string, scope: OrgScope): string {
-    let normalized = sql.trim().replace(/;+$/, '').trim();
-
-    // Must be a SELECT
-    if (!/^\s*SELECT\b/i.test(normalized)) {
-      throw new Error('Dynamic SQL must start with SELECT');
-    }
-
-    // Block mutation statements
-    if (/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE)\b/i.test(normalized)) {
-      throw new Error('Dynamic SQL must not contain mutation statements');
-    }
-
-    // Block system table access
-    if (/\bsystem\s*\.\s*\w+/i.test(normalized) || /\binformation_schema\b/i.test(normalized)) {
-      throw new Error('Dynamic SQL must not access system tables');
-    }
-
-    // Must have LIMIT
-    if (!/\bLIMIT\s+\d+/i.test(normalized)) {
-      throw new Error('Dynamic SQL must include LIMIT clause');
-    }
-
-    // Must reference the org scope filter so no cross-tenant data leaks.
-    if (!/{externalOrgIds\s*:\s*Array\s*\(\s*String\s*\)}/i.test(normalized)) {
-      throw new Error('Dynamic SQL missing externalOrgIds scope filter');
-    }
-
-    // Auto-repair common ClickHouse incompatibilities
-    normalized = this.repairClickHouseSql(normalized);
-
-    return normalized;
+  private validateAndScopeDynamicSql(
+    sql: string,
+    scope: OrgScope,
+    opts?: { chartType?: ChartType },
+  ): string {
+    const normalized = validateDynamicSql(sql, {
+      analyticsDb: this.analyticsDb,
+      chartType: opts?.chartType ?? null,
+    });
+    // Auto-repair common ClickHouse incompatibilities (alias-shadowing, ORDER BY fixes, etc)
+    return this.repairClickHouseSql(normalized);
   }
 
-  private async executeDynamicSql(sql: string, scope: OrgScope): Promise<Record<string, unknown>[]> {
+  private async executeDynamicSql(
+    sql: string,
+    scope: OrgScope,
+    opts?: { chartType?: ChartType },
+  ): Promise<Record<string, unknown>[]> {
     try {
-      let raw = String(sql ?? '').trim();
-      if (!raw) return [];
-      const lower = raw.toLowerCase();
-      // Safety: dynamic SQL MUST be read-only and MUST be tenant-scoped.
-      if (/\b(insert|update|delete|drop|alter|create|truncate|optimize|attach|detach)\b/i.test(lower)) {
-        this.logger.warn('[Agent:Dynamic] Rejected non-readonly SQL.');
-        return [];
+      const normalized = this.validateAndScopeDynamicSql(sql, scope, opts);
+
+      const tryQuery = async (q: string, asOfIso: string | null) => {
+        const params: Record<string, unknown> = {
+          tenantId: scope.tenantId,
+          externalOrgIds: scope.externalOrgIds,
+        };
+        if (asOfIso) params.asOf = `${asOfIso} 23:59:59`;
+        return this.queryRows<Record<string, unknown>>(q, params);
+      };
+
+      const usesNow = sqlUsesNowOrToday(normalized);
+      const asOfIso = usesNow ? await this.resolveAsOfIso(scope) : null;
+      const shouldAnchor = asOfIso ? this.isStaleAsOf(asOfIso) : false;
+
+      // Primary attempt
+      if (usesNow && shouldAnchor && asOfIso) {
+        const rewritten = rewriteRelativeNowToAsOf(normalized);
+        const anchored = this.validateAndScopeDynamicSql(rewritten, scope, opts);
+        const rows = await tryQuery(anchored, asOfIso);
+        if (rows.length > 0) return rows;
+        // If anchored returns empty, fall through to original (may be intended "now").
       }
-      // Enforce org scoping by requiring the externalOrgIds query param placeholder.
-      // We generate prompts that use: org_id IN ({externalOrgIds:Array(String)}).
-      if (!/\{externalorgids\s*:\s*array\s*\(\s*string\s*\)\s*\}/i.test(raw)) {
-        this.logger.warn('[Agent:Dynamic] Rejected SQL missing externalOrgIds scope.');
-        return [];
+
+      const primary = await tryQuery(normalized, null);
+      if (primary.length > 0) return primary;
+
+      // Retry: if time-relative SQL returned empty, try anchoring to dataset max date.
+      if (usesNow && asOfIso) {
+        const rewritten = rewriteRelativeNowToAsOf(normalized);
+        const anchored = this.validateAndScopeDynamicSql(rewritten, scope, opts);
+        const rows = await tryQuery(anchored, asOfIso);
+        return rows;
       }
-      // Auto-repair stored SQL that may have ClickHouse incompatibilities
-      try {
-        raw = this.repairClickHouseSql(raw);
-      } catch (repairErr: any) {
-        this.logger.warn(`[Agent:Dynamic] SQL rejected by repair: ${repairErr.message}`);
-        return [];
-      }
-      return await this.queryRows<Record<string, unknown>>(raw, {
-        externalOrgIds: scope.externalOrgIds,
-      });
+
+      return [];
     } catch (err: any) {
-      this.logger.warn(`[Agent:Dynamic] SQL execution failed: ${err.message}`);
+      this.logger.warn(`[Agent:Dynamic] SQL execution failed: ${err?.message ?? err}`);
       return [];
     }
   }
@@ -12783,15 +13111,19 @@ Output SQL ONLY — no explanation, no markdown.`;
     return this.queryRows<T>(buildSql(''), params);
   }
 
-  private timeWhereOn(column: string, range?: TimeRange): string {
+  private timeWhereOn(
+    column: string,
+    range?: TimeRange,
+    asOfExpr: string = 'now()',
+  ): string {
     if (!range || range.kind === 'ALL_TIME') return '';
 
     const col = column;
     const isIsoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-    if (range.kind === 'MTD') return `AND ${col} >= toStartOfMonth(now())`;
-    if (range.kind === 'QTD') return `AND ${col} >= toStartOfQuarter(now())`;
-    if (range.kind === 'YTD') return `AND ${col} >= toStartOfYear(now())`;
+    if (range.kind === 'MTD') return `AND ${col} >= toStartOfMonth(${asOfExpr})`;
+    if (range.kind === 'QTD') return `AND ${col} >= toStartOfQuarter(${asOfExpr})`;
+    if (range.kind === 'YTD') return `AND ${col} >= toStartOfYear(${asOfExpr})`;
 
     if (range.kind === 'SINCE_DATE' && isIsoDate(range.start)) {
       return `AND ${col} >= toDateTime('${range.start} 00:00:00')`;
@@ -12807,19 +13139,19 @@ Output SQL ONLY — no explanation, no markdown.`;
     }
 
     if (range.kind === 'LAST_N_DAYS')
-      return `AND ${col} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days))} DAY)`;
+      return `AND ${col} >= (${asOfExpr} - INTERVAL ${Math.max(1, Math.floor(range.days))} DAY)`;
     if (range.kind === 'LAST_N_WEEKS')
-      return `AND ${col} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks))} WEEK)`;
+      return `AND ${col} >= (${asOfExpr} - INTERVAL ${Math.max(1, Math.floor(range.weeks))} WEEK)`;
     if (range.kind === 'LAST_N_MONTHS') {
       const months = Math.max(1, Math.floor(range.months));
       // Use calendar-month boundaries so "last 6 months" yields 6 month buckets
       // (including the current month) when charting by month.
-      return `AND ${col} >= toStartOfMonth(addMonths(now(), -${months - 1}))`;
+      return `AND ${col} >= toStartOfMonth(addMonths(${asOfExpr}, -${months - 1}))`;
     }
     if (range.kind === 'LAST_N_QUARTERS')
-      return `AND ${col} >= toStartOfQuarter(addMonths(now(), -${(Math.max(1, Math.floor(range.quarters)) - 1) * 3}))`;
+      return `AND ${col} >= toStartOfQuarter(addMonths(${asOfExpr}, -${(Math.max(1, Math.floor(range.quarters)) - 1) * 3}))`;
     if (range.kind === 'LAST_N_YEARS')
-      return `AND ${col} >= toStartOfYear(addYears(now(), -${Math.max(1, Math.floor(range.years)) - 1}))`;
+      return `AND ${col} >= toStartOfYear(addYears(${asOfExpr}, -${Math.max(1, Math.floor(range.years)) - 1}))`;
 
     return '';
   }

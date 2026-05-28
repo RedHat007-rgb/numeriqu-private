@@ -793,7 +793,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 ))}
                 {isStackedBarChart && (
                   <Bar dataKey="_total" stackId="stack" fill="transparent"
-                    maxBarSize={isExpanded ? 48 : 36} isAnimationActive={false}>
+                    maxBarSize={isExpanded ? 48 : 36} isAnimationActive={false} legendType="none">
                     <LabelList dataKey="_total" position="top"
                       style={{ fill: "rgb(var(--color-text-muted))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
                       formatter={(v: unknown) => fmtCurrency(Number(v) || 0)} />

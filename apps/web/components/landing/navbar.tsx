@@ -40,8 +40,8 @@ export function Navbar() {
         >
           <Link href="/" className="flex items-center gap-2.5">
             <Logo />
-            <span className="font-serif text-[19px] tracking-tight text-foreground">
-              NumeriQ
+            <span className="font-display text-[19px] font-bold tracking-widest text-foreground uppercase">
+              NUMERIQU
             </span>
           </Link>
 

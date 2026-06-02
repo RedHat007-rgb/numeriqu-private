@@ -1,4 +1,5 @@
 import {
+  injectTenantScopePredicate,
   rewriteRelativeNowToAsOf,
   sqlUsesNowOrToday,
   validateDynamicSql,
@@ -61,6 +62,94 @@ describe('dynamic-sql', () => {
       { analyticsDb: 'analytics', chartType: 'table' },
     );
     expect(sql).toMatch(/invoice_number/i);
+  });
+
+  test('injectTenantScopePredicate adds tenant_id when the planner writes org_id only', () => {
+    // Reproduces the real failure: every planner widget was rejected with
+    // "missing tenantId param placeholder" because the LLM scoped by org_id only.
+    const orgOnly = `SELECT account_name AS name, round(sum(toFloat64(debit)), 0) AS value
+       FROM analytics.sample_gl_dump
+       WHERE org_id IN ({externalOrgIds:Array(String)}) AND account_type = 'Expense'
+       GROUP BY account_name ORDER BY value DESC LIMIT 15`;
+    const injected = injectTenantScopePredicate(orgOnly);
+    expect(injected).toMatch(
+      /tenant_id = \{tenantId:String\} AND org_id IN \(\{externalOrgIds:Array\(String\)\}\)/,
+    );
+    // And the result must now pass full validation end-to-end.
+    expect(() =>
+      validateDynamicSql(injected, { analyticsDb: 'analytics', chartType: 'bar' }),
+    ).not.toThrow();
+  });
+
+  test('injectTenantScopePredicate is a no-op when tenant predicate already present', () => {
+    const scoped = `SELECT 'A' AS name, 1 AS value
+       FROM analytics.sample_trial_balance
+       WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+       LIMIT 100`;
+    expect(injectTenantScopePredicate(scoped)).toBe(scoped);
+  });
+
+  test('injectTenantScopePredicate scopes every org predicate (subqueries too)', () => {
+    const twoPredicates = `SELECT name, value FROM (
+         SELECT account_name AS name, sum(toFloat64(debit)) AS value
+         FROM analytics.sample_gl_dump
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+         GROUP BY account_name
+       ) WHERE value > (
+         SELECT avg(toFloat64(debit)) FROM analytics.sample_gl_dump
+         WHERE org_id IN ({externalOrgIds:Array(String)})
+       ) LIMIT 50`;
+    const injected = injectTenantScopePredicate(twoPredicates);
+    const matches = injected.match(/tenant_id = \{tenantId:String\}/g) ?? [];
+    expect(matches.length).toBe(2);
+  });
+
+  test('accepts a WITH (CTE) query for month-over-month growth', () => {
+    const sql = `WITH m AS (
+        SELECT toStartOfMonth(journal_date) AS mo,
+               round(sumIf(toFloat64(line_amount), line_amount > 0), 2) AS spend
+        FROM analytics.v_fact_accounting_journal_lines_latest
+        WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+        GROUP BY toStartOfMonth(journal_date)
+      )
+      SELECT formatDateTime(mo, '%b %Y') AS name,
+             round((spend - lagInFrame(spend) OVER (ORDER BY mo)) / nullIf(lagInFrame(spend) OVER (ORDER BY mo), 0) * 100, 1) AS value
+      FROM m ORDER BY mo ASC LIMIT 200`;
+    const out = validateDynamicSql(sql, { analyticsDb: 'analytics', chartType: 'line' });
+    expect(out).toMatch(/^WITH/i);
+  });
+
+  test('accepts a WIDE multi-series query with no "value" column', () => {
+    const sql = `SELECT formatDateTime(toStartOfMonth(issued_at), '%b %Y') AS name,
+             round(sumIf(total_amount, contact_name = 'Apex Ventures Ltd'), 2) AS apex_ventures_ltd,
+             round(sumIf(total_amount, contact_name = 'BlueOak Distributors'), 2) AS blueoak_distributors
+      FROM analytics.v_fact_accounting_invoices_latest
+      WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+      GROUP BY toStartOfMonth(issued_at) ORDER BY toStartOfMonth(issued_at) ASC LIMIT 24`;
+    const out = validateDynamicSql(sql, { analyticsDb: 'analytics', chartType: 'line' });
+    expect(out).toMatch(/apex_ventures_ltd/);
+  });
+
+  test('rejects a single-series query that omits "value"', () => {
+    expect(() =>
+      validateDynamicSql(
+        `SELECT account_name AS name, round(sum(toFloat64(debit)), 0) AS spend
+         FROM analytics.sample_gl_dump
+         WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+         GROUP BY account_name LIMIT 20`,
+        { analyticsDb: 'analytics', chartType: 'bar' },
+      ),
+    ).toThrow(/value.*or.*series|series columns/i);
+  });
+
+  test('rejects a query starting with neither SELECT nor WITH', () => {
+    expect(() =>
+      validateDynamicSql(
+        `EXPLAIN SELECT 'A' AS name, 1 AS value FROM analytics.sample_gl_dump
+         WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) LIMIT 1`,
+        { analyticsDb: 'analytics', chartType: 'bar' },
+      ),
+    ).toThrow(/start with SELECT or WITH/i);
   });
 
   test('rewriteRelativeNowToAsOf replaces now()/today()', () => {

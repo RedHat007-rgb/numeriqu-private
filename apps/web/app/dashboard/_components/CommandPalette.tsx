@@ -265,7 +265,7 @@ export function CommandPalette({
         onClick={() => onOpenChange(false)}
       />
 
-      <div className="absolute left-1/2 top-20 w-[min(760px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-3xl border border-default bg-white shadow-2xl">
+      <div className="absolute left-1/2 top-20 w-[min(760px,calc(100vw-32px))] -translate-x-1/2 overflow-hidden rounded-3xl border border-default bg-bg-card shadow-2xl shadow-black/50">
         <div className="flex items-center gap-2 border-b border-default px-4 py-3">
           <Search className="size-4 text-text-muted" />
           <input

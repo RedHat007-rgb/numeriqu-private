@@ -62,12 +62,26 @@ function enforceScopedPredicates(sql: string) {
 }
 
 function enforceOutputShape(sql: string) {
-  // We need at least a stable dimension label and metric for charting.
-  // For multi-series, additional numeric columns are fine.
+  // We need at least a stable dimension label and a metric for charting.
   const hasName = /\bAS\s+name\b/i.test(sql);
+  if (!hasName)
+    throw new Error('Dynamic SQL must alias the label column as "name"');
+
+  // Single-series charts must alias the metric as "value". Multi-series (WIDE)
+  // charts — comparisons, multi-line growth — instead have one column PER SERIES
+  // (e.g. AS admin, AS operations) and no "value"; allow those when there are at
+  // least two non-"name" output aliases. The frontend infers numeric series keys.
   const hasValue = /\bAS\s+value\b/i.test(sql);
-  if (!hasName || !hasValue)
-    throw new Error('Dynamic SQL must alias columns as "name" and "value"');
+  if (hasValue) return;
+
+  const aliases = Array.from(sql.matchAll(/\bAS\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi))
+    .map((m) => m[1]!.toLowerCase())
+    .filter((a) => a !== 'name');
+  const distinctSeries = new Set(aliases).size;
+  if (distinctSeries < 2)
+    throw new Error(
+      'Dynamic SQL must alias the metric as "value", or provide >=2 named series columns for a multi-series chart',
+    );
 }
 
 export function validateDynamicSql(
@@ -80,8 +94,12 @@ export function validateDynamicSql(
   if (hasMultipleStatements(normalized))
     throw new Error('Dynamic SQL must be a single SELECT statement');
 
-  if (!/^\s*SELECT\b/i.test(normalized))
-    throw new Error('Dynamic SQL must start with SELECT');
+  // Read-only queries must start with SELECT or a WITH (CTE) that resolves to a
+  // SELECT. CTEs are needed for month-over-month growth, running totals, etc.
+  if (!/^\s*(SELECT|WITH)\b/i.test(normalized))
+    throw new Error('Dynamic SQL must start with SELECT or WITH');
+  if (/^\s*WITH\b/i.test(normalized) && !/\bSELECT\b/i.test(normalized))
+    throw new Error('WITH (CTE) query must contain a SELECT');
 
   if (
     /\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|OPTIMIZE|ATTACH|DETACH)\b/i.test(
@@ -114,6 +132,23 @@ export function validateDynamicSql(
   if (mustHaveNameValue) enforceOutputShape(normalized);
 
   return normalized;
+}
+
+// The planner is instructed to scope every query, but the LLM frequently writes
+// only the org_id predicate (most prompt examples show org_id alone). The
+// validator requires BOTH tenant_id and org_id predicates, and the tenantId
+// param is always supplied at execution — so when the tenant predicate is
+// missing we inject it immediately before each org predicate. Without this,
+// every planner widget is rejected and the agent silently falls back to generic
+// charts.
+export function injectTenantScopePredicate(sql: string): string {
+  const s = String(sql ?? '');
+  // Already has a proper `tenant_id = {tenantId:String}` predicate — leave it.
+  if (/\btenant_id\s*=\s*\{tenantId\s*:\s*String\s*\}/i.test(s)) return s;
+  return s.replace(
+    /\borg_id\s+IN\s*\(\s*\{externalOrgIds\s*:\s*Array\s*\(\s*String\s*\)\s*\}\s*\)/gi,
+    'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})',
+  );
 }
 
 export function rewriteRelativeNowToAsOf(sql: string): string {

@@ -58,7 +58,7 @@ export class AgentService {
       content: userQuery,
     });
 
-    const sessionHistory = session.messages.map(m => ({
+    const sessionHistory = session.messages.map((m) => ({
       role: m.role,
       content: m.content,
     }));
@@ -141,7 +141,9 @@ export class AgentService {
 
       if (!response.ok) {
         clearTimeout(timeout);
-        this.logger.error(`[Agent:Ollama] Engine returned non-OK status: ${response.status} ${response.statusText}`);
+        this.logger.error(
+          `[Agent:Ollama] Engine returned non-OK status: ${response.status} ${response.statusText}`,
+        );
         throw new Error('AI_ENGINE_OFFLINE');
       }
 
@@ -196,7 +198,9 @@ export class AgentService {
                 .trim();
 
               if (sanitizedTextBefore) {
-                yield this.chunk('token', { content: sanitizedTextBefore + ' ' });
+                yield this.chunk('token', {
+                  content: sanitizedTextBefore + ' ',
+                });
               }
 
               isCapturingCommand = true;
@@ -237,32 +241,49 @@ export class AgentService {
 
             // A command is complete if we have a closing ']' or '}' that restores parity
             const hasClosingTag = commandBuffer.includes(']');
-            if (bracketCount === 0 && (hasClosingTag || (commandBuffer.includes('}') && commandBuffer.length > 50))) {
+            if (
+              bracketCount === 0 &&
+              (hasClosingTag ||
+                (commandBuffer.includes('}') && commandBuffer.length > 50))
+            ) {
               try {
                 const firstBrace = commandBuffer.indexOf('{');
                 const lastBrace = commandBuffer.lastIndexOf('}');
 
                 if (firstBrace !== -1 && lastBrace !== -1) {
-                  const cmdJson = commandBuffer.substring(firstBrace, lastBrace + 1);
+                  const cmdJson = commandBuffer.substring(
+                    firstBrace,
+                    lastBrace + 1,
+                  );
                   const cmdBody = commandBuffer.substring(0, firstBrace);
-                  const cmdName = cmdBody.includes('GENERATE_DASHBOARD') ? 'GENERATE_DASHBOARD' : 'SAVE_INSIGHT';
+                  const cmdName = cmdBody.includes('GENERATE_DASHBOARD')
+                    ? 'GENERATE_DASHBOARD'
+                    : 'SAVE_INSIGHT';
 
-                  this.logger.log(`[Agent:Parser] Executing isolated command: ${cmdName}`);
+                  this.logger.log(
+                    `[Agent:Parser] Executing isolated command: ${cmdName}`,
+                  );
                   await this.executeCommand(tenantId, userId, cmdName, cmdJson);
 
-                  yield this.chunk('system', { 
-                    action: 'DASHBOARD_REFRESH', 
-                    message: `Strategic views updated.` 
+                  yield this.chunk('system', {
+                    action: 'DASHBOARD_REFRESH',
+                    message: `Strategic views updated.`,
                   });
 
                   // Move past command and restore narrative flow
-                  const lastTagIdx = hasClosingTag ? commandBuffer.lastIndexOf(']') : lastBrace;
-                  currentDisplayBuffer = commandBuffer.substring(lastTagIdx + 1);
+                  const lastTagIdx = hasClosingTag
+                    ? commandBuffer.lastIndexOf(']')
+                    : lastBrace;
+                  currentDisplayBuffer = commandBuffer.substring(
+                    lastTagIdx + 1,
+                  );
                   commandBuffer = '';
                   isCapturingCommand = false;
                 }
               } catch (err: any) {
-                this.logger.warn(`[Agent:Parser] Command partial/failed: ${err.message}`);
+                this.logger.warn(
+                  `[Agent:Parser] Command partial/failed: ${err.message}`,
+                );
                 // Don't swallow, might be text LLM forgot to tag
               }
             }
@@ -280,7 +301,7 @@ export class AgentService {
       await this.persistence.saveMessage({
         sessionId: session.id,
         role: 'assistant',
-        content: narrativeBuffer || "Strategic mission complete.",
+        content: narrativeBuffer || 'Strategic mission complete.',
         tokens: tokensGenerated,
         latencyMs: Date.now() - startTime,
       });

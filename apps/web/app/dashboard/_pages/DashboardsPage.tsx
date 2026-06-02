@@ -600,6 +600,13 @@ function ExpandedDashboard({
       {dashboard.charts.map((chart, i) => {
         const data = chartData[chart.id] ?? [];
         const description = (chart.chartConfig as any)?.description as string | undefined;
+        const axisless = ["metric", "kpi", "gauge", "pie", "donut", "treemap"].includes(chart.type);
+        const xAxisLabel = !axisless
+          ? ((chart.queryConfig as any)?.xAxisLabel as string | undefined)?.trim()
+          : undefined;
+        const yAxisLabel = !axisless
+          ? ((chart.queryConfig as any)?.yAxisLabel as string | undefined)?.trim()
+          : undefined;
         return (
           <motion.div
             key={chart.id}
@@ -637,6 +644,23 @@ function ExpandedDashboard({
                 {description && (
                   <p className="mt-0.5 line-clamp-1 text-[10px] text-text-muted">
                     {description}
+                  </p>
+                )}
+                {(xAxisLabel || yAxisLabel) && (
+                  <p className="mt-1 line-clamp-1 text-[10px] font-medium text-text-muted/90">
+                    {xAxisLabel && (
+                      <>
+                        <span className="text-text-muted/70">X:</span> {xAxisLabel}
+                      </>
+                    )}
+                    {xAxisLabel && yAxisLabel && (
+                      <span className="mx-1.5 text-text-muted/40">·</span>
+                    )}
+                    {yAxisLabel && (
+                      <>
+                        <span className="text-text-muted/70">Y:</span> {yAxisLabel}
+                      </>
+                    )}
                   </p>
                 )}
               </div>

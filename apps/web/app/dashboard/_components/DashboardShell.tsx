@@ -262,7 +262,7 @@ export function DashboardShell({
       <div className={cn("relative flex flex-col", isImmersive ? "h-screen" : "min-h-screen")}>
         <header
           className={cn(
-            "z-40 border-b border-default bg-white/75 backdrop-blur",
+            "z-40 border-b border-default bg-bg-base/85 backdrop-blur",
             isImmersive ? "sticky top-0" : "sticky top-0",
           )}
         >
@@ -283,12 +283,22 @@ export function DashboardShell({
                     <ArrowLeft className="size-4" />
                   </button>
                 ) : null}
-                <div className="flex size-9 items-center justify-center rounded-xl bg-accent-blue/10 ring-1 ring-accent-blue/20">
-                  <span className="text-[11px] font-black tracking-[0.22em] text-accent-blue">NQ</span>
+                <div className="flex size-9 items-center justify-center rounded-xl bg-accent-blue/15 ring-1 ring-accent-blue/30"
+                  style={{ background: "linear-gradient(135deg, rgba(0,119,255,0.15), rgba(155,77,255,0.15))" }}>
+                  <svg viewBox="0 0 20 20" fill="none" className="size-5" aria-hidden>
+                    <defs>
+                      <linearGradient id="shell-logo" x1="0" y1="0" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+                        <stop stopColor="#0077FF" /><stop offset="1" stopColor="#9B4DFF" />
+                      </linearGradient>
+                    </defs>
+                    <circle cx="8.5" cy="8.5" r="5.5" stroke="url(#shell-logo)" strokeWidth="1.8" fill="none" />
+                    <line x1="12.4" y1="12.4" x2="16.5" y2="16.5" stroke="url(#shell-logo)" strokeWidth="1.8" strokeLinecap="round" />
+                    <line x1="8.5" y1="5.5" x2="8.5" y2="10" stroke="url(#shell-logo)" strokeWidth="1.5" strokeLinecap="round" opacity="0.65" />
+                  </svg>
                 </div>
                 <div className="min-w-0">
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-text-muted">
-                    NumeriQ
+                    NUMERIQU
                   </p>
                   <h1 className="truncate text-lg font-bold tracking-tight text-text-primary md:text-xl">
                     {activeItem?.label ?? "Workspace"}
@@ -336,7 +346,7 @@ export function DashboardShell({
                 </button>
 
                 {userMenuOpen ? (
-                  <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden rounded-2xl border border-default bg-white shadow-xl">
+                  <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden rounded-2xl border border-default bg-bg-card shadow-xl shadow-black/40">
                     <div className="border-b border-default px-4 py-3">
                       <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-text-muted">Workspace</p>
                       <p className="mt-1 truncate text-sm font-semibold text-text-primary">{tenantLabel}</p>
@@ -477,7 +487,7 @@ export function DashboardShell({
             aria-label="Close navigation"
             onClick={() => setNavDrawerOpen(false)}
           />
-          <div className="absolute left-0 top-0 h-full w-[320px] bg-white shadow-2xl">
+          <div className="absolute left-0 top-0 h-full w-[320px] bg-bg-surface shadow-2xl shadow-black/50">
             <div className="flex items-center justify-between border-b border-default px-4 py-4">
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-text-muted">Navigate</p>

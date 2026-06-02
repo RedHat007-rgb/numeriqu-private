@@ -8,6 +8,7 @@ import type { ClickHouseClient } from '@clickhouse/client';
 import { OrganizationContextService } from '../org-context/org-context.service';
 import { parseQuerySpec, type QuerySpec, type TimeRange } from './query-spec';
 import {
+  injectTenantScopePredicate,
   rewriteRelativeNowToAsOf,
   sqlUsesNowOrToday,
   validateDynamicSql,
@@ -63,6 +64,9 @@ interface AgentPlan {
       grouping: string;
       breakdown?: 'client';
       topN?: number;
+      // Axis titles surfaced to the chart (what X and Y actually represent).
+      xAxisLabel?: string;
+      yAxisLabel?: string;
       // Presentation-only hints for the frontend (ignored by /agent/metrics).
       display?: {
         donut?: boolean;
@@ -73,6 +77,13 @@ interface AgentPlan {
   };
   analysis_focus: string;
 }
+
+// Structured outcome of the SQL-first planner: build a dashboard, ask the user
+// a focused question, or honestly report that the data is not available.
+type SmartPlanResult =
+  | { kind: 'build'; plan: AgentPlan }
+  | { kind: 'clarify'; clarification: ClarificationPrompt }
+  | { kind: 'no_data'; message: string };
 
 interface DashboardEditPlan {
   summary: string;
@@ -846,7 +857,7 @@ RULES:
 7. Use simple aggregations: sum(), count(), avg(), max(), min()
 8. For monthly trends: GROUP BY toStartOfMonth(col) ORDER BY toStartOfMonth(col) — NEVER group by alias
 9. For rankings: GROUP BY dimension ORDER BY value DESC
-10. Never use WITH (CTE), window functions, or ARRAY JOIN unless essential
+10. WITH (CTE) and window functions are allowed (ClickHouse uses lagInFrame()/leadInFrame(), not lag()/lead()); avoid ARRAY JOIN unless essential
 11. Keep queries simple and fast — max 2 JOINs
 12. NEVER reference columns debit_amount or credit_amount — they may be zero. Instead compute:
     debits  = sumIf(toFloat64(line_amount),  line_amount > 0)
@@ -921,6 +932,14 @@ TABLE SELECTION GUIDE (tenant_id + org_id scope required on ALL tables):
   Monthly trends / time-series → analytics.v_fact_accounting_journal_lines_latest (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
   Invoice analysis / client revenue → analytics.v_fact_accounting_invoices_latest (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
 
+⚠️ COLUMNS ARE PER-TABLE — DO NOT MIX. Using a column that belongs to another table = 0-row error:
+  • sample_gl_dump        → date column is 'date' (NOT journal_date). Amounts: debit / credit. Vendor: vendor_customer.
+  • v_fact_accounting_journal_lines_latest → date column is 'journal_date'. Amount: line_amount. Vendor: vendor_name. Has source_type.
+  • v_fact_accounting_invoices_latest      → dates are issued_at / due_at / paid_at. Amounts: total_amount / amount_due / amount_paid. Party: contact_name.
+  • sample_trial_balance  → NO date column at all (it is a balance snapshot). Use net_balance / debit / credit by account_type.
+  For VENDOR SPEND BY MONTH (time-series): use v_fact_accounting_journal_lines_latest (journal_date + vendor_name +
+  source_type IN ('OPEX','COGS')). For vendor spend with NO time dimension: sample_gl_dump (date + vendor_customer + debit).
+
 NON-NEGOTIABLE SQL RULES:
 1. EVERY query MUST include: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 2. EVERY query MUST include LIMIT (100 for aggregates, 500 for row-level lists)
@@ -933,7 +952,7 @@ NON-NEGOTIABLE SQL RULES:
 5. For month labels: SELECT formatDateTime(toStartOfMonth(journal_date), '%b %Y') AS name — GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date)
 6. For expenses (debit): WHERE line_amount > 0 — use sumIf(toFloat64(line_amount), line_amount > 0)
 7. For revenue from journals: sumIf(-toFloat64(line_amount), line_amount < 0) as value
-8. NO CTEs (WITH clause) — use flat SELECT or subqueries only
+8. CTEs (WITH ... AS (...)) ARE ALLOWED and encouraged for growth %, running totals, and multi-step math. The query may start with WITH as long as it resolves to a SELECT. Subqueries are also fine.
 9. NEVER reference debit_amount or credit_amount columns directly — use line_amount sign
 10. For grouping by department/vendor: COALESCE(NULLIF(department,''),'Other') — and ORDER BY the SAME expression
 11. Keep queries fast — max 2 JOINs, prefer aggregates over row scans
@@ -952,7 +971,29 @@ NON-NEGOTIABLE SQL RULES:
       SELECT name, sum(total_amount) AS value ... GROUP BY month  ← single bar, not a comparison
     Column names must be valid SQL identifiers (replace spaces with underscores, lowercase).
     Each column name = entity identifier with spaces replaced by underscores, fully lowercase.
-13. CRITICAL — NO WINDOW FUNCTIONS: ClickHouse does NOT support lag(), lead(), row_number(), rank() in aggregate queries. For month-over-month growth, use a self-join subquery or simply show absolute values per month. NEVER write lag() or lead().
+13. WINDOW FUNCTIONS ARE SUPPORTED — ClickHouse names them lagInFrame()/leadInFrame() (NOT lag()/lead()).
+    Use them for period-over-period math. CRITICAL OUTPUT SHAPE: a multi-series line/bar chart must be
+    WIDE — one "name" column plus ONE NUMERIC COLUMN PER SERIES (NOT a long format with a text category
+    column). For MONTH-OVER-MONTH GROWTH % BY DEPARTMENT (a multi-line chart): aggregate each department
+    into its OWN monthly spend column in a CTE, then compute growth per column with lagInFrame OVER
+    (ORDER BY month). Use the ACTUAL departments from LIVE DATA (here Admin/Operations/Sales):
+      WITH m AS (
+        SELECT toStartOfMonth(journal_date) AS mo,
+               round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Admin'), 2) AS admin_spend,
+               round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Operations'), 2) AS ops_spend,
+               round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Sales'), 2) AS sales_spend
+        FROM analytics.v_fact_accounting_journal_lines_latest
+        WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+          AND journal_date >= addMonths(now(), -12)
+        GROUP BY toStartOfMonth(journal_date)
+      )
+      SELECT formatDateTime(mo, '%b %Y') AS name,
+             round((admin_spend - lagInFrame(admin_spend) OVER (ORDER BY mo)) / nullIf(lagInFrame(admin_spend) OVER (ORDER BY mo), 0) * 100, 1) AS admin,
+             round((ops_spend   - lagInFrame(ops_spend)   OVER (ORDER BY mo)) / nullIf(lagInFrame(ops_spend)   OVER (ORDER BY mo), 0) * 100, 1) AS operations,
+             round((sales_spend - lagInFrame(sales_spend) OVER (ORDER BY mo)) / nullIf(lagInFrame(sales_spend) OVER (ORDER BY mo), 0) * 100, 1) AS sales
+      FROM m ORDER BY mo ASC LIMIT 200
+    nullIf(...,0) avoids divide-by-zero; the first month is NULL growth (expected). For a SINGLE-series
+    growth line, output just "name" + "value" (one growth column). yAxisLabel = "MoM Growth (%)".
 14. For ORDER BY on a coalesced dimension: ALWAYS write the full COALESCE expression, e.g. ORDER BY COALESCE(NULLIF(vendor_name,''),'Other') ASC
 15. CRITICAL — NO aggregate functions in WHERE: NEVER write WHERE col >= max(col) or WHERE col >= min(col). For time filtering use: WHERE journal_date >= addMonths(now(), -6) or WHERE issued_at >= addDays(now(), -90). Use now() for relative dates.
 16. For client queries: use v_dim_clients_latest with client_name column. For invoice-level queries: use v_fact_accounting_invoices_latest with contact_name (NOT client_name).
@@ -971,7 +1012,28 @@ NON-NEGOTIABLE SQL RULES:
       FROM analytics.v_fact_accounting_journal_lines_latest
       WHERE org_id IN ({externalOrgIds:Array(String)}) AND journal_date >= addMonths(now(), -12)
       GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date) ASC LIMIT 24
+19b. CRITICAL — "TOP <A> BY <B>" / "<A> BY <B>": <A> is the PRIMARY dimension that goes on the X-axis
+    (the AS name column) and is what you rank. <B> is a SECONDARY breakdown shown as colored series —
+    NEVER the reverse. DO NOT put <B> in the name column. Example — "top expense accounts by department":
+    the X-axis MUST be the ACCOUNT NAME (Salaries & Wages, Rent Expense, …), with one sumIf() column per
+    department as the colored series:
+      SELECT account_name AS name,
+             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Admin'), 0) AS admin,
+             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Operations'), 0) AS operations,
+             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Sales'), 0) AS sales
+      FROM analytics.v_fact_accounting_journal_lines_latest
+      WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+        AND source_type IN ('OPEX','COGS') AND account_name != ''
+      GROUP BY account_name
+      ORDER BY (admin + operations + sales) DESC LIMIT 15
+    Result: one bar per account, segmented by department — exactly "accounts by department".
+    NEVER output an extra free-standing text column (like account_name) next to name — only "name" plus
+    NUMERIC series columns. The label the user reads on each bar is the "name" value, so name = the entity
+    being listed, with NO duplicate labels.
 20. TIME SCOPING — "annual operating spend" / "for the year" = last 12 months: WHERE journal_date >= addMonths(now(), -12). "This year" = WHERE toYear(journal_date) = toYear(now()). Never return all-time data when user says "annual" or "for the year".
+20b. QUARTERLY GROUPING — ClickHouse formatDateTime() has NO quarter token. NEVER write '%Q'. For a
+    quarter label use: concat('Q', toString(toQuarter(journal_date)), ' ', toString(toYear(journal_date))) AS name
+    and GROUP BY toStartOfQuarter(journal_date) ORDER BY toStartOfQuarter(journal_date) ASC.
 21. SOURCE TYPES — the source_type column cleanly separates entry types. ALWAYS use it:
     • source_type = 'REV'  → Revenue/income accounts (Product Sales, Service Revenue, etc.) — line_amount is NEGATIVE (credit)
     • source_type = 'OPEX' → Operating expenses — line_amount is POSITIVE (debit)
@@ -993,21 +1055,123 @@ NON-NEGOTIABLE SQL RULES:
       HAVING x > 0 OR y > 0 LIMIT 20
 24. USER TYPOS: understand user intent even with spelling errors — "grpah" = chart, "monthy" = monthly, "departemnt" = department, "expnese" = expense. Always infer the intended meaning.
 
-CHART TYPE REFERENCE:
-  line bar stacked_bar area waterfall pie donut treemap scatter horizontal_bar
-  pareto gauge bubble histogram table metric kpi
+26. ANALYTICAL INTENT — answer the QUESTION, do not just dump breakdowns. When the request is analytical
+    (e.g. "cost optimization", "inefficient spending", "where can we save", "what's driving X",
+    "anomalies", "risks", "opportunities", "concentration"), the charts must surface the ANSWER, not a
+    generic ranking. Think like a CFO and pick views that expose the insight:
+    • "cost optimization / inefficient spend" → (a) Expense Pareto: cumulative % of spend by account
+      (where the 80% sits), (b) Fastest-growing expense accounts: this-period vs prior-period spend per
+      account with the delta/% change (rising costs = inefficiency), (c) Spend concentration by vendor
+      (over-reliance / negotiation leverage), (d) Discretionary vs essential or spend as % of revenue
+      trend. AVOID a plain "top expense accounts" bar as the headline — it does not show inefficiency.
+    • "what's driving the change" → period-over-period contribution (waterfall or signed bar of deltas).
+    • "anomalies / outliers" → category vs its own historical average, flag the gap.
+    • "concentration / dependence" → Pareto or share-of-total (treemap/donut) with the top contributors.
+    A descriptive chart that does not answer the analytical ask is a FAILURE — choose the revealing view.
+    If the data cannot support the analysis (e.g. only one period exists, so no growth/delta is possible),
+    say so via "clarify" or "no_data" rather than substituting a generic breakdown.
 
-OUTPUT FORMAT — JSON only, no explanation, no markdown:
+27. ENTITY SEMANTICS — DO NOT mismatch a metric to an entity that cannot have it (this returns 0 rows):
+    • VENDORS / SUPPLIERS are EXPENSE payees. They have SPEND, never revenue. "vendor revenue",
+      "top vendors by revenue", "compare revenue of vendors" → interpret as vendor SPEND. Source:
+      vendor_name with source_type IN ('OPEX','COGS') in v_fact_accounting_journal_lines_latest, or
+      vendor_customer debit in sample_gl_dump. NEVER query REV/Income for a vendor — it is always empty.
+    • CLIENTS / CUSTOMERS / CONTACTS are REVENUE sources. Use v_dim_clients_latest.total_revenue or
+      invoices invoice_type='ACCREC'. They do not have "spend".
+    • DEPARTMENTS / CLASSES carry SPEND (expense), not revenue.
+    • To compare "top N vendors over time": first rank vendors by total spend, then build a multi-series
+      line/stacked_bar with one sumIf(spend, vendor_name = '<that vendor>') column per top vendor, grouped
+      by month. The series MUST be the actual top-N vendor names from LIVE DATA.
+    If the user clearly asks for an impossible pairing (e.g. vendor revenue) and you are not confident the
+    spend reinterpretation is what they want, return "clarify" ("Vendors are who you pay — compare their
+    SPEND instead?"). Otherwise build the sensible spend version. NEVER emit a chart that returns 0 rows.
+
+CHART TYPE REFERENCE (pick the type that genuinely fits the question — never the "closest" one):
+  TIME / TREND:        line (trend over time)  area (cumulative/volume over time)  stacked_bar (composition over time)
+  RANKING / COMPARE:   bar (compare categories)  horizontal_bar (long labels / many items)  pareto (80/20 contribution)
+  COMPOSITION:         pie / donut (share of a whole, <=8 slices)  treemap (nested share, many items)  waterfall (build-up: revenue→costs→net)
+  RELATIONSHIP:        scatter (X vs Y)  bubble (X vs Y vs size)  heatmap (two-dimension intensity)
+  DISTRIBUTION:        histogram (frequency of a numeric range)
+  SINGLE VALUE:        metric / kpi (one headline number)  gauge (value vs a 0-100 range)
+  DETAIL:              table (row-level lists or multi-column matrices)
+  Comparisons of 2+ entities/periods over time → stacked_bar or line (multi-series). Side-by-side single period → bar (multi-series).
+  HEATMAP OUTPUT SHAPE (when the user asks for a heatmap): output WIDE. Either (a) a grid — name = one
+  axis (e.g. month), one NUMERIC column per the other axis category (e.g. one per department: AS admin,
+  AS operations, AS sales) — or (b) a simple intensity strip — name = the entity, value = the metric.
+  Example "heatmap of departments with highest spending" → name = department, value = total spend
+  (one row per department); the hottest cell is the biggest spender. Use the sumIf()-per-category pivot
+  for the grid form. Do NOT fall back to a bar when a heatmap is explicitly requested.
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ DECISION — before writing any SQL, classify the request into ONE verdict:     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+• "build"   → You are confident WHICH metric, WHICH dimension, and (for comparisons) WHICH exact
+              entities/periods to use, AND the data to answer it exists in the schema above. Emit charts.
+• "clarify" → The request is ambiguous OR underspecified in a way that changes the answer: e.g. an
+              entity name you cannot match to LIVE DATA, "top" without a measure, "compare" without two
+              clear subjects, a metric that could mean several things. DO NOT GUESS. Ask ONE focused
+              question with 2-4 concrete options drawn from LIVE DATA. A wrong-but-plausible chart is a
+              FAILURE — clarifying is always better than guessing.
+• "no_data" → The request is clear but the data genuinely does NOT exist in the schema/LIVE DATA
+              (e.g. headcount, payroll-by-employee, NPS, website traffic, a vendor/client/account that
+              does not appear in LIVE DATA). Be honest. NEVER substitute a different chart. Say what is
+              missing and, if useful, what you COULD show instead.
+
+COMPARISON ENGINE — "compare X vs Y" works for ANY dimension, not just clients:
+• Resolve every named subject to an EXACT value present in LIVE DATA (vendors, departments, accounts,
+  classes, clients, journal/source types). If a name is not an exact or obvious match → verdict "clarify"
+  and list the closest real candidates as options. Never run sumIf(col = 'TypoName') — it returns 0.
+• Entities (2+ vendors/departments/accounts/clients): one row per time bucket, one sumIf() column per
+  entity (see RULE 12). Use stacked_bar or line.
+• Periods (Q1 vs Q2, 2023 vs 2024, this month vs last): one row per category (dept/account/etc.),
+  one sumIf(..., <period condition>) column per period. Use bar (grouped).
+• Metrics (revenue vs expense, billed vs collected): one row per time bucket, one column per metric.
+• If the user says "compare" but names only one subject (or none), verdict "clarify" and ask which two.
+
+AXIS LABELS — REQUIRED on every chart (except metric/kpi/gauge/pie/donut/treemap):
+  xAxisLabel = what the "name"/X column represents, with unit if any (e.g. "Month", "Department", "Vendor").
+  yAxisLabel = what the "value"/Y column measures, WITH its unit (e.g. "Revenue (USD)", "Spend (USD)",
+               "Invoice Count", "Collection Rate (%)"). Be specific and accurate to the SQL you wrote.
+
+TITLE ACCURACY — the title MUST describe exactly what the SQL computes (metric + dimension + scope +
+  comparison subjects). "Admin vs Operations Monthly Spend (Last 12 Months)" — not "Spend Chart".
+
+OUTPUT FORMAT — JSON only, no explanation, no markdown. Always include "verdict".
+
+When verdict = "build":
 {
-  "title": "Dashboard or chart title (specific, not generic)",
+  "verdict": "build",
+  "title": "Dashboard or chart title (specific, names the metric + dimension)",
   "charts": [
     {
       "title": "Chart title (specific — use real account/department/vendor names from LIVE DATA)",
       "description": "One-sentence insight this chart reveals",
       "type": "bar",
+      "xAxisLabel": "Month",
+      "yAxisLabel": "Operating Spend (USD)",
       "sql": "SELECT formatDateTime(toStartOfMonth(journal_date), '%b %Y') AS name, round(sumIf(toFloat64(line_amount), line_amount > 0), 2) AS value FROM analytics.v_fact_accounting_journal_lines_latest WHERE org_id IN ({externalOrgIds:Array(String)}) AND journal_date IS NOT NULL GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date) ASC LIMIT 100"
     }
   ]
+}
+
+When verdict = "clarify":
+{
+  "verdict": "clarify",
+  "clarification": {
+    "question": "One focused question (<=140 chars).",
+    "options": [
+      { "label": "Short button text", "value": "A plain-English restatement of the request, as the user would phrase it." }
+    ]
+  }
+}
+CLARIFY RULES — "question", "label", and "value" are ALL natural language shown to a human.
+  NEVER put SQL, column names, table names, or {placeholders} in any clarify field. The "value" is a
+  rephrased user request (e.g. "Compare Admin vs Operations spend by month") — NOT a query.
+
+When verdict = "no_data":
+{
+  "verdict": "no_data",
+  "message": "Plain, honest sentence: what was asked, why it is not available, and (optional) what IS available instead."
 }
 
 25. SAMPLE TABLE RULES — org_id filter required on both sample tables:
@@ -1124,8 +1288,25 @@ export class AgentService {
     const q = String(queryText ?? '').trim().toLowerCase();
     if (!q) return null;
 
+    // If the user already RESOLVED the budget question (e.g. clicked
+    // "Show actuals only (no budget)"), the answer text still contains the word
+    // "budget" — do NOT re-ask, or we loop forever. Treat any explicit
+    // proceed-without-budget phrasing as resolved.
+    const budgetResolved =
+      /\b(actuals?\s+only|ignore\s+budget|without\s+budget|no\s+budget|exclude\s+budget|skip\s+budget|proceed\s+with\s+actuals)\b/i.test(
+        q,
+      );
+
+    // Likewise, "skip forecasting / historical only" is a resolution, not a new
+    // forecast request.
+    const forecastResolved =
+      /\b(no\s+forecast|skip\s+forecast(?:ing)?|without\s+forecast|historical\s+(?:only|actuals))\b/i.test(
+        q,
+      );
+
     // Budget / plan / target / variance needs a budget dataset.
     if (
+      !budgetResolved &&
       /\b(budget|budgeted|plan\b|planned|target|variance|vs\.?\s*budget|plan\s+vs\s+actual|actuals?\s+vs\s+plan)\b/i.test(
         q,
       )
@@ -1151,6 +1332,7 @@ export class AgentService {
 
     // Forecasting is possible, but requires choosing a method + horizon.
     if (
+      !forecastResolved &&
       /\b(forecast|projection|projected|predict|prediction|what[- ]if|scenario)\b/i.test(
         q,
       )
@@ -7348,7 +7530,24 @@ export class AgentService {
         activeDashboardTitle: activeDashboard?.title ?? null,
       });
 
-      const unsupported = this.detectUnsupportedOrAmbiguousAsk(queryText);
+      // If the previous turn in this session ended by asking the user a
+      // clarification (NEEDS_INPUT), this message is the ANSWER. Do not run the
+      // hardcoded clarification gates again — otherwise an answer that echoes a
+      // trigger word (e.g. "...ignore budget/plan...") loops forever.
+      const priorRequest = await this.prisma.agentDashboardRequest.findFirst({
+        where: {
+          agentSessionId: currentSession.id,
+          organizationId,
+          id: { not: request.id },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { status: true },
+      });
+      const wasAwaitingClarification = priorRequest?.status === 'NEEDS_INPUT';
+
+      const unsupported = wasAwaitingClarification
+        ? null
+        : this.detectUnsupportedOrAmbiguousAsk(queryText);
       if (unsupported) {
         await logEvent('NEEDS_INPUT', { reason: unsupported.reason });
 
@@ -8023,7 +8222,10 @@ export class AgentService {
       );
 
       // ── HYBRID MODE: Ask 1 question only when ambiguity blocks correctness ──
-      const clarification = this.getClarificationPrompt(queryText, intent);
+      // Skip when the user is answering a prior clarification (avoid re-asking).
+      const clarification = wasAwaitingClarification
+        ? null
+        : this.getClarificationPrompt(queryText, intent);
       if (clarification) {
         await logEvent('NEEDS_INPUT', { reason: clarification.reason });
 
@@ -8090,14 +8292,118 @@ export class AgentService {
         plan.should_generate_dashboard = false; // We're editing, not creating
         editPlan = resolvedEdit;
       } else {
-        plan = await this.generatePlan(
-          queryText,
-          conversationHistory,
-          activeDashboard,
-          dataContext,
-          scope,
-          spec.timeRange,
-        );
+        // ── PRIMARY: SQL-first structured planner ───────────────────────────
+        // Returns build / clarify / no_data — never a guessed chart. Only when
+        // the planner is unavailable (null) do we fall back to the vocabulary
+        // planner.
+        const smartResult: SmartPlanResult | null =
+          scope.externalOrgIds.length > 0
+            ? await this.generateSmartPlan(
+                queryText,
+                scope,
+                spec.timeRange,
+                conversationHistory,
+              )
+            : null;
+
+        // The planner asked a focused question — surface it and stop.
+        if (smartResult?.kind === 'clarify') {
+          const clr = smartResult.clarification;
+          await logEvent('NEEDS_INPUT', { reason: clr.reason });
+
+          const questionText = [
+            clr.question,
+            '',
+            ...clr.options.map((o, i) => `${i + 1}) ${o.label}`),
+          ].join('\n');
+
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+              content: questionText,
+            },
+          });
+          await this.prisma.agentDashboardRequest.update({
+            where: { id: request.id },
+            data: { status: 'NEEDS_INPUT', completedAt: new Date() },
+          });
+          await this.prisma.agentRun.update({
+            where: { id: run.id },
+            data: {
+              status: 'NEEDS_INPUT',
+              completedAt: new Date(),
+              latencyMs: Date.now() - runStartedAt,
+            },
+          });
+
+          yield this.chunk(
+            'clarify',
+            clr as unknown as Record<string, unknown>,
+          );
+          yield this.chunk('done', {
+            metrics: {
+              sessionId: currentSession.id,
+              intent,
+              needsInput: true,
+              reason: clr.reason,
+            },
+          });
+          return;
+        }
+
+        // The data genuinely is not available — say so honestly, build nothing.
+        if (smartResult?.kind === 'no_data') {
+          await logEvent('NO_DATA', { message: smartResult.message.slice(0, 200) });
+
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+              content: smartResult.message,
+            },
+          });
+          await this.prisma.agentDashboardRequest.update({
+            where: { id: request.id },
+            data: { status: 'SUCCEEDED', completedAt: new Date() },
+          });
+          await this.prisma.agentRun.update({
+            where: { id: run.id },
+            data: {
+              status: 'SUCCEEDED',
+              completedAt: new Date(),
+              latencyMs: Date.now() - runStartedAt,
+            },
+          });
+
+          for (const part of this.chunkText(smartResult.message, 24)) {
+            yield this.chunk('token', { content: part });
+          }
+          yield this.chunk('done', {
+            metrics: {
+              sessionId: currentSession.id,
+              intent,
+              noData: true,
+            },
+          });
+          return;
+        }
+
+        if (smartResult?.kind === 'build') {
+          plan = smartResult.plan;
+        } else {
+          // Planner offline/failed — fall back to the vocabulary planner.
+          plan = await this.generatePlan(
+            queryText,
+            conversationHistory,
+            activeDashboard,
+            dataContext,
+            scope,
+            spec.timeRange,
+          );
+        }
       }
 
       await logEvent('PLAN_GENERATED', {
@@ -8289,6 +8595,8 @@ export class AgentService {
                       ? (typeof (w as any)?.topN === 'number' ? (w as any).topN : (spec.topN ?? 2))
                       : ((w as any)?.topN ?? null)),
                   ...(dynamicSql ? { dynamicSql } : {}),
+                  ...((w as any)?.xAxisLabel ? { xAxisLabel: (w as any).xAxisLabel } : {}),
+                  ...((w as any)?.yAxisLabel ? { yAxisLabel: (w as any).yAxisLabel } : {}),
                 } as Prisma.InputJsonValue,
                 chartConfig: {
                   description: w.description,
@@ -10009,12 +10317,16 @@ export class AgentService {
   // ─── Smart SQL planner — primary agent path ──────────────────────────────────
   // Introspects live ClickHouse data, then has the LLM write exact SQL for each
   // chart. Every widget returned has _sql set and metric='dynamic'.
+  // Returns a structured outcome: build / clarify / no_data. Returns null ONLY
+  // when the planner itself is unavailable (Ollama offline) so callers can fall
+  // back. A confident "build", an honest "no_data", and a focused "clarify" are
+  // all valid first-class results — never a guessed chart.
   private async generateSmartPlan(
     query: string,
     scope: OrgScope,
     range?: TimeRange,
     conversationHistory?: string,
-  ): Promise<AgentPlan | null> {
+  ): Promise<SmartPlanResult | null> {
     try {
       // Verify Ollama is reachable before doing the expensive introspection
       const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
@@ -10042,7 +10354,7 @@ export class AgentService {
         timeHint,
         historySnippet,
         `\nUSER REQUEST: "${query}"`,
-        `Generate up to ${maxCharts} chart(s). Each chart needs a precise SQL query using the REAL data values shown above.`,
+        `First decide the verdict (build / clarify / no_data). Only on "build", generate up to ${maxCharts} chart(s), each with a precise SQL query using the REAL data values shown above plus accurate xAxisLabel/yAxisLabel. If any named subject is not an exact match to the LIVE DATA above, or the request is ambiguous, return "clarify". If the data genuinely does not exist, return "no_data". Never guess.`,
       ].filter(Boolean).join('\n');
 
       const controller = new AbortController();
@@ -10083,7 +10395,70 @@ export class AgentService {
         parsed = JSON.parse(jsonMatch[0]);
       }
 
+      const verdict = String(parsed?.verdict ?? '').toLowerCase().trim();
+
+      // Guard: the model sometimes leaks raw SQL into user-facing text (it reads
+      // "restatement the planner can run as-is" as "write SQL"). NEVER show SQL
+      // or query placeholders in chat.
+      const looksLikeSql = (s: string): boolean =>
+        /\bSELECT\b[\s\S]*\bFROM\b/i.test(s) ||
+        /\{(?:externalOrgIds|tenantId|asOf)\s*:/i.test(s) ||
+        /\b(sumIf|formatDateTime|toStartOf|toFloat64|GROUP\s+BY)\b/i.test(s);
+
+      // ── CLARIFY ───────────────────────────────────────────────────────────
+      if (verdict === 'clarify' && parsed?.clarification?.question) {
+        const question = String(parsed.clarification.question).slice(0, 200).trim();
+        const rawOpts = Array.isArray(parsed.clarification.options)
+          ? parsed.clarification.options
+          : [];
+        const options = rawOpts
+          .map((o: any) => {
+            const label = String(o?.label ?? '').slice(0, 80).trim();
+            let value = String(o?.value ?? o?.label ?? '').slice(0, 300).trim();
+            // If the model put SQL in the natural-language value, fall back to
+            // the label so the resubmitted query is plain language, not SQL.
+            if (looksLikeSql(value)) value = label;
+            return { label, value };
+          })
+          .filter(
+            (o: { label: string; value: string }) =>
+              o.label && o.value && !looksLikeSql(o.label),
+          )
+          .slice(0, 4);
+        // Only surface the clarification if the question and options are clean.
+        if (options.length >= 1 && !looksLikeSql(question)) {
+          this.logger.log(`[SmartPlan] CLARIFY for: "${query.slice(0, 80)}"`);
+          return {
+            kind: 'clarify',
+            clarification: {
+              reason: 'PLANNER_NEEDS_INPUT',
+              question,
+              options,
+            },
+          };
+        }
+        // Malformed/SQL-tainted clarify — fall through to build/none.
+      }
+
+      // ── NO DATA ───────────────────────────────────────────────────────────
+      if (verdict === 'no_data' && parsed?.message) {
+        const message = String(parsed.message).slice(0, 600).trim();
+        if (!looksLikeSql(message)) {
+          this.logger.log(`[SmartPlan] NO_DATA for: "${query.slice(0, 80)}"`);
+          return { kind: 'no_data', message };
+        }
+        // SQL-tainted message — fall through rather than show SQL to the user.
+      }
+
+      // ── BUILD ─────────────────────────────────────────────────────────────
       if (!parsed?.charts || !Array.isArray(parsed.charts) || parsed.charts.length === 0) return null;
+
+      // If the user EXPLICITLY named a chart type ("create a heatmap", "as a pie
+      // chart"), honor it — never silently substitute a different type. Applies
+      // when exactly one type was requested.
+      const explicitTypes = this.parseExplicitChartConstraints(query)?.requiredTypes;
+      const forcedType: ChartType | null =
+        explicitTypes && explicitTypes.length === 1 ? explicitTypes[0]! : null;
 
       const widgets: Array<AgentPlan['dashboard']['widgets'][number] & { _sql?: string }> = [];
 
@@ -10097,6 +10472,8 @@ export class AgentService {
             'scatter','stacked_bar','waterfall','histogram','horizontal_bar',
             'pareto','gauge','bubble','heatmap',
           ];
+          // Explicit user request wins over the model's pick.
+          if (forcedType) return forcedType;
           return valid.includes(c.type as ChartType) ? (c.type as ChartType) : 'bar';
         })();
 
@@ -10112,12 +10489,24 @@ export class AgentService {
           continue;
         }
 
+        // Axis labels — omit for chart types where axes are meaningless.
+        const axisless: ChartType[] = ['metric', 'kpi', 'gauge', 'pie', 'donut', 'treemap'];
+        const wantsAxes = !axisless.includes(chartType);
+        const xAxisLabel = wantsAxes && c.xAxisLabel
+          ? String(c.xAxisLabel).slice(0, 60).trim()
+          : undefined;
+        const yAxisLabel = wantsAxes && c.yAxisLabel
+          ? String(c.yAxisLabel).slice(0, 60).trim()
+          : undefined;
+
         widgets.push({
           title: String(c.title ?? '').slice(0, 80),
           description: String(c.description ?? ''),
           type: chartType,
           metric: 'dynamic',
           grouping: 'query',
+          ...(xAxisLabel ? { xAxisLabel } : {}),
+          ...(yAxisLabel ? { yAxisLabel } : {}),
           display_order: i,
           _sql: sql,
         } as any);
@@ -10125,17 +10514,85 @@ export class AgentService {
 
       if (widgets.length === 0) return null;
 
-      this.logger.log(`[SmartPlan] Generated ${widgets.length} SQL-backed charts for: "${query.slice(0, 80)}"`);
+      // ── VERIFY DATA BEFORE CLAIMING SUCCESS ───────────────────────────────
+      // Execute each chart's SQL now and keep only the ones that actually return
+      // rows. A chart that renders empty while the chat says "Built your
+      // dashboard" is exactly the failure the user hits with e.g. "revenue of
+      // top vendors" (vendors have spend, not revenue → 0 rows). Be honest.
+      const verified = await Promise.all(
+        widgets.map(async (w) => {
+          const sql0 = (w as any)._sql as string;
+          const r1 = await this.executeDynamicSqlChecked(sql0, scope, {
+            chartType: w.type,
+          });
+
+          // Determine what (if anything) is wrong and recoverable.
+          // - SQL error → recoverable via self-repair.
+          // - ran fine, has rows, but the chart SHAPE is wrong (e.g. duplicate
+          //   x-axis labels because the wrong dimension was used as the label) →
+          //   also recoverable via self-repair with a shape hint.
+          // - ran fine, 0 rows, no error → genuinely empty, not fixable.
+          let problem: string | null = null;
+          if (r1.error) problem = r1.error;
+          else if (r1.rows.length === 0) return { w, ok: false };
+          else problem = this.detectBadChartShape(r1.rows, w.type);
+
+          if (!problem) return { w, ok: true };
+
+          // Attempt ONE self-repair with the error/shape hint.
+          const repaired = await this.repairSqlViaLLM(sql0, problem, liveContext);
+          if (!repaired) return { w, ok: false };
+          let scoped: string;
+          try {
+            scoped = this.validateAndScopeDynamicSql(repaired, scope, {
+              chartType: w.type,
+            });
+          } catch (e: any) {
+            this.logger.warn(`[SmartPlan] self-repair produced invalid SQL: ${e?.message ?? e}`);
+            return { w, ok: false };
+          }
+          const r2 = await this.executeDynamicSqlChecked(scoped, scope, {
+            chartType: w.type,
+          });
+          if (r2.rows.length > 0 && !this.detectBadChartShape(r2.rows, w.type)) {
+            (w as any)._sql = scoped;
+            this.logger.log(`[SmartPlan] self-repair SUCCEEDED for "${w.title}"`);
+            return { w, ok: true };
+          }
+          this.logger.warn(`[SmartPlan] self-repair did not yield a clean chart for "${w.title}"`);
+          return { w, ok: false };
+        }),
+      );
+      const nonEmpty = verified.filter((v) => v.ok).map((v) => v.w);
+
+      if (nonEmpty.length === 0) {
+        this.logger.log(`[SmartPlan] BUILD produced only empty charts → NO_DATA for: "${query.slice(0, 80)}"`);
+        return {
+          kind: 'no_data',
+          message:
+            `I built the query for "${String(parsed.title ?? query).slice(0, 80)}" but it returned no rows for this scope. ` +
+            `The data needed to answer this may not exist as asked — for example, vendors/suppliers have spend, not revenue, ` +
+            `and revenue comes from clients/invoices. Try rephrasing (e.g. compare vendor SPEND) or widen the time window.`,
+        };
+      }
+
+      // Re-number display order after dropping empties.
+      const finalWidgets = nonEmpty.map((w, i) => ({ ...w, display_order: i }));
+
+      this.logger.log(`[SmartPlan] BUILD — ${finalWidgets.length}/${widgets.length} SQL-backed charts returned data for: "${query.slice(0, 80)}"`);
 
       return {
-        tools_to_execute: [],
-        should_generate_dashboard: true,
-        dashboard: {
-          title: String(parsed.title ?? query).slice(0, 100),
-          description: 'Real-time dashboard built from live ClickHouse data',
-          widgets: widgets as AgentPlan['dashboard']['widgets'],
+        kind: 'build',
+        plan: {
+          tools_to_execute: [],
+          should_generate_dashboard: true,
+          dashboard: {
+            title: String(parsed.title ?? query).slice(0, 100),
+            description: 'Real-time dashboard built from live ClickHouse data',
+            widgets: finalWidgets as AgentPlan['dashboard']['widgets'],
+          },
+          analysis_focus: query,
         },
-        analysis_focus: query,
       };
     } catch (err: any) {
       this.logger.warn(`[SmartPlan] Failed: ${err?.message ?? err}`);
@@ -10697,12 +11154,19 @@ export class AgentService {
     )
       addType(/\bstacked\s+bar\b|\bstacked\s+bars\b/.test(q) ? 'stacked_bar' : 'bar');
     if (/\bpie\s+chart\b|\bpie\s+graph\b/.test(q)) addType('pie');
+    if (/\bdonut\b|\bdoughnut\b/.test(q)) addType('donut');
     if (/\btable\b|\btabular\b/.test(q)) addType('table');
     if (/\bmetric\s+tile\b|\bmetric\b/.test(q) && /\btile\b/.test(q))
       addType('metric');
     if (/\bwaterfall\s+chart\b|\bwaterfall\b/.test(q)) addType('waterfall');
     if (/\btreemap\b/.test(q)) addType('treemap');
     if (/\bscatter\s*plot\b|\bscatter\b/.test(q)) addType('scatter');
+    if (/\bheat\s*map\b|\bheatmap\b/.test(q)) addType('heatmap');
+    if (/\bhistogram\b/.test(q)) addType('histogram');
+    if (/\bpareto\b/.test(q)) addType('pareto');
+    if (/\bgauge\b/.test(q)) addType('gauge');
+    if (/\bbubble\s*chart\b|\bbubble\s*plot\b|\bbubble\b/.test(q)) addType('bubble');
+    if (/\bhorizontal\s+bar\b|\branked\s+bar\b/.test(q)) addType('horizontal_bar');
 
     const countMatch =
       q.match(
@@ -10746,32 +11210,11 @@ export class AgentService {
     scope?: OrgScope,
     range?: TimeRange,
   ): Promise<AgentPlan> {
-    // Fast deterministic routing — bypass both the Smart SQL planner and Ollama
-    // for well-known query patterns to guarantee consistent, correct output.
-    const preRouted = this.preRouteQuery(query);
-    if (preRouted && preRouted.length > 0) {
-      this.logger.log(`[plan] pre-route matched — ${preRouted.length} widget(s), bypassing LLM`);
-      const widgets = preRouted.map((w, i) => ({
-        title: w.title,
-        description: '',
-        type: w.type as AgentPlan['dashboard']['widgets'][number]['type'],
-        metric: w.metric,
-        grouping: w.grouping,
-        display_order: i,
-        data: [],
-      }));
-      return {
-        tools_to_execute: this.selectToolsForQuery(query),
-        should_generate_dashboard: true,
-        dashboard: {
-          title: this.deriveQueryTitle(query),
-          description: 'AI-generated financial intelligence dashboard',
-          widgets,
-        },
-        analysis_focus: query,
-      };
-    }
-
+    // NOTE: preRouteQuery() regex routing was intentionally removed from this
+    // path — it produced "closest-match" charts that did not reflect the real
+    // request. All real planning goes through the SQL-first structured planner
+    // (generateSmartPlan) in query(); this method is now the fallback used only
+    // for EDIT intents and when the planner is unavailable.
     const spec = parseQuerySpec(query);
     const constraints = this.parseExplicitChartConstraints(query);
     const compareClients = this.extractCompareClients(query);
@@ -10918,16 +11361,18 @@ export class AgentService {
 
     const userMsg = `${contextBlock}${historyBlock}\n\nUSER QUERY: "${query}"`;
 
-    // ── PRIMARY PATH: Smart SQL planner — queries real ClickHouse data ─────────
-    // Introspects live dimension values, then has the LLM generate exact SQL for
-    // every chart. No preset vocabulary, no pattern-matching shortcuts.
+    // ── Smart SQL planner — queries real ClickHouse data ──────────────────────
+    // For create intents this already ran in query(); here it primarily serves
+    // the EDIT path. Only a confident "build" is used — clarify/no_data are
+    // handled upstream in query(), so here we just fall back to the vocabulary
+    // planner when the structured planner does not return buildable charts.
     if (scope && scope.externalOrgIds.length > 0) {
-      const smartPlan = await this.generateSmartPlan(query, scope, range, conversationHistory);
-      if (smartPlan) {
-        this.logger.log(`[plan] smart-SQL path succeeded — ${smartPlan.dashboard.widgets.length} SQL-backed charts`);
-        return smartPlan;
+      const smartResult = await this.generateSmartPlan(query, scope, range, conversationHistory);
+      if (smartResult?.kind === 'build') {
+        this.logger.log(`[plan] smart-SQL path succeeded — ${smartResult.plan.dashboard.widgets.length} SQL-backed charts`);
+        return smartResult.plan;
       }
-      this.logger.warn('[plan] smart-SQL path failed — falling back to vocabulary planner');
+      this.logger.warn('[plan] smart-SQL path produced no buildable charts — falling back to vocabulary planner');
     }
 
     // ── FALLBACK: Vocabulary-based planner (Ollama picks preset metric+grouping)
@@ -13011,12 +13456,39 @@ Output SQL ONLY — no explanation, no markdown.`;
       (match, prefix) => `ORDER BY ${prefix}COALESCE(NULLIF(class_name,''),'Other')`,
     );
 
-    // ── 3. Reject unsupported window functions ────────────────────────────────────────────────
-    if (/\blag\s*\(/i.test(fixed) || /\blead\s*\(/i.test(fixed)) {
-      throw new Error(
-        'SQL uses lag()/lead() window functions which ClickHouse does not support in aggregate queries. Rewrite using a self-join or neighbor().',
-      );
+    // ── 2b. Fix invalid quarter formatting ───────────────────────────────────────────────────
+    // ClickHouse formatDateTime() has NO quarter token (%Q). A query using it
+    // throws and the chart silently renders empty. Rewrite to a valid quarter
+    // label — toQuarter()/toYear() accept the same inner date expression
+    // (e.g. toStartOfMonth(journal_date) or journal_date) directly.
+    fixed = fixed.replace(
+      /formatDateTime\s*\(\s*([^,]+?)\s*,\s*'[^']*%Q[^']*'\s*\)/gi,
+      (_m, inner) =>
+        `concat('Q', toString(toQuarter(${String(inner).trim()})), ' ', toString(toYear(${String(inner).trim()})))`,
+    );
+
+    // ── 2c. Fix cross-table date column confusion ────────────────────────────────────────────
+    // sample_gl_dump's date column is `date`. The model often writes `journal_date`
+    // (which only exists on v_fact_accounting_journal_lines_latest), causing
+    // UNKNOWN_IDENTIFIER → empty chart. When the query reads sample_gl_dump and NOT
+    // the journal-lines view, rewrite journal_date → date.
+    if (
+      /\bsample_gl_dump\b/i.test(fixed) &&
+      !/v_fact_accounting_journal_lines/i.test(fixed)
+    ) {
+      fixed = fixed.replace(/\bjournal_date\b/gi, 'date');
     }
+    // Symmetric: sample_trial_balance has no date column at all — nothing to do here,
+    // but if the model used line_amount on sample_gl_dump (which has debit/credit),
+    // that is a different table and handled by table selection, not a rename.
+
+    // ── 3. Normalize window functions to ClickHouse spelling ─────────────────────────────────
+    // ClickHouse supports window functions but names them lagInFrame()/leadInFrame()
+    // (not the standard lag()/lead()). The model often writes the standard names —
+    // rewrite them so month-over-month growth etc. runs instead of erroring.
+    // (Only touch lag(/lead( that are NOT already *InFrame.)
+    fixed = fixed.replace(/\blag\s*\(/gi, 'lagInFrame(');
+    fixed = fixed.replace(/\blead\s*\(/gi, 'leadInFrame(');
 
     return fixed;
   }
@@ -13026,7 +13498,14 @@ Output SQL ONLY — no explanation, no markdown.`;
     scope: OrgScope,
     opts?: { chartType?: ChartType },
   ): string {
-    const normalized = validateDynamicSql(sql, {
+    // The planner is told to scope every query, but the LLM frequently writes
+    // only the org_id predicate (most prompt examples show org_id alone). The
+    // validator requires BOTH tenant_id and org_id predicates. We always pass
+    // the tenantId param, so inject the tenant predicate next to each org
+    // predicate when it is missing — otherwise every widget would be rejected
+    // and we'd silently fall back to generic charts.
+    const scoped = injectTenantScopePredicate(sql);
+    const normalized = validateDynamicSql(scoped, {
       analyticsDb: this.analyticsDb,
       chartType: opts?.chartType ?? null,
     });
@@ -13039,6 +13518,19 @@ Output SQL ONLY — no explanation, no markdown.`;
     scope: OrgScope,
     opts?: { chartType?: ChartType },
   ): Promise<Record<string, unknown>[]> {
+    const { rows } = await this.executeDynamicSqlChecked(sql, scope, opts);
+    return rows;
+  }
+
+  // Like executeDynamicSql but surfaces WHY a query produced no rows: error !==
+  // null means validation or ClickHouse rejected it (recoverable via self-repair);
+  // error === null with rows === [] means the query ran fine but the data is
+  // genuinely empty (do NOT retry — that is an honest no-data).
+  private async executeDynamicSqlChecked(
+    sql: string,
+    scope: OrgScope,
+    opts?: { chartType?: ChartType },
+  ): Promise<{ rows: Record<string, unknown>[]; error: string | null }> {
     try {
       const normalized = this.validateAndScopeDynamicSql(sql, scope, opts);
 
@@ -13060,25 +13552,130 @@ Output SQL ONLY — no explanation, no markdown.`;
         const rewritten = rewriteRelativeNowToAsOf(normalized);
         const anchored = this.validateAndScopeDynamicSql(rewritten, scope, opts);
         const rows = await tryQuery(anchored, asOfIso);
-        if (rows.length > 0) return rows;
+        if (rows.length > 0) return { rows, error: null };
         // If anchored returns empty, fall through to original (may be intended "now").
       }
 
       const primary = await tryQuery(normalized, null);
-      if (primary.length > 0) return primary;
+      if (primary.length > 0) return { rows: primary, error: null };
 
       // Retry: if time-relative SQL returned empty, try anchoring to dataset max date.
       if (usesNow && asOfIso) {
         const rewritten = rewriteRelativeNowToAsOf(normalized);
         const anchored = this.validateAndScopeDynamicSql(rewritten, scope, opts);
         const rows = await tryQuery(anchored, asOfIso);
-        return rows;
+        return { rows, error: null };
       }
 
-      return [];
+      return { rows: [], error: null };
     } catch (err: any) {
-      this.logger.warn(`[Agent:Dynamic] SQL execution failed: ${err?.message ?? err}`);
-      return [];
+      const msg = String(err?.message ?? err);
+      this.logger.warn(`[Agent:Dynamic] SQL execution failed: ${msg}`);
+      return { rows: [], error: msg };
+    }
+  }
+
+  // Detect a chart whose SQL ran but produced an unusable SHAPE — most commonly
+  // the wrong dimension used as the x-axis label (duplicate "name" values), or a
+  // missing label column. Returns a human hint for self-repair, or null if fine.
+  private detectBadChartShape(
+    rows: Record<string, unknown>[],
+    chartType: ChartType,
+  ): string | null {
+    const t = String(chartType).toLowerCase();
+    // These chart types don't have a categorical x-axis label to dedupe.
+    if (['table', 'metric', 'kpi', 'gauge'].includes(t)) return null;
+    if (!rows.length) return null;
+
+    const keys = Object.keys(rows[0] ?? {});
+    if (!keys.includes('name')) {
+      return `Output has no "name" column (columns: ${keys.join(', ')}). Alias the label/dimension column AS name.`;
+    }
+
+    const names = rows.map((r) => String((r as any).name ?? ''));
+    const distinct = new Set(names).size;
+    if (distinct < names.length) {
+      return (
+        `The "name" column has duplicate labels (${distinct} distinct across ${names.length} rows), ` +
+        `so the x-axis repeats values — the WRONG dimension is being used as the label. Put the entity ` +
+        `the user is listing/ranking in "name" (one row per entity), and express any "by <category>" ` +
+        `breakdown as separate NUMERIC sumIf() columns (one per category) — not as extra rows and not ` +
+        `as an extra text column.`
+      );
+    }
+
+    // Must have at least one numeric series column besides "name".
+    const hasNumericSeries = keys.some(
+      (k) =>
+        k !== 'name' &&
+        rows.some((r) => {
+          const v = (r as any)[k];
+          return v !== null && v !== '' && Number.isFinite(Number(v));
+        }),
+    );
+    if (!hasNumericSeries) {
+      return `Output has no numeric series column (columns: ${keys.join(', ')}). Provide a numeric "value" column, or numeric series columns.`;
+    }
+
+    return null;
+  }
+
+  // Self-repair: when a chart's SQL is rejected by ClickHouse (wrong column,
+  // bad function, syntax), feed the error + live schema back to the model ONCE
+  // and ask for a corrected query. Generic safety net for the recurring class of
+  // "model wrote slightly-wrong SQL → empty chart" failures. Returns null if it
+  // cannot produce a clean fix (caller then drops the chart / reports no_data).
+  private async repairSqlViaLLM(
+    brokenSql: string,
+    errorMessage: string,
+    liveContext: string,
+  ): Promise<string | null> {
+    try {
+      const sys =
+        'You are a ClickHouse SQL fixer. A query failed. Return ONLY the corrected single ' +
+        'SELECT or WITH query — no markdown, no prose. Keep the SAME analytical intent and the ' +
+        'same output column aliases. ALWAYS keep the scope predicate ' +
+        'WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) and a LIMIT. ' +
+        'Use ONLY tables/columns that exist in the schema below. Common fixes: correct date column per ' +
+        "table (sample_gl_dump uses 'date'; v_fact_accounting_journal_lines_latest uses 'journal_date'; " +
+        "invoices use 'issued_at'); ClickHouse window functions are lagInFrame()/leadInFrame() (never lag/lead); " +
+        "there is NO '%Q' format token (build quarter labels with toQuarter()/toYear()).";
+      const user =
+        `SCHEMA / LIVE DATA:\n${liveContext}\n\n` +
+        `FAILED SQL:\n${brokenSql}\n\n` +
+        `CLICKHOUSE ERROR:\n${errorMessage}\n\n` +
+        `Return the corrected SQL only.`;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.OLLAMA_MODEL,
+          messages: [
+            { role: 'system', content: sys },
+            { role: 'user', content: user },
+          ],
+          stream: false,
+          options: { temperature: 0.05, num_predict: 1500, num_ctx: 8192 },
+        }),
+      }).catch(() => null);
+      clearTimeout(timer);
+      if (!resp?.ok) return null;
+
+      const body = (await resp.json()) as { message?: { content?: string } };
+      let out = (body.message?.content ?? '')
+        .replace(/```sql|```json|```/gi, '')
+        .trim();
+      // Strip any surrounding prose — keep from the first SELECT/WITH onward.
+      const m = out.match(/\b(WITH|SELECT)\b[\s\S]*/i);
+      if (m) out = m[0];
+      out = out.replace(/;+\s*$/, '').trim();
+      return out || null;
+    } catch {
+      return null;
     }
   }
 
@@ -13201,6 +13798,10 @@ Output SQL ONLY — no explanation, no markdown.`;
           : `Analyzed your data and prepared a dashboard plan.`;
 
     const metricSentence = (() => {
+      // SQL-first (smart-plan) dashboards run no invoice tools, so financial_summary
+      // is absent. Do NOT assert "No invoices found" for a vendor/expense dashboard
+      // that never involved invoices — it reads as broken. Stay silent on metrics.
+      if (!map.has('financial_summary')) return '';
       if (totalInvoices === 0) {
         if (spec.entityFilter?.orgName) {
           return `No invoices found for ${spec.entityFilter.orgName} in this scope yet (0 invoices).`;

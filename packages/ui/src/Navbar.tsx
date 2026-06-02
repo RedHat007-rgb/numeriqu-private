@@ -33,18 +33,19 @@ export const Navbar: React.FC<NavbarProps> = ({ trailing }) => {
               width="32"
               height="32"
               viewBox="0 0 32 32"
-              className="text-accent-blue"
               fill="none"
               aria-hidden
             >
               <defs>
                 <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#3b82f6" />
-                  <stop offset="100%" stopColor="#7c3aed" />
+                  <stop offset="0%" stopColor="#0077FF" />
+                  <stop offset="100%" stopColor="#9B4DFF" />
                 </linearGradient>
               </defs>
-              <polygon points="16,4 26,28 6,28" fill="url(#logoGrad)" opacity="0.9" />
-              <polygon points="14,10 20,22 8,22" fill="currentColor" opacity="0.32" />
+              {/* Q magnifying glass */}
+              <circle cx="13.5" cy="13.5" r="8" stroke="url(#logoGrad)" strokeWidth="2.5" fill="none" />
+              <line x1="19.5" y1="19.5" x2="26" y2="26" stroke="url(#logoGrad)" strokeWidth="2.5" strokeLinecap="round" />
+              <line x1="13.5" y1="9" x2="13.5" y2="16" stroke="url(#logoGrad)" strokeWidth="2" strokeLinecap="round" opacity="0.65" />
             </svg>
 
             <div>

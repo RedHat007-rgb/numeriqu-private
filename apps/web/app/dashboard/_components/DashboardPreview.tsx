@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Maximize2,
@@ -60,6 +60,8 @@ interface ChartConfig {
   orgName?: string | null;
   breakdown?: "client" | null;
   topN?: number | null;
+  xAxisLabel?: string | null;
+  yAxisLabel?: string | null;
   display?: {
     donut?: boolean | null;
     highlightMaxMin?: boolean | null;
@@ -1295,30 +1297,66 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     );
   }
 
-  // ── heatmap (revenue vs expenses comparison grid) ─────────────────────────
+  // ── heatmap (general grid: rows = series, columns = categories) ────────────
   if (chart.type === "heatmap") {
-    const maxVal = Math.max(...data.flatMap((d) => [Number((d as any).Revenue) || 0, Number((d as any).Expenses) || 0]), 1);
+    // Special case: the Revenue/Expenses/Net comparison grid (kept for P&L heatmaps).
+    const hasRevExp = data.some(
+      (d) => (d as any).Revenue !== undefined || (d as any).Expenses !== undefined,
+    );
+
+    // General case: rows are the numeric series columns (e.g. one per department),
+    // columns are the "name" values (e.g. months / accounts). A single-series
+    // name/value dataset renders as a one-row intensity strip — e.g. "departments
+    // with highest spending" becomes a row of departments where the hottest cell
+    // is the biggest spender.
+    const seriesKeys = hasRevExp
+      ? ["Revenue", "Expenses", "Net"]
+      : (() => {
+          const keys = inferNumericSeriesKeys(data);
+          return keys.length > 0 ? keys : ["value"];
+        })();
+
+    const maxVal = Math.max(
+      ...data.flatMap((d) => seriesKeys.map((k) => Math.abs(Number((d as any)[k]) || 0))),
+      1,
+    );
+
+    const cellColor = (series: string, val: number, intensity: number) => {
+      if (series === "Revenue") return `rgba(124,58,237,${0.1 + intensity * 0.7})`;
+      if (series === "Expenses") return `rgba(239,68,68,${0.1 + intensity * 0.7})`;
+      if (series === "Net")
+        return val < 0
+          ? `rgba(239,68,68,${0.1 + intensity * 0.7})`
+          : `rgba(16,185,129,${0.1 + intensity * 0.7})`;
+      // General series → violet gradient by intensity.
+      return `rgba(124,58,237,${0.1 + intensity * 0.7})`;
+    };
+
+    const labelFor = (series: string) =>
+      series === "value" && seriesKeys.length === 1 ? "Spend" : series;
+
     return (
       <div style={{ height: h, width: "100%", overflowX: "auto" }}>
         <div className="flex flex-col gap-1 min-w-[400px]">
-          {["Revenue", "Expenses", "Net"].map((series) => (
+          {seriesKeys.map((series) => (
             <div key={series} className="flex items-center gap-1">
-              <span className="w-16 shrink-0 text-[9px] font-semibold text-text-muted text-right pr-2">{series}</span>
+              <span className="w-20 shrink-0 truncate text-[9px] font-semibold text-text-muted text-right pr-2">
+                {labelFor(series)}
+              </span>
               <div className="flex flex-1 gap-[2px]">
                 {data.map((d, i) => {
                   const val = Number((d as any)[series]) || 0;
-                  const intensity = series === "Net" ? Math.min(1, Math.abs(val) / maxVal) : Math.min(1, val / maxVal);
-                  const isNeg = val < 0;
-                  const bg = series === "Revenue"
-                    ? `rgba(124,58,237,${0.1 + intensity * 0.7})`
-                    : series === "Expenses"
-                    ? `rgba(239,68,68,${0.1 + intensity * 0.7})`
-                    : isNeg ? `rgba(239,68,68,${0.1 + intensity * 0.7})` : `rgba(16,185,129,${0.1 + intensity * 0.7})`;
+                  const intensity = Math.min(1, Math.abs(val) / maxVal);
                   return (
-                    <div key={i} title={`${(d as any).name}: ${fmtCurrency(val)}`}
+                    <div
+                      key={i}
+                      title={`${labelFor(series)} · ${(d as any).name}: ${fmtCurrency(val)}`}
                       className="flex flex-1 flex-col items-center justify-center rounded py-2 cursor-default transition-opacity hover:opacity-80"
-                      style={{ background: bg, minWidth: 32 }}>
-                      <span className="text-[8px] font-semibold text-text-primary">{fmtCurrency(Math.abs(val)).replace('$', '')}</span>
+                      style={{ background: cellColor(series, val, intensity), minWidth: 32 }}
+                    >
+                      <span className="text-[8px] font-semibold text-text-primary">
+                        {fmtCurrency(Math.abs(val)).replace("$", "")}
+                      </span>
                     </div>
                   );
                 })}
@@ -1326,11 +1364,11 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             </div>
           ))}
           <div className="flex items-center gap-1 mt-1">
-            <span className="w-16 shrink-0" />
+            <span className="w-20 shrink-0" />
             <div className="flex flex-1 gap-[2px]">
               {data.map((d, i) => (
                 <div key={i} className="flex flex-1 justify-center">
-                  <span className="text-[8px] text-text-muted">{String((d as any).name ?? "")}</span>
+                  <span className="text-[8px] text-text-muted truncate">{String((d as any).name ?? "")}</span>
                 </div>
               ))}
             </div>
@@ -1392,6 +1430,39 @@ function getEmptyMessage(chart: Chart): string {
   return 'No data for this scope yet';
 }
 
+// Chart types that have no meaningful X/Y axes.
+const AXISLESS_TYPES = new Set([
+  "metric",
+  "kpi",
+  "gauge",
+  "pie",
+  "donut",
+  "treemap",
+]);
+
+// Compact, always-visible caption telling the user exactly what each axis means.
+function AxisCaption({ chart }: { chart: Chart }) {
+  if (AXISLESS_TYPES.has(chart.type)) return null;
+  const x = chart.config.xAxisLabel?.trim();
+  const y = chart.config.yAxisLabel?.trim();
+  if (!x && !y) return null;
+  return (
+    <p className="mt-1 line-clamp-1 text-[10px] font-medium text-text-muted/90">
+      {x ? (
+        <>
+          <span className="text-text-muted/70">X:</span> {x}
+        </>
+      ) : null}
+      {x && y ? <span className="mx-1.5 text-text-muted/40">·</span> : null}
+      {y ? (
+        <>
+          <span className="text-text-muted/70">Y:</span> {y}
+        </>
+      ) : null}
+    </p>
+  );
+}
+
 function ChartCard({
   chart,
   data,
@@ -1426,6 +1497,7 @@ function ChartCard({
           <p className="mt-0.5 line-clamp-1 text-[10px] text-text-muted">
             {chart.description ?? `${chart.type} · ${chart.config.metric} / ${chart.config.grouping}`}
           </p>
+          <AxisCaption chart={chart} />
         </div>
         {!isEmpty && (
           <Maximize2
@@ -1480,6 +1552,17 @@ export function DashboardPreview({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedChartId, setExpandedChartId] = useState<string | null>(null);
+  const prevSessionRef = useRef<string | null | undefined>(sessionId);
+
+  // Switching chats (or starting a new one) must NOT keep showing the previous
+  // dashboard's charts. Clear immediately so the loading/generating skeleton is
+  // shown until the new session's dashboard arrives.
+  if (prevSessionRef.current !== sessionId) {
+    prevSessionRef.current = sessionId;
+    if (dashboard !== null) setDashboard(null);
+    if (Object.keys(chartData).length > 0) setChartData({});
+    setExpandedChartId(null);
+  }
 
   useEffect(() => {
     if (loading) return;
@@ -1547,8 +1630,10 @@ export function DashboardPreview({
   }, [agent, loading, triggerSync, sessionId]);
 
   // ── Loading / Generating state ──────────────────────────────────────────────
-
-  if (isGenerating && !dashboard) {
+  // Show the generating skeleton whenever a generation is in flight — even if a
+  // previous dashboard is still in state — so a new prompt never displays the
+  // old prompt's charts while the new one is being built.
+  if (isGenerating) {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-2 rounded-2xl border border-accent-violet/20 bg-accent-violet/5 px-4 py-3">
@@ -1682,6 +1767,26 @@ export function DashboardPreview({
                   {expandedChart.description ??
                     `${expandedChart.type} analysis of ${expandedChart.config.metric} grouped by ${expandedChart.config.grouping}`}
                 </p>
+                {!AXISLESS_TYPES.has(expandedChart.type) &&
+                (expandedChart.config.xAxisLabel || expandedChart.config.yAxisLabel) ? (
+                  <p className="mt-2 text-xs font-medium text-text-muted">
+                    {expandedChart.config.xAxisLabel ? (
+                      <>
+                        <span className="text-text-muted/70">X-Axis:</span>{" "}
+                        {expandedChart.config.xAxisLabel}
+                      </>
+                    ) : null}
+                    {expandedChart.config.xAxisLabel && expandedChart.config.yAxisLabel ? (
+                      <span className="mx-2 text-text-muted/40">·</span>
+                    ) : null}
+                    {expandedChart.config.yAxisLabel ? (
+                      <>
+                        <span className="text-text-muted/70">Y-Axis:</span>{" "}
+                        {expandedChart.config.yAxisLabel}
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
               </div>
 
               <div className="min-h-0 w-full flex-1 rounded-2xl border border-default bg-bg-elevated/30 p-6">

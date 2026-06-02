@@ -215,6 +215,9 @@ export type ChartConfig = {
   orgName?: string | null;
   breakdown?: Breakdown | null;
   topN?: number | null;
+  /** Axis titles describing what X and Y actually represent (with units). */
+  xAxisLabel?: string | null;
+  yAxisLabel?: string | null;
 };
 
 export type TimeRange =

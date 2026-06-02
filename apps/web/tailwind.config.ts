@@ -91,17 +91,10 @@ const config: Config = {
         glow: "rgb(var(--color-border-glow) / 0.4)",
       },
       fontFamily: {
-        display: [
-          "ui-serif",
-          "Iowan Old Style",
-          "Palatino",
-          "Palatino Linotype",
-          "Georgia",
-          "Times New Roman",
-          "serif",
-        ],
+        display: ["var(--font-nunito)", "Nunito", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["var(--font-roboto)", "Roboto", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["var(--font-jetbrains-mono)", "monospace"],
-        body: ["var(--font-inter)", "sans-serif"],
+        body: ["var(--font-roboto)", "Roboto", "ui-sans-serif", "sans-serif"],
       },
       animation: {
         "pulse-subtle": "pulse-subtle 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
@@ -119,8 +112,8 @@ const config: Config = {
           "50%": { transform: "translateY(-20px)" },
         },
         "glow-pulse": {
-          "0%, 100%": { boxShadow: "0 0 20px rgba(59, 130, 246, 0.5)" },
-          "50%": { boxShadow: "0 0 40px rgba(59, 130, 246, 0.8)" },
+          "0%, 100%": { boxShadow: "0 0 20px rgba(0, 119, 255, 0.5)" },
+          "50%": { boxShadow: "0 0 40px rgba(0, 119, 255, 0.8)" },
         },
         "fade-in-up": {
           "0%": { opacity: "0", transform: "translateY(8px)" },
@@ -128,14 +121,14 @@ const config: Config = {
         },
       },
       backgroundImage: {
-        "dot-grid": "radial-gradient(circle, rgba(59, 130, 246, 0.1) 1px, transparent 1px)",
+        "dot-grid": "radial-gradient(circle, rgba(0, 119, 255, 0.1) 1px, transparent 1px)",
       },
       backgroundSize: {
         "dot-grid": "24px 24px",
       },
       boxShadow: {
-        "glow-blue": "0 0 24px rgba(59, 130, 246, 0.5)",
-        "glow-violet": "0 0 24px rgba(124, 58, 237, 0.3)",
+        "glow-blue": "0 0 24px rgba(0, 119, 255, 0.5)",
+        "glow-violet": "0 0 24px rgba(155, 77, 255, 0.3)",
         glass: "0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06)",
       },
       backdropBlur: {

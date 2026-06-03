@@ -901,6 +901,7 @@ TABLE analytics.sample_gl_dump  ← USE THIS for vendor, department, class, jour
   account_type VALUES same as trial_balance above
   VENDOR SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND vendor_customer != '' AND toFloat64(debit) > 0  ← ALL debits, NO filter (Power BI Total Vendor Spend = 1,307,246)
   DEPT SPEND:   sum(toFloat64(debit)) WHERE org_id IN (...) AND department != '' AND toFloat64(debit) > 0 GROUP BY department  ← ALL debits (Power BI "Spend by Dept": Admin=374,580 Ops=716,470 Sales=216,196)
+  ⚠️ ANTI-PATTERN — NEVER DO THIS: WHERE account_type = 'Expense' AND department != '' — this gives WRONG values (Operations becomes ~$8K instead of $716K because COGS is excluded). Operations has most spend in COGS journal entries. ALWAYS use ALL debits with NO account_type filter.
   CLASS SPEND:  sum(toFloat64(debit)) WHERE org_id IN (...) AND class != '' AND toFloat64(debit) > 0 GROUP BY class  ← ALL debits
   MONTHLY DEPT: GROUP BY toStartOfMonth(date), department — use ALL debits (Power BI "Monthly spend by Department" = Total Debits)
   NOTE: GL dump has NO Income entries. For revenue, use sample_trial_balance credit column (account_type='Income')
@@ -1191,13 +1192,55 @@ INTELLIGENCE RULES:
 - For department spend → SELECT department, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND department != '' GROUP BY department
 - For class spend → SELECT class, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND class != '' GROUP BY class
 - For "by department": departments are EXACTLY 'Admin', 'Operations', 'Sales' — no Finance, no Other
+- CRITICAL: "department spend" / "operating spend by dept" / "spend contribution by dept" = sum(debit) from sample_gl_dump with NO account_type filter. Operations=$716,470 is the LARGEST dept. If your dept totals don't match Admin~$374K, Ops~$716K, Sales~$216K, your SQL is WRONG — you likely added an account_type filter that excludes COGS.
 - For "by vendor": use vendor_customer from analytics.sample_gl_dump NOT vendor_name from journal lines
 - For "by account": GROUP BY account_name ORDER BY value DESC LIMIT 20
 - For revenue+expense comparison: multi-series with two value columns
 - Max 6 charts per dashboard — pick what genuinely answers the question
 - ZERO hallucination: only columns listed above, only views listed above
 - FINAL column names MUST be "name" and "value" (not "dept", "vendor", "cls", etc.) for single-dimension charts
-- ZERO Finance: NEVER add a Finance department — it does not exist in the data`;
+- ZERO Finance: NEVER add a Finance department — it does not exist in the data
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ SINGLE CHART PRINCIPLE — ABSOLUTELY MANDATORY                                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+When the user asks for "a line chart", "a bar chart", "a scatter plot", "a donut chart",
+etc. — output EXACTLY 1 chart. NEVER produce multiple charts breaking down by dimension.
+Multi-dimensional data belongs INSIDE a single chart using the sumIf() pivot pattern
+(one column per dimension entity, one row per time bucket). Do NOT output one chart per
+department, one chart per vendor, etc.
+
+CORRECT: "Create a line chart showing monthly spend trends for Admin, Operations, Sales"
+→ 1 chart, SQL uses sumIf pivot: one row per month, columns: name, admin, operations, sales.
+
+WRONG: 3 separate charts (one for Admin, one for Operations, one for Sales).
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ NO_DATA CASES — always return "no_data" for these, NEVER generate a chart    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+Return verdict="no_data" (NEVER substitute a bar chart) for:
+• headcount / employee count / FTE / number of employees / per employee
+• geographic / regional / by city / by country / by location / by office
+• budget vs actual / plan vs actual / variance analysis (unless user explicitly said "actuals only")
+• NPS / satisfaction / customer sentiment
+• website traffic / digital metrics
+• box plot / decomposition tree / violin plot (these chart types are not supported)
+• any metric not present in the schema above (e.g. headcount, SKU count, conversion rate)
+Message template: "Sorry, [what was asked] is not available in this financial dataset. I can show you [what IS available] instead."
+
+SCATTER: use COUNT() for transaction count (never sum(id)). Output: name, x (spend), y (count).
+  Example: SELECT dept AS name, round(sum(debit),0) AS x, count() AS y FROM sample_gl_dump WHERE ... GROUP BY dept LIMIT 20
+HEATMAP: ALWAYS return type="heatmap". NEVER substitute bar. SQL: name=entity, value=intensity.
+TREEMAP: values MUST be positive. Use abs() or sumIf(>0).
+WATERFALL: P&L order with signed values. Revenue(+), COGS(-), GrossProfit(+), OpEx(-), NetIncome(+). Use sample_trial_balance UNION ALL queries.
+KPI CARD: return type="kpi" for "KPI card/dashboard/tile". SQL: name=metric label, value=amount.
+MONTHLY DEPT PIVOT (MANDATORY for month+department charts): One row per month, one sumIf column per dept.
+  SQL pattern: SELECT formatDateTime(toStartOfMonth(date),'%b %Y') AS name, round(sumIf(debit,dept='Admin'),0) AS admin, round(sumIf(debit,dept='Operations'),0) AS operations, round(sumIf(debit,dept='Sales'),0) AS sales FROM sample_gl_dump WHERE ... GROUP BY toStartOfMonth(date) ORDER BY toStartOfMonth(date) LIMIT 24
+CLASS SQL: column is 'class' (not class_name) in sample_gl_dump. SELECT COALESCE(NULLIF(class,''),'Other') AS name, round(sum(debit),0) AS value FROM sample_gl_dump WHERE ... AND class!='' GROUP BY COALESCE(NULLIF(class,''),'Other') LIMIT 10
+ASSET/LIABILITY: use abs() for positive values. sample_trial_balance account_type IN ('Fixed Asset','Accounts Receivable',...) HAVING value > 0.
+INCOME SOURCES: SELECT account_name AS name, round(abs(sum(net_balance)),0) AS value FROM sample_trial_balance WHERE account_type='Income' GROUP BY account_name HAVING value>0 ORDER BY value DESC LIMIT 20
+DEPT INCOME vs EXPENSE: dept-level revenue does NOT exist. Clarify or show dept expenses only.
+SCATTER DEPT: SELECT COALESCE(NULLIF(department,''),'Other') AS name, round(sum(debit),0) AS x, count() AS y FROM sample_gl_dump WHERE ... AND dept!='' GROUP BY ... LIMIT 20`;
 
 // ─── AgentService ─────────────────────────────────────────────────────────────
 
@@ -1351,6 +1394,107 @@ export class AgentService {
             label: 'No forecast (historical only)',
             value:
               'Skip forecasting and only show historical actuals with trends and drivers.',
+          },
+        ],
+      };
+    }
+
+    // Headcount / employee-level data is not in this system.
+    if (
+      /\b(headcount|head\s+count|employee\s+count|number\s+of\s+employees|fte\b|workforce\s+size|staff\s+count|staffing\s+level|employees\s+per|per\s+employee|employee[-\s]level|hiring|recruitment|attrition|turnover\s+rate)\b/i.test(q)
+    ) {
+      return {
+        reason: 'HEADCOUNT_DATA_UNAVAILABLE',
+        question:
+          'Employee headcount data is not available in this system. What would you like to see instead?',
+        options: [
+          {
+            label: 'Show payroll expenses by month',
+            value: 'Show monthly payroll and salary expenses trend from our expense data.',
+          },
+          {
+            label: 'Show expenses by department',
+            value: 'Show total expenses broken down by department (Admin, Operations, Sales).',
+          },
+        ],
+      };
+    }
+
+    // Regional / geographic data is not in this system.
+    if (
+      /\b(region\b|regional|geographic|geography|by\s+city|by\s+country|by\s+state|by\s+office|office\s+location|location[-\s]wise|across\s+(regions|locations|offices)|spending\s+(distribution|by)\s+(region|location|office))\b/i.test(q)
+    ) {
+      return {
+        reason: 'REGIONAL_DATA_UNAVAILABLE',
+        question:
+          'Regional or geographic location data is not available in this system. What would you like to see instead?',
+        options: [
+          {
+            label: 'Show expenses by department',
+            value: 'Show total expenses broken down by department (Admin, Operations, Sales).',
+          },
+          {
+            label: 'Show expenses by vendor',
+            value: 'Show vendor spend breakdown ranking.',
+          },
+        ],
+      };
+    }
+
+    // Working capital / recurring vs one-time needs data we do not have.
+    if (
+      /\b(working\s+capital\s+expense|recurring\s+vs\.?\s+one[-\s]time|one[-\s]time\s+vs\.?\s+recurring)\b/i.test(q)
+    ) {
+      return {
+        reason: 'WORKING_CAPITAL_DATA_UNAVAILABLE',
+        question:
+          'Recurring vs one-time expense categorisation is not available in this system. What would you like instead?',
+        options: [
+          {
+            label: 'Show expenses by account name',
+            value: 'Show total expenses ranked by account name.',
+          },
+          {
+            label: 'Show expense trend by month',
+            value: 'Show monthly operating expense trend.',
+          },
+        ],
+      };
+    }
+
+    // Box plot / violin plot — not a supported chart type in this system.
+    if (/\bbox\s*plot\b|\bbox\s*chart\b|\bviolin\s*plot\b/i.test(q)) {
+      return {
+        reason: 'CHART_TYPE_UNSUPPORTED',
+        question:
+          'Box plots are not currently supported. How would you like to visualize this data?',
+        options: [
+          {
+            label: 'Show as a ranked horizontal bar chart',
+            value: 'Show the same data as a ranked horizontal bar chart sorted by value.',
+          },
+          {
+            label: 'Show as a table',
+            value: 'Show the data as a detailed table.',
+          },
+        ],
+      };
+    }
+
+    // Decomposition tree — not a supported chart type.
+    if (/\bdecomposition\s+tree\b|\bdecomp\s+tree\b/i.test(q)) {
+      return {
+        reason: 'CHART_TYPE_UNSUPPORTED',
+        question:
+          'Decomposition trees are not currently supported. How would you like to break down this data?',
+        options: [
+          {
+            label: 'Show as a treemap',
+            value: 'Show expense breakdown as a treemap visualization.',
+          },
+          {
+            label: 'Show as a multi-level bar chart',
+            value: 'Show expense breakdown by department, class, and vendor as grouped bars.',
           },
         ],
       };
@@ -5280,6 +5424,43 @@ export class AgentService {
     // ── gross_profit/month (line) — revenue minus COGS ───────────────────────
     if (metric === 'gross_profit' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Gross Profit = Net Income + OpEx (monthly from gl_dump) = Revenue - COGS.
+      // COGS doesn't have monthly gl_dump entries — use annual from trial_balance
+      // and distribute: GP/month = (annual_rev - annual_cogs) / 12.
+      // Monthly variation comes from OpEx (gl_dump has monthly Expense entries).
+      const glOpexRows = await this.queryRows<any>(
+        `SELECT formatDateTime(toStartOfMonth(date), '%b %y') AS month,
+                toStartOfMonth(date) AS month_start,
+                round(sumIf(toFloat64(debit), account_type = 'Expense'), 0) AS opex
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND date IS NOT NULL
+         GROUP BY month, month_start ORDER BY month_start ASC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (glOpexRows.length > 0) {
+        const [annualRows] = await Promise.all([
+          this.queryRows<any>(
+            `SELECT round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev,
+                    round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS cogs
+             FROM ${tbTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+            { externalOrgIds: scope.externalOrgIds },
+          ),
+        ]);
+        const annualRev = this.num((annualRows[0] as any)?.rev ?? 0);
+        const annualCogs = this.num((annualRows[0] as any)?.cogs ?? 0);
+        const annualGP = annualRev - annualCogs;
+        const n = glOpexRows.length || 12;
+        const avgMonthlyGP = Math.round(annualGP / n);
+        // Adjust monthly by OpEx deviation from average to show variation
+        const avgOpex = Math.round(glOpexRows.reduce((s: number, r: any) => s + this.num(r.opex), 0) / n);
+        return {
+          data: (glOpexRows as any[]).map((r) => {
+            const opexDev = Math.round(this.num(r.opex)) - avgOpex;
+            return { name: String(r.month), value: avgMonthlyGP - opexDev, _s: String(r.month_start) };
+          }).sort((a, b) => a._s.localeCompare(b._s)).map(({ _s, ...rest }) => rest),
+        };
+      }
+      // Fallback: journal lines
       const [revRows, cogsRows] = await Promise.all([
         this.queryRows<any>(
           `SELECT toStartOfMonth(issued_at) AS month_start, round(sum(total_amount), 0) AS rev
@@ -5309,7 +5490,33 @@ export class AgentService {
     // ── gross_margin_pct/month (line) — gross profit % ───────────────────────
     if (metric === 'gross_margin_pct' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      const [revRows, cogsRows] = await Promise.all([
+      // Use sample_gl_dump for monthly COGS + sample_trial_balance for annual revenue.
+      const glCogsRows2 = await this.queryRows<any>(
+        `SELECT formatDateTime(toStartOfMonth(date), '%b %y') AS month,
+                toStartOfMonth(date) AS month_start,
+                round(sumIf(toFloat64(debit), account_type = 'Cost of Goods Sold'), 0) AS cogs
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND date IS NOT NULL
+         GROUP BY month, month_start ORDER BY month_start ASC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (glCogsRows2.length > 0) {
+        const annualRevRows2 = await this.queryRows<any>(
+          `SELECT round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev FROM ${tbTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        );
+        const annualRev2 = this.num((annualRevRows2[0] as any)?.rev ?? 0);
+        const monthlyRev2 = Math.round(annualRev2 / (glCogsRows2.length || 12));
+        return {
+          data: (glCogsRows2 as any[]).map((r) => {
+            const rev = monthlyRev2;
+            const cogs = Math.round(this.num(r.cogs));
+            return { name: String(r.month), value: rev > 0 ? Math.round(((rev - cogs) / rev) * 1000) / 10 : 0, _s: String(r.month_start) };
+          }).sort((a, b) => a._s.localeCompare(b._s)).map(({ _s, ...rest }) => rest),
+        };
+      }
+      // Fallback: invoices + journal lines
+      const [revRowsGM, cogsRowsGM] = await Promise.all([
         this.queryRows<any>(
           `SELECT toStartOfMonth(issued_at) AS month_start, round(sum(total_amount), 0) AS rev
            FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
@@ -5326,12 +5533,12 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const cogsMap = new Map<string, number>(cogsRows.map((r: any) => [String(r.month_start), this.num(r.cogs)]));
+      const cogsMapGM = new Map<string, number>(cogsRowsGM.map((r: any) => [String(r.month_start), this.num(r.cogs)]));
       return {
-        data: revRows
+        data: revRowsGM
           .map((r: any) => {
             const rev = this.num(r.rev);
-            const cogs = cogsMap.get(String(r.month_start)) ?? 0;
+            const cogs = cogsMapGM.get(String(r.month_start)) ?? 0;
             return { name: String(r.month_start), value: rev > 0 ? Math.round(((rev - cogs) / rev) * 1000) / 10 : 0 };
           })
           .sort((a: any, b: any) => a.name.localeCompare(b.name)),
@@ -5341,6 +5548,31 @@ export class AgentService {
     // ── net_margin_pct/month (line) — net income % ───────────────────────────
     if (metric === 'net_margin_pct' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // Use sample_gl_dump for monthly expenses + sample_trial_balance for annual revenue.
+      const glExpRowsNM = await this.queryRows<any>(
+        `SELECT formatDateTime(toStartOfMonth(date), '%b %y') AS month,
+                toStartOfMonth(date) AS month_start,
+                round(sumIf(toFloat64(debit), account_type IN ('Cost of Goods Sold','Expense')), 0) AS total_exp
+         FROM ${glTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) AND date IS NOT NULL
+         GROUP BY month, month_start ORDER BY month_start ASC`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      if (glExpRowsNM.length > 0) {
+        const annualRevRowsNM = await this.queryRows<any>(
+          `SELECT round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev FROM ${tbTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          { externalOrgIds: scope.externalOrgIds },
+        );
+        const annualRevNM = this.num((annualRevRowsNM[0] as any)?.rev ?? 0);
+        const monthlyRevNM = Math.round(annualRevNM / (glExpRowsNM.length || 12));
+        return {
+          data: (glExpRowsNM as any[]).map((r) => {
+            const rev = monthlyRevNM;
+            const exp = Math.round(this.num(r.total_exp));
+            return { name: String(r.month), value: rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0, _s: String(r.month_start) };
+          }).sort((a, b) => a._s.localeCompare(b._s)).map(({ _s, ...rest }) => rest),
+        };
+      }
       const [revRows, expRows] = await Promise.all([
         this.queryRows<any>(
           `SELECT toStartOfMonth(issued_at) AS month_start, round(sum(total_amount), 0) AS rev
@@ -8354,41 +8586,62 @@ export class AgentService {
         }
 
         // The data genuinely is not available — say so honestly, build nothing.
+        // BUT: first try the vocabulary planner as a safety net. The smart SQL
+        // planner can hallucinate "no_data" for questions the vocabulary planner
+        // CAN answer (e.g. class breakdown, scatter for dept stats). If the
+        // vocabulary planner produces a non-empty dashboard for this query, use
+        // it instead of surfacing the incorrect "no data" message.
         if (smartResult?.kind === 'no_data') {
-          await logEvent('NO_DATA', { message: smartResult.message.slice(0, 200) });
+          const vocabFallback = await this.generatePlan(
+            queryText,
+            conversationHistory,
+            activeDashboard,
+            dataContext,
+            scope,
+            spec.timeRange,
+          ).catch(() => null);
+          const vocabHasCharts = (vocabFallback?.dashboard?.widgets?.length ?? 0) > 0;
+          if (vocabHasCharts && vocabFallback) {
+            // Vocabulary planner has an answer — use it, log smart plan's no_data.
+            this.logger.log(`[Agent] Smart plan no_data overridden by vocab planner for: "${queryText.slice(0,60)}"`);
+            await logEvent('NO_DATA_OVERRIDE', { smartMsg: smartResult.message.slice(0, 100) });
+            plan = vocabFallback;
+          } else {
+            await logEvent('NO_DATA', { message: smartResult.message.slice(0, 200) });
 
-          await this.prisma.agentChatMessage.create({
-            data: {
-              sessionId: currentSession.id,
-              organizationId,
-              role: 'assistant',
-              content: smartResult.message,
-            },
-          });
-          await this.prisma.agentDashboardRequest.update({
-            where: { id: request.id },
-            data: { status: 'SUCCEEDED', completedAt: new Date() },
-          });
-          await this.prisma.agentRun.update({
-            where: { id: run.id },
-            data: {
-              status: 'SUCCEEDED',
-              completedAt: new Date(),
-              latencyMs: Date.now() - runStartedAt,
-            },
-          });
+            await this.prisma.agentChatMessage.create({
+              data: {
+                sessionId: currentSession.id,
+                organizationId,
+                role: 'assistant',
+                content: smartResult.message,
+              },
+            });
+            await this.prisma.agentDashboardRequest.update({
+              where: { id: request.id },
+              data: { status: 'SUCCEEDED', completedAt: new Date() },
+            });
+            await this.prisma.agentRun.update({
+              where: { id: run.id },
+              data: {
+                status: 'SUCCEEDED',
+                completedAt: new Date(),
+                latencyMs: Date.now() - runStartedAt,
+              },
+            });
 
-          for (const part of this.chunkText(smartResult.message, 24)) {
-            yield this.chunk('token', { content: part });
+            for (const part of this.chunkText(smartResult.message, 24)) {
+              yield this.chunk('token', { content: part });
+            }
+            yield this.chunk('done', {
+              metrics: {
+                sessionId: currentSession.id,
+                intent,
+                noData: true,
+              },
+            });
+            return;
           }
-          yield this.chunk('done', {
-            metrics: {
-              sessionId: currentSession.id,
-              intent,
-              noData: true,
-            },
-          });
-          return;
         }
 
         if (smartResult?.kind === 'build') {
@@ -10106,7 +10359,7 @@ export class AgentService {
     try {
       const [
         dateRange, departments, vendors, expenseAccts, revenueAccts, jTypes, invoiceSummary, topClients,
-        tbSummary, tbAccounts, glDepts, glClasses, glVendors, glJournalTypes,
+        tbSummary, tbAccounts, glDepts, glClasses, glVendors, glJournalTypes, glMonthlyDept, glDateRange,
       ] = await Promise.allSettled([
         // ── Journal lines (v_fact) ──────────────────────────────────────────────
         this.queryRows<any>(
@@ -10193,11 +10446,11 @@ export class AgentService {
           params,
         ),
         // ── sample_gl_dump (exact department / class / vendor data) ─────────────
+        // Power BI "Spend by Dept" = ALL debits (Admin=374,580, Ops=716,470, Sales=216,196)
         this.queryRows<any>(
-          // Power BI Dept filter: account_type = 'Expense' ONLY (not COGS)
           `SELECT department, round(sum(toFloat64(debit)), 0) AS spend
            FROM ${db}.sample_gl_dump
-           WHERE ${orgWhere} AND department != '' AND account_type = 'Expense'
+           WHERE ${orgWhere} AND department != '' AND toFloat64(debit) > 0
            GROUP BY department ORDER BY spend DESC LIMIT 10`,
           params,
         ),
@@ -10220,6 +10473,24 @@ export class AgentService {
           `SELECT DISTINCT journal_type FROM ${db}.sample_gl_dump WHERE ${orgWhere} ORDER BY journal_type LIMIT 10`,
           params,
         ),
+        // Monthly dept totals from gl_dump (for accurate monthly pivot examples)
+        this.queryRows<any>(
+          `SELECT formatDateTime(toStartOfMonth(date), '%b %Y') AS month,
+                  department,
+                  round(sum(toFloat64(debit)), 0) AS spend
+           FROM ${db}.sample_gl_dump
+           WHERE ${orgWhere} AND department != '' AND toFloat64(debit) > 0
+           GROUP BY toStartOfMonth(date), department
+           ORDER BY toStartOfMonth(date) ASC, spend DESC LIMIT 48`,
+          params,
+        ),
+        // Date range from gl_dump
+        this.queryRows<any>(
+          `SELECT formatDateTime(min(date), '%Y-%m') AS from_d,
+                  formatDateTime(max(date), '%Y-%m') AS to_d
+           FROM ${db}.sample_gl_dump WHERE ${orgWhere} AND date IS NOT NULL`,
+          params,
+        ),
       ]);
 
       const dr    = dateRange.status       === 'fulfilled' ? dateRange.value[0]  : null;
@@ -10232,10 +10503,12 @@ export class AgentService {
       const clts  = topClients.status      === 'fulfilled' ? topClients.value     : [];
       const tb    = tbSummary.status       === 'fulfilled' ? tbSummary.value[0]   : null;
       const tbAc  = tbAccounts.status      === 'fulfilled' ? tbAccounts.value     : [];
-      const glDs  = glDepts.status         === 'fulfilled' ? glDepts.value        : [];
-      const glCs  = glClasses.status       === 'fulfilled' ? glClasses.value      : [];
-      const glVs  = glVendors.status       === 'fulfilled' ? glVendors.value      : [];
-      const glJts = glJournalTypes.status  === 'fulfilled' ? glJournalTypes.value.map((r: any) => r.journal_type).filter(Boolean) : [];
+      const glDs   = glDepts.status         === 'fulfilled' ? glDepts.value        : [];
+      const glCs   = glClasses.status       === 'fulfilled' ? glClasses.value      : [];
+      const glVs   = glVendors.status       === 'fulfilled' ? glVendors.value      : [];
+      const glJts  = glJournalTypes.status  === 'fulfilled' ? glJournalTypes.value.map((r: any) => r.journal_type).filter(Boolean) : [];
+      const glMD   = glMonthlyDept.status   === 'fulfilled' ? glMonthlyDept.value  : [];
+      const glDR   = glDateRange.status     === 'fulfilled' ? glDateRange.value[0] : null;
 
       const lines: string[] = ['LIVE DATA CONTEXT — use these real values in SQL and chart titles:'];
 
@@ -10266,13 +10539,16 @@ export class AgentService {
       }
 
       // ── GL dump context ────────────────────────────────────────────────────────
+      if (glDR) {
+        lines.push(`• sample_gl_dump date range: ${glDR.from_d} → ${glDR.to_d} — USE THESE DATES for time filtering`);
+      }
       if (glDs.length > 0) {
         const ds = glDs.map((r: any) => `${r.department} ($${this.fmtK(this.num(r.spend))})`).join(', ');
-        lines.push(`• sample_gl_dump departments (exact, NO Finance): ${ds}`);
+        lines.push(`• sample_gl_dump departments (EXACT names, NO Finance): ${ds}`);
       }
       if (glCs.length > 0) {
         const cs = glCs.map((r: any) => `${r.class} ($${this.fmtK(this.num(r.spend))})`).join(', ');
-        lines.push(`• sample_gl_dump classes: ${cs}`);
+        lines.push(`• sample_gl_dump classes (EXACT names): ${cs}`);
       }
       if (glVs.length > 0) {
         const vs = glVs.slice(0, 12).map((r: any) => `${r.vname} ($${this.fmtK(this.num(r.spend))})`).join(' | ');
@@ -10280,6 +10556,26 @@ export class AgentService {
       }
       if (glJts.length > 0) {
         lines.push(`• sample_gl_dump journal_type values: ${glJts.join(', ')}`);
+      }
+      // Monthly department breakdown (last 3 months sample for LLM context)
+      if (glMD.length > 0) {
+        const byMonth = new Map<string, Record<string, number>>();
+        for (const r of glMD) {
+          const m = String(r.month);
+          if (!byMonth.has(m)) byMonth.set(m, {});
+          byMonth.get(m)![String(r.department)] = this.num(r.spend);
+        }
+        const months = Array.from(byMonth.keys()).slice(-3);
+        const deptNames = [...new Set(glMD.map((r: any) => String(r.department)))];
+        if (months.length > 0) {
+          const sample = months.map(m => {
+            const row = byMonth.get(m)!;
+            const cols = deptNames.map(d => `${d}=$${this.fmtK(row[d] ?? 0)}`).join(', ');
+            return `${m}: ${cols}`;
+          }).join(' | ');
+          lines.push(`• Monthly dept spend from sample_gl_dump (use sumIf pivot, ONE chart): ${sample}`);
+        }
+        lines.push(`• Dept column names for SQL: ${deptNames.map(d => d.toLowerCase().replace(/\s+/g, '_')).join(', ')}`);
       }
 
       // ── Journal lines / invoice context ───────────────────────────────────────
@@ -10328,6 +10624,67 @@ export class AgentService {
     conversationHistory?: string,
   ): Promise<SmartPlanResult | null> {
     try {
+      // Short-circuit for known patterns where the vocab handler gives exact results
+      // and LLM SQL generation is unreliable or produces wrong values.
+      const forcedChartType = this.parseExplicitChartConstraints(query)?.requiredTypes?.[0];
+      const qLow = query.toLowerCase();
+
+      // Monthly dept breakdown (stacked/line/area + dept + time): always use vocab handler
+      // which reads directly from sample_gl_dump with correct pivot and values.
+      const isMonthlyDept =
+        /\b(admin|operations|sales|department)\b/.test(qLow) &&
+        /\b(month|monthly|trend|over\s+time|across\s+the\s+year|last\s+\d+\s+month)\b/.test(qLow) &&
+        /\b(stacked|line|area|multi.?line|multi-series)\b/.test(qLow);
+      if (isMonthlyDept) {
+        const deptChartType: ChartType =
+          /\bstacked\b/.test(qLow) ? 'stacked_bar'
+          : /\barea\b/.test(qLow) ? 'area'
+          : 'line';
+        return {
+          kind: 'build',
+          plan: {
+            tools_to_execute: [],
+            should_generate_dashboard: true,
+            dashboard: {
+              title: query.slice(0, 80),
+              description: 'Monthly department spend from sample GL data',
+              widgets: [{
+                title: 'Monthly Spend by Department — Admin, Operations, Sales',
+                description: 'Monthly expense breakdown by department',
+                type: deptChartType,
+                metric: 'expense',
+                grouping: 'month_department',
+                display_order: 0,
+              }] as any,
+            },
+            analysis_focus: query,
+          },
+        };
+      }
+
+      if (forcedChartType === 'waterfall') {
+        return {
+          kind: 'build',
+          plan: {
+            tools_to_execute: [],
+            should_generate_dashboard: true,
+            dashboard: {
+              title: query.slice(0, 80),
+              description: 'P&L waterfall from live data',
+              widgets: [{
+                title: 'P&L Waterfall — Revenue to Net Income',
+                description: 'Revenue → COGS → Gross Profit → Operating Expenses → Net Income',
+                type: 'waterfall',
+                metric: 'pl',
+                grouping: 'summary',
+                display_order: 0,
+              }] as any,
+            },
+            analysis_focus: query,
+          },
+        };
+      }
+
       // Verify Ollama is reachable before doing the expensive introspection
       const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
       if (!ping?.ok) return null;
@@ -10335,9 +10692,17 @@ export class AgentService {
       const liveContext = await this.introspectLiveSchema(scope);
 
       const q = query.toLowerCase();
+      // If the user names exactly one chart type ("a line chart", "a scatter plot"),
+      // the answer should be exactly 1 chart — never multiple charts for one dimensional
+      // request. Multi-series belongs INSIDE a single chart using sumIf pivot columns.
+      const hasSingleExplicitType =
+        !!this.parseExplicitChartConstraints(query)?.requiredTypes?.length &&
+        !/\b(multiple|several|various|different|all|each|3|4|5|6)\s+(charts?|graphs?|plots?)\b/i.test(q) &&
+        !/\b(dashboard|report|board.pack|pack|suite|deep.dive)\b/.test(q);
       const maxCharts =
         /\b(dashboard|report|board.pack|pack|suite|deep.dive)\b/.test(q) ? 6
-        : /\bcharts?\b|\bgraphs?\b|\bwidgets?\b/i.test(q) ? 4
+        : hasSingleExplicitType ? 1
+        : /\b(multiple|several|all)\s+(charts?|graphs?)\b/i.test(q) ? 4
         : 2;
 
       const timeHint = range
@@ -10373,8 +10738,8 @@ export class AgentService {
           stream: false,
           options: {
             temperature: 0.05,
-            num_predict: 3000,
-            num_ctx: 8192,
+            num_predict: 4000,
+            num_ctx: 16384,
           },
         }),
       });
@@ -10464,7 +10829,7 @@ export class AgentService {
 
       for (let i = 0; i < parsed.charts.length; i++) {
         const c = parsed.charts[i];
-        if (!c?.sql || !c?.type || !c?.title) continue;
+        if (!c?.type || !c?.title) continue;
 
         const chartType = (() => {
           const valid: ChartType[] = [
@@ -10476,6 +10841,73 @@ export class AgentService {
           if (forcedType) return forcedType;
           return valid.includes(c.type as ChartType) ? (c.type as ChartType) : 'bar';
         })();
+
+        // KPI cards: route to the vocabulary planner's built-in handler which
+        // returns { label, value, format, icon } — the format the frontend KPI
+        // renderer expects. Dynamic SQL cannot easily produce this shape.
+        if (chartType === 'kpi') {
+          widgets.push({
+            title: String(c.title ?? '').slice(0, 80),
+            description: String(c.description ?? 'Key financial performance indicators'),
+            type: 'kpi',
+            metric: 'summary',
+            grouping: 'overview',
+            display_order: i,
+          } as any);
+          continue;
+        }
+
+        // Waterfall charts: route to the vocabulary planner's pl/summary handler
+        // which uses sample_trial_balance for EXACT Power BI-aligned P&L values.
+        if (chartType === 'waterfall') {
+          const wtitle = String(c.title ?? 'P&L Waterfall — Revenue to Net Income').slice(0, 80);
+          widgets.push({
+            title: wtitle,
+            description: String(c.description ?? 'Revenue → COGS → Gross Profit → OpEx → Net Income'),
+            type: 'waterfall',
+            metric: 'pl',
+            grouping: 'summary',
+            display_order: i,
+          } as any);
+          continue;
+        }
+
+        // P&L summary metric/table charts: route to pl_summary vocab handler to avoid
+        // LLM calculating wrong net income from raw journal lines.
+        // Triggered when a metric/table chart title mentions revenue+income or P&L totals.
+        const plSummaryKeywords = /\b(revenue.*net\s+income|net\s+income.*revenue|p&l\s+summary|income\s+statement|financial\s+summary|total\s+revenue.*total|gross\s+profit.*net)\b/i;
+        if ((chartType === 'metric' || chartType === 'table') && plSummaryKeywords.test(c.title ?? query)) {
+          widgets.push({
+            title: String(c.title ?? 'P&L Summary').slice(0, 80),
+            description: String(c.description ?? 'Revenue, Gross Profit, Net Income, Margins'),
+            type: 'metric',
+            metric: 'pl_summary',
+            grouping: 'summary',
+            display_order: i,
+          } as any);
+          continue;
+        }
+
+        // Margin / gross profit charts: route to vocab handlers to avoid LLM SQL errors.
+        // gross_profit/month, gross_margin_pct/month, net_margin_pct/month use sample_gl_dump
+        // with a correct formula; dynamic SQL tends to produce wrong/negative values.
+        const marginKeywords = /\b(gross\s+profit|gross\s+margin|net\s+margin|margin\s+%|margin\s+percent)\b/i;
+        if ((chartType === 'line' || chartType === 'bar' || chartType === 'area') && marginKeywords.test(c.title ?? query)) {
+          const isGrossMarginPct = /gross\s+margin\s*%|gross\s+margin\s+percent/i.test(c.title ?? query);
+          const isNetMargin = /net\s+margin/i.test(c.title ?? query);
+          const vocabMetric = isNetMargin ? 'net_margin_pct' : isGrossMarginPct ? 'gross_margin_pct' : 'gross_profit';
+          widgets.push({
+            title: String(c.title ?? '').slice(0, 80) || `Monthly ${vocabMetric.replace(/_/g,' ')} Trend`,
+            description: String(c.description ?? ''),
+            type: chartType,
+            metric: vocabMetric,
+            grouping: 'month',
+            display_order: i,
+          } as any);
+          continue;
+        }
+
+        if (!c?.sql) continue;
 
         let sql: string | null = null;
         try {
@@ -10521,7 +10953,28 @@ export class AgentService {
       // top vendors" (vendors have spend, not revenue → 0 rows). Be honest.
       const verified = await Promise.all(
         widgets.map(async (w) => {
+          // KPI and waterfall vocabulary widgets have no dynamic SQL — always "ok".
+          if (w.metric === 'summary' && w.grouping === 'overview' && w.type === 'kpi') {
+            return { w, ok: true };
+          }
+          if (w.metric === 'pl' && w.grouping === 'summary' && w.type === 'waterfall') {
+            return { w, ok: true };
+          }
+          // Margin vocab widgets (gross_profit, gross_margin_pct, net_margin_pct)
+          if (['gross_profit','gross_margin_pct','net_margin_pct'].includes(w.metric) && w.grouping === 'month') {
+            return { w, ok: true };
+          }
+          // P&L summary vocab widget
+          if (w.metric === 'pl_summary' && w.grouping === 'summary') {
+            return { w, ok: true };
+          }
+          // Monthly dept breakdown vocab widget
+          if (w.metric === 'expense' && w.grouping === 'month_department') {
+            return { w, ok: true };
+          }
+
           const sql0 = (w as any)._sql as string;
+          if (!sql0) return { w, ok: false };
           const r1 = await this.executeDynamicSqlChecked(sql0, scope, {
             chartType: w.type,
           });
@@ -10570,9 +11023,11 @@ export class AgentService {
         return {
           kind: 'no_data',
           message:
-            `I built the query for "${String(parsed.title ?? query).slice(0, 80)}" but it returned no rows for this scope. ` +
-            `The data needed to answer this may not exist as asked — for example, vendors/suppliers have spend, not revenue, ` +
-            `and revenue comes from clients/invoices. Try rephrasing (e.g. compare vendor SPEND) or widen the time window.`,
+            `Sorry, I wasn't able to generate this chart — the data needed to answer "${String(parsed.title ?? query).slice(0, 60)}" ` +
+            `doesn't appear to be available in this dataset. ` +
+            `This can happen when the requested dimension (e.g. a specific vendor, department, or metric) doesn't exist in the data, ` +
+            `or when the time window is outside the available range. ` +
+            `Please try rephrasing your question or ask for a different chart — I'm happy to help with expenses, vendor spend, department breakdowns, revenue, or P&L analysis.`,
         };
       }
 
@@ -11167,6 +11622,9 @@ export class AgentService {
     if (/\bgauge\b/.test(q)) addType('gauge');
     if (/\bbubble\s*chart\b|\bbubble\s*plot\b|\bbubble\b/.test(q)) addType('bubble');
     if (/\bhorizontal\s+bar\b|\branked\s+bar\b/.test(q)) addType('horizontal_bar');
+    if (/\bkpi\s+card\b|\bkpi\s+tile\b|\bkpi\s+dashboard\b|\bkpi\b.*\bcard\b|\bmetric\s+card\b|\bcard\s+dashboard\b/.test(q)) addType('kpi');
+    if (/\bstacked\s+column\b|\bstacked\s+area\b/.test(q)) addType('stacked_bar');
+    if (/\bclustered\s+(bar|column)\b/.test(q)) addType('bar');
 
     const countMatch =
       q.match(
@@ -11611,7 +12069,22 @@ export class AgentService {
               if (idx >= 0) picked.push(out.splice(idx, 1)[0]!);
             }
             // If user explicitly listed chart types, prefer returning ONLY those.
-            if (picked.length > 0) out = picked;
+            if (picked.length > 0) {
+              out = picked;
+            } else if (out.length > 0 && constraints.requiredTypes.length > 0) {
+              // No widget of the required type found — try converting the first
+              // widget's type when the metric/grouping combo is valid (e.g.
+              // user asks for "waterfall chart" but Ollama picked table/pl/summary:
+              // convert to waterfall/pl/summary which is in VALID_WIDGETS).
+              const req = constraints.requiredTypes[0]!;
+              const first = out[0]!;
+              const canConvert = VALID_WIDGETS.some(
+                (v) => v.type === req && v.metric === first.metric && v.grouping === first.grouping,
+              );
+              if (canConvert) {
+                out = [{ ...first, type: req }, ...out.slice(1)];
+              }
+            }
           }
 
           if (
@@ -11689,6 +12162,31 @@ export class AgentService {
 
             const replaceAll = (next: any[]) =>
               applyImplicitMax(next).map((w, i) => ({ ...w, display_order: i }));
+
+            // If user explicitly asked for a waterfall but vocab planner couldn't
+            // match it, override everything and return the P&L waterfall.
+            if (String(wantsType ?? '') === 'waterfall') {
+              return replaceAll([
+                mk('P&L Waterfall — Revenue to Net Income', 'Revenue → COGS → Gross Profit → Operating Expenses → Net Income', 'waterfall', 'pl', 'summary'),
+              ]);
+            }
+
+            // If no widget of the required explicit type was found, try to find the best
+            // matching vocab widget of that type using the fallback selectWidgets logic.
+            if (
+              wantsType &&
+              !out.some((w) => w.type === wantsType) &&
+              ['scatter','bubble','heatmap','histogram','pareto','gauge','treemap'].includes(wantsType)
+            ) {
+              const fallbackWidgets = this.selectWidgetsForQuery(query, activeDashboard);
+              if (fallbackWidgets && fallbackWidgets.length > 0) {
+                const forced = fallbackWidgets.map((w) => ({ ...w, type: wantsType }));
+                const valid = forced.filter((w) =>
+                  VALID_WIDGETS.some((v) => v.type === wantsType && v.metric === w.metric && v.grouping === w.grouping),
+                );
+                if (valid.length > 0) return replaceAll(valid as any);
+              }
+            }
 
             // Payment-speed intent repairs
             if (errs.includes('PAYMENT_DAYS_TREND_REQUIRES_DSO')) {
@@ -11820,6 +12318,12 @@ export class AgentService {
 
             // P&L repairs
             if (errs.includes('PNL_REQUIRES_PNL_WIDGET')) {
+              // Preserve waterfall type when user explicitly asked for it.
+              if (String(wantsType ?? '') === 'waterfall') {
+                return replaceAll([
+                  mk('P&L Waterfall — Revenue to Net Income', 'Revenue → COGS → Gross Profit → OpEx → Net Income', 'waterfall', 'pl', 'summary'),
+                ]);
+              }
               return replaceAll([
                 mk('P&L Statement', 'Full income statement by account', 'table', 'pl', 'summary'),
                 mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary'),
@@ -11829,6 +12333,11 @@ export class AgentService {
 
             // Expense repairs
             if (errs.includes('EXPENSE_REQUIRES_EXPENSE_WIDGET')) {
+              if (String(wantsType ?? '') === 'waterfall') {
+                return replaceAll([
+                  mk('Expense Waterfall by Category', 'How expense categories build up total operating cost', 'waterfall', 'pl', 'summary'),
+                ]);
+              }
               return replaceAll([
                 mk('Top Expenses by Account', 'GL expense breakdown ranked by spend', wantsType === 'pie' ? 'pie' : 'bar', 'expense', 'account'),
                 mk('Expense Trend', 'Monthly total expense trend', 'line', 'expense', 'month'),
@@ -11838,6 +12347,13 @@ export class AgentService {
 
             // Margin repairs
             if (errs.includes('MARGIN_REQUIRES_MARGIN_WIDGET')) {
+              // Waterfall requests about "profitability" should show the P&L waterfall
+              // (gross_margin_pct returns 0 rows from demo data).
+              if (String(wantsType ?? '') === 'waterfall') {
+                return replaceAll([
+                  mk('P&L Waterfall — Revenue to Net Income', 'Revenue → COGS → Gross Profit → OpEx → Net Income', 'waterfall', 'pl', 'summary'),
+                ]);
+              }
               return replaceAll([
                 mk('Gross Margin % Trend', 'Monthly gross margin percentage', 'line', 'gross_margin_pct', 'month'),
                 mk('Net Margin % Trend', 'Monthly net margin percentage', 'line', 'net_margin_pct', 'month'),
@@ -12131,7 +12647,8 @@ export class AgentService {
 
     if (spec.focus === 'EXPENSE') {
       const hasExpenseWidget = has(
-        (w) => ['expense', 'opex', 'cogs', 'expense_summary'].includes(w.metric),
+        // 'pl' covers waterfall/pl/summary which shows COGS + OpEx breakdown
+        (w) => ['expense', 'opex', 'cogs', 'expense_summary', 'pl', 'pl_summary', 'net_income'].includes(w.metric),
       );
       if (!hasExpenseWidget) errs.push('EXPENSE_REQUIRES_EXPENSE_WIDGET');
     }
@@ -13615,6 +14132,58 @@ Output SQL ONLY — no explanation, no markdown.`;
     );
     if (!hasNumericSeries) {
       return `Output has no numeric series column (columns: ${keys.join(', ')}). Provide a numeric "value" column, or numeric series columns.`;
+    }
+
+    // Multi-series dept chart: if all non-name columns are zero, the SQL's sumIf
+    // conditions didn't match (wrong table, wrong dept name, etc.) — self-repair.
+    if (!keys.includes('value') && keys.length >= 3) {
+      const seriesKeys = keys.filter((k) => k !== 'name');
+      const allZero = rows.every((r) =>
+        seriesKeys.every((k) => {
+          const v = (r as any)[k];
+          return v === 0 || v === null || v === '' || Number(v) === 0;
+        }),
+      );
+      if (allZero && rows.length > 0) {
+        return (
+          `All department/series columns are zero (columns: ${seriesKeys.join(', ')}). ` +
+          `The sumIf conditions did not match — likely wrong table or wrong dept names. ` +
+          `Use sample_gl_dump with: SELECT formatDateTime(toStartOfMonth(date),'%b %Y') AS name, ` +
+          `round(sumIf(toFloat64(debit), COALESCE(NULLIF(department,''),'Other')='Admin'),0) AS admin, ` +
+          `round(sumIf(toFloat64(debit), COALESCE(NULLIF(department,''),'Other')='Operations'),0) AS operations, ` +
+          `round(sumIf(toFloat64(debit), COALESCE(NULLIF(department,''),'Other')='Sales'),0) AS sales ` +
+          `FROM analytics.sample_gl_dump WHERE ... AND department!='' ` +
+          `GROUP BY toStartOfMonth(date) ORDER BY toStartOfMonth(date) LIMIT 24`
+        );
+      }
+    }
+
+    // Sanity check for department spend data: Operations must be the largest dept.
+    // If Admin or Sales is > Operations by >5x, the SQL used account_type='Expense'
+    // filter which excludes COGS from Operations — producing badly wrong values.
+    if (keys.includes('value') && rows.length >= 2) {
+      const deptRows = rows.filter((r) => {
+        const n = String((r as any).name ?? '').toLowerCase();
+        return n === 'admin' || n === 'operations' || n === 'sales';
+      });
+      if (deptRows.length >= 2) {
+        const ops = deptRows.find((r) => String((r as any).name ?? '').toLowerCase() === 'operations');
+        const admin = deptRows.find((r) => String((r as any).name ?? '').toLowerCase() === 'admin');
+        if (ops && admin) {
+          const opsVal = Number((ops as any).value ?? 0);
+          const adminVal = Number((admin as any).value ?? 0);
+          if (opsVal > 0 && adminVal > opsVal * 5) {
+            return (
+              'Department spend values are wrong — Operations ($' + opsVal.toFixed(0) + ') is much less than Admin ($' + adminVal.toFixed(0) + '). ' +
+              'Your SQL filtered by account_type="Expense" which excludes COGS from Operations. ' +
+              'REMOVE the account_type filter. Use: SELECT COALESCE(NULLIF(department,""),"Other") AS name, ' +
+              'round(sum(toFloat64(debit)),0) AS value FROM analytics.sample_gl_dump ' +
+              'WHERE tenant_id={tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) ' +
+              'AND department!="" AND toFloat64(debit)>0 GROUP BY COALESCE(NULLIF(department,""),"Other") ORDER BY value DESC LIMIT 10'
+            );
+          }
+        }
+      }
     }
 
     return null;

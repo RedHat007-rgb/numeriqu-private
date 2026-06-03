@@ -224,7 +224,10 @@ export function parseTimeRange(raw: string): TimeRange | null {
 export function parseQuerySpec(raw: string): QuerySpec {
   const q = raw.trim().toLowerCase();
 
-  const wantsAudit = /\b(audit|list|ledger|detail|transaction|invoice\s+list|recent\s+invoice)\b/.test(q);
+  // "transaction" alone is too broad (matches "transaction count", "transaction amount" in chart requests).
+  // Only treat as audit when it clearly means "list transactions" not "count transactions".
+  const wantsAudit = /\b(audit|ledger|invoice\s+list|recent\s+invoice|list\s+invoices?|show\s+invoices?|transaction\s+list|list\s+transactions?)\b/.test(q) ||
+    (/\b(detail|transaction)\b/.test(q) && /\blist\b|\bshow\b|\btable\b/.test(q));
   const wantsVenture = /\b(runway|burn|cash|venture|investor|fundraise)\b/.test(q);
 
   const wantsOverdue = /\b(overdue|aging|ar\b|receivable|past.?due)\b/.test(q);

@@ -6,11 +6,19 @@ export type AuthUser = {
 
 export type CurrentUserResponse = {
   user: AuthUser;
-  tenant: { id: string; name: string; accountType?: "SOLO" | "ORGANIZATION"; createdAt?: string };
+  tenant: {
+    id: string;
+    name: string;
+    accountType?: "SOLO" | "ORGANIZATION";
+    createdAt?: string;
+  };
 };
 
 export type OrganizationRole = "ADMIN" | "USER";
-export type PermissionCode = "VIEW_DASHBOARD" | "CREATE_DASHBOARD" | "SHARE_DASHBOARD";
+export type PermissionCode =
+  | "VIEW_DASHBOARD"
+  | "CREATE_DASHBOARD"
+  | "SHARE_DASHBOARD";
 
 export type OrganizationContextResponse = {
   organization: {
@@ -153,7 +161,12 @@ export type DashboardResponse = {
     type: string;
     createdAt: string;
   }>;
-  meta: { computedAt: string; latencyMs: number; error?: string; range?: TimeRange };
+  meta: {
+    computedAt: string;
+    latencyMs: number;
+    error?: string;
+    range?: TimeRange;
+  };
 };
 
 export type Connection = {
@@ -185,9 +198,17 @@ export type HealthResponse = {
   advisory?: string;
   ollama?: boolean;
   mode?: string;
+  provider?: "ollama" | "openai";
+  model?: string;
+  backendUrl?: string;
+  modelLoaded?: boolean;
+  uptime?: number;
 };
 
-export type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
+export type ChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
 export type ChatMode = "rag" | "agent";
 
 export type ChatSessionSummary = {
@@ -260,7 +281,7 @@ export type MetricsResponse = {
 // ── Organisation management ────────────────────────────────────────────────
 
 export type Organization = {
-  id: string;             // connection id
+  id: string; // connection id
   orgName: string;
   provider: string;
   providerAccountId: string;

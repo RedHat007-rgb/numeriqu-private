@@ -3,6 +3,10 @@ import { FinancialDataService } from '../financial-data/financial-data.service';
 import { RagContextCacheService } from './rag-context-cache.service';
 import { classifyIntent, buildRagMessages } from './rag-prompt.builder';
 import type { FinancialProfile } from '../financial-data/financial-data.service';
+import {
+  resolveLlmRuntimeConfig,
+  type LlmProvider,
+} from '../common/llm/llm-config';
 
 /**
  * RagService — Pure Retrieval-Augmented Generation Engine
@@ -30,14 +34,17 @@ export class RagService {
   private readonly logger = new Logger(RagService.name);
   private readonly OLLAMA_URL: string;
   private readonly OLLAMA_MODEL: string;
+  private readonly llmProvider: LlmProvider;
 
   constructor(
     private readonly financialData: FinancialDataService,
     private readonly contextCache: RagContextCacheService,
     private readonly persistence: PersistenceService,
   ) {
-    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-    this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3:latest';
+    const llm = resolveLlmRuntimeConfig('llama3:latest');
+    this.llmProvider = llm.provider;
+    this.OLLAMA_URL = llm.url;
+    this.OLLAMA_MODEL = llm.model;
   }
 
   async *query(
@@ -63,7 +70,7 @@ export class RagService {
       content: userQuery,
     });
 
-    const conversationHistory = session.messages.map(m => ({
+    const conversationHistory = session.messages.map((m) => ({
       role: m.role,
       content: m.content,
     }));
@@ -337,13 +344,20 @@ export class RagService {
     } catch {
       ollamaStatus = false;
     }
+    const backendLabel =
+      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
 
     return {
       status: 'ok',
       layer: 'rag',
       ollama: ollamaStatus,
+      provider: this.llmProvider,
+      backendUrl: this.OLLAMA_URL,
       engine: this.OLLAMA_MODEL,
       uptime: process.uptime(),
+      advisory: ollamaStatus
+        ? `Numeriqu Intelligence ready — ${backendLabel}: ${this.OLLAMA_MODEL}`
+        : `${backendLabel} offline at ${this.OLLAMA_URL}`,
       mode: ollamaStatus ? 'rag-active' : 'heuristic-fallback',
     };
   }

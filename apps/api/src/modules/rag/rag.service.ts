@@ -5,6 +5,10 @@ import {
   PRISMA_TOKEN,
 } from '../../database/database.module';
 import type { ClickHouseClient } from '@clickhouse/client';
+import {
+  resolveLlmRuntimeConfig,
+  type LlmProvider,
+} from '../../common/llm/llm-config';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,27 +66,105 @@ const SAFE_QUERY_SETTINGS = {
 // ─── Intent Classification ────────────────────────────────────────────────────
 
 const FINANCE_KEYWORDS = [
-  'revenue', 'income', 'profit', 'margin', 'expense', 'cost', 'invoice',
-  'bill', 'payment', 'overdue', 'cashflow', 'cash flow', 'budget', 'forecast',
-  'tax', 'vat', 'gst', 'balance', 'account', 'ledger', 'xero', 'quickbooks',
-  'currency', 'financial', 'money', 'debt', 'credit', 'debit', 'growth',
-  'trend', 'quarter', 'monthly', 'annual', 'ytd', 'mtd', 'risk', 'exposure',
-  'profitability', 'roi', 'working capital', 'ar', 'ap', 'receivable',
-  'payable', 'loss', 'gain', 'asset', 'liability', 'equity', 'numeriqu',
-  'burn', 'runway', 'ebitda', 'mrr', 'arr', 'cac', 'ltv', 'churn',
-  'dso', 'dpo', 'collections', 'aging', 'liquidity', 'solvency',
-  'gross margin', 'net margin', 'operating margin', 'breakeven',
-  'entity', 'subsidiary', 'segment', 'department', 'bank', 'transfer',
-  'saas', 'subscription', 'recurring', 'audit', 'reconcile',
+  'revenue',
+  'income',
+  'profit',
+  'margin',
+  'expense',
+  'cost',
+  'invoice',
+  'bill',
+  'payment',
+  'overdue',
+  'cashflow',
+  'cash flow',
+  'budget',
+  'forecast',
+  'tax',
+  'vat',
+  'gst',
+  'balance',
+  'account',
+  'ledger',
+  'xero',
+  'quickbooks',
+  'currency',
+  'financial',
+  'money',
+  'debt',
+  'credit',
+  'debit',
+  'growth',
+  'trend',
+  'quarter',
+  'monthly',
+  'annual',
+  'ytd',
+  'mtd',
+  'risk',
+  'exposure',
+  'profitability',
+  'roi',
+  'working capital',
+  'ar',
+  'ap',
+  'receivable',
+  'payable',
+  'loss',
+  'gain',
+  'asset',
+  'liability',
+  'equity',
+  'numeriqu',
+  'burn',
+  'runway',
+  'ebitda',
+  'mrr',
+  'arr',
+  'cac',
+  'ltv',
+  'churn',
+  'dso',
+  'dpo',
+  'collections',
+  'aging',
+  'liquidity',
+  'solvency',
+  'gross margin',
+  'net margin',
+  'operating margin',
+  'breakeven',
+  'entity',
+  'subsidiary',
+  'segment',
+  'department',
+  'bank',
+  'transfer',
+  'saas',
+  'subscription',
+  'recurring',
+  'audit',
+  'reconcile',
 ];
 
 const GREETING_PATTERNS = [
-  'hi', 'hello', 'hey', 'sup', 'help', 'who are you', 'what can you do', 'what do you do',
+  'hi',
+  'hello',
+  'hey',
+  'sup',
+  'help',
+  'who are you',
+  'what can you do',
+  'what do you do',
 ];
 
 function classifyIntent(query: string): 'greeting' | 'financial' | 'off_topic' {
   const q = query.toLowerCase().trim();
-  if (GREETING_PATTERNS.some((g) => q === g || q.startsWith(g + ' ') || q.startsWith(g + '!'))) {
+  if (
+    GREETING_PATTERNS.some(
+      (g) => q === g || q.startsWith(g + ' ') || q.startsWith(g + '!'),
+    )
+  ) {
     return 'greeting';
   }
   if (q.length < 15) return 'financial';
@@ -111,9 +193,11 @@ Preferred format:
 
 function buildFactBlock(ctx: FinancialContext): string {
   const $$ = (n: number) =>
-    n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(2)}M`
-    : n >= 1_000 ? `$${(n / 1_000).toFixed(1)}K`
-    : `$${n.toFixed(0)}`;
+    n >= 1_000_000
+      ? `$${(n / 1_000_000).toFixed(2)}M`
+      : n >= 1_000
+        ? `$${(n / 1_000).toFixed(1)}K`
+        : `$${n.toFixed(0)}`;
 
   // ── Derived: MoM and 3-month trend ─────────────────────────────────────────
   const trend = ctx.monthlyTrend;
@@ -121,7 +205,10 @@ function buildFactBlock(ctx: FinancialContext): string {
     if (trend.length < 2) return 'N/A';
     const last = trend[trend.length - 1]!;
     const prev = trend[trend.length - 2]!;
-    const pct = prev.revenue > 0 ? ((last.revenue - prev.revenue) / prev.revenue) * 100 : 0;
+    const pct =
+      prev.revenue > 0
+        ? ((last.revenue - prev.revenue) / prev.revenue) * 100
+        : 0;
     return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
   })();
 
@@ -133,15 +220,21 @@ function buildFactBlock(ctx: FinancialContext): string {
     return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
   })();
 
-  const peakMonth = trend.length > 0
-    ? trend.reduce((a, b) => (b.revenue > a.revenue ? b : a), trend[0]!)
-    : null;
+  const peakMonth =
+    trend.length > 0
+      ? trend.reduce((a, b) => (b.revenue > a.revenue ? b : a), trend[0]!)
+      : null;
 
   // ── Derived: AR health ──────────────────────────────────────────────────────
   const s = ctx.summary;
-  const overdueRate = s.openAmount > 0 ? ((s.overdueAmount / s.openAmount) * 100).toFixed(1) : '0.0';
-  const collectionEfficiency = s.totalRevenue > 0
-    ? (((s.totalRevenue - s.openAmount) / s.totalRevenue) * 100).toFixed(1) : '0.0';
+  const overdueRate =
+    s.openAmount > 0
+      ? ((s.overdueAmount / s.openAmount) * 100).toFixed(1)
+      : '0.0';
+  const collectionEfficiency =
+    s.totalRevenue > 0
+      ? (((s.totalRevenue - s.openAmount) / s.totalRevenue) * 100).toFixed(1)
+      : '0.0';
 
   // ── Derived: Venture / runway ───────────────────────────────────────────────
   const vm = ctx.ventureMetrics;
@@ -152,28 +245,52 @@ function buildFactBlock(ctx: FinancialContext): string {
     return d.toISOString().slice(0, 7);
   })();
 
-  const burnMultiple = vm.burnRate > 0 && s.totalRevenue > 0
-    ? (vm.burnRate / (s.totalRevenue / Math.max(trend.length, 1))).toFixed(2) + 'x'
-    : 'N/A';
+  const burnMultiple =
+    vm.burnRate > 0 && s.totalRevenue > 0
+      ? (vm.burnRate / (s.totalRevenue / Math.max(trend.length, 1))).toFixed(
+          2,
+        ) + 'x'
+      : 'N/A';
 
   // ── Derived: Entity concentration ──────────────────────────────────────────
-  const totalEntRevenue = ctx.entityBreakdown.reduce((s, e) => s + e.totalRevenue, 0);
-  const entities = ctx.entityBreakdown.map((e) => {
-    const share = totalEntRevenue > 0 ? ((e.totalRevenue / totalEntRevenue) * 100).toFixed(0) : '0';
-    return `${e.orgName}[${e.provider}]: ${$$(e.totalRevenue)} (${share}% share, ${e.invoiceCount} inv)`;
-  }).join('\n  ') || 'none';
+  const totalEntRevenue = ctx.entityBreakdown.reduce(
+    (s, e) => s + e.totalRevenue,
+    0,
+  );
+  const entities =
+    ctx.entityBreakdown
+      .map((e) => {
+        const share =
+          totalEntRevenue > 0
+            ? ((e.totalRevenue / totalEntRevenue) * 100).toFixed(0)
+            : '0';
+        return `${e.orgName}[${e.provider}]: ${$$(e.totalRevenue)} (${share}% share, ${e.invoiceCount} inv)`;
+      })
+      .join('\n  ') || 'none';
 
-  const topEntityShare = ctx.entityBreakdown.length > 0 && totalEntRevenue > 0
-    ? ((ctx.entityBreakdown[0]!.totalRevenue / totalEntRevenue) * 100).toFixed(0) + '%'
-    : 'N/A';
+  const topEntityShare =
+    ctx.entityBreakdown.length > 0 && totalEntRevenue > 0
+      ? (
+          (ctx.entityBreakdown[0]!.totalRevenue / totalEntRevenue) *
+          100
+        ).toFixed(0) + '%'
+      : 'N/A';
 
   // ── Derived: Invoice status breakdown ──────────────────────────────────────
-  const statuses = ctx.invoiceStatusBreakdown.map((s) =>
-    `${s.status}: ${s.count} inv / ${$$(s.amount)}${s.status.toLowerCase() === 'overdue' ? ' ⚠️' : ''}`
-  ).join('\n  ') || 'none';
+  const statuses =
+    ctx.invoiceStatusBreakdown
+      .map(
+        (s) =>
+          `${s.status}: ${s.count} inv / ${$$(s.amount)}${s.status.toLowerCase() === 'overdue' ? ' ⚠️' : ''}`,
+      )
+      .join('\n  ') || 'none';
 
   // ── 12-month trend series ───────────────────────────────────────────────────
-  const trendSeries = trend.slice(-12).map((r) => `${r.month}:${$$(r.revenue)}(${r.invoiceCount})`).join(', ') || 'none';
+  const trendSeries =
+    trend
+      .slice(-12)
+      .map((r) => `${r.month}:${$$(r.revenue)}(${r.invoiceCount})`)
+      .join(', ') || 'none';
 
   return `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -234,25 +351,52 @@ function buildMessages(
 
 function parseTimeRangeFromQuery(query: string): TimeRange | null {
   const q = query.toLowerCase();
-  if (/\b(all time|all-time|lifetime|since inception)\b/.test(q)) return { kind: 'ALL_TIME' };
-  if (/\b(mtd|month to date|month-to-date|this month)\b/.test(q)) return { kind: 'MTD' };
-  if (/\b(qtd|quarter to date|quarter-to-date|this quarter)\b/.test(q)) return { kind: 'QTD' };
-  if (/\b(ytd|year to date|year-to-date|this year)\b/.test(q)) return { kind: 'YTD' };
+  if (/\b(all time|all-time|lifetime|since inception)\b/.test(q))
+    return { kind: 'ALL_TIME' };
+  if (/\b(mtd|month to date|month-to-date|this month)\b/.test(q))
+    return { kind: 'MTD' };
+  if (/\b(qtd|quarter to date|quarter-to-date|this quarter)\b/.test(q))
+    return { kind: 'QTD' };
+  if (/\b(ytd|year to date|year-to-date|this year)\b/.test(q))
+    return { kind: 'YTD' };
 
   const days = q.match(/\b(last|past)\s+(\d{1,3})\s+days?\b/);
-  if (days) return { kind: 'LAST_N_DAYS', days: Math.max(1, Math.floor(Number(days[2]))) };
+  if (days)
+    return {
+      kind: 'LAST_N_DAYS',
+      days: Math.max(1, Math.floor(Number(days[2]))),
+    };
   const weeks = q.match(/\b(last|past)\s+(\d{1,3})\s+weeks?\b/);
-  if (weeks) return { kind: 'LAST_N_WEEKS', weeks: Math.max(1, Math.floor(Number(weeks[2]))) };
+  if (weeks)
+    return {
+      kind: 'LAST_N_WEEKS',
+      weeks: Math.max(1, Math.floor(Number(weeks[2]))),
+    };
   const months = q.match(/\b(last|past)\s+(\d{1,3})\s+months?\b/);
-  if (months) return { kind: 'LAST_N_MONTHS', months: Math.max(1, Math.floor(Number(months[2]))) };
+  if (months)
+    return {
+      kind: 'LAST_N_MONTHS',
+      months: Math.max(1, Math.floor(Number(months[2]))),
+    };
   const quarters = q.match(/\b(last|past)\s+(\d{1,2})\s+quarters?\b/);
-  if (quarters) return { kind: 'LAST_N_QUARTERS', quarters: Math.max(1, Math.floor(Number(quarters[2]))) };
+  if (quarters)
+    return {
+      kind: 'LAST_N_QUARTERS',
+      quarters: Math.max(1, Math.floor(Number(quarters[2]))),
+    };
   const years = q.match(/\b(last|past)\s+(\d{1,2})\s+years?\b/);
-  if (years) return { kind: 'LAST_N_YEARS', years: Math.max(1, Math.floor(Number(years[2]))) };
+  if (years)
+    return {
+      kind: 'LAST_N_YEARS',
+      years: Math.max(1, Math.floor(Number(years[2]))),
+    };
 
-  if (/\b(last month|previous month)\b/.test(q)) return { kind: 'LAST_N_MONTHS', months: 1 };
-  if (/\b(last quarter|previous quarter)\b/.test(q)) return { kind: 'LAST_N_QUARTERS', quarters: 1 };
-  if (/\b(last year|previous year)\b/.test(q)) return { kind: 'LAST_N_YEARS', years: 1 };
+  if (/\b(last month|previous month)\b/.test(q))
+    return { kind: 'LAST_N_MONTHS', months: 1 };
+  if (/\b(last quarter|previous quarter)\b/.test(q))
+    return { kind: 'LAST_N_QUARTERS', quarters: 1 };
+  if (/\b(last year|previous year)\b/.test(q))
+    return { kind: 'LAST_N_YEARS', years: 1 };
 
   return null;
 }
@@ -260,7 +404,9 @@ function parseTimeRangeFromQuery(query: string): TimeRange | null {
 function queryNeedsRangeClarification(query: string): boolean {
   const q = query.toLowerCase();
   const impliesPeriod =
-    /\b(compare|comparison|trend|month|monthly|quarter|quarterly|qoq|mom|growth|decline|increase|decrease|change|delta|over time)\b/.test(q);
+    /\b(compare|comparison|trend|month|monthly|quarter|quarterly|qoq|mom|growth|decline|increase|decrease|change|delta|over time)\b/.test(
+      q,
+    );
   if (!impliesPeriod) return false;
   return parseTimeRangeFromQuery(query) == null;
 }
@@ -273,7 +419,8 @@ function formatRangeLabel(range: TimeRange): string {
   if (range.kind === 'LAST_N_DAYS') return `Last ${range.days} days`;
   if (range.kind === 'LAST_N_WEEKS') return `Last ${range.weeks} weeks`;
   if (range.kind === 'LAST_N_MONTHS') return `Last ${range.months} months`;
-  if (range.kind === 'LAST_N_QUARTERS') return `Last ${range.quarters} quarters`;
+  if (range.kind === 'LAST_N_QUARTERS')
+    return `Last ${range.quarters} quarters`;
   if (range.kind === 'LAST_N_YEARS') return `Last ${range.years} years`;
   return 'All time';
 }
@@ -300,7 +447,10 @@ function buildDeterministicPrismAnswer(
   const scope = formatRangeLabel(range);
   const s = ctx.summary;
 
-  const asksForAdvice = /\b(should i|what should|recommend|recommendation|suggest|next step|action plan)\b/.test(q);
+  const asksForAdvice =
+    /\b(should i|what should|recommend|recommendation|suggest|next step|action plan)\b/.test(
+      q,
+    );
   if (asksForAdvice) {
     return [
       `I can’t provide recommendations in Prism.`,
@@ -315,7 +465,9 @@ function buildDeterministicPrismAnswer(
   }
 
   const asksProfit =
-    /\b(net profit|profit|margin|ebitda|gross margin|net margin|operating margin)\b/.test(q);
+    /\b(net profit|profit|margin|ebitda|gross margin|net margin|operating margin)\b/.test(
+      q,
+    );
   if (asksProfit) {
     return [
       `Not available in the current gold layer.`,
@@ -330,15 +482,24 @@ function buildDeterministicPrismAnswer(
   }
 
   const wantsOverdue = /\boverdue\b/.test(q);
-  const wantsOpen = /\b(open|outstanding|unpaid|accounts receivable|ar)\b/.test(q);
+  const wantsOpen = /\b(open|outstanding|unpaid|accounts receivable|ar)\b/.test(
+    q,
+  );
   const wantsRunway = /\b(runway|burn|cash on hand|cliff)\b/.test(q);
-  const wantsStatus = /\b(status|paid|authorised|submitted|draft|breakdown)\b/.test(q) && /\binvoice\b/.test(q);
-  const wantsEntities = /\b(entity|entities|org|organization|client|customers?)\b/.test(q) && (/\btop\b/.test(q) || /\bcompare\b/.test(q) || /\bbreakdown\b/.test(q));
-  const wantsTrend = /\b(trend|monthly|month|month-wise|over time|mom|qoq|quarter)\b/.test(q) && /\b(revenue|income|invoic)\b/.test(q);
+  const wantsStatus =
+    /\b(status|paid|authorised|submitted|draft|breakdown)\b/.test(q) &&
+    /\binvoice\b/.test(q);
+  const wantsEntities =
+    /\b(entity|entities|org|organization|client|customers?)\b/.test(q) &&
+    (/\btop\b/.test(q) || /\bcompare\b/.test(q) || /\bbreakdown\b/.test(q));
+  const wantsTrend =
+    /\b(trend|monthly|month|month-wise|over time|mom|qoq|quarter)\b/.test(q) &&
+    /\b(revenue|income|invoic)\b/.test(q);
   const wantsRevenue = /\b(revenue|income|invoic(ed)?|sales)\b/.test(q);
 
   if (wantsOverdue || wantsOpen) {
-    const overdueRate = s.openAmount > 0 ? (s.overdueAmount / s.openAmount) * 100 : 0;
+    const overdueRate =
+      s.openAmount > 0 ? (s.overdueAmount / s.openAmount) * 100 : 0;
     return [
       `**Answer (scope: ${scope})**`,
       `- Open invoices: ${formatMoney(s.openAmount)}`,
@@ -395,7 +556,10 @@ function buildDeterministicPrismAnswer(
 
   if (wantsEntities) {
     const top = ctx.entityBreakdown.slice(0, 6);
-    const total = ctx.entityBreakdown.reduce((sum, row) => sum + (row.totalRevenue || 0), 0);
+    const total = ctx.entityBreakdown.reduce(
+      (sum, row) => sum + (row.totalRevenue || 0),
+      0,
+    );
     const lines = top.map((row) => {
       const share = total > 0 ? (row.totalRevenue / total) * 100 : 0;
       return `- ${row.orgName} (${row.provider}): ${formatMoney(row.totalRevenue)} · ${row.invoiceCount} invoices · ${pct(share)} share`;
@@ -414,7 +578,10 @@ function buildDeterministicPrismAnswer(
 
   if (wantsTrend) {
     const series = ctx.monthlyTrend.slice(-12);
-    const lines = series.map((row) => `- ${row.month}: ${formatMoney(row.revenue)} · ${row.invoiceCount} invoices`);
+    const lines = series.map(
+      (row) =>
+        `- ${row.month}: ${formatMoney(row.revenue)} · ${row.invoiceCount} invoices`,
+    );
     return [
       `**Answer (scope: ${scope})**`,
       ...lines,
@@ -449,16 +616,23 @@ export class RagService {
   private readonly logger = new Logger(RagService.name);
   private readonly OLLAMA_URL: string;
   private readonly OLLAMA_MODEL: string;
+  private readonly llmProvider: LlmProvider;
   private readonly analyticsDb: string;
-  private readonly ctxCache = new Map<string, { ctx: FinancialContext; expiresAt: number }>();
+  private readonly ctxCache = new Map<
+    string,
+    { ctx: FinancialContext; expiresAt: number }
+  >();
   private readonly CACHE_TTL_MS = 90_000; // 90 seconds — fresh enough, cheap enough
 
   constructor(
     @Inject(PRISMA_TOKEN) private readonly prisma: PrismaClient,
-    @Inject(CLICKHOUSE_ANALYTICS_TOKEN) private readonly clickhouse: ClickHouseClient,
+    @Inject(CLICKHOUSE_ANALYTICS_TOKEN)
+    private readonly clickhouse: ClickHouseClient,
   ) {
-    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-    this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3:latest';
+    const llm = resolveLlmRuntimeConfig('llama3:latest');
+    this.llmProvider = llm.provider;
+    this.OLLAMA_URL = llm.url;
+    this.OLLAMA_MODEL = llm.model;
     this.analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
   }
 
@@ -474,15 +648,24 @@ export class RagService {
 
     // ── Session management ──────────────────────────────────────────────────
     const session = sessionId
-      ? await this.prisma.ragChatSession.findFirst({ where: { id: sessionId, organizationId, userId } })
+      ? await this.prisma.ragChatSession.findFirst({
+          where: { id: sessionId, organizationId, userId },
+        })
       : null;
 
-    const currentSession = session ?? await this.prisma.ragChatSession.create({
-      data: { organizationId, userId, title: userQuery.slice(0, 80) },
-    });
+    const currentSession =
+      session ??
+      (await this.prisma.ragChatSession.create({
+        data: { organizationId, userId, title: userQuery.slice(0, 80) },
+      }));
 
     await this.prisma.ragChatMessage.create({
-      data: { sessionId: currentSession.id, organizationId, role: 'USER', content: userQuery },
+      data: {
+        sessionId: currentSession.id,
+        organizationId,
+        role: 'USER',
+        content: userQuery,
+      },
     });
 
     // Load conversation history for multi-turn context
@@ -491,10 +674,13 @@ export class RagService {
       orderBy: { createdAt: 'desc' },
       take: 20,
     });
-    const history = [...historyRows].reverse().slice(0, -1).map((m) => ({
-      role: m.role.toLowerCase() === 'user' ? 'user' : 'assistant',
-      content: m.content,
-    }));
+    const history = [...historyRows]
+      .reverse()
+      .slice(0, -1)
+      .map((m) => ({
+        role: m.role.toLowerCase() === 'user' ? 'user' : 'assistant',
+        content: m.content,
+      }));
 
     try {
       // ── Intent classification — fast paths before LLM ──────────────────
@@ -505,9 +691,20 @@ export class RagService {
         yield this.chunk('status', { message: 'Ready.' });
         yield this.chunk('token', { content: text });
         await this.prisma.ragChatMessage.create({
-          data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: text },
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'ASSISTANT',
+            content: text,
+          },
         });
-        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'greeting', sessionId: currentSession.id } });
+        yield this.chunk('done', {
+          metrics: {
+            totalMs: Date.now() - startTime,
+            mode: 'greeting',
+            sessionId: currentSession.id,
+          },
+        });
         return;
       }
 
@@ -516,14 +713,27 @@ export class RagService {
         yield this.chunk('status', { message: 'Domain check.' });
         yield this.chunk('token', { content: text });
         await this.prisma.ragChatMessage.create({
-          data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: text },
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'ASSISTANT',
+            content: text,
+          },
         });
-        yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'domain-gate', sessionId: currentSession.id } });
+        yield this.chunk('done', {
+          metrics: {
+            totalMs: Date.now() - startTime,
+            mode: 'domain-gate',
+            sessionId: currentSession.id,
+          },
+        });
         return;
       }
 
       // ── Context retrieval ──────────────────────────────────────────────
-      yield this.chunk('status', { message: 'Loading live financial intelligence...' });
+      yield this.chunk('status', {
+        message: 'Loading live financial intelligence...',
+      });
 
       const parsedRange = parseTimeRangeFromQuery(userQuery);
       const range: TimeRange = parsedRange ?? { kind: 'ALL_TIME' };
@@ -541,18 +751,28 @@ export class RagService {
 
         yield this.chunk('clarify', {
           question,
-          reason: 'Your question implies a time period, but none was specified.',
+          reason:
+            'Your question implies a time period, but none was specified.',
           options,
         });
 
         const text = `${question}\n\n- ${options.map((o) => o.label).join('\n- ')}`;
         yield this.chunk('token', { content: text });
         await this.prisma.ragChatMessage.create({
-          data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: text },
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'ASSISTANT',
+            content: text,
+          },
         });
 
         yield this.chunk('done', {
-          metrics: { totalMs: Date.now() - startTime, mode: 'clarify', sessionId: currentSession.id },
+          metrics: {
+            totalMs: Date.now() - startTime,
+            mode: 'clarify',
+            sessionId: currentSession.id,
+          },
         });
         return;
       }
@@ -564,8 +784,15 @@ export class RagService {
         ctx = cached.ctx;
         this.backgroundRefresh(cacheKey, organizationId, range); // warm for next request
       } else {
-        ctx = await this.fetchFinancialContext(organizationId, userQuery, range);
-        this.ctxCache.set(cacheKey, { ctx, expiresAt: Date.now() + this.CACHE_TTL_MS });
+        ctx = await this.fetchFinancialContext(
+          organizationId,
+          userQuery,
+          range,
+        );
+        this.ctxCache.set(cacheKey, {
+          ctx,
+          expiresAt: Date.now() + this.CACHE_TTL_MS,
+        });
       }
 
       // Emit financial snapshot so frontend can render context panel
@@ -587,11 +814,20 @@ export class RagService {
       // ── Deterministic Prism answer (default) ──────────────────────────
       yield this.chunk('status', { message: 'Calculating…' });
 
-      const deterministic = buildDeterministicPrismAnswer(userQuery, ctx, range);
+      const deterministic = buildDeterministicPrismAnswer(
+        userQuery,
+        ctx,
+        range,
+      );
       if (deterministic) {
         yield this.chunk('token', { content: deterministic });
         await this.prisma.ragChatMessage.create({
-          data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: deterministic },
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'ASSISTANT',
+            content: deterministic,
+          },
         });
         yield this.chunk('done', {
           metrics: {
@@ -607,24 +843,54 @@ export class RagService {
       // If Prism can't confidently map the question to a supported calculation, ask.
       const clarifyQuestion = 'What should Prism calculate from your data?';
       const clarifyOptions = [
-        { label: 'Revenue (total)', value: `What is my total revenue? (${formatRangeLabel(range)})` },
-        { label: 'Revenue trend (monthly)', value: `Show my monthly revenue trend. (${formatRangeLabel(range)})` },
-        { label: 'Overdue exposure', value: `How much is overdue? (${formatRangeLabel(range)})` },
-        { label: 'Open invoices', value: `How much is open (unpaid)? (${formatRangeLabel(range)})` },
-        { label: 'Entity breakdown', value: `Show top entities by revenue. (${formatRangeLabel(range)})` },
-        { label: 'Invoice status breakdown', value: `Break down invoices by status. (${formatRangeLabel(range)})` },
+        {
+          label: 'Revenue (total)',
+          value: `What is my total revenue? (${formatRangeLabel(range)})`,
+        },
+        {
+          label: 'Revenue trend (monthly)',
+          value: `Show my monthly revenue trend. (${formatRangeLabel(range)})`,
+        },
+        {
+          label: 'Overdue exposure',
+          value: `How much is overdue? (${formatRangeLabel(range)})`,
+        },
+        {
+          label: 'Open invoices',
+          value: `How much is open (unpaid)? (${formatRangeLabel(range)})`,
+        },
+        {
+          label: 'Entity breakdown',
+          value: `Show top entities by revenue. (${formatRangeLabel(range)})`,
+        },
+        {
+          label: 'Invoice status breakdown',
+          value: `Break down invoices by status. (${formatRangeLabel(range)})`,
+        },
       ];
       yield this.chunk('clarify', {
         question: clarifyQuestion,
-        reason: 'Your request is not specific enough to compute deterministically.',
+        reason:
+          'Your request is not specific enough to compute deterministically.',
         options: clarifyOptions,
       });
       const clarifyText = `${clarifyQuestion}\n\n- ${clarifyOptions.map((o) => o.label).join('\n- ')}`;
       yield this.chunk('token', { content: clarifyText });
       await this.prisma.ragChatMessage.create({
-        data: { sessionId: currentSession.id, organizationId, role: 'ASSISTANT', content: clarifyText },
+        data: {
+          sessionId: currentSession.id,
+          organizationId,
+          role: 'ASSISTANT',
+          content: clarifyText,
+        },
       });
-      yield this.chunk('done', { metrics: { totalMs: Date.now() - startTime, mode: 'clarify', sessionId: currentSession.id } });
+      yield this.chunk('done', {
+        metrics: {
+          totalMs: Date.now() - startTime,
+          mode: 'clarify',
+          sessionId: currentSession.id,
+        },
+      });
       return;
 
       // ── LLM streaming (optional, feature-flagged) ─────────────────────
@@ -632,7 +898,9 @@ export class RagService {
       /* c8 ignore next  */
       if (process.env.PRISM_ENABLE_LLM !== '1') return;
 
-      yield this.chunk('status', { message: 'Analyzing your financial data...' });
+      yield this.chunk('status', {
+        message: 'Analyzing your financial data...',
+      });
 
       const messages = buildMessages(ctx, history, userQuery);
 
@@ -662,7 +930,9 @@ export class RagService {
         });
       } catch (fetchErr: any) {
         clearTimeout(timeout);
-        throw new Error(fetchErr.name === 'AbortError' ? 'AI_TIMEOUT' : 'AI_ENGINE_OFFLINE');
+        throw new Error(
+          fetchErr.name === 'AbortError' ? 'AI_TIMEOUT' : 'AI_ENGINE_OFFLINE',
+        );
       }
 
       if (!response.ok) {
@@ -695,7 +965,11 @@ export class RagService {
         for (const line of lines) {
           if (!line.trim()) continue;
           let parsed: { message?: { content?: string }; done?: boolean };
-          try { parsed = JSON.parse(line); } catch { continue; }
+          try {
+            parsed = JSON.parse(line);
+          } catch {
+            continue;
+          }
 
           const token = parsed.message?.content;
           if (token) {
@@ -707,7 +981,10 @@ export class RagService {
               streamBuffer = '';
             }
           }
-          if (parsed.done === true) { streamDone = true; break; }
+          if (parsed.done === true) {
+            streamDone = true;
+            break;
+          }
         }
         if (streamDone) break;
       }
@@ -715,13 +992,17 @@ export class RagService {
       // Handle leftover carry
       if (lineCarry.trim()) {
         try {
-          const parsed = JSON.parse(lineCarry.trim()) as { message?: { content?: string } };
+          const parsed = JSON.parse(lineCarry.trim()) as {
+            message?: { content?: string };
+          };
           const tail = parsed.message?.content;
           if (tail) {
             fullContent += tail;
             streamBuffer += tail;
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
 
       // Final flush
@@ -738,7 +1019,10 @@ export class RagService {
           organizationId,
           role: 'ASSISTANT',
           content: fullContent.trim() || 'Analysis complete.',
-          contextSnapshot: { tokens: tokenCount, latencyMs: Date.now() - startTime } as any,
+          contextSnapshot: {
+            tokens: tokenCount,
+            latencyMs: Date.now() - startTime,
+          } as any,
         },
       });
 
@@ -751,18 +1035,20 @@ export class RagService {
           model: this.OLLAMA_MODEL,
         },
       });
-
     } catch (err: any) {
       const msg = err.name === 'AbortError' ? 'AI_TIMEOUT' : err.message;
       this.logger.error(`[RAG:Fatal] ${msg}`);
 
       let userMessage: string;
       if (msg === 'AI_ENGINE_OFFLINE' || msg?.includes('ECONNREFUSED')) {
-        userMessage = '**AI engine is warming up.** Your financial data is available on the dashboard while the advisor initializes. Please try again in 30 seconds.';
+        userMessage =
+          '**AI engine is warming up.** Your financial data is available on the dashboard while the advisor initializes. Please try again in 30 seconds.';
       } else if (msg === 'AI_TIMEOUT') {
-        userMessage = '**Analysis is taking longer than expected.** This usually happens with very large datasets. Please try a more specific question or try again.';
+        userMessage =
+          '**Analysis is taking longer than expected.** This usually happens with very large datasets. Please try a more specific question or try again.';
       } else {
-        userMessage = '**Something went wrong.** Our team has been notified. Please try again — your data is safe.';
+        userMessage =
+          '**Something went wrong.** Our team has been notified. Please try again — your data is safe.';
       }
 
       yield this.chunk('error', { message: userMessage });
@@ -775,20 +1061,31 @@ export class RagService {
     let ollamaOnline = false;
     let modelLoaded = false;
     try {
-      const res = await fetch(`${this.OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      const res = await fetch(`${this.OLLAMA_URL}/api/tags`, {
+        signal: AbortSignal.timeout(5000),
+      });
       if (res.ok) {
-        const data = await res.json() as { models?: Array<{ name: string }> };
+        const data = (await res.json()) as { models?: Array<{ name: string }> };
         ollamaOnline = true;
-        modelLoaded = (data.models ?? []).some((m) => m.name.startsWith(this.OLLAMA_MODEL.split(':')[0] ?? ''));
+        modelLoaded = (data.models ?? []).some((m) =>
+          m.name.startsWith(this.OLLAMA_MODEL.split(':')[0] ?? ''),
+        );
       }
-    } catch { /* offline */ }
+    } catch {
+      /* offline */
+    }
+
+    const backendLabel =
+      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
 
     return {
       status: ollamaOnline ? 'operational' : 'degraded',
       advisory: ollamaOnline
-        ? `NumeriQ Intelligence ready — ${this.OLLAMA_MODEL}`
-        : `Ollama offline at ${this.OLLAMA_URL}`,
+        ? `NumeriQ Intelligence ready — ${backendLabel}: ${this.OLLAMA_MODEL}`
+        : `${backendLabel} offline at ${this.OLLAMA_URL}`,
       ollama: ollamaOnline,
+      provider: this.llmProvider,
+      backendUrl: this.OLLAMA_URL,
       model: this.OLLAMA_MODEL,
       modelLoaded,
       uptime: process.uptime(),
@@ -836,21 +1133,33 @@ export class RagService {
     if (range.kind === 'MTD') return `AND issued_at >= toStartOfMonth(now())`;
     if (range.kind === 'QTD') return `AND issued_at >= toStartOfQuarter(now())`;
     if (range.kind === 'YTD') return `AND issued_at >= toStartOfYear(now())`;
-    if (range.kind === 'LAST_N_DAYS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days))} DAY)`;
-    if (range.kind === 'LAST_N_WEEKS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks))} WEEK)`;
-    if (range.kind === 'LAST_N_MONTHS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months))} MONTH)`;
-    if (range.kind === 'LAST_N_QUARTERS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters)) * 3} MONTH)`;
-    if (range.kind === 'LAST_N_YEARS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years))} YEAR)`;
+    if (range.kind === 'LAST_N_DAYS')
+      return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days))} DAY)`;
+    if (range.kind === 'LAST_N_WEEKS')
+      return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks))} WEEK)`;
+    if (range.kind === 'LAST_N_MONTHS')
+      return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months))} MONTH)`;
+    if (range.kind === 'LAST_N_QUARTERS')
+      return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters)) * 3} MONTH)`;
+    if (range.kind === 'LAST_N_YEARS')
+      return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years))} YEAR)`;
     return '';
   }
 
   private rangeKey(range?: TimeRange | null): string {
     if (!range) return 'ALL_TIME';
-    if (range.kind === 'ALL_TIME' || range.kind === 'MTD' || range.kind === 'QTD' || range.kind === 'YTD') return range.kind;
+    if (
+      range.kind === 'ALL_TIME' ||
+      range.kind === 'MTD' ||
+      range.kind === 'QTD' ||
+      range.kind === 'YTD'
+    )
+      return range.kind;
     if (range.kind === 'LAST_N_DAYS') return `LAST_N_DAYS:${range.days}`;
     if (range.kind === 'LAST_N_WEEKS') return `LAST_N_WEEKS:${range.weeks}`;
     if (range.kind === 'LAST_N_MONTHS') return `LAST_N_MONTHS:${range.months}`;
-    if (range.kind === 'LAST_N_QUARTERS') return `LAST_N_QUARTERS:${range.quarters}`;
+    if (range.kind === 'LAST_N_QUARTERS')
+      return `LAST_N_QUARTERS:${range.quarters}`;
     if (range.kind === 'LAST_N_YEARS') return `LAST_N_YEARS:${range.years}`;
     return 'ALL_TIME';
   }
@@ -862,7 +1171,12 @@ export class RagService {
   ): Promise<FinancialContext> {
     const connections = await this.prisma.erpConnection.findMany({
       where: { organizationId, status: 'ACTIVE' },
-      select: { id: true, externalOrganizationId: true, provider: true, metadata: true },
+      select: {
+        id: true,
+        externalOrganizationId: true,
+        provider: true,
+        metadata: true,
+      },
     });
 
     if (connections.length === 0) {
@@ -870,32 +1184,52 @@ export class RagService {
     }
 
     const connectionIds = connections.map((c) => c.id);
-    const externalOrgIds = connections.map((c) => c.externalOrganizationId).filter(Boolean) as string[];
+    const externalOrgIds = connections
+      .map((c) => c.externalOrganizationId)
+      .filter(Boolean) as string[];
 
-    const [summary, trend, entities, statusBreakdown, venture, snippets] = await Promise.allSettled([
-      this.fetchSummary(connectionIds, range),
-      this.fetchMonthlyTrend(externalOrgIds, range),
-      this.fetchEntityBreakdown(connectionIds, connections, range),
-      this.fetchStatusBreakdown(connectionIds, range),
-      this.fetchVentureMetrics(connectionIds, range),
-      this.fetchSemanticSnippets(organizationId, query),
-    ]);
+    const [summary, trend, entities, statusBreakdown, venture, snippets] =
+      await Promise.allSettled([
+        this.fetchSummary(connectionIds, range),
+        this.fetchMonthlyTrend(externalOrgIds, range),
+        this.fetchEntityBreakdown(connectionIds, connections, range),
+        this.fetchStatusBreakdown(connectionIds, range),
+        this.fetchVentureMetrics(connectionIds, range),
+        this.fetchSemanticSnippets(organizationId, query),
+      ]);
 
     return {
       connectionCount: connections.length,
       externalOrgIds,
       connectionIds,
-      summary: summary.status === 'fulfilled' ? summary.value : { totalRevenue: 0, openAmount: 0, overdueAmount: 0, overdueCount: 0, invoiceCount: 0, avgInvoiceValue: 0 },
+      summary:
+        summary.status === 'fulfilled'
+          ? summary.value
+          : {
+              totalRevenue: 0,
+              openAmount: 0,
+              overdueAmount: 0,
+              overdueCount: 0,
+              invoiceCount: 0,
+              avgInvoiceValue: 0,
+            },
       monthlyTrend: trend.status === 'fulfilled' ? trend.value : [],
       entityBreakdown: entities.status === 'fulfilled' ? entities.value : [],
-      invoiceStatusBreakdown: statusBreakdown.status === 'fulfilled' ? statusBreakdown.value : [],
-      ventureMetrics: venture.status === 'fulfilled' ? venture.value : { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyRatio: 0 },
+      invoiceStatusBreakdown:
+        statusBreakdown.status === 'fulfilled' ? statusBreakdown.value : [],
+      ventureMetrics:
+        venture.status === 'fulfilled'
+          ? venture.value
+          : { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyRatio: 0 },
       semanticSnippets: snippets.status === 'fulfilled' ? snippets.value : [],
       computedAt: new Date().toISOString(),
     };
   }
 
-  private async fetchSummary(connectionIds: string[], range?: TimeRange | null) {
+  private async fetchSummary(
+    connectionIds: string[],
+    range?: TimeRange | null,
+  ) {
     const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
       query: `
@@ -926,7 +1260,10 @@ export class RagService {
     };
   }
 
-  private async fetchMonthlyTrend(externalOrgIds: string[], range?: TimeRange | null) {
+  private async fetchMonthlyTrend(
+    externalOrgIds: string[],
+    range?: TimeRange | null,
+  ) {
     if (externalOrgIds.length === 0) return [];
     const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
@@ -954,7 +1291,11 @@ export class RagService {
     }));
   }
 
-  private async fetchEntityBreakdown(connectionIds: string[], connections: any[], range?: TimeRange | null) {
+  private async fetchEntityBreakdown(
+    connectionIds: string[],
+    connections: any[],
+    range?: TimeRange | null,
+  ) {
     const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
       query: `
@@ -981,7 +1322,11 @@ export class RagService {
       return connections.map((c) => {
         const meta = (c.metadata as Record<string, any>) ?? {};
         return {
-          orgName: meta.orgName ?? meta.companyId ?? c.externalOrganizationId ?? 'Unknown',
+          orgName:
+            meta.orgName ??
+            meta.companyId ??
+            c.externalOrganizationId ??
+            'Unknown',
           provider: c.provider as string,
           totalRevenue: 0,
           invoiceCount: 0,
@@ -999,7 +1344,10 @@ export class RagService {
     }));
   }
 
-  private async fetchStatusBreakdown(connectionIds: string[], range?: TimeRange | null) {
+  private async fetchStatusBreakdown(
+    connectionIds: string[],
+    range?: TimeRange | null,
+  ) {
     const time = this.timeWhere(range);
     const result = await this.clickhouse.query({
       query: `
@@ -1026,7 +1374,10 @@ export class RagService {
     }));
   }
 
-  private async fetchVentureMetrics(connectionIds: string[], range?: TimeRange | null) {
+  private async fetchVentureMetrics(
+    connectionIds: string[],
+    range?: TimeRange | null,
+  ) {
     try {
       const time = this.timeWhere(range);
       const result = await this.clickhouse.query({
@@ -1063,7 +1414,12 @@ export class RagService {
         efficiencyRatio: burn > 0 ? Math.round((inflow / burn) * 100) / 100 : 0,
       };
     } catch {
-      return { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyRatio: 0 };
+      return {
+        burnRate: 0,
+        runwayMonths: 0,
+        cashOnHand: 0,
+        efficiencyRatio: 0,
+      };
     }
   }
 
@@ -1089,10 +1445,21 @@ export class RagService {
     }
   }
 
-  private backgroundRefresh(cacheKey: string, organizationId: string, range: TimeRange) {
+  private backgroundRefresh(
+    cacheKey: string,
+    organizationId: string,
+    range: TimeRange,
+  ) {
     this.fetchFinancialContext(organizationId, undefined, range)
-      .then((ctx) => this.ctxCache.set(cacheKey, { ctx, expiresAt: Date.now() + this.CACHE_TTL_MS }))
-      .catch(() => { /* non-critical */ });
+      .then((ctx) =>
+        this.ctxCache.set(cacheKey, {
+          ctx,
+          expiresAt: Date.now() + this.CACHE_TTL_MS,
+        }),
+      )
+      .catch(() => {
+        /* non-critical */
+      });
   }
 
   private emptyContext(organizationId: string): FinancialContext {
@@ -1100,11 +1467,23 @@ export class RagService {
       connectionCount: 0,
       externalOrgIds: [],
       connectionIds: [],
-      summary: { totalRevenue: 0, openAmount: 0, overdueAmount: 0, overdueCount: 0, invoiceCount: 0, avgInvoiceValue: 0 },
+      summary: {
+        totalRevenue: 0,
+        openAmount: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+        invoiceCount: 0,
+        avgInvoiceValue: 0,
+      },
       monthlyTrend: [],
       entityBreakdown: [],
       invoiceStatusBreakdown: [],
-      ventureMetrics: { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyRatio: 0 },
+      ventureMetrics: {
+        burnRate: 0,
+        runwayMonths: 0,
+        cashOnHand: 0,
+        efficiencyRatio: 0,
+      },
       semanticSnippets: [],
       computedAt: new Date().toISOString(),
     };

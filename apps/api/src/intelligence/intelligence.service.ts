@@ -4,6 +4,10 @@ import { ContextCacheService } from './context-cache.service';
 import { AgentToolsService } from './agent-tools.service';
 import { classifyIntent, buildMessages } from './prompt-builder';
 import type { FinancialProfile } from './financial-data.service';
+import {
+  resolveLlmRuntimeConfig,
+  type LlmProvider,
+} from '../common/llm/llm-config';
 
 /**
  * IntelligenceService — Zero-Latency Financial AI Engine
@@ -40,14 +44,17 @@ export class IntelligenceService {
   private readonly logger = new Logger(IntelligenceService.name);
   private readonly OLLAMA_URL: string;
   private readonly OLLAMA_MODEL: string;
+  private readonly llmProvider: LlmProvider;
 
   constructor(
     private readonly financialData: FinancialDataService,
     private readonly contextCache: ContextCacheService,
     private readonly agentTools: AgentToolsService,
   ) {
-    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-    this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
+    const llm = resolveLlmRuntimeConfig('llama3.2:3b');
+    this.llmProvider = llm.provider;
+    this.OLLAMA_URL = llm.url;
+    this.OLLAMA_MODEL = llm.model;
   }
 
   /**
@@ -293,12 +300,19 @@ export class IntelligenceService {
     } catch {
       ollamaStatus = false;
     }
+    const backendLabel =
+      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
 
     return {
       status: 'ok',
       ollama: ollamaStatus,
+      provider: this.llmProvider,
+      backendUrl: this.OLLAMA_URL,
       engine: this.OLLAMA_MODEL,
       uptime: process.uptime(),
+      advisory: ollamaStatus
+        ? `Numeriqu Intelligence ready — ${backendLabel}: ${this.OLLAMA_MODEL}`
+        : `${backendLabel} offline at ${this.OLLAMA_URL}`,
       mode: ollamaStatus ? 'agentic-active' : 'heuristic-fallback',
     };
   }

@@ -175,12 +175,13 @@ export class IntelligenceController {
   @Get('health')
   async healthCheck() {
     const health = await this.intelligence.healthCheck();
+    const backendLabel = health.provider === 'openai' ? 'OpenAI' : 'Ollama';
     return {
       ...health,
       status: health.ollama ? 'operational' : 'degraded',
       advisory: health.ollama
         ? `Numeriqu Intelligence is ready. Mode: ${health.mode}`
-        : 'Ollama offline — start with: ollama serve && ollama pull llama3.2:3b',
+        : `${backendLabel} offline — check ${health.backendUrl}`,
     };
   }
 }

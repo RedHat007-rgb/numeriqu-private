@@ -3,6 +3,10 @@ import { FinancialDataService } from '../financial-data/financial-data.service';
 import { AgentToolExecutor } from './agent-tool.executor';
 import { buildAgentMessages } from './agent-prompt.builder';
 import type { FinancialProfile } from '../financial-data/financial-data.service';
+import {
+  resolveLlmRuntimeConfig,
+  type LlmProvider,
+} from '../common/llm/llm-config';
 
 /**
  * AgentService — Strategic Intelligence Agent with Tool Invocation
@@ -25,14 +29,17 @@ export class AgentService {
   private readonly logger = new Logger(AgentService.name);
   private readonly OLLAMA_URL: string;
   private readonly OLLAMA_MODEL: string;
+  private readonly llmProvider: LlmProvider;
 
   constructor(
     private readonly financialData: FinancialDataService,
     private readonly toolExecutor: AgentToolExecutor,
     private readonly persistence: PersistenceService,
   ) {
-    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-    this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3:latest';
+    const llm = resolveLlmRuntimeConfig('llama3:latest');
+    this.llmProvider = llm.provider;
+    this.OLLAMA_URL = llm.url;
+    this.OLLAMA_MODEL = llm.model;
   }
 
   async *query(
@@ -429,13 +436,20 @@ export class AgentService {
     } catch {
       ollamaStatus = false;
     }
+    const backendLabel =
+      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
 
     return {
       status: 'ok',
       layer: 'agent',
       ollama: ollamaStatus,
+      provider: this.llmProvider,
+      backendUrl: this.OLLAMA_URL,
       engine: this.OLLAMA_MODEL,
       uptime: process.uptime(),
+      advisory: ollamaStatus
+        ? `Numeriqu Intelligence ready — ${backendLabel}: ${this.OLLAMA_MODEL}`
+        : `${backendLabel} offline at ${this.OLLAMA_URL}`,
       mode: ollamaStatus ? 'agentic-active' : 'heuristic-fallback',
     };
   }

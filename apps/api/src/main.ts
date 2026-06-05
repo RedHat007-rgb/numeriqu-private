@@ -1,11 +1,39 @@
-import 'dotenv/config';
+import { config as loadEnvFile } from 'dotenv';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { resolveLlmRuntimeConfig } from './common/llm/llm-config';
+import { installLlmFetchInterceptor } from './common/llm/llm-fetch-interceptor';
 import { Logger } from '@nestjs/common';
+
+const repoRoot = join(__dirname, '..', '..', '..');
+const apiRoot = join(__dirname, '..');
+
+const envFiles = [
+  join(repoRoot, '.env'),
+  join(repoRoot, '.env.local'),
+  join(apiRoot, '.env'),
+  join(apiRoot, '.env.local'),
+];
+
+for (const envFile of envFiles) {
+  if (!existsSync(envFile)) continue;
+  loadEnvFile({ path: envFile, override: true });
+}
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  // Preserve the existing Ollama-shaped app code while translating OpenAI calls
+  // directly at the fetch boundary when LLM_PROVIDER=openai.
+  installLlmFetchInterceptor();
+  const llm = resolveLlmRuntimeConfig('llama3:latest');
+  logger.log(
+    `LLM runtime provider=${llm.provider} backend=${llm.url} model=${llm.model}`,
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { AppModule } = require('./app.module');
   const app = await NestFactory.create(AppModule);
 
   // ── Global Exception Filter ──────────────────────────────────────────────
@@ -26,8 +54,10 @@ async function bootstrap() {
 
   /** Local Next ports; always merged in non-production so WEB_APP_URL=3001 alone does not block 3010. */
   const localWebOrigins = [
+    'http://localhost:3000',
     'http://localhost:3010',
     'http://localhost:3001',
+    'http://127.0.0.1:3000',
     'http://127.0.0.1:3010',
     'http://127.0.0.1:3001',
   ];

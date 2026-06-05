@@ -110,12 +110,13 @@ export class RagController {
   @Get('health')
   async healthCheck() {
     const health = await this.ragService.healthCheck();
+    const backendLabel = health.provider === 'openai' ? 'OpenAI' : 'Ollama';
     return {
       ...health,
       status: health.ollama ? 'operational' : 'degraded',
       advisory: health.ollama
         ? `RAG Advisor ready. Model: ${health.engine}`
-        : 'Ollama offline — check your Azure VM at ' + (process.env.OLLAMA_URL || 'http://localhost:11434'),
+        : `${backendLabel} offline — check ${health.backendUrl}`,
     };
   }
 

@@ -13,6 +13,10 @@ import {
   sqlUsesNowOrToday,
   validateDynamicSql,
 } from './dynamic-sql';
+import {
+  resolveLlmRuntimeConfig,
+  type LlmProvider,
+} from '../../common/llm/llm-config';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -200,17 +204,17 @@ const VALID_WIDGETS = [
   { type: 'bar', metric: 'collection_rate', grouping: 'client' },
   { type: 'bar', metric: 'overdue_rate', grouping: 'client' },
   // ── Proportional pies
-  { type: 'pie',            metric: 'revenue', grouping: 'client' },
-  { type: 'pie',            metric: 'revenue', grouping: 'provider' },
+  { type: 'pie', metric: 'revenue', grouping: 'client' },
+  { type: 'pie', metric: 'revenue', grouping: 'provider' },
   // ── Revenue by GL account / category (from journal lines)
-  { type: 'bar',            metric: 'revenue', grouping: 'account' },
+  { type: 'bar', metric: 'revenue', grouping: 'account' },
   { type: 'horizontal_bar', metric: 'revenue', grouping: 'account' },
-  { type: 'pie',            metric: 'revenue', grouping: 'account' },
-  { type: 'donut',          metric: 'revenue', grouping: 'account' },
-  { type: 'bar',            metric: 'revenue', grouping: 'category' },
+  { type: 'pie', metric: 'revenue', grouping: 'account' },
+  { type: 'donut', metric: 'revenue', grouping: 'account' },
+  { type: 'bar', metric: 'revenue', grouping: 'category' },
   { type: 'horizontal_bar', metric: 'revenue', grouping: 'category' },
-  { type: 'pie',            metric: 'revenue', grouping: 'category' },
-  { type: 'pie',            metric: 'invoices', grouping: 'status' },
+  { type: 'pie', metric: 'revenue', grouping: 'category' },
+  { type: 'pie', metric: 'invoices', grouping: 'status' },
   { type: 'pie', metric: 'outstanding', grouping: 'client' },
   // ── Metric tiles
   { type: 'metric', metric: 'venture', grouping: 'summary' },
@@ -225,167 +229,167 @@ const VALID_WIDGETS = [
   { type: 'line', metric: 'dso', grouping: 'month' },
 
   // ── P&L / Income Statement (sourced from fact_accounting_journal_lines)
-  { type: 'line',   metric: 'net_income',         grouping: 'month'   },
-  { type: 'bar',    metric: 'net_income',         grouping: 'month'   },
-  { type: 'bar',    metric: 'net_income',         grouping: 'quarter' },
-  { type: 'line',   metric: 'expense',            grouping: 'month'   },
-  { type: 'bar',    metric: 'expense',            grouping: 'month'   },
-  { type: 'bar',    metric: 'expense',            grouping: 'quarter' },
-  { type: 'line',   metric: 'gross_profit',       grouping: 'month'   },
-  { type: 'line',   metric: 'gross_margin_pct',   grouping: 'month'   },
-  { type: 'line',   metric: 'net_margin_pct',     grouping: 'month'   },
-  { type: 'line',   metric: 'ebitda',             grouping: 'month'   },
-  { type: 'line',   metric: 'revenue_vs_expense', grouping: 'month'   },
-  { type: 'bar',    metric: 'revenue_vs_expense', grouping: 'month'   },
+  { type: 'line', metric: 'net_income', grouping: 'month' },
+  { type: 'bar', metric: 'net_income', grouping: 'month' },
+  { type: 'bar', metric: 'net_income', grouping: 'quarter' },
+  { type: 'line', metric: 'expense', grouping: 'month' },
+  { type: 'bar', metric: 'expense', grouping: 'month' },
+  { type: 'bar', metric: 'expense', grouping: 'quarter' },
+  { type: 'line', metric: 'gross_profit', grouping: 'month' },
+  { type: 'line', metric: 'gross_margin_pct', grouping: 'month' },
+  { type: 'line', metric: 'net_margin_pct', grouping: 'month' },
+  { type: 'line', metric: 'ebitda', grouping: 'month' },
+  { type: 'line', metric: 'revenue_vs_expense', grouping: 'month' },
+  { type: 'bar', metric: 'revenue_vs_expense', grouping: 'month' },
 
   // ── Expense breakdowns by GL account
-  { type: 'bar',    metric: 'expense',            grouping: 'account' },
-  { type: 'pie',    metric: 'expense',            grouping: 'account' },
+  { type: 'bar', metric: 'expense', grouping: 'account' },
+  { type: 'pie', metric: 'expense', grouping: 'account' },
   // Expense breakdowns by user-defined cost category (e.g., Admin / Marketing / Sales)
-  { type: 'bar',    metric: 'expense',            grouping: 'category' },
-  { type: 'pie',    metric: 'expense',            grouping: 'category' },
-  { type: 'bar',    metric: 'opex',               grouping: 'account' },
-  { type: 'bar',    metric: 'cogs',               grouping: 'account' },
+  { type: 'bar', metric: 'expense', grouping: 'category' },
+  { type: 'pie', metric: 'expense', grouping: 'category' },
+  { type: 'bar', metric: 'opex', grouping: 'account' },
+  { type: 'bar', metric: 'cogs', grouping: 'account' },
   // Admin-only expense cuts (requires map_account_cost_categories mapping)
-  { type: 'line',   metric: 'admin_expense',      grouping: 'month' },
-  { type: 'bar',    metric: 'admin_expense',      grouping: 'month' },
-  { type: 'bar',    metric: 'admin_expense',      grouping: 'account' },
-  { type: 'table',  metric: 'admin_expense',      grouping: 'list' },
+  { type: 'line', metric: 'admin_expense', grouping: 'month' },
+  { type: 'bar', metric: 'admin_expense', grouping: 'month' },
+  { type: 'bar', metric: 'admin_expense', grouping: 'account' },
+  { type: 'table', metric: 'admin_expense', grouping: 'list' },
 
   // ── CFO / controller-style extras
-  { type: 'area',   metric: 'revenue_cumulative', grouping: 'month' },
-  { type: 'line',   metric: 'revenue_cumulative', grouping: 'month' },
-  { type: 'bar',    metric: 'debits_credits',     grouping: 'month' },
+  { type: 'area', metric: 'revenue_cumulative', grouping: 'month' },
+  { type: 'line', metric: 'revenue_cumulative', grouping: 'month' },
+  { type: 'bar', metric: 'debits_credits', grouping: 'month' },
   { type: 'stacked_bar', metric: 'debits_credits', grouping: 'month' },
-  { type: 'bar',    metric: 'net_position',       grouping: 'month' },
-  { type: 'waterfall', metric: 'net_position',    grouping: 'month' },
-  { type: 'line',   metric: 'running_balance',    grouping: 'month' },
-  { type: 'bar',    metric: 'invoice_amount',     grouping: 'bucket' },
-  { type: 'table',  metric: 'top_invoices',       grouping: 'list' },
-  { type: 'pie',    metric: 'invoice_value',      grouping: 'invoice_type' },
-  { type: 'pie',    metric: 'transaction_value',  grouping: 'journal_type' },
-  { type: 'pie',    metric: 'transaction_value',  grouping: 'currency' },
-  { type: 'treemap', metric: 'expense',           grouping: 'account' },
-  { type: 'scatter', metric: 'invoice_amount',    grouping: 'time' },
+  { type: 'bar', metric: 'net_position', grouping: 'month' },
+  { type: 'waterfall', metric: 'net_position', grouping: 'month' },
+  { type: 'line', metric: 'running_balance', grouping: 'month' },
+  { type: 'bar', metric: 'invoice_amount', grouping: 'bucket' },
+  { type: 'table', metric: 'top_invoices', grouping: 'list' },
+  { type: 'pie', metric: 'invoice_value', grouping: 'invoice_type' },
+  { type: 'pie', metric: 'transaction_value', grouping: 'journal_type' },
+  { type: 'pie', metric: 'transaction_value', grouping: 'currency' },
+  { type: 'treemap', metric: 'expense', grouping: 'account' },
+  { type: 'scatter', metric: 'invoice_amount', grouping: 'time' },
 
   // ── P&L tables and metric tiles
-  { type: 'table',  metric: 'pl',                 grouping: 'summary' },
-  { type: 'table',  metric: 'expense',            grouping: 'list'    },
-  { type: 'table',  metric: 'gl_transactions',    grouping: 'list'    },
-  { type: 'metric', metric: 'pl_summary',         grouping: 'summary' },
-  { type: 'metric', metric: 'expense_summary',    grouping: 'summary' },
+  { type: 'table', metric: 'pl', grouping: 'summary' },
+  { type: 'table', metric: 'expense', grouping: 'list' },
+  { type: 'table', metric: 'gl_transactions', grouping: 'list' },
+  { type: 'metric', metric: 'pl_summary', grouping: 'summary' },
+  { type: 'metric', metric: 'expense_summary', grouping: 'summary' },
 
   // ── Department dimension (QB DepartmentRef / Xero TrackingCategory 1)
-  { type: 'bar',          metric: 'expense',      grouping: 'department' },
-  { type: 'pie',          metric: 'expense',      grouping: 'department' },
-  { type: 'donut',        metric: 'expense',      grouping: 'department' },
-  { type: 'treemap',      metric: 'expense',      grouping: 'department' },
-  { type: 'horizontal_bar', metric: 'expense',    grouping: 'department' },
-  { type: 'stacked_bar',  metric: 'expense',      grouping: 'department' },
-  { type: 'line',         metric: 'expense',      grouping: 'department' },
-  { type: 'bar',          metric: 'net_income',   grouping: 'department' },
-  { type: 'line',         metric: 'net_income',   grouping: 'department' },
-  { type: 'bar',          metric: 'revenue',      grouping: 'department' },
-  { type: 'pie',          metric: 'revenue',      grouping: 'department' },
+  { type: 'bar', metric: 'expense', grouping: 'department' },
+  { type: 'pie', metric: 'expense', grouping: 'department' },
+  { type: 'donut', metric: 'expense', grouping: 'department' },
+  { type: 'treemap', metric: 'expense', grouping: 'department' },
+  { type: 'horizontal_bar', metric: 'expense', grouping: 'department' },
+  { type: 'stacked_bar', metric: 'expense', grouping: 'department' },
+  { type: 'line', metric: 'expense', grouping: 'department' },
+  { type: 'bar', metric: 'net_income', grouping: 'department' },
+  { type: 'line', metric: 'net_income', grouping: 'department' },
+  { type: 'bar', metric: 'revenue', grouping: 'department' },
+  { type: 'pie', metric: 'revenue', grouping: 'department' },
 
   // ── Class dimension (QB ClassRef / Xero TrackingCategory 2)
-  { type: 'bar',          metric: 'expense',      grouping: 'class' },
-  { type: 'pie',          metric: 'expense',      grouping: 'class' },
-  { type: 'donut',        metric: 'expense',      grouping: 'class' },
-  { type: 'treemap',      metric: 'expense',      grouping: 'class' },
-  { type: 'horizontal_bar', metric: 'expense',    grouping: 'class' },
-  { type: 'stacked_bar',  metric: 'expense',      grouping: 'class' },
+  { type: 'bar', metric: 'expense', grouping: 'class' },
+  { type: 'pie', metric: 'expense', grouping: 'class' },
+  { type: 'donut', metric: 'expense', grouping: 'class' },
+  { type: 'treemap', metric: 'expense', grouping: 'class' },
+  { type: 'horizontal_bar', metric: 'expense', grouping: 'class' },
+  { type: 'stacked_bar', metric: 'expense', grouping: 'class' },
 
   // ── Vendor dimension (QB VendorRef / Xero contact on bills)
-  { type: 'bar',          metric: 'expense',      grouping: 'vendor' },
-  { type: 'horizontal_bar', metric: 'expense',    grouping: 'vendor' },
-  { type: 'pie',          metric: 'expense',      grouping: 'vendor' },
-  { type: 'donut',        metric: 'expense',      grouping: 'vendor' },
-  { type: 'treemap',      metric: 'expense',      grouping: 'vendor' },
-  { type: 'pareto',       metric: 'expense',      grouping: 'vendor' },
-  { type: 'table',        metric: 'expense',      grouping: 'vendor' },
-  { type: 'scatter',      metric: 'expense',      grouping: 'vendor' },
-  { type: 'bubble',       metric: 'expense',      grouping: 'vendor' },
-  { type: 'line',         metric: 'expense',      grouping: 'vendor' },
+  { type: 'bar', metric: 'expense', grouping: 'vendor' },
+  { type: 'horizontal_bar', metric: 'expense', grouping: 'vendor' },
+  { type: 'pie', metric: 'expense', grouping: 'vendor' },
+  { type: 'donut', metric: 'expense', grouping: 'vendor' },
+  { type: 'treemap', metric: 'expense', grouping: 'vendor' },
+  { type: 'pareto', metric: 'expense', grouping: 'vendor' },
+  { type: 'table', metric: 'expense', grouping: 'vendor' },
+  { type: 'scatter', metric: 'expense', grouping: 'vendor' },
+  { type: 'bubble', metric: 'expense', grouping: 'vendor' },
+  { type: 'line', metric: 'expense', grouping: 'vendor' },
 
   // ── Debit / Credit by account type (balance-sheet analysis)
-  { type: 'bar',          metric: 'debits_credits', grouping: 'account_type' },
-  { type: 'stacked_bar',  metric: 'debits_credits', grouping: 'account_type' },
-  { type: 'pie',          metric: 'debits_credits', grouping: 'account_type' },
+  { type: 'bar', metric: 'debits_credits', grouping: 'account_type' },
+  { type: 'stacked_bar', metric: 'debits_credits', grouping: 'account_type' },
+  { type: 'pie', metric: 'debits_credits', grouping: 'account_type' },
 
   // ── Multi-series monthly expense with department breakdown
-  { type: 'stacked_bar',  metric: 'expense',      grouping: 'month_department' },
-  { type: 'line',         metric: 'expense',      grouping: 'month_department' },
-  { type: 'area',         metric: 'expense',      grouping: 'month_department' },
+  { type: 'stacked_bar', metric: 'expense', grouping: 'month_department' },
+  { type: 'line', metric: 'expense', grouping: 'month_department' },
+  { type: 'area', metric: 'expense', grouping: 'month_department' },
   // ── Vendor spend trend (multi-series line per vendor over months)
-  { type: 'line',         metric: 'expense',      grouping: 'vendor_month' },
-  { type: 'stacked_bar',  metric: 'expense',      grouping: 'vendor_month' },
-  { type: 'area',         metric: 'expense',      grouping: 'vendor_month' },
+  { type: 'line', metric: 'expense', grouping: 'vendor_month' },
+  { type: 'stacked_bar', metric: 'expense', grouping: 'vendor_month' },
+  { type: 'area', metric: 'expense', grouping: 'vendor_month' },
 
   // ── Vendor transactions (scatter / bubble for risk / concentration)
-  { type: 'scatter',      metric: 'vendor_transactions', grouping: 'vendor' },
-  { type: 'bubble',       metric: 'vendor_transactions', grouping: 'vendor' },
+  { type: 'scatter', metric: 'vendor_transactions', grouping: 'vendor' },
+  { type: 'bubble', metric: 'vendor_transactions', grouping: 'vendor' },
 
   // ── GL transactions by vendor (table)
-  { type: 'table',        metric: 'gl_transactions', grouping: 'vendor' },
+  { type: 'table', metric: 'gl_transactions', grouping: 'vendor' },
 
   // ── Monthly by class (multi-series)
-  { type: 'stacked_bar',  metric: 'expense',      grouping: 'month_class' },
-  { type: 'line',         metric: 'expense',      grouping: 'month_class' },
-  { type: 'area',         metric: 'expense',      grouping: 'month_class' },
+  { type: 'stacked_bar', metric: 'expense', grouping: 'month_class' },
+  { type: 'line', metric: 'expense', grouping: 'month_class' },
+  { type: 'area', metric: 'expense', grouping: 'month_class' },
 
   // ── Dept × Class cross breakdown
-  { type: 'stacked_bar',  metric: 'expense',      grouping: 'dept_class' },
-  { type: 'bar',          metric: 'expense',      grouping: 'dept_class' },
+  { type: 'stacked_bar', metric: 'expense', grouping: 'dept_class' },
+  { type: 'bar', metric: 'expense', grouping: 'dept_class' },
 
   // ── Department stats scatter
-  { type: 'scatter',      metric: 'expense',      grouping: 'dept_stats' },
+  { type: 'scatter', metric: 'expense', grouping: 'dept_stats' },
 
   // ── Revenue vs Expense by department
-  { type: 'stacked_bar',  metric: 'revenue_vs_expense', grouping: 'department' },
-  { type: 'bar',          metric: 'revenue_vs_expense', grouping: 'department' },
+  { type: 'stacked_bar', metric: 'revenue_vs_expense', grouping: 'department' },
+  { type: 'bar', metric: 'revenue_vs_expense', grouping: 'department' },
 
   // ── P&L waterfall
-  { type: 'waterfall',    metric: 'pl',           grouping: 'summary' },
+  { type: 'waterfall', metric: 'pl', grouping: 'summary' },
 
   // ── Monthly financial KPI lines
-  { type: 'line',         metric: 'gross_profit', grouping: 'month' },
-  { type: 'line',         metric: 'net_margin',   grouping: 'month' },
-  { type: 'line',         metric: 'expense_ratio', grouping: 'month' },
-  { type: 'line',         metric: 'net_position', grouping: 'month' },
+  { type: 'line', metric: 'gross_profit', grouping: 'month' },
+  { type: 'line', metric: 'net_margin', grouping: 'month' },
+  { type: 'line', metric: 'expense_ratio', grouping: 'month' },
+  { type: 'line', metric: 'net_position', grouping: 'month' },
 
   // ── Balance sheet: assets / liabilities / equity / balance_sheet summary
-  { type: 'donut',          metric: 'assets',         grouping: 'account_type' },
-  { type: 'pie',            metric: 'assets',         grouping: 'account_type' },
-  { type: 'bar',            metric: 'assets',         grouping: 'breakdown' },
-  { type: 'horizontal_bar', metric: 'assets',         grouping: 'breakdown' },
-  { type: 'donut',          metric: 'assets',         grouping: 'breakdown' },
-  { type: 'donut',          metric: 'liabilities',    grouping: 'account_type' },
-  { type: 'pie',            metric: 'liabilities',    grouping: 'account_type' },
-  { type: 'bar',            metric: 'liabilities',    grouping: 'breakdown' },
-  { type: 'horizontal_bar', metric: 'liabilities',    grouping: 'breakdown' },
-  { type: 'donut',          metric: 'liabilities',    grouping: 'breakdown' },
-  { type: 'bar',            metric: 'equity',         grouping: 'breakdown' },
-  { type: 'donut',          metric: 'equity',         grouping: 'breakdown' },
-  { type: 'bar',            metric: 'balance_sheet',  grouping: 'summary' },
-  { type: 'donut',          metric: 'balance_sheet',  grouping: 'summary' },
-  { type: 'table',          metric: 'trial_balance',  grouping: 'summary' },
-  { type: 'table',          metric: 'trial_balance',  grouping: 'list' },
-  { type: 'table',          metric: 'gl_dump',        grouping: 'detail' },
-  { type: 'bar',            metric: 'income',         grouping: 'breakdown' },
-  { type: 'donut',          metric: 'income',         grouping: 'breakdown' },
-  { type: 'bar',            metric: 'account_type',   grouping: 'breakdown' },
-  { type: 'donut',          metric: 'account_type',   grouping: 'breakdown' },
+  { type: 'donut', metric: 'assets', grouping: 'account_type' },
+  { type: 'pie', metric: 'assets', grouping: 'account_type' },
+  { type: 'bar', metric: 'assets', grouping: 'breakdown' },
+  { type: 'horizontal_bar', metric: 'assets', grouping: 'breakdown' },
+  { type: 'donut', metric: 'assets', grouping: 'breakdown' },
+  { type: 'donut', metric: 'liabilities', grouping: 'account_type' },
+  { type: 'pie', metric: 'liabilities', grouping: 'account_type' },
+  { type: 'bar', metric: 'liabilities', grouping: 'breakdown' },
+  { type: 'horizontal_bar', metric: 'liabilities', grouping: 'breakdown' },
+  { type: 'donut', metric: 'liabilities', grouping: 'breakdown' },
+  { type: 'bar', metric: 'equity', grouping: 'breakdown' },
+  { type: 'donut', metric: 'equity', grouping: 'breakdown' },
+  { type: 'bar', metric: 'balance_sheet', grouping: 'summary' },
+  { type: 'donut', metric: 'balance_sheet', grouping: 'summary' },
+  { type: 'table', metric: 'trial_balance', grouping: 'summary' },
+  { type: 'table', metric: 'trial_balance', grouping: 'list' },
+  { type: 'table', metric: 'gl_dump', grouping: 'detail' },
+  { type: 'bar', metric: 'income', grouping: 'breakdown' },
+  { type: 'donut', metric: 'income', grouping: 'breakdown' },
+  { type: 'bar', metric: 'account_type', grouping: 'breakdown' },
+  { type: 'donut', metric: 'account_type', grouping: 'breakdown' },
 
   // ── Account type treemap / top debits / top credits / scatter
-  { type: 'treemap',      metric: 'accounts',     grouping: 'account_type' },
-  { type: 'bar',          metric: 'debits',       grouping: 'account_type' },
-  { type: 'bar',          metric: 'credits',      grouping: 'account_type' },
-  { type: 'scatter',      metric: 'debits_credits', grouping: 'account' },
+  { type: 'treemap', metric: 'accounts', grouping: 'account_type' },
+  { type: 'bar', metric: 'debits', grouping: 'account_type' },
+  { type: 'bar', metric: 'credits', grouping: 'account_type' },
+  { type: 'scatter', metric: 'debits_credits', grouping: 'account' },
 
   // ── Monthly debits vs credits stacked
-  { type: 'stacked_bar',  metric: 'debits_credits', grouping: 'month' },
-  { type: 'donut',        metric: 'debits_credits', grouping: 'account_type' },
+  { type: 'stacked_bar', metric: 'debits_credits', grouping: 'month' },
+  { type: 'donut', metric: 'debits_credits', grouping: 'account_type' },
 ] as const;
 
 // ─── Planning Prompt — minimal for fast Ollama inference ─────────────────────
@@ -1249,6 +1253,7 @@ export class AgentService {
   private readonly logger = new Logger(AgentService.name);
   private readonly OLLAMA_URL: string;
   private readonly OLLAMA_MODEL: string;
+  private readonly llmProvider: LlmProvider;
   private readonly analyticsDb: string;
   private analyticsSchemaEnsured = false;
   private analyticsSchemaEnsurePromise: Promise<void> | null = null;
@@ -1263,8 +1268,10 @@ export class AgentService {
     private readonly clickhouse: ClickHouseClient,
     private readonly orgContext: OrganizationContextService,
   ) {
-    this.OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-    this.OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3:latest';
+    const llm = resolveLlmRuntimeConfig('llama3:latest');
+    this.llmProvider = llm.provider;
+    this.OLLAMA_URL = llm.url;
+    this.OLLAMA_MODEL = llm.model;
     this.analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
   }
 
@@ -1328,7 +1335,9 @@ export class AgentService {
   private detectUnsupportedOrAmbiguousAsk(
     queryText: string,
   ): ClarificationPrompt | null {
-    const q = String(queryText ?? '').trim().toLowerCase();
+    const q = String(queryText ?? '')
+      .trim()
+      .toLowerCase();
     if (!q) return null;
 
     // If the user already RESOLVED the budget question (e.g. clicked
@@ -1401,7 +1410,9 @@ export class AgentService {
 
     // Headcount / employee-level data is not in this system.
     if (
-      /\b(headcount|head\s+count|employee\s+count|number\s+of\s+employees|fte\b|workforce\s+size|staff\s+count|staffing\s+level|employees\s+per|per\s+employee|employee[-\s]level|hiring|recruitment|attrition|turnover\s+rate)\b/i.test(q)
+      /\b(headcount|head\s+count|employee\s+count|number\s+of\s+employees|fte\b|workforce\s+size|staff\s+count|staffing\s+level|employees\s+per|per\s+employee|employee[-\s]level|hiring|recruitment|attrition|turnover\s+rate)\b/i.test(
+        q,
+      )
     ) {
       return {
         reason: 'HEADCOUNT_DATA_UNAVAILABLE',
@@ -1410,11 +1421,13 @@ export class AgentService {
         options: [
           {
             label: 'Show payroll expenses by month',
-            value: 'Show monthly payroll and salary expenses trend from our expense data.',
+            value:
+              'Show monthly payroll and salary expenses trend from our expense data.',
           },
           {
             label: 'Show expenses by department',
-            value: 'Show total expenses broken down by department (Admin, Operations, Sales).',
+            value:
+              'Show total expenses broken down by department (Admin, Operations, Sales).',
           },
         ],
       };
@@ -1422,7 +1435,9 @@ export class AgentService {
 
     // Regional / geographic data is not in this system.
     if (
-      /\b(region\b|regional|geographic|geography|by\s+city|by\s+country|by\s+state|by\s+office|office\s+location|location[-\s]wise|across\s+(regions|locations|offices)|spending\s+(distribution|by)\s+(region|location|office))\b/i.test(q)
+      /\b(region\b|regional|geographic|geography|by\s+city|by\s+country|by\s+state|by\s+office|office\s+location|location[-\s]wise|across\s+(regions|locations|offices)|spending\s+(distribution|by)\s+(region|location|office))\b/i.test(
+        q,
+      )
     ) {
       return {
         reason: 'REGIONAL_DATA_UNAVAILABLE',
@@ -1431,7 +1446,8 @@ export class AgentService {
         options: [
           {
             label: 'Show expenses by department',
-            value: 'Show total expenses broken down by department (Admin, Operations, Sales).',
+            value:
+              'Show total expenses broken down by department (Admin, Operations, Sales).',
           },
           {
             label: 'Show expenses by vendor',
@@ -1443,7 +1459,9 @@ export class AgentService {
 
     // Working capital / recurring vs one-time needs data we do not have.
     if (
-      /\b(working\s+capital\s+expense|recurring\s+vs\.?\s+one[-\s]time|one[-\s]time\s+vs\.?\s+recurring)\b/i.test(q)
+      /\b(working\s+capital\s+expense|recurring\s+vs\.?\s+one[-\s]time|one[-\s]time\s+vs\.?\s+recurring)\b/i.test(
+        q,
+      )
     ) {
       return {
         reason: 'WORKING_CAPITAL_DATA_UNAVAILABLE',
@@ -1471,7 +1489,8 @@ export class AgentService {
         options: [
           {
             label: 'Show as a ranked horizontal bar chart',
-            value: 'Show the same data as a ranked horizontal bar chart sorted by value.',
+            value:
+              'Show the same data as a ranked horizontal bar chart sorted by value.',
           },
           {
             label: 'Show as a table',
@@ -1494,7 +1513,8 @@ export class AgentService {
           },
           {
             label: 'Show as a multi-level bar chart',
-            value: 'Show expense breakdown by department, class, and vendor as grouped bars.',
+            value:
+              'Show expense breakdown by department, class, and vendor as grouped bars.',
           },
         ],
       };
@@ -1881,13 +1901,18 @@ export class AgentService {
       /* offline */
     }
 
+    const backendLabel =
+      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
+
     return {
       status: ollamaOnline ? 'operational' : 'degraded',
       advisory: ollamaOnline
-        ? `NumeriQ Agent Layer ready — ${this.OLLAMA_MODEL}`
-        : `Ollama offline — check ${this.OLLAMA_URL}`,
+        ? `NumeriQ Agent Layer ready — ${backendLabel}: ${this.OLLAMA_MODEL}`
+        : `${backendLabel} offline — check ${this.OLLAMA_URL}`,
       mode: 'agentic-tool-use',
       ollama: ollamaOnline,
+      provider: this.llmProvider,
+      backendUrl: this.OLLAMA_URL,
       model: this.OLLAMA_MODEL,
     };
   }
@@ -2028,7 +2053,9 @@ export class AgentService {
           return { data };
         }
       } catch (err: any) {
-        this.logger.warn(`[Agent:Dynamic] widgetId=${widgetId} SQL exec failed: ${err.message}`);
+        this.logger.warn(
+          `[Agent:Dynamic] widgetId=${widgetId} SQL exec failed: ${err.message}`,
+        );
       }
       return { data: [] };
     }
@@ -2072,7 +2099,9 @@ export class AgentService {
     const clientListDim = clientNamesLower
       ? `AND lowerUTF8(coalesce(nullIf(client_name, ''), 'Unknown Client')) IN ({clientNames:Array(String)})`
       : '';
-    const clientListParam = clientNamesLower ? { clientNames: clientNamesLower } : {};
+    const clientListParam = clientNamesLower
+      ? { clientNames: clientNamesLower }
+      : {};
     const entity = orgId ? `AND org_id = {orgId:String}` : '';
     const entityParam = orgId ? { orgId } : {};
     const rangeEndExpr = (() => {
@@ -2735,10 +2764,10 @@ export class AgentService {
 	           AND issued_at IS NOT NULL
 	         ORDER BY abs(total_amount) DESC
 	         LIMIT ${requestedTopN ?? 10}`,
-	        {
-	          externalOrgIds: scope.externalOrgIds,
-	          ...providerParam,
-	          ...clientParam,
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
           ...entityParam,
         },
       );
@@ -3405,12 +3434,12 @@ export class AgentService {
 		           GROUP BY client_name
 		           ORDER BY total_collected DESC
 		           LIMIT ${requestedTopN ?? 30}`,
-		          {
-		            externalOrgIds: scope.externalOrgIds,
-		            ...clientListParam,
-		            ...entityParam,
-		          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...entityParam,
+          },
+        );
         if (rows.length > 0) {
           return {
             data: rows.map((r) => ({
@@ -3485,14 +3514,14 @@ export class AgentService {
          GROUP BY client_name, client_id
 	         ORDER BY total_collected DESC
 	         LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...providerParam,
-	            ...clientParam,
-	            ...clientListParam,
-	            ...entityParam,
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...providerParam,
+            ...clientParam,
+            ...clientListParam,
+            ...entityParam,
+          },
+        );
 
         return {
           data: rows.map((r) => ({
@@ -3523,8 +3552,8 @@ export class AgentService {
 	             ${clientListDim}
 	             AND client_name != ''
 	           ORDER BY total_revenue DESC LIMIT 15`,
-	          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
-	        );
+          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -3835,10 +3864,10 @@ export class AgentService {
     }
 
     // ── paid/month ────────────────────────────────────────────────────────────
-	    if (metric === 'paid' && grouping === 'month') {
-	      if (scope.externalOrgIds.length === 0) return { data: [] };
-	      const rows = await this.queryRows<any>(
-	        `WITH invoices AS (
+    if (metric === 'paid' && grouping === 'month') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const rows = await this.queryRows<any>(
+        `WITH invoices AS (
 	           SELECT invoice_external_id
 	           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
 	           WHERE org_id IN ({externalOrgIds:Array(String)})
@@ -3864,18 +3893,18 @@ export class AgentService {
 	         GROUP BY month, month_start
 	         ORDER BY month_start ASC
 	         LIMIT 36`,
-	        {
-	          externalOrgIds: scope.externalOrgIds,
-	          ...providerParam,
-	          ...clientParam,
-	          ...clientListParam,
-	          ...entityParam,
-	        },
-	      );
-	      return {
-	        data: rows.map((r) => ({
-	          name: r.month as string,
-	          value: this.num(r.paid_amount),
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...providerParam,
+          ...clientParam,
+          ...clientListParam,
+          ...entityParam,
+        },
+      );
+      return {
+        data: rows.map((r) => ({
+          name: r.month as string,
+          value: this.num(r.paid_amount),
         })),
       };
     }
@@ -4032,7 +4061,11 @@ export class AgentService {
       const out = rows.map((r) => {
         const cur = this.num(r.revenue);
         running += cur;
-        return { name: String(r.month ?? ''), value: Math.round(running), revenue: Math.round(cur) };
+        return {
+          name: String(r.month ?? ''),
+          value: Math.round(running),
+          revenue: Math.round(cur),
+        };
       });
       return { data: out };
     }
@@ -4128,7 +4161,11 @@ export class AgentService {
       const out = rows.map((r) => {
         const net = this.num(r.credits) - this.num(r.debits);
         running += net;
-        return { name: String(r.month ?? ''), value: Math.round(running), net: Math.round(net) };
+        return {
+          name: String(r.month ?? ''),
+          value: Math.round(running),
+          net: Math.round(net),
+        };
       });
       return { data: out };
     }
@@ -4335,7 +4372,11 @@ export class AgentService {
            ${clientListDim}
            AND client_name != ''
          ORDER BY total_invoiced DESC LIMIT 15`,
-        { externalOrgIds: scope.externalOrgIds, ...clientListParam, ...entityParam },
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...clientListParam,
+          ...entityParam,
+        },
       );
       return {
         data: rows.map((r) => ({
@@ -4412,7 +4453,11 @@ export class AgentService {
            ${clientListDim}
            AND client_name != '' AND invoice_count > 0
          ORDER BY avg_invoice_amount DESC LIMIT 15`,
-        { externalOrgIds: scope.externalOrgIds, ...clientListParam, ...entityParam },
+        {
+          externalOrgIds: scope.externalOrgIds,
+          ...clientListParam,
+          ...entityParam,
+        },
       );
       return {
         data: rows.map((r) => ({
@@ -4567,12 +4612,12 @@ export class AgentService {
 	         HAVING total_invoiced > 0
 	         ORDER BY total_invoiced DESC
 	         LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...entityParam,
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...entityParam,
+          },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4597,12 +4642,12 @@ export class AgentService {
 	             ${clientListDim}
 	             AND client_name != '' AND total_invoiced > 0
 	           ORDER BY total_invoiced DESC LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...entityParam,
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...entityParam,
+          },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4671,12 +4716,12 @@ export class AgentService {
 	         HAVING total_invoiced > 0
 	         ORDER BY total_overdue DESC
 	         LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...entityParam,
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...entityParam,
+          },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4700,8 +4745,8 @@ export class AgentService {
 	             ${clientListDim}
 	             AND client_name != '' AND total_invoiced > 0
 	           ORDER BY total_overdue DESC LIMIT 15`,
-	          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
-	        );
+          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4723,7 +4768,7 @@ export class AgentService {
       // If no time window is requested, prefer the pre-aggregated gold dimension.
       if (!time.trim()) {
         const rows = await this.queryRows<any>(
-	          `SELECT
+          `SELECT
 	             coalesce(nullIf(client_name, ''), nullIf(client_id, ''), 'Unknown Client') AS client_name,
 	             client_id,
 	             total_outstanding,
@@ -4735,12 +4780,12 @@ export class AgentService {
 	             ${clientListDim}
 	             AND (total_outstanding > 0 OR total_overdue > 0)
 	           ORDER BY total_outstanding DESC LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...(orgId ? { orgId } : {}),
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...(orgId ? { orgId } : {}),
+          },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4800,12 +4845,12 @@ export class AgentService {
 	         HAVING (total_outstanding > 0 OR total_overdue > 0)
 	         ORDER BY total_outstanding DESC
 	         LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...entityParam,
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...entityParam,
+          },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4828,8 +4873,8 @@ export class AgentService {
 	             AND client_name != ''
 	             AND (total_outstanding > 0 OR total_overdue > 0)
 	           ORDER BY total_outstanding DESC LIMIT 15`,
-	          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
-	        );
+          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4846,7 +4891,7 @@ export class AgentService {
       // If no time window is requested, prefer the pre-aggregated gold dimension.
       if (!time.trim()) {
         const rows = await this.queryRows<any>(
-	          `SELECT
+          `SELECT
 	             coalesce(nullIf(client_name, ''), nullIf(client_id, ''), 'Unknown Client') AS client_name,
 	             client_id,
 	             total_overdue,
@@ -4858,12 +4903,12 @@ export class AgentService {
 	             ${clientListDim}
 	             AND total_overdue > 0
 	           ORDER BY total_overdue DESC LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...(orgId ? { orgId } : {}),
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...(orgId ? { orgId } : {}),
+          },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4923,12 +4968,12 @@ export class AgentService {
 	         HAVING total_overdue > 0
 	         ORDER BY total_overdue DESC
 	         LIMIT 15`,
-	          {
-	            externalOrgIds: scope.externalOrgIds,
-	            ...clientListParam,
-	            ...entityParam,
-	          },
-	        );
+          {
+            externalOrgIds: scope.externalOrgIds,
+            ...clientListParam,
+            ...entityParam,
+          },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -4951,8 +4996,8 @@ export class AgentService {
 	             AND client_name != ''
 	             AND total_overdue > 0
 	           ORDER BY total_overdue DESC LIMIT 15`,
-	          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
-	        );
+          { externalOrgIds: scope.externalOrgIds, ...clientListParam },
+        );
         return {
           data: rows.map((r) => ({
             name: r.client_name as string,
@@ -5016,7 +5061,7 @@ export class AgentService {
       OR lowerUTF8(account_name) LIKE '%amortization%'
     )`;
 
-    const jDb  = this.analyticsDb;
+    const jDb = this.analyticsDb;
     const jTbl = `${jDb}.v_fact_accounting_journal_lines_enriched_latest`;
     const tbTbl = `${jDb}.sample_trial_balance`;
     const glTbl = `${jDb}.sample_gl_dump`;
@@ -5038,7 +5083,12 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds },
       );
       if (glMonthRows.length > 0) {
-        return { data: (glMonthRows as any[]).map((r) => ({ name: String(r.month), value: this.num(r.total_expense) })) };
+        return {
+          data: (glMonthRows as any[]).map((r) => ({
+            name: String(r.month),
+            value: this.num(r.total_expense),
+          })),
+        };
       }
       // Fallback: journal lines for non-sample orgs
       const rows = await this.queryRowsWithTimeFallback<any>(
@@ -5059,7 +5109,12 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
         jTime,
       );
-      return { data: rows.map((r) => ({ name: r.month as string, value: this.num(r.total_expense) })) };
+      return {
+        data: rows.map((r) => ({
+          name: r.month as string,
+          value: this.num(r.total_expense),
+        })),
+      };
     }
 
     // ── expense/quarter (bar) ─────────────────────────────────────────────────
@@ -5082,7 +5137,12 @@ export class AgentService {
          LIMIT 16`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: rows.map((r) => ({ name: r.quarter as string, value: this.num(r.total_expense) })) };
+      return {
+        data: rows.map((r) => ({
+          name: r.quarter as string,
+          value: this.num(r.total_expense),
+        })),
+      };
     }
 
     // ── expense/account (bar or pie) ──────────────────────────────────────────
@@ -5090,7 +5150,9 @@ export class AgentService {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const limit = (() => {
         const n =
-          typeof topN === 'number' && Number.isFinite(topN) ? Math.floor(topN) : 20;
+          typeof topN === 'number' && Number.isFinite(topN)
+            ? Math.floor(topN)
+            : 20;
         return Math.max(3, Math.min(50, n));
       })();
       const rows = await this.queryRows<any>(
@@ -5111,7 +5173,12 @@ export class AgentService {
          LIMIT ${limit}`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: rows.map((r) => ({ name: r.account_name as string, value: this.num(r.total_expense) })) };
+      return {
+        data: rows.map((r) => ({
+          name: r.account_name as string,
+          value: this.num(r.total_expense),
+        })),
+      };
     }
 
     // ── expense/category (bar or pie) — user-defined cost categories ─────────
@@ -5119,7 +5186,9 @@ export class AgentService {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const limit = (() => {
         const n =
-          typeof topN === 'number' && Number.isFinite(topN) ? Math.floor(topN) : 20;
+          typeof topN === 'number' && Number.isFinite(topN)
+            ? Math.floor(topN)
+            : 20;
         return Math.max(3, Math.min(50, n));
       })();
       const rows = await this.queryRows<any>(
@@ -5181,7 +5250,9 @@ export class AgentService {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const limit = (() => {
         const n =
-          typeof topN === 'number' && Number.isFinite(topN) ? Math.floor(topN) : 20;
+          typeof topN === 'number' && Number.isFinite(topN)
+            ? Math.floor(topN)
+            : 20;
         return Math.max(3, Math.min(50, n));
       })();
       const rows = await this.queryRows<any>(
@@ -5268,7 +5339,12 @@ export class AgentService {
          LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: rows.map((r) => ({ name: r.account_name as string, value: this.num(r.total_opex) })) };
+      return {
+        data: rows.map((r) => ({
+          name: r.account_name as string,
+          value: this.num(r.total_opex),
+        })),
+      };
     }
 
     // ── cogs/account (bar) — cost of goods / direct costs only ───────────────
@@ -5292,7 +5368,12 @@ export class AgentService {
          LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: rows.map((r) => ({ name: r.account_name as string, value: this.num(r.total_cogs) })) };
+      return {
+        data: rows.map((r) => ({
+          name: r.account_name as string,
+          value: this.num(r.total_cogs),
+        })),
+      };
     }
 
     // ── net_income/month (line or bar) ────────────────────────────────────────
@@ -5320,11 +5401,16 @@ export class AgentService {
         const monthCount = glMonthlyRows.length || 12;
         const monthlyRev = Math.round(annualRev / monthCount);
         return {
-          data: (glMonthlyRows as any[]).map((r) => ({
-            name: String(r.month),
-            value: Math.round(monthlyRev - this.num(r.cogs) - this.num(r.opex)),
-            _sort: String(r.month_start),
-          })).sort((a, b) => a._sort.localeCompare(b._sort)).map(({ _sort: _s, ...rest }) => rest),
+          data: (glMonthlyRows as any[])
+            .map((r) => ({
+              name: String(r.month),
+              value: Math.round(
+                monthlyRev - this.num(r.cogs) - this.num(r.opex),
+              ),
+              _sort: String(r.month_start),
+            }))
+            .sort((a, b) => a._sort.localeCompare(b._sort))
+            .map(({ _sort: _s, ...rest }) => rest),
         };
       }
       // Fallback: invoices + journal lines
@@ -5375,7 +5461,9 @@ export class AgentService {
               _sort: key,
             };
           })
-          .sort((a: any, b: any) => String(a._sort).localeCompare(String(b._sort)))
+          .sort((a: any, b: any) =>
+            String(a._sort).localeCompare(String(b._sort)),
+          )
           .map(({ _sort: _s, ...rest }: any) => rest),
       };
     }
@@ -5412,10 +5500,18 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const expMap = new Map<string, number>(expRows.map((r: any) => [String(r.quarter), this.num(r.exp)]));
+      const expMap = new Map<string, number>(
+        expRows.map((r: any) => [String(r.quarter), this.num(r.exp)]),
+      );
       return {
         data: revRows
-          .map((r: any) => ({ name: String(r.quarter), value: Math.round(this.num(r.rev) - (expMap.get(String(r.quarter)) ?? 0)), _qs: String(r.quarter_start) }))
+          .map((r: any) => ({
+            name: String(r.quarter),
+            value: Math.round(
+              this.num(r.rev) - (expMap.get(String(r.quarter)) ?? 0),
+            ),
+            _qs: String(r.quarter_start),
+          }))
           .sort((a: any, b: any) => a._qs.localeCompare(b._qs))
           .map(({ _qs: _qs, ...rest }: any) => rest),
       };
@@ -5452,12 +5548,21 @@ export class AgentService {
         const n = glOpexRows.length || 12;
         const avgMonthlyGP = Math.round(annualGP / n);
         // Adjust monthly by OpEx deviation from average to show variation
-        const avgOpex = Math.round(glOpexRows.reduce((s: number, r: any) => s + this.num(r.opex), 0) / n);
+        const avgOpex = Math.round(
+          glOpexRows.reduce((s: number, r: any) => s + this.num(r.opex), 0) / n,
+        );
         return {
-          data: (glOpexRows as any[]).map((r) => {
-            const opexDev = Math.round(this.num(r.opex)) - avgOpex;
-            return { name: String(r.month), value: avgMonthlyGP - opexDev, _s: String(r.month_start) };
-          }).sort((a, b) => a._s.localeCompare(b._s)).map(({ _s, ...rest }) => rest),
+          data: (glOpexRows as any[])
+            .map((r) => {
+              const opexDev = Math.round(this.num(r.opex)) - avgOpex;
+              return {
+                name: String(r.month),
+                value: avgMonthlyGP - opexDev,
+                _s: String(r.month_start),
+              };
+            })
+            .sort((a, b) => a._s.localeCompare(b._s))
+            .map(({ _s, ...rest }) => rest),
         };
       }
       // Fallback: journal lines
@@ -5479,10 +5584,17 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const cogsMap = new Map<string, number>(cogsRows.map((r: any) => [String(r.month_start), this.num(r.cogs)]));
+      const cogsMap = new Map<string, number>(
+        cogsRows.map((r: any) => [String(r.month_start), this.num(r.cogs)]),
+      );
       return {
         data: revRows
-          .map((r: any) => ({ name: String(r.month_start), value: Math.round(this.num(r.rev) - (cogsMap.get(String(r.month_start)) ?? 0)) }))
+          .map((r: any) => ({
+            name: String(r.month_start),
+            value: Math.round(
+              this.num(r.rev) - (cogsMap.get(String(r.month_start)) ?? 0),
+            ),
+          }))
           .sort((a: any, b: any) => a.name.localeCompare(b.name)),
       };
     }
@@ -5508,11 +5620,19 @@ export class AgentService {
         const annualRev2 = this.num((annualRevRows2[0] as any)?.rev ?? 0);
         const monthlyRev2 = Math.round(annualRev2 / (glCogsRows2.length || 12));
         return {
-          data: (glCogsRows2 as any[]).map((r) => {
-            const rev = monthlyRev2;
-            const cogs = Math.round(this.num(r.cogs));
-            return { name: String(r.month), value: rev > 0 ? Math.round(((rev - cogs) / rev) * 1000) / 10 : 0, _s: String(r.month_start) };
-          }).sort((a, b) => a._s.localeCompare(b._s)).map(({ _s, ...rest }) => rest),
+          data: (glCogsRows2 as any[])
+            .map((r) => {
+              const rev = monthlyRev2;
+              const cogs = Math.round(this.num(r.cogs));
+              return {
+                name: String(r.month),
+                value:
+                  rev > 0 ? Math.round(((rev - cogs) / rev) * 1000) / 10 : 0,
+                _s: String(r.month_start),
+              };
+            })
+            .sort((a, b) => a._s.localeCompare(b._s))
+            .map(({ _s, ...rest }) => rest),
         };
       }
       // Fallback: invoices + journal lines
@@ -5533,13 +5653,18 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const cogsMapGM = new Map<string, number>(cogsRowsGM.map((r: any) => [String(r.month_start), this.num(r.cogs)]));
+      const cogsMapGM = new Map<string, number>(
+        cogsRowsGM.map((r: any) => [String(r.month_start), this.num(r.cogs)]),
+      );
       return {
         data: revRowsGM
           .map((r: any) => {
             const rev = this.num(r.rev);
             const cogs = cogsMapGM.get(String(r.month_start)) ?? 0;
-            return { name: String(r.month_start), value: rev > 0 ? Math.round(((rev - cogs) / rev) * 1000) / 10 : 0 };
+            return {
+              name: String(r.month_start),
+              value: rev > 0 ? Math.round(((rev - cogs) / rev) * 1000) / 10 : 0,
+            };
           })
           .sort((a: any, b: any) => a.name.localeCompare(b.name)),
       };
@@ -5564,13 +5689,23 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds },
         );
         const annualRevNM = this.num((annualRevRowsNM[0] as any)?.rev ?? 0);
-        const monthlyRevNM = Math.round(annualRevNM / (glExpRowsNM.length || 12));
+        const monthlyRevNM = Math.round(
+          annualRevNM / (glExpRowsNM.length || 12),
+        );
         return {
-          data: (glExpRowsNM as any[]).map((r) => {
-            const rev = monthlyRevNM;
-            const exp = Math.round(this.num(r.total_exp));
-            return { name: String(r.month), value: rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0, _s: String(r.month_start) };
-          }).sort((a, b) => a._s.localeCompare(b._s)).map(({ _s, ...rest }) => rest),
+          data: (glExpRowsNM as any[])
+            .map((r) => {
+              const rev = monthlyRevNM;
+              const exp = Math.round(this.num(r.total_exp));
+              return {
+                name: String(r.month),
+                value:
+                  rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0,
+                _s: String(r.month_start),
+              };
+            })
+            .sort((a, b) => a._s.localeCompare(b._s))
+            .map(({ _s, ...rest }) => rest),
         };
       }
       const [revRows, expRows] = await Promise.all([
@@ -5590,13 +5725,18 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const expMap = new Map<string, number>(expRows.map((r: any) => [String(r.month_start), this.num(r.exp)]));
+      const expMap = new Map<string, number>(
+        expRows.map((r: any) => [String(r.month_start), this.num(r.exp)]),
+      );
       return {
         data: revRows
           .map((r: any) => {
             const rev = this.num(r.rev);
             const exp = expMap.get(String(r.month_start)) ?? 0;
-            return { name: String(r.month_start), value: rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0 };
+            return {
+              name: String(r.month_start),
+              value: rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0,
+            };
           })
           .sort((a: any, b: any) => a.name.localeCompare(b.name)),
       };
@@ -5631,15 +5771,19 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const expMap = new Map<string, number>(expRows.map((r: any) => [String(r.month_start), this.num(r.exp)]));
-      const daMap  = new Map<string, number>(daRows.map((r: any) => [String(r.month_start), this.num(r.da)]));
+      const expMap = new Map<string, number>(
+        expRows.map((r: any) => [String(r.month_start), this.num(r.exp)]),
+      );
+      const daMap = new Map<string, number>(
+        daRows.map((r: any) => [String(r.month_start), this.num(r.da)]),
+      );
       return {
         data: revRows
           .map((r: any) => {
             const key = String(r.month_start);
             const rev = this.num(r.rev);
             const exp = expMap.get(key) ?? 0;
-            const da  = daMap.get(key) ?? 0;
+            const da = daMap.get(key) ?? 0;
             return { name: key, value: Math.round(rev - exp + da) };
           })
           .sort((a: any, b: any) => a.name.localeCompare(b.name)),
@@ -5673,12 +5817,15 @@ export class AgentService {
         const monthCount = glCombinedRows.length || 12;
         const monthlyRev = Math.round(annualRev / monthCount);
         return {
-          data: (glCombinedRows as any[]).map((r) => ({
-            name: String(r.month),
-            Revenue: monthlyRev,
-            Expense: this.num(r.exp) + this.num(r.cogs),
-            _sort: String(r.month_start),
-          })).sort((a, b) => a._sort.localeCompare(b._sort)).map(({ _sort: _s, ...rest }) => rest),
+          data: (glCombinedRows as any[])
+            .map((r) => ({
+              name: String(r.month),
+              Revenue: monthlyRev,
+              Expense: this.num(r.exp) + this.num(r.cogs),
+              _sort: String(r.month_start),
+            }))
+            .sort((a, b) => a._sort.localeCompare(b._sort))
+            .map(({ _sort: _s, ...rest }) => rest),
         };
       }
       // Fallback: invoices + journal lines
@@ -5706,14 +5853,24 @@ export class AgentService {
         ),
       ]);
       const map = new Map<string, any>();
-      for (const r of revRows) map.set(String(r.month), { name: String(r.month), Revenue: this.num(r.rev), Expense: 0, _sort: String(r.month_start) });
+      for (const r of revRows)
+        map.set(String(r.month), {
+          name: String(r.month),
+          Revenue: this.num(r.rev),
+          Expense: 0,
+          _sort: String(r.month_start),
+        });
       for (const r of expRows) {
         const key = String(r.month);
         const existing = map.get(key) ?? { name: key, Revenue: 0, _sort: key };
         existing.Expense = this.num(r.exp);
         map.set(key, existing);
       }
-      return { data: Array.from(map.values()).sort((a, b) => a._sort.localeCompare(b._sort)).map(({ _sort: _s, ...rest }) => rest) };
+      return {
+        data: Array.from(map.values())
+          .sort((a, b) => a._sort.localeCompare(b._sort))
+          .map(({ _sort: _s, ...rest }) => rest),
+      };
     }
 
     // ── balance_sheet/summary — total assets, liabilities, equity from trial balance ──
@@ -5732,14 +5889,14 @@ export class AgentService {
          WHERE org_id IN ({externalOrgIds:Array(String)})`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      const totalAssets  = this.num((bsRows[0] as any)?.total_assets ?? 0);
-      const totalLiab    = this.num((bsRows[0] as any)?.total_liabilities ?? 0);
-      const totalEquity  = this.num((bsRows[0] as any)?.total_equity ?? 0);
+      const totalAssets = this.num((bsRows[0] as any)?.total_assets ?? 0);
+      const totalLiab = this.num((bsRows[0] as any)?.total_liabilities ?? 0);
+      const totalEquity = this.num((bsRows[0] as any)?.total_equity ?? 0);
       return {
         data: [
-          { name: 'Total Assets',      value: totalAssets },
+          { name: 'Total Assets', value: totalAssets },
           { name: 'Total Liabilities', value: totalLiab },
-          { name: 'Total Equity',      value: totalEquity },
+          { name: 'Total Equity', value: totalEquity },
         ],
       };
     }
@@ -5747,7 +5904,13 @@ export class AgentService {
     // ── assets/breakdown — asset accounts from trial balance ─────────────────
     // Mirrors Power BI DAX: Total Assets = SUM(net_balance) per account_type — NO ABS per row
     // Fixed Assets net of depreciation: SUM(+85k+62k+38.5k-45.2k) = 140,300 (not 230,700)
-    if (metric === 'assets' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
+    if (
+      metric === 'assets' &&
+      (grouping === 'account_type' ||
+        grouping === 'account' ||
+        grouping === 'breakdown' ||
+        grouping === 'summary')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `SELECT account_type AS name, round(sum(toFloat64(net_balance)), 0) AS value
@@ -5759,12 +5922,23 @@ export class AgentService {
          ORDER BY value DESC LIMIT 10`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── liabilities/breakdown — liability accounts from trial balance ─────────
     // Mirrors Power BI DAX: Total Liabilities = ABS(SUM(net_balance)) per account_type
-    if (metric === 'liabilities' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
+    if (
+      metric === 'liabilities' &&
+      (grouping === 'account_type' ||
+        grouping === 'account' ||
+        grouping === 'breakdown' ||
+        grouping === 'summary')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `SELECT account_type AS name, round(abs(sum(toFloat64(net_balance))), 0) AS value
@@ -5776,11 +5950,22 @@ export class AgentService {
          ORDER BY value DESC LIMIT 10`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── equity/breakdown — equity accounts from trial balance ─────────────────
-    if (metric === 'equity' && (grouping === 'account_type' || grouping === 'account' || grouping === 'breakdown' || grouping === 'summary')) {
+    if (
+      metric === 'equity' &&
+      (grouping === 'account_type' ||
+        grouping === 'account' ||
+        grouping === 'breakdown' ||
+        grouping === 'summary')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value
@@ -5790,11 +5975,19 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── trial_balance/summary — full trial balance table ──────────────────────
-    if (metric === 'trial_balance' && (grouping === 'summary' || grouping === 'list')) {
+    if (
+      metric === 'trial_balance' &&
+      (grouping === 'summary' || grouping === 'list')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `SELECT account_number, account_name, account_type,
@@ -5819,7 +6012,12 @@ export class AgentService {
     }
 
     // ── income/breakdown — income + COGS accounts from trial balance ──────────
-    if (metric === 'income' && (grouping === 'breakdown' || grouping === 'account' || grouping === 'summary')) {
+    if (
+      metric === 'income' &&
+      (grouping === 'breakdown' ||
+        grouping === 'account' ||
+        grouping === 'summary')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `SELECT account_name AS name, round(abs(toFloat64(net_balance)), 0) AS value, account_type
@@ -5830,11 +6028,22 @@ export class AgentService {
          ORDER BY account_type ASC, value DESC LIMIT 30`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value), type: String(r.account_type) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+          type: String(r.account_type),
+        })),
+      };
     }
 
     // ── account_type/breakdown — any account type breakdown from trial balance ─
-    if (metric === 'account_type' && (grouping === 'breakdown' || grouping === 'summary' || grouping === 'account')) {
+    if (
+      metric === 'account_type' &&
+      (grouping === 'breakdown' ||
+        grouping === 'summary' ||
+        grouping === 'account')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `SELECT account_type AS name, round(sum(abs(toFloat64(net_balance))), 0) AS value
@@ -5844,11 +6053,19 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── gl_dump/detail — full GL dump from sample_gl_dump ─────────────────────
-    if (metric === 'gl_dump' && (grouping === 'detail' || grouping === 'list')) {
+    if (
+      metric === 'gl_dump' &&
+      (grouping === 'detail' || grouping === 'list')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       const rows = await this.queryRows<any>(
         `SELECT
@@ -5917,17 +6134,21 @@ export class AgentService {
         ),
       ]);
       const totalRevenue = this.num((tbSummary[0] as any)?.total_revenue ?? 0);
-      const totalCogs    = this.num((tbSummary[0] as any)?.total_cogs ?? 0);
-      const totalOpex    = this.num((tbSummary[0] as any)?.total_expenses ?? 0);
-      const grossProfit  = totalRevenue - totalCogs;
-      const netIncome    = grossProfit - totalOpex;
+      const totalCogs = this.num((tbSummary[0] as any)?.total_cogs ?? 0);
+      const totalOpex = this.num((tbSummary[0] as any)?.total_expenses ?? 0);
+      const grossProfit = totalRevenue - totalCogs;
+      const netIncome = grossProfit - totalOpex;
       const rows: Array<{ name: string; value: number }> = [
-        { name: 'Revenue',              value: totalRevenue },
-        ...(totalCogs > 0    ? [{ name: 'Cost of Goods Sold',  value: -totalCogs }]  : []),
-        { name: 'Gross Profit',         value: grossProfit },
-        ...(totalOpex > 0    ? [{ name: 'Operating Expenses',  value: -totalOpex }]  : []),
-        { name: 'Net Income',           value: netIncome },
-      ].filter(r => r.value !== 0);
+        { name: 'Revenue', value: totalRevenue },
+        ...(totalCogs > 0
+          ? [{ name: 'Cost of Goods Sold', value: -totalCogs }]
+          : []),
+        { name: 'Gross Profit', value: grossProfit },
+        ...(totalOpex > 0
+          ? [{ name: 'Operating Expenses', value: -totalOpex }]
+          : []),
+        { name: 'Net Income', value: netIncome },
+      ].filter((r) => r.value !== 0);
       void tbAccounts; // available for future table variant
       return { data: rows };
     }
@@ -6007,19 +6228,27 @@ export class AgentService {
          WHERE org_id IN ({externalOrgIds:Array(String)})`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      const rev  = this.num((tbRows[0] as any)?.total_revenue ?? 0);
+      const rev = this.num((tbRows[0] as any)?.total_revenue ?? 0);
       const cogs = this.num((tbRows[0] as any)?.total_cogs ?? 0);
-      const exp  = this.num((tbRows[0] as any)?.total_expenses ?? 0);
-      const gp   = rev - cogs;
-      const ni   = gp - exp;
+      const exp = this.num((tbRows[0] as any)?.total_expenses ?? 0);
+      const gp = rev - cogs;
+      const ni = gp - exp;
       return {
         data: [
-          { label: 'Total Revenue',    value: rev,  format: 'currency' },
-          { label: 'Total Expenses',   value: exp + cogs, format: 'currency' },
-          { label: 'Gross Profit',     value: gp,   format: 'currency' },
-          { label: 'Net Income',       value: ni,   format: 'currency' },
-          { label: 'Gross Margin',     value: rev > 0 ? Math.round((gp / rev) * 1000) / 10 : 0, format: 'percent' },
-          { label: 'Net Margin',       value: rev > 0 ? Math.round((ni / rev) * 1000) / 10 : 0, format: 'percent' },
+          { label: 'Total Revenue', value: rev, format: 'currency' },
+          { label: 'Total Expenses', value: exp + cogs, format: 'currency' },
+          { label: 'Gross Profit', value: gp, format: 'currency' },
+          { label: 'Net Income', value: ni, format: 'currency' },
+          {
+            label: 'Gross Margin',
+            value: rev > 0 ? Math.round((gp / rev) * 1000) / 10 : 0,
+            format: 'percent',
+          },
+          {
+            label: 'Net Margin',
+            value: rev > 0 ? Math.round((ni / rev) * 1000) / 10 : 0,
+            format: 'percent',
+          },
         ],
       };
     }
@@ -6047,15 +6276,24 @@ export class AgentService {
       ]);
       const totalCogs = this.num((expRows[0] as any)?.total_cogs ?? 0);
       const totalOpex = this.num((expRows[0] as any)?.total_opex ?? 0);
-      const totalExp  = totalCogs + totalOpex;
-      const topAcct   = String((topRows[0] as any)?.account_name ?? 'N/A');
-      const topAmt    = this.num((topRows[0] as any)?.amt ?? 0);
+      const totalExp = totalCogs + totalOpex;
+      const topAcct = String((topRows[0] as any)?.account_name ?? 'N/A');
+      const topAmt = this.num((topRows[0] as any)?.amt ?? 0);
       return {
         data: [
-          { label: 'Total Expenses',         value: totalExp,  format: 'currency' },
-          { label: 'Cost of Sales (COGS)',   value: totalCogs, format: 'currency' },
-          { label: 'Operating Expenses',     value: totalOpex, format: 'currency' },
-          { label: 'Largest Expense',        value: topAmt,    format: 'currency', note: topAcct },
+          { label: 'Total Expenses', value: totalExp, format: 'currency' },
+          {
+            label: 'Cost of Sales (COGS)',
+            value: totalCogs,
+            format: 'currency',
+          },
+          { label: 'Operating Expenses', value: totalOpex, format: 'currency' },
+          {
+            label: 'Largest Expense',
+            value: topAmt,
+            format: 'currency',
+            note: topAcct,
+          },
         ],
       };
     }
@@ -6078,7 +6316,11 @@ export class AgentService {
       return {
         data: rows.map((r: any) => {
           cumulative += this.num(r.monthly_revenue);
-          return { name: String(r.month ?? ''), value: Math.round(cumulative), monthly: Math.round(this.num(r.monthly_revenue)) };
+          return {
+            name: String(r.month ?? ''),
+            value: Math.round(cumulative),
+            monthly: Math.round(this.num(r.monthly_revenue)),
+          };
         }),
       };
     }
@@ -6096,7 +6338,12 @@ export class AgentService {
          GROUP BY invoice_type ORDER BY value DESC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── transaction_value/source_type (pie/donut — journal source breakdown) ─
@@ -6113,7 +6360,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── transaction_value/currency (pie/donut) ────────────────────────────────
@@ -6129,7 +6381,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── accounts/classification (pie/donut — P&L vs Balance Sheet) ──────────
@@ -6151,7 +6408,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── accounts/active_status (pie — active vs inactive accounts) ───────────
@@ -6166,7 +6428,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── top_invoices/value (bar/horizontal_bar — top 10 by amount) ───────────
@@ -6223,7 +6490,12 @@ export class AgentService {
          GROUP BY bucket, bucket_order ORDER BY bucket_order ASC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.bucket ?? ''), value: this.num(r.invoice_count) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.bucket ?? ''),
+          value: this.num(r.invoice_count),
+        })),
+      };
     }
 
     // ── expense_by_type/source (bar — expenses ranked by source type) ─────────
@@ -6240,7 +6512,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── expense_by_type/month (stacked_bar — monthly expenses by source type) ─
@@ -6265,12 +6542,17 @@ export class AgentService {
       const sortMap = new Map<string, string>();
       for (const r of rows) {
         const m = String(r.month ?? '');
-        if (!monthMap.has(m)) { monthMap.set(m, { name: m }); sortMap.set(m, String(r.month_start ?? '')); }
+        if (!monthMap.has(m)) {
+          monthMap.set(m, { name: m });
+          sortMap.set(m, String(r.month_start ?? ''));
+        }
         (monthMap.get(m) as any)[String(r.source_type)] = this.num(r.amount);
       }
       return {
         data: [...monthMap.entries()]
-          .sort(([a], [b]) => (sortMap.get(a) ?? '').localeCompare(sortMap.get(b) ?? ''))
+          .sort(([a], [b]) =>
+            (sortMap.get(a) ?? '').localeCompare(sortMap.get(b) ?? ''),
+          )
           .map(([, v]) => v),
       };
     }
@@ -6295,7 +6577,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC LIMIT 15`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── bs_accounts/account (bar — Balance Sheet accounts by total amount) ────
@@ -6318,7 +6605,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC LIMIT 15`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── accounts_by_type/classification (bar — total by account classification)
@@ -6340,7 +6632,12 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      return { data: rows.map((r: any) => ({ name: String(r.name ?? ''), value: this.num(r.value) })) };
+      return {
+        data: rows.map((r: any) => ({
+          name: String(r.name ?? ''),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── bubble/clients/revenue_invoices_avg ────────────────────────────────────
@@ -6398,21 +6695,39 @@ export class AgentService {
       const expenses = this.num((expRows[0] as any)?.total_expenses ?? 0);
       const collectionRate = revenue > 0 ? (collected / revenue) * 100 : 0;
       const overdueRatio = revenue > 0 ? (overdue / revenue) * 100 : 0;
-      const netMargin = revenue > 0 ? ((revenue - expenses) / revenue) * 100 : 50;
-      const score = Math.max(0, Math.min(100, Math.round(
-        collectionRate * 0.4 + Math.max(0, 100 - overdueRatio * 2) * 0.3 + Math.max(0, Math.min(100, netMargin)) * 0.3
-      )));
+      const netMargin =
+        revenue > 0 ? ((revenue - expenses) / revenue) * 100 : 50;
+      const score = Math.max(
+        0,
+        Math.min(
+          100,
+          Math.round(
+            collectionRate * 0.4 +
+              Math.max(0, 100 - overdueRatio * 2) * 0.3 +
+              Math.max(0, Math.min(100, netMargin)) * 0.3,
+          ),
+        ),
+      );
       return {
-        data: [{
-          name: 'Financial Health',
-          value: score,
-          revenue: Math.round(revenue),
-          collected: Math.round(collected),
-          overdue: Math.round(overdue),
-          expenses: Math.round(expenses),
-          collectionRate: Math.round(collectionRate),
-          label: score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'Needs Attention',
-        }],
+        data: [
+          {
+            name: 'Financial Health',
+            value: score,
+            revenue: Math.round(revenue),
+            collected: Math.round(collected),
+            overdue: Math.round(overdue),
+            expenses: Math.round(expenses),
+            collectionRate: Math.round(collectionRate),
+            label:
+              score >= 80
+                ? 'Excellent'
+                : score >= 60
+                  ? 'Good'
+                  : score >= 40
+                    ? 'Fair'
+                    : 'Needs Attention',
+          },
+        ],
       };
     }
 
@@ -6441,22 +6756,52 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds },
         ),
       ]);
-      const revenue  = this.num((tbRows[0] as any)?.total_revenue ?? 0);
-      const cogs     = this.num((tbRows[0] as any)?.total_cogs ?? 0);
-      const opex     = this.num((tbRows[0] as any)?.total_opex ?? 0);
+      const revenue = this.num((tbRows[0] as any)?.total_revenue ?? 0);
+      const cogs = this.num((tbRows[0] as any)?.total_cogs ?? 0);
+      const opex = this.num((tbRows[0] as any)?.total_opex ?? 0);
       const expenses = cogs + opex;
       const netProfit = revenue - expenses;
       const invoiceCount = this.num((invRows[0] as any)?.invoice_count ?? 0);
-      const avgInvoice   = this.num((invRows[0] as any)?.avg_invoice ?? 0);
-      const overdue      = this.num((invRows[0] as any)?.overdue ?? 0);
+      const avgInvoice = this.num((invRows[0] as any)?.avg_invoice ?? 0);
+      const overdue = this.num((invRows[0] as any)?.overdue ?? 0);
       return {
         data: [
-          { label: 'Total Revenue',     value: revenue,     format: 'currency', icon: 'revenue'  },
-          { label: 'Total Expenses',    value: expenses,    format: 'currency', icon: 'expenses' },
-          { label: 'Net Profit',        value: netProfit,   format: 'currency', icon: 'profit'   },
-          { label: 'Avg Invoice Value', value: avgInvoice,  format: 'currency', icon: 'invoice'  },
-          { label: 'Invoice Count',     value: invoiceCount,format: 'number',   icon: 'count'    },
-          { label: 'Overdue Amount',    value: overdue,     format: 'currency', icon: 'overdue'  },
+          {
+            label: 'Total Revenue',
+            value: revenue,
+            format: 'currency',
+            icon: 'revenue',
+          },
+          {
+            label: 'Total Expenses',
+            value: expenses,
+            format: 'currency',
+            icon: 'expenses',
+          },
+          {
+            label: 'Net Profit',
+            value: netProfit,
+            format: 'currency',
+            icon: 'profit',
+          },
+          {
+            label: 'Avg Invoice Value',
+            value: avgInvoice,
+            format: 'currency',
+            icon: 'invoice',
+          },
+          {
+            label: 'Invoice Count',
+            value: invoiceCount,
+            format: 'number',
+            icon: 'count',
+          },
+          {
+            label: 'Overdue Amount',
+            value: overdue,
+            format: 'currency',
+            icon: 'overdue',
+          },
         ],
       };
     }
@@ -6486,12 +6831,26 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds },
         ),
       ]);
-      const revMap = new Map(revRows.map((r: any) => [String(r.month), { value: this.num(r.value), sort: String(r.month_start) }]));
-      const expMap = new Map(expRows.map((r: any) => [String(r.month), { value: this.num(r.value), sort: String(r.month_start) }]));
-      const months = [...new Set([...revMap.keys(), ...expMap.keys()])]
-        .sort((a, b) => (revMap.get(a)?.sort ?? expMap.get(a)?.sort ?? '').localeCompare(revMap.get(b)?.sort ?? expMap.get(b)?.sort ?? ''));
+      const revMap = new Map(
+        revRows.map((r: any) => [
+          String(r.month),
+          { value: this.num(r.value), sort: String(r.month_start) },
+        ]),
+      );
+      const expMap = new Map(
+        expRows.map((r: any) => [
+          String(r.month),
+          { value: this.num(r.value), sort: String(r.month_start) },
+        ]),
+      );
+      const months = [...new Set([...revMap.keys(), ...expMap.keys()])].sort(
+        (a, b) =>
+          (revMap.get(a)?.sort ?? expMap.get(a)?.sort ?? '').localeCompare(
+            revMap.get(b)?.sort ?? expMap.get(b)?.sort ?? '',
+          ),
+      );
       return {
-        data: months.map(m => ({
+        data: months.map((m) => ({
           name: m,
           Revenue: revMap.get(m)?.value ?? 0,
           Expenses: expMap.get(m)?.value ?? 0,
@@ -6519,7 +6878,12 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds },
       );
       if (deptRows.length > 0) {
-        return { data: deptRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+        return {
+          data: deptRows.map((r: any) => ({
+            name: String(r.name),
+            value: this.num(r.value),
+          })),
+        };
       }
       // Fallback to journal lines if gl_dump has no data
       const fallbackRows = await this.queryRows<any>(
@@ -6533,7 +6897,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: fallbackRows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── expense/class (bar, pie, treemap) ─────────────────────────────────────
@@ -6554,7 +6923,12 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds },
       );
       if (classRows.length > 0) {
-        return { data: classRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+        return {
+          data: classRows.map((r: any) => ({
+            name: String(r.name),
+            value: this.num(r.value),
+          })),
+        };
       }
       // Fallback to journal lines if gl_dump has no class data
       const fallbackRows = await this.queryRows<any>(
@@ -6568,7 +6942,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: fallbackRows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── expense/vendor (horizontal_bar, pareto, table, scatter) ──────────────
@@ -6632,7 +7011,12 @@ export class AgentService {
     // ── revenue/account | revenue/category (bar, pie) ───────────────────────
     // Mirrors Power BI DAX exactly: use sample_trial_balance credit column per account name
     // Product Sales=980,400  Service Revenue=215,600  Consulting=87,300  Other Income=12,800
-    if (metric === 'revenue' && (grouping === 'account' || grouping === 'category' || grouping === 'account_name')) {
+    if (
+      metric === 'revenue' &&
+      (grouping === 'account' ||
+        grouping === 'category' ||
+        grouping === 'account_name')
+    ) {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       // Primary: sample_trial_balance credit column — exact match to Power BI
       const tbRevRows = await this.queryRows<any>(
@@ -6644,7 +7028,12 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds },
       );
       if (tbRevRows.length > 0) {
-        return { data: tbRevRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+        return {
+          data: tbRevRows.map((r: any) => ({
+            name: String(r.name),
+            value: this.num(r.value),
+          })),
+        };
       }
       // Fallback: journal lines (for non-sample orgs)
       const revRows = await this.queryRows<any>(
@@ -6659,7 +7048,12 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
       if (revRows.length > 0) {
-        return { data: revRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+        return {
+          data: revRows.map((r: any) => ({
+            name: String(r.name),
+            value: this.num(r.value),
+          })),
+        };
       }
       const fallbackRows = await this.queryRows<any>(
         `SELECT account_name AS name, round(abs(sum(line_amount)), 0) AS value
@@ -6674,7 +7068,12 @@ export class AgentService {
          GROUP BY name HAVING value > 0 ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: fallbackRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: fallbackRows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── revenue/department (bar, pie) ─────────────────────────────────────────
@@ -6691,7 +7090,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: deptRows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: deptRows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── net_income/department (bar, waterfall) ────────────────────────────────
@@ -6777,7 +7181,10 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds },
       );
 
-      const maxDate = String((maxDateRows[0] as any)?.max_date ?? '').slice(0, 10);
+      const maxDate = String((maxDateRows[0] as any)?.max_date ?? '').slice(
+        0,
+        10,
+      );
       const hasMaxDate = /^\d{4}-\d{2}-\d{2}$/.test(maxDate);
 
       const isoDate = (d: Date) =>
@@ -6809,56 +7216,80 @@ export class AgentService {
       };
 
       const glTimeParts: string[] = [];
-      const glParams: Record<string, unknown> = { externalOrgIds: scope.externalOrgIds };
+      const glParams: Record<string, unknown> = {
+        externalOrgIds: scope.externalOrgIds,
+      };
 
       if (hasMaxDate && range?.kind) {
         if (range.kind === 'BETWEEN_DATES') {
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.start = range.start;
           glParams.end = range.end;
         } else if (range.kind === 'SINCE_DATE') {
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.start = range.start;
           glParams.end = maxDate;
         } else if (range.kind === 'LAST_N_DAYS') {
-          glTimeParts.push('AND date >= addDays(toDate({end:String}), -{days:Int32}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= addDays(toDate({end:String}), -{days:Int32}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.days = Math.max(1, Math.min(3650, range.days));
         } else if (range.kind === 'LAST_N_WEEKS') {
-          glTimeParts.push('AND date >= addDays(toDate({end:String}), -{days:Int32}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= addDays(toDate({end:String}), -{days:Int32}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.days = Math.max(1, Math.min(520, range.weeks)) * 7;
         } else if (range.kind === 'LAST_N_MONTHS') {
           const months = Math.max(1, Math.min(240, range.months));
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.start = addMonthsUtc(maxDate, -months);
         } else if (range.kind === 'LAST_N_QUARTERS') {
           const quarters = Math.max(1, Math.min(80, range.quarters));
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.start = addMonthsUtc(maxDate, -(quarters * 3));
         } else if (range.kind === 'LAST_N_YEARS') {
           const years = Math.max(1, Math.min(30, range.years));
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.start = addMonthsUtc(maxDate, -(years * 12));
         } else if (range.kind === 'MTD') {
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.start = startOfMonthUtc(maxDate);
         } else if (range.kind === 'QTD') {
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.start = startOfQuarterUtc(maxDate);
         } else if (range.kind === 'YTD') {
-          glTimeParts.push('AND date >= toDate({start:String}) AND date <= toDate({end:String})');
+          glTimeParts.push(
+            'AND date >= toDate({start:String}) AND date <= toDate({end:String})',
+          );
           glParams.end = maxDate;
           glParams.start = startOfYearUtc(maxDate);
         }
       }
 
-      const glTime = glTimeParts.length ? `\n           ${glTimeParts.join('\n           ')}` : '';
+      const glTime = glTimeParts.length
+        ? `\n           ${glTimeParts.join('\n           ')}`
+        : '';
       // Power BI "Monthly spend by Department" uses _measures.Total Debits = SUM(gl_dump[Debit])
       // ALL debits, NO account_type filter (includes Inventory, Payroll, Expenses)
       const glRows = await this.queryRows<any>(
@@ -6926,8 +7357,11 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
         jTime,
       );
-      if (topVendors.length === 0) return { data: [], _noVendorData: true } as any;
-      const vendorNames = (topVendors as any[]).map((r: any) => String(r.vendor_name));
+      if (topVendors.length === 0)
+        return { data: [], _noVendorData: true } as any;
+      const vendorNames = (topVendors as any[]).map((r: any) =>
+        String(r.vendor_name),
+      );
       // Use all-time for monthly pivot so we get the full trend regardless of date range
       const rows = await this.queryRows<any>(
         `SELECT
@@ -6977,7 +7411,8 @@ export class AgentService {
          ORDER BY total_spend DESC LIMIT 30`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      if (vendorRows.length === 0) return { data: [], _noVendorData: true } as any;
+      if (vendorRows.length === 0)
+        return { data: [], _noVendorData: true } as any;
       return {
         data: (vendorRows as any[]).map((r: any) => ({
           name: String(r.name),
@@ -7019,7 +7454,10 @@ export class AgentService {
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
       return {
-        data: rows.map((r: any) => ({ name: String(r.name), value: this.num(r.value) })),
+        data: rows.map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
       };
     }
 
@@ -7034,8 +7472,14 @@ export class AgentService {
          GROUP BY name ORDER BY value DESC LIMIT 20`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      if (vendorRows.length === 0) return { data: [], _noVendorData: true } as any;
-      return { data: (vendorRows as any[]).map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      if (vendorRows.length === 0)
+        return { data: [], _noVendorData: true } as any;
+      return {
+        data: (vendorRows as any[]).map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── net_income/month_department (stacked_bar — multi-series P&L) ─────────
@@ -7199,7 +7643,12 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const revMap = new Map<string, number>((revJRows as any[]).map((r: any) => [String(r.dept), this.num(r.revenue)]));
+      const revMap = new Map<string, number>(
+        (revJRows as any[]).map((r: any) => [
+          String(r.dept),
+          this.num(r.revenue),
+        ]),
+      );
       return {
         data: (expRows as any[]).map((r: any) => ({
           name: String(r.dept),
@@ -7238,13 +7687,21 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const expMap = new Map<string, number>((expRows as any[]).map((r: any) => [String(r.month_start), this.num(r.exp)]));
+      const expMap = new Map<string, number>(
+        (expRows as any[]).map((r: any) => [
+          String(r.month_start),
+          this.num(r.exp),
+        ]),
+      );
       return {
         data: (revRows as any[])
           .map((r: any) => {
             const rev = this.num(r.rev);
             const exp = expMap.get(String(r.month_start)) ?? 0;
-            return { name: String(r.month_start), value: rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0 };
+            return {
+              name: String(r.month_start),
+              value: rev > 0 ? Math.round(((rev - exp) / rev) * 1000) / 10 : 0,
+            };
           })
           .sort((a: any, b: any) => a.name.localeCompare(b.name)),
       };
@@ -7278,13 +7735,21 @@ export class AgentService {
           { externalOrgIds: scope.externalOrgIds, ...entityParam },
         ),
       ]);
-      const expMap = new Map<string, number>((expRows as any[]).map((r: any) => [String(r.month_start), this.num(r.exp)]));
+      const expMap = new Map<string, number>(
+        (expRows as any[]).map((r: any) => [
+          String(r.month_start),
+          this.num(r.exp),
+        ]),
+      );
       return {
         data: (revRows as any[])
           .map((r: any) => {
             const rev = this.num(r.rev);
             const exp = expMap.get(String(r.month_start)) ?? 0;
-            return { name: String(r.month_start), value: rev > 0 ? Math.round((exp / rev) * 1000) / 10 : 0 };
+            return {
+              name: String(r.month_start),
+              value: rev > 0 ? Math.round((exp / rev) * 1000) / 10 : 0,
+            };
           })
           .sort((a: any, b: any) => a.name.localeCompare(b.name)),
       };
@@ -7322,7 +7787,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 12`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: (rows as any[]).map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: (rows as any[]).map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── liabilities/account_type (donut/pie) ─────────────────────────────────
@@ -7357,7 +7827,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 12`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: (rows as any[]).map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: (rows as any[]).map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── accounts/account_type (treemap) — all accounts by GL category ───────
@@ -7384,7 +7859,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 15`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: (rows as any[]).map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: (rows as any[]).map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── debits/account_type (bar) — top account types by debit volume ────────
@@ -7411,7 +7891,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 12`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: (rows as any[]).map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: (rows as any[]).map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── credits/account_type (bar) — top account types by credit volume ──────
@@ -7436,7 +7921,12 @@ export class AgentService {
          ORDER BY value DESC LIMIT 12`,
         { externalOrgIds: scope.externalOrgIds, ...entityParam },
       );
-      return { data: (rows as any[]).map((r: any) => ({ name: String(r.name), value: this.num(r.value) })) };
+      return {
+        data: (rows as any[]).map((r: any) => ({
+          name: String(r.name),
+          value: this.num(r.value),
+        })),
+      };
     }
 
     // ── debits_credits/account (scatter) — per-account debit vs credit ───────
@@ -7469,13 +7959,20 @@ export class AgentService {
     // ── Dynamic SQL fallback — any unrecognized metric/grouping ──────────────
     // When no hardcoded handler matches, ask Ollama to write the ClickHouse SQL.
     {
-      const dynamicSql = await this.generateDynamicMetricSql(metric, grouping, scope, range);
+      const dynamicSql = await this.generateDynamicMetricSql(
+        metric,
+        grouping,
+        scope,
+        range,
+      );
       if (dynamicSql) {
         try {
           const data = await this.executeDynamicSql(dynamicSql, scope);
           return { data };
         } catch (err: any) {
-          this.logger.warn(`[Agent:DynamicFallback] metric=${metric} grouping=${grouping} sql_error=${err.message}`);
+          this.logger.warn(
+            `[Agent:DynamicFallback] metric=${metric} grouping=${grouping} sql_error=${err.message}`,
+          );
         }
       }
     }
@@ -7620,14 +8117,16 @@ export class AgentService {
       // Also fire for short follow-up messages (e.g., "Compare revenue month by month") that
       // could be the final step of a multi-step client selection flow — the prior "Use client A/B:"
       // directives need to be merged in so the dashboard builder sees them.
-      const isDirectiveMessage = /^\s*use\s+(client|entity)(?:\s+(?:a|b|1|2))?\s*:/i.test(queryText);
-      const mightBeCompareFollowUp = !isDirectiveMessage &&
+      const isDirectiveMessage =
+        /^\s*use\s+(client|entity)(?:\s+(?:a|b|1|2))?\s*:/i.test(queryText);
+      const mightBeCompareFollowUp =
+        !isDirectiveMessage &&
         !spec.wantsTopClients &&
-        (
-          /\b(compare|comparison)\b/i.test(queryText) ||
-          (/\b(revenue|outstanding|overdue|dso|month|chart|bar|line)\b/i.test(queryText) &&
-            queryText.trim().split(/\s+/).length <= 20)
-        );
+        (/\b(compare|comparison)\b/i.test(queryText) ||
+          (/\b(revenue|outstanding|overdue|dso|month|chart|bar|line)\b/i.test(
+            queryText,
+          ) &&
+            queryText.trim().split(/\s+/).length <= 20));
       if (isDirectiveMessage || mightBeCompareFollowUp) {
         const recentUsers = await this.prisma.agentChatMessage.findMany({
           where: {
@@ -7714,7 +8213,12 @@ export class AgentService {
           }
 
           // Emit: base, then directives in stable order, then any non-duplicate extra lines.
-          const directiveOrder = ['entity', 'client', 'client_a', 'client_b'] as const;
+          const directiveOrder = [
+            'entity',
+            'client',
+            'client_a',
+            'client_b',
+          ] as const;
           const orderedDirectives = directiveOrder
             .map((k) => directivesByKey.get(k))
             .filter(Boolean) as string[];
@@ -7887,7 +8391,8 @@ export class AgentService {
               clarification.question,
               '',
               ...clarification.options.map((o, i) => {
-                const detail = o.value && o.value !== o.label ? ` — ${o.value}` : '';
+                const detail =
+                  o.value && o.value !== o.label ? ` — ${o.value}` : '';
                 return `${i + 1}) ${o.label}${detail}`;
               }),
             ].join('\n');
@@ -8089,17 +8594,19 @@ export class AgentService {
           const lines = queryText.split('\n').map((l) => l.trim());
           const directiveA =
             lines
-              .map(
-                (l) =>
-                  l.match(/^use\s+client\s+(?:a|1)\s*[:\-]\s*(.+)$/i)?.[1]?.trim(),
+              .map((l) =>
+                l
+                  .match(/^use\s+client\s+(?:a|1)\s*[:\-]\s*(.+)$/i)?.[1]
+                  ?.trim(),
               )
               .filter(Boolean)
               .slice(-1)[0] ?? null;
           const directiveB =
             lines
-              .map(
-                (l) =>
-                  l.match(/^use\s+client\s+(?:b|2)\s*[:\-]\s*(.+)$/i)?.[1]?.trim(),
+              .map((l) =>
+                l
+                  .match(/^use\s+client\s+(?:b|2)\s*[:\-]\s*(.+)$/i)?.[1]
+                  ?.trim(),
               )
               .filter(Boolean)
               .slice(-1)[0] ?? null;
@@ -8107,8 +8614,7 @@ export class AgentService {
           const inferred = this.extractCompareClients(queryText);
           // If the user explicitly chose B (but not A), don't treat it as A.
           const clientA =
-            directiveA ??
-            (directiveB ? null : inferred?.[0] ?? null);
+            directiveA ?? (directiveB ? null : (inferred?.[0] ?? null));
           const clientB = directiveB ?? inferred?.[1] ?? null;
 
           const hasA = Boolean(clientA);
@@ -8136,7 +8642,8 @@ export class AgentService {
                 },
                 {
                   label: 'Payment speed (DSO, monthly)',
-                  value: 'Compare average days-to-pay by month in a line chart.',
+                  value:
+                    'Compare average days-to-pay by month in a line chart.',
                 },
               ],
             };
@@ -8221,7 +8728,8 @@ export class AgentService {
               if (!hasA) {
                 const clarification: ClarificationPrompt = {
                   reason: 'COMPARE_CLIENT_PICK_A',
-                  question: 'Pick the first client to compare (or type a name):',
+                  question:
+                    'Pick the first client to compare (or type a name):',
                   options: clients.slice(0, 6).map((name) => ({
                     label: name,
                     value: `Use client A: ${name}`,
@@ -8281,7 +8789,8 @@ export class AgentService {
                 );
                 const clarification: ClarificationPrompt = {
                   reason: 'COMPARE_CLIENT_PICK_B',
-                  question: 'Pick the second client to compare (or type a name):',
+                  question:
+                    'Pick the second client to compare (or type a name):',
                   options: options.slice(0, 6).map((name) => ({
                     label: name,
                     value: `Use client B: ${name}`,
@@ -8600,14 +9109,21 @@ export class AgentService {
             scope,
             spec.timeRange,
           ).catch(() => null);
-          const vocabHasCharts = (vocabFallback?.dashboard?.widgets?.length ?? 0) > 0;
+          const vocabHasCharts =
+            (vocabFallback?.dashboard?.widgets?.length ?? 0) > 0;
           if (vocabHasCharts && vocabFallback) {
             // Vocabulary planner has an answer — use it, log smart plan's no_data.
-            this.logger.log(`[Agent] Smart plan no_data overridden by vocab planner for: "${queryText.slice(0,60)}"`);
-            await logEvent('NO_DATA_OVERRIDE', { smartMsg: smartResult.message.slice(0, 100) });
+            this.logger.log(
+              `[Agent] Smart plan no_data overridden by vocab planner for: "${queryText.slice(0, 60)}"`,
+            );
+            await logEvent('NO_DATA_OVERRIDE', {
+              smartMsg: smartResult.message.slice(0, 100),
+            });
             plan = vocabFallback;
           } else {
-            await logEvent('NO_DATA', { message: smartResult.message.slice(0, 200) });
+            await logEvent('NO_DATA', {
+              message: smartResult.message.slice(0, 200),
+            });
 
             await this.prisma.agentChatMessage.create({
               data: {
@@ -8788,7 +9304,11 @@ export class AgentService {
                 !spec.wantsTopClients));
 
           // For any dynamic widgets, generate SQL now (before createMany)
-          const scope = await this.getOrgScope(organizationId, role, spec.entityFilter?.orgId);
+          const scope = await this.getOrgScope(
+            organizationId,
+            role,
+            spec.entityFilter?.orgId,
+          );
           const widgetDataList = await Promise.all(
             widgets.map(async (w) => {
               const wantsClientPair =
@@ -8806,10 +9326,18 @@ export class AgentService {
                   );
                 })();
 
-              const clientBreakdownMetrics = ['revenue', 'overdue', 'outstanding', 'dso', 'paid'];
+              const clientBreakdownMetrics = [
+                'revenue',
+                'overdue',
+                'outstanding',
+                'dso',
+                'paid',
+              ];
               const breakdown =
                 w.grouping === 'month' &&
-                clientBreakdownMetrics.includes(String(w.metric ?? '').toLowerCase()) &&
+                clientBreakdownMetrics.includes(
+                  String(w.metric ?? '').toLowerCase(),
+                ) &&
                 (wantsClientPair || spec.wantsTopClients)
                   ? 'client'
                   : ((w as any)?.breakdown ?? null);
@@ -8819,7 +9347,12 @@ export class AgentService {
               let dynamicSql: string | null = (w as any)._sql ?? null;
               if (!dynamicSql && w.metric === 'dynamic') {
                 const intent = (w as any)._dynamicIntent ?? `${w.title} chart`;
-                dynamicSql = await this.generateDynamicSql(intent, w.title, scope, spec.timeRange).catch(() => null);
+                dynamicSql = await this.generateDynamicSql(
+                  intent,
+                  w.title,
+                  scope,
+                  spec.timeRange,
+                ).catch(() => null);
               }
 
               // Widgets from the smart SQL planner always use metric='dynamic'.
@@ -8842,14 +9375,22 @@ export class AgentService {
                   orgName: spec.entityFilter?.orgName ?? null,
                   breakdown: dynamicSql ? null : breakdown,
                   display: dynamicSql ? null : ((w as any)?.display ?? null),
-                  topN: dynamicSql ? null : (applyClientPair
+                  topN: dynamicSql
                     ? null
-                    : breakdown === 'client' && spec.wantsTopClients
-                      ? (typeof (w as any)?.topN === 'number' ? (w as any).topN : (spec.topN ?? 2))
-                      : ((w as any)?.topN ?? null)),
+                    : applyClientPair
+                      ? null
+                      : breakdown === 'client' && spec.wantsTopClients
+                        ? typeof (w as any)?.topN === 'number'
+                          ? (w as any).topN
+                          : (spec.topN ?? 2)
+                        : ((w as any)?.topN ?? null),
                   ...(dynamicSql ? { dynamicSql } : {}),
-                  ...((w as any)?.xAxisLabel ? { xAxisLabel: (w as any).xAxisLabel } : {}),
-                  ...((w as any)?.yAxisLabel ? { yAxisLabel: (w as any).yAxisLabel } : {}),
+                  ...((w as any)?.xAxisLabel
+                    ? { xAxisLabel: (w as any).xAxisLabel }
+                    : {}),
+                  ...((w as any)?.yAxisLabel
+                    ? { yAxisLabel: (w as any).yAxisLabel }
+                    : {}),
                 } as Prisma.InputJsonValue,
                 chartConfig: {
                   description: w.description,
@@ -8859,7 +9400,9 @@ export class AgentService {
             }),
           );
 
-          await this.prisma.dashboardWidget.createMany({ data: widgetDataList });
+          await this.prisma.dashboardWidget.createMany({
+            data: widgetDataList,
+          });
 
           // Link request to the generated dashboard
           await this.prisma.agentDashboardRequest.update({
@@ -9345,7 +9888,8 @@ export class AgentService {
             // UI currently renders “gauge” requests best as a KPI/metric tile.
             if (wants(/gauge/)) return 'metric';
             // Heatmaps aren't a first-class widget yet; map to bar/stacked bar as best-effort.
-            if (wants(/heatmap/)) return wants(/stacked/) ? 'stacked_bar' : 'bar';
+            if (wants(/heatmap/))
+              return wants(/stacked/) ? 'stacked_bar' : 'bar';
             if (wants(/waterfall/)) return 'waterfall';
             if (wants(/treemap/)) return 'treemap';
             if (wants(/scatter/)) return 'scatter';
@@ -9358,7 +9902,8 @@ export class AgentService {
           })();
 
           const display: W['display'] | undefined =
-            wants(/donut/) || (wants(/highlight/) && wants(/highest|lowest|max|min/))
+            wants(/donut/) ||
+            (wants(/highlight/) && wants(/highest|lowest|max|min/))
               ? {
                   donut: wants(/donut/),
                   highlightMaxMin:
@@ -9366,17 +9911,29 @@ export class AgentService {
                 }
               : undefined;
 
-          const metricGrouping = ((): { metric: string; grouping: string } | null => {
+          const metricGrouping = ((): {
+            metric: string;
+            grouping: string;
+          } | null => {
             // Gauge-style “financial health” defaults to a KPI summary.
-            if (wants(/gauge|health/) && wants(/revenue|expense|balance|profit|net/))
+            if (
+              wants(/gauge|health/) &&
+              wants(/revenue|expense|balance|profit|net/)
+            )
               return { metric: 'pl_summary', grouping: 'summary' };
 
             // Revenue by month
-            if (wants(/revenue/) && wants(/\bby\s+month\b|\bmonthly\b|\beach\s+month\b/))
+            if (
+              wants(/revenue/) &&
+              wants(/\bby\s+month\b|\bmonthly\b|\beach\s+month\b/)
+            )
               return { metric: 'revenue', grouping: 'month' };
 
             // Month-over-month revenue growth %
-            if (wants(/month[-\s]?over[-\s]?month|mom\b/) && wants(/revenue|growth/))
+            if (
+              wants(/month[-\s]?over[-\s]?month|mom\b/) &&
+              wants(/revenue|growth/)
+            )
               return { metric: 'mom_growth', grouping: 'month' };
 
             // Cumulative revenue
@@ -9384,14 +9941,20 @@ export class AgentService {
               return { metric: 'revenue_cumulative', grouping: 'month' };
 
             // Revenue vs expenses comparison
-            if (wants(/compare|comparing/) && wants(/revenue/) && wants(/expense/))
+            if (
+              wants(/compare|comparing/) &&
+              wants(/revenue/) &&
+              wants(/expense/)
+            )
               return { metric: 'revenue_vs_expense', grouping: 'month' };
             if (wants(/heatmap/) && wants(/revenue/) && wants(/expense/))
               return { metric: 'revenue_vs_expense', grouping: 'month' };
 
             // Net position (credits - debits)
             if (
-              wants(/net\s+monthly|net\s+position|credits?\s*-\s*debits?|debits?\s*-\s*credits?/) ||
+              wants(
+                /net\s+monthly|net\s+position|credits?\s*-\s*debits?|debits?\s*-\s*credits?/,
+              ) ||
               (wants(/credits?/) && wants(/debits?/))
             )
               return { metric: 'net_position', grouping: 'month' };
@@ -9413,7 +9976,10 @@ export class AgentService {
               return { metric: 'transaction_value', grouping: 'journal_type' };
 
             // Invoice value by month (column chart phrasing)
-            if (wants(/invoice\s+value/) && wants(/\bby\s+month\b|\bmonthly\b|\beach\s+month\b/))
+            if (
+              wants(/invoice\s+value/) &&
+              wants(/\bby\s+month\b|\bmonthly\b|\beach\s+month\b/)
+            )
               return { metric: 'revenue', grouping: 'month' };
 
             // Invoice count by month
@@ -9443,14 +10009,14 @@ export class AgentService {
 
           if (!metricGrouping) continue;
 
-	          const type: W['type'] = (() => {
-	            // Some metrics are only meaningful in specific visual forms.
-	            if (metricGrouping.metric === 'top_invoices') return 'table';
-	            if (
-	              requestedType === 'waterfall' &&
-	              metricGrouping.metric === 'net_position'
-	            )
-	              return 'waterfall';
+          const type: W['type'] = (() => {
+            // Some metrics are only meaningful in specific visual forms.
+            if (metricGrouping.metric === 'top_invoices') return 'table';
+            if (
+              requestedType === 'waterfall' &&
+              metricGrouping.metric === 'net_position'
+            )
+              return 'waterfall';
             if (
               requestedType === 'stacked_bar' &&
               metricGrouping.metric === 'debits_credits'
@@ -9462,58 +10028,78 @@ export class AgentService {
               requestedType !== 'waterfall'
             )
               return requestedType === 'bar' ? 'bar' : 'line';
-	            return requestedType;
-	          })();
+            return requestedType;
+          })();
 
-	          const title = (() => {
-	            if (metricGrouping.metric === 'pl_summary') return 'Financial Health (KPI Summary)';
-	            if (metricGrouping.metric === 'revenue') return 'Monthly Revenue';
-	            if (metricGrouping.metric === 'mom_growth') return 'MoM Revenue Growth %';
-	            if (metricGrouping.metric === 'revenue_cumulative') return 'Cumulative Revenue';
-            if (metricGrouping.metric === 'revenue_vs_expense') return 'Revenue vs Expenses';
-            if (metricGrouping.metric === 'net_position') return 'Net Monthly Position';
-            if (metricGrouping.metric === 'running_balance') return 'Running Balance';
-            if (metricGrouping.metric === 'debits_credits') return 'Debits vs Credits';
-            if (metricGrouping.metric === 'invoice_value') return 'Invoice Value by Type';
-            if (metricGrouping.metric === 'transaction_value') return 'Transaction Value by Journal Type';
-            if (metricGrouping.metric === 'invoice_count') return 'Invoice Count Trend';
-            if (metricGrouping.metric === 'avg_invoice') return 'Average Invoice Value';
-            if (metricGrouping.metric === 'invoice_amount') return 'Invoice Amount Distribution';
+          const title = (() => {
+            if (metricGrouping.metric === 'pl_summary')
+              return 'Financial Health (KPI Summary)';
+            if (metricGrouping.metric === 'revenue') return 'Monthly Revenue';
+            if (metricGrouping.metric === 'mom_growth')
+              return 'MoM Revenue Growth %';
+            if (metricGrouping.metric === 'revenue_cumulative')
+              return 'Cumulative Revenue';
+            if (metricGrouping.metric === 'revenue_vs_expense')
+              return 'Revenue vs Expenses';
+            if (metricGrouping.metric === 'net_position')
+              return 'Net Monthly Position';
+            if (metricGrouping.metric === 'running_balance')
+              return 'Running Balance';
+            if (metricGrouping.metric === 'debits_credits')
+              return 'Debits vs Credits';
+            if (metricGrouping.metric === 'invoice_value')
+              return 'Invoice Value by Type';
+            if (metricGrouping.metric === 'transaction_value')
+              return 'Transaction Value by Journal Type';
+            if (metricGrouping.metric === 'invoice_count')
+              return 'Invoice Count Trend';
+            if (metricGrouping.metric === 'avg_invoice')
+              return 'Average Invoice Value';
+            if (metricGrouping.metric === 'invoice_amount')
+              return 'Invoice Amount Distribution';
             if (metricGrouping.metric === 'top_invoices') return 'Top Invoices';
-            if (metricGrouping.metric === 'expense' && metricGrouping.grouping === 'month')
+            if (
+              metricGrouping.metric === 'expense' &&
+              metricGrouping.grouping === 'month'
+            )
               return 'Monthly Expenses';
-            if (metricGrouping.metric === 'expense' && metricGrouping.grouping === 'account')
+            if (
+              metricGrouping.metric === 'expense' &&
+              metricGrouping.grouping === 'account'
+            )
               return 'Top Expense Accounts';
             return `${metricGrouping.metric} (${metricGrouping.grouping})`;
           })();
 
-	          const description = line
-	            .replace(/^(?:[-*]\s*)?(create|make|build|generate)\s+/i, '')
-	            .trim();
+          const description = line
+            .replace(/^(?:[-*]\s*)?(create|make|build|generate)\s+/i, '')
+            .trim();
 
-	          const topFromLine = (() => {
-	            const m = lower.match(/\btop\s+(\d+)\b/);
-	            if (!m?.[1]) return null;
-	            const n = Number(m[1]);
-	            if (!Number.isFinite(n)) return null;
-	            return Math.max(1, Math.min(50, Math.floor(n)));
-	          })();
+          const topFromLine = (() => {
+            const m = lower.match(/\btop\s+(\d+)\b/);
+            if (!m?.[1]) return null;
+            const n = Number(m[1]);
+            if (!Number.isFinite(n)) return null;
+            return Math.max(1, Math.min(50, Math.floor(n)));
+          })();
 
-	          const extra = topFromLine ? ({ topN: topFromLine } as const) : undefined;
+          const extra = topFromLine
+            ? ({ topN: topFromLine } as const)
+            : undefined;
 
-	          widgets.push({
-	            ...mk(
-	              title,
-	              description,
-	              type,
-	              metricGrouping.metric,
-	              metricGrouping.grouping,
-	              widgets.length,
-	              extra,
-	            ),
-	            ...(display ? { display } : {}),
-	          });
-	        }
+          widgets.push({
+            ...mk(
+              title,
+              description,
+              type,
+              metricGrouping.metric,
+              metricGrouping.grouping,
+              widgets.length,
+              extra,
+            ),
+            ...(display ? { display } : {}),
+          });
+        }
 
         if (widgets.length > 0) return widgets;
       }
@@ -9536,7 +10122,9 @@ export class AgentService {
     }
 
     // ── Running balance / net position ───────────────────────────────────────
-    if (has(/running\s+balance|balance\s+trend|cash\s+position|net\s+position/)) {
+    if (
+      has(/running\s+balance|balance\s+trend|cash\s+position|net\s+position/)
+    ) {
       const wantsWaterfall = has(/waterfall/);
       if (wantsWaterfall) {
         return [
@@ -9647,7 +10235,10 @@ export class AgentService {
         ),
       ];
     }
-    if (has(/scatter|outlier/) && has(/invoice\s+amount|invoice\s+value|amount/)) {
+    if (
+      has(/scatter|outlier/) &&
+      has(/invoice\s+amount|invoice\s+value|amount/)
+    ) {
       return [
         mk(
           'Invoice Amount vs Date',
@@ -9663,54 +10254,190 @@ export class AgentService {
     // ── EBITDA focus ─────────────────────────────────────────────────────────
     if (has(/\bebitda\b/)) {
       return [
-        mk('EBITDA Trend', 'Monthly EBITDA (net income + depreciation/amortisation add-back)', 'line', 'ebitda', 'month', 0),
-        mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary', 1),
-        mk('Revenue vs Expenses', 'Revenue and total expenses on the same timeline', 'line', 'revenue_vs_expense', 'month', 2),
+        mk(
+          'EBITDA Trend',
+          'Monthly EBITDA (net income + depreciation/amortisation add-back)',
+          'line',
+          'ebitda',
+          'month',
+          0,
+        ),
+        mk(
+          'P&L KPI Summary',
+          'Revenue, Expenses, Gross Profit, Net Income, Margins',
+          'metric',
+          'pl_summary',
+          'summary',
+          1,
+        ),
+        mk(
+          'Revenue vs Expenses',
+          'Revenue and total expenses on the same timeline',
+          'line',
+          'revenue_vs_expense',
+          'month',
+          2,
+        ),
       ];
     }
 
     // ── Margin analysis focus ────────────────────────────────────────────────
-    if (has(/gross\s+margin|net\s+margin|margin\s+analysis|margin\s+trend|gross\s+profit|markup/)) {
+    if (
+      has(
+        /gross\s+margin|net\s+margin|margin\s+analysis|margin\s+trend|gross\s+profit|markup/,
+      )
+    ) {
       return [
-        mk('Gross Margin % Trend', 'Monthly gross margin percentage (revenue minus COGS)', 'line', 'gross_margin_pct', 'month', 0),
-        mk('Net Margin % Trend', 'Monthly net margin percentage (revenue minus all expenses)', 'line', 'net_margin_pct', 'month', 1),
-        mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary', 2),
+        mk(
+          'Gross Margin % Trend',
+          'Monthly gross margin percentage (revenue minus COGS)',
+          'line',
+          'gross_margin_pct',
+          'month',
+          0,
+        ),
+        mk(
+          'Net Margin % Trend',
+          'Monthly net margin percentage (revenue minus all expenses)',
+          'line',
+          'net_margin_pct',
+          'month',
+          1,
+        ),
+        mk(
+          'P&L KPI Summary',
+          'Revenue, Expenses, Gross Profit, Net Income, Margins',
+          'metric',
+          'pl_summary',
+          'summary',
+          2,
+        ),
       ];
     }
 
     // ── P&L / income statement / net income focus ───────────────────────────
-    if (has(/p&l|pl\b|profit\s+and\s+loss|income\s+statement|net\s+income|net\s+profit/) ||
-        (has(/profit|loss|profitability/) && !has(/overdue|ar\b|receivable/))) {
-      const chartType: 'line' | 'bar' = has(/bar\s+chart|bar\s+graph|\bbar\b/) ? 'bar' : 'line';
+    if (
+      has(
+        /p&l|pl\b|profit\s+and\s+loss|income\s+statement|net\s+income|net\s+profit/,
+      ) ||
+      (has(/profit|loss|profitability/) && !has(/overdue|ar\b|receivable/))
+    ) {
+      const chartType: 'line' | 'bar' = has(/bar\s+chart|bar\s+graph|\bbar\b/)
+        ? 'bar'
+        : 'line';
       return [
-        mk('P&L Statement', 'Full income statement: Revenue, COGS, OPEX, Net Income by account', 'table', 'pl', 'summary', 0),
-        mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Gross Margin %, Net Margin %', 'metric', 'pl_summary', 'summary', 1),
-        mk('Net Income Trend', 'Monthly net income (revenue minus all GL expenses)', chartType, 'net_income', 'month', 2),
+        mk(
+          'P&L Statement',
+          'Full income statement: Revenue, COGS, OPEX, Net Income by account',
+          'table',
+          'pl',
+          'summary',
+          0,
+        ),
+        mk(
+          'P&L KPI Summary',
+          'Revenue, Expenses, Gross Profit, Net Income, Gross Margin %, Net Margin %',
+          'metric',
+          'pl_summary',
+          'summary',
+          1,
+        ),
+        mk(
+          'Net Income Trend',
+          'Monthly net income (revenue minus all GL expenses)',
+          chartType,
+          'net_income',
+          'month',
+          2,
+        ),
       ];
     }
 
     // ── Expense / OPEX / cost breakdown focus ────────────────────────────────
-    if (has(/expense|expenses|opex|operating\s+expense|cost\s+breakdown|spending|spend|overheads?/)) {
-      const chartType: 'bar' | 'pie' = has(/pie\s+chart|pie\s+graph|\bpie\b/) ? 'pie' : 'bar';
+    if (
+      has(
+        /expense|expenses|opex|operating\s+expense|cost\s+breakdown|spending|spend|overheads?/,
+      )
+    ) {
+      const chartType: 'bar' | 'pie' = has(/pie\s+chart|pie\s+graph|\bpie\b/)
+        ? 'pie'
+        : 'bar';
       const w: W[] = [
-        mk('Top Expenses by GL Account', 'Expense accounts ranked by total spend', chartType, 'expense', 'account', 0),
-        mk('Expense Trend', 'Monthly total expense trend from GL journals', 'line', 'expense', 'month', 1),
-        mk('Expense KPI Summary', 'Total Expenses, COGS, OPEX, largest expense account', 'metric', 'expense_summary', 'summary', 2),
+        mk(
+          'Top Expenses by GL Account',
+          'Expense accounts ranked by total spend',
+          chartType,
+          'expense',
+          'account',
+          0,
+        ),
+        mk(
+          'Expense Trend',
+          'Monthly total expense trend from GL journals',
+          'line',
+          'expense',
+          'month',
+          1,
+        ),
+        mk(
+          'Expense KPI Summary',
+          'Total Expenses, COGS, OPEX, largest expense account',
+          'metric',
+          'expense_summary',
+          'summary',
+          2,
+        ),
       ];
       if (has(/cogs|cost\s+of\s+goods|cost\s+of\s+sales|direct\s+cost/)) {
-        w.push(mk('COGS by Account', 'Direct cost accounts ranked by spend', 'bar', 'cogs', 'account', 3));
+        w.push(
+          mk(
+            'COGS by Account',
+            'Direct cost accounts ranked by spend',
+            'bar',
+            'cogs',
+            'account',
+            3,
+          ),
+        );
       }
       if (has(/opex|operating\s+expense/) && !has(/only|just/)) {
-        w.push(mk('OPEX by Account', 'Operating expense accounts (excluding COGS)', 'bar', 'opex', 'account', 4));
+        w.push(
+          mk(
+            'OPEX by Account',
+            'Operating expense accounts (excluding COGS)',
+            'bar',
+            'opex',
+            'account',
+            4,
+          ),
+        );
       }
       return w;
     }
 
     // ── GL / journal / ledger focus ──────────────────────────────────────────
-    if (has(/journal|journals|gl\b|general\s+ledger|journal\s+lines?|gl\s+entries|ledger\s+entries/)) {
+    if (
+      has(
+        /journal|journals|gl\b|general\s+ledger|journal\s+lines?|gl\s+entries|ledger\s+entries/,
+      )
+    ) {
       return [
-        mk('GL Journal Entries', 'All journal lines with debit/credit type, account, journal number', 'table', 'gl_transactions', 'list', 0),
-        mk('Top Expenses by Account', 'Expense accounts from journal lines ranked by spend', 'bar', 'expense', 'account', 1),
+        mk(
+          'GL Journal Entries',
+          'All journal lines with debit/credit type, account, journal number',
+          'table',
+          'gl_transactions',
+          'list',
+          0,
+        ),
+        mk(
+          'Top Expenses by Account',
+          'Expense accounts from journal lines ranked by spend',
+          'bar',
+          'expense',
+          'account',
+          1,
+        ),
       ];
     }
 
@@ -9785,7 +10512,9 @@ export class AgentService {
       if (
         wantsCompareClients &&
         has(/\b(revenue|sales|invoiced|billed|collected|paid)\b/) &&
-        has(/month|monthly|month[-\s]?wise|trend|over\s+time|last\s+\d+\s+months?/)
+        has(
+          /month|monthly|month[-\s]?wise|trend|over\s+time|last\s+\d+\s+months?/,
+        )
       ) {
         return [
           mk(
@@ -9803,7 +10532,9 @@ export class AgentService {
       if (
         wantsCompareClients &&
         has(/\b(outstanding|overdue|aging|ar\b|receivable|past.?due)\b/) &&
-        has(/month|monthly|month[-\s]?wise|trend|over\s+time|last\s+\d+\s+months?/)
+        has(
+          /month|monthly|month[-\s]?wise|trend|over\s+time|last\s+\d+\s+months?/,
+        )
       ) {
         const metric = has(/\boverdue|past.?due|aging\b/)
           ? 'overdue'
@@ -9823,7 +10554,9 @@ export class AgentService {
 
       if (
         wantsCompareClients &&
-        has(/dso|days?\s+to\s+pay|payment\s+days|issued.*paid|convert.*issued.*paid/) &&
+        has(
+          /dso|days?\s+to\s+pay|payment\s+days|issued.*paid|convert.*issued.*paid/,
+        ) &&
         has(/month|monthly|trend|over\s+time|line\s+chart/)
       ) {
         return [
@@ -10211,9 +10944,10 @@ export class AgentService {
       const entity = entityFilter ? `AND org_id = {orgId:String}` : '';
       const entityParam = entityFilter ? { orgId: entityFilter.orgId } : {};
 
-      const [summary, topClients, entities, journalCtx] = await Promise.allSettled([
-	        this.queryRows<any>(
-	          `SELECT
+      const [summary, topClients, entities, journalCtx] =
+        await Promise.allSettled([
+          this.queryRows<any>(
+            `SELECT
 	             count()                                                                AS total_invoices,
 	             round(coalesce(sum(total_amount), 0), 0)                              AS total_revenue,
              formatDateTime(min(issued_at), '%Y-%m')                               AS date_from,
@@ -10230,41 +10964,41 @@ export class AgentService {
 		             ${entity}
 		             AND issued_at IS NOT NULL
 		             ${time}`,
-		          {
-		            tenantId,
-		            externalOrgIds: orgIds,
-		            ...clientParam,
-		            ...entityParam,
-		          },
-		        ),
-	        this.queryRows<any>(
-	          `SELECT client_name, round(total_invoiced, 0) AS billed, round(total_overdue, 0) AS overdue
+            {
+              tenantId,
+              externalOrgIds: orgIds,
+              ...clientParam,
+              ...entityParam,
+            },
+          ),
+          this.queryRows<any>(
+            `SELECT client_name, round(total_invoiced, 0) AS billed, round(total_overdue, 0) AS overdue
 	           FROM ${this.analyticsDb}.v_dim_clients_latest
 	           WHERE tenant_id = {tenantId:String} AND org_id IN ({orgIds:Array(String)}) AND client_name != ''
 	           ${clientDim}
 	           ${entityFilter ? `AND org_id = {orgId:String}` : ''}
 	           ORDER BY total_invoiced DESC
 	           LIMIT ${clientFilter ? 1 : 5}`,
-	          { tenantId, orgIds, ...clientParam, ...entityParam },
-	        ),
-	        this.queryRows<any>(
-	          `SELECT coalesce(org_name, org_id) AS org_name, count() AS invoice_count
+            { tenantId, orgIds, ...clientParam, ...entityParam },
+          ),
+          this.queryRows<any>(
+            `SELECT coalesce(org_name, org_id) AS org_name, count() AS invoice_count
 		           FROM ${this.analyticsDb}.v_fact_accounting_invoices_latest
 		           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 		             ${client}
 		             ${entity}
 		             ${time}
 		           GROUP BY org_name ORDER BY invoice_count DESC LIMIT 5`,
-		          {
-		            tenantId,
-		            externalOrgIds: orgIds,
-		            ...clientParam,
-		            ...entityParam,
-		          },
-		        ),
-        // Journal lines context — expenses, P&L signals
-        this.queryRows<any>(
-          `SELECT
+            {
+              tenantId,
+              externalOrgIds: orgIds,
+              ...clientParam,
+              ...entityParam,
+            },
+          ),
+          // Journal lines context — expenses, P&L signals
+          this.queryRows<any>(
+            `SELECT
              round(sum(line_amount), 0) AS total_expenses,
              round(sumIf(line_amount,
                lowerUTF8(account_name) LIKE '%cost of%' OR lowerUTF8(account_name) LIKE '%cogs%'
@@ -10286,15 +11020,16 @@ export class AgentService {
                OR lowerUTF8(account_name) LIKE '%gst%'     OR lowerUTF8(account_name) LIKE '%vat%'
                OR lowerUTF8(account_name) LIKE '%rounding%'
              )`,
-          { tenantId, orgIds, ...entityParam },
-        ).catch(() => [] as any[]),
-      ]);
+            { tenantId, orgIds, ...entityParam },
+          ).catch(() => [] as any[]),
+        ]);
 
       const s =
         (summary.status === 'fulfilled' ? summary.value[0] : null) ?? {};
       const clients = topClients.status === 'fulfilled' ? topClients.value : [];
       const ents = entities.status === 'fulfilled' ? entities.value : [];
-      const jCtx = (journalCtx.status === 'fulfilled' ? journalCtx.value[0] : null) ?? {};
+      const jCtx =
+        (journalCtx.status === 'fulfilled' ? journalCtx.value[0] : null) ?? {};
 
       const clientCount = clients.length;
       const topStr = clients
@@ -10323,7 +11058,9 @@ export class AgentService {
             `- Total Expenses: $${this.fmtK(totalExp)} | COGS: $${this.fmtK(totalCogs)} | OPEX: $${this.fmtK(totalExp - totalCogs)}`,
             `- Gross Profit: $${this.fmtK(grossProfit)}${totalRev > 0 ? ` (${Math.round((grossProfit / totalRev) * 100)}% margin)` : ''} | Net Income: $${this.fmtK(netIncome)}${totalRev > 0 ? ` (${Math.round((netIncome / totalRev) * 100)}% margin)` : ''}`,
           ]
-        : [`- GL Journals: no journal lines synced yet (P&L/expense charts need Xero journal sync)`];
+        : [
+            `- GL Journals: no journal lines synced yet (P&L/expense charts need Xero journal sync)`,
+          ];
 
       return [
         `LIVE DATA CONTEXT:`,
@@ -10358,8 +11095,22 @@ export class AgentService {
 
     try {
       const [
-        dateRange, departments, vendors, expenseAccts, revenueAccts, jTypes, invoiceSummary, topClients,
-        tbSummary, tbAccounts, glDepts, glClasses, glVendors, glJournalTypes, glMonthlyDept, glDateRange,
+        dateRange,
+        departments,
+        vendors,
+        expenseAccts,
+        revenueAccts,
+        jTypes,
+        invoiceSummary,
+        topClients,
+        tbSummary,
+        tbAccounts,
+        glDepts,
+        glClasses,
+        glVendors,
+        glJournalTypes,
+        glMonthlyDept,
+        glDateRange,
       ] = await Promise.allSettled([
         // ── Journal lines (v_fact) ──────────────────────────────────────────────
         this.queryRows<any>(
@@ -10493,65 +11244,111 @@ export class AgentService {
         ),
       ]);
 
-      const dr    = dateRange.status       === 'fulfilled' ? dateRange.value[0]  : null;
-      const depts = departments.status     === 'fulfilled' ? departments.value.map((r: any) => r.dept).filter(Boolean) : [];
-      const vends = vendors.status         === 'fulfilled' ? vendors.value        : [];
-      const expAs = expenseAccts.status    === 'fulfilled' ? expenseAccts.value   : [];
-      const revAs = revenueAccts.status    === 'fulfilled' ? revenueAccts.value   : [];
-      const jtps  = jTypes.status          === 'fulfilled' ? jTypes.value.map((r: any) => r.source_type).filter(Boolean) : [];
-      const inv   = invoiceSummary.status  === 'fulfilled' ? invoiceSummary.value[0] : null;
-      const clts  = topClients.status      === 'fulfilled' ? topClients.value     : [];
-      const tb    = tbSummary.status       === 'fulfilled' ? tbSummary.value[0]   : null;
-      const tbAc  = tbAccounts.status      === 'fulfilled' ? tbAccounts.value     : [];
-      const glDs   = glDepts.status         === 'fulfilled' ? glDepts.value        : [];
-      const glCs   = glClasses.status       === 'fulfilled' ? glClasses.value      : [];
-      const glVs   = glVendors.status       === 'fulfilled' ? glVendors.value      : [];
-      const glJts  = glJournalTypes.status  === 'fulfilled' ? glJournalTypes.value.map((r: any) => r.journal_type).filter(Boolean) : [];
-      const glMD   = glMonthlyDept.status   === 'fulfilled' ? glMonthlyDept.value  : [];
-      const glDR   = glDateRange.status     === 'fulfilled' ? glDateRange.value[0] : null;
+      const dr = dateRange.status === 'fulfilled' ? dateRange.value[0] : null;
+      const depts =
+        departments.status === 'fulfilled'
+          ? departments.value.map((r: any) => r.dept).filter(Boolean)
+          : [];
+      const vends = vendors.status === 'fulfilled' ? vendors.value : [];
+      const expAs =
+        expenseAccts.status === 'fulfilled' ? expenseAccts.value : [];
+      const revAs =
+        revenueAccts.status === 'fulfilled' ? revenueAccts.value : [];
+      const jtps =
+        jTypes.status === 'fulfilled'
+          ? jTypes.value.map((r: any) => r.source_type).filter(Boolean)
+          : [];
+      const inv =
+        invoiceSummary.status === 'fulfilled' ? invoiceSummary.value[0] : null;
+      const clts = topClients.status === 'fulfilled' ? topClients.value : [];
+      const tb = tbSummary.status === 'fulfilled' ? tbSummary.value[0] : null;
+      const tbAc = tbAccounts.status === 'fulfilled' ? tbAccounts.value : [];
+      const glDs = glDepts.status === 'fulfilled' ? glDepts.value : [];
+      const glCs = glClasses.status === 'fulfilled' ? glClasses.value : [];
+      const glVs = glVendors.status === 'fulfilled' ? glVendors.value : [];
+      const glJts =
+        glJournalTypes.status === 'fulfilled'
+          ? glJournalTypes.value.map((r: any) => r.journal_type).filter(Boolean)
+          : [];
+      const glMD =
+        glMonthlyDept.status === 'fulfilled' ? glMonthlyDept.value : [];
+      const glDR =
+        glDateRange.status === 'fulfilled' ? glDateRange.value[0] : null;
 
-      const lines: string[] = ['LIVE DATA CONTEXT — use these real values in SQL and chart titles:'];
+      const lines: string[] = [
+        'LIVE DATA CONTEXT — use these real values in SQL and chart titles:',
+      ];
 
       // ── Trial Balance P&L totals (authoritative) ──────────────────────────────
       if (tb) {
-        const rev   = this.num(tb.revenue);
-        const cogs  = this.num(tb.cogs);
-        const opex  = this.num(tb.opex);
-        const gp    = rev - cogs;
-        const ni    = gp - opex;
-        lines.push(`• AUTHORITATIVE P&L (from sample_trial_balance): Revenue=$${this.fmtK(rev)} | COGS=$${this.fmtK(cogs)} | Operating Expenses=$${this.fmtK(opex)} | Gross Profit=$${this.fmtK(gp)} | Net Income=$${this.fmtK(ni)}`);
-        lines.push(`• AUTHORITATIVE Balance Sheet: Total Assets=$${this.fmtK(this.num(tb.total_assets))} | Total Liabilities=$${this.fmtK(this.num(tb.total_liabilities))} | Total Equity=$${this.fmtK(this.num(tb.total_equity))}`);
+        const rev = this.num(tb.revenue);
+        const cogs = this.num(tb.cogs);
+        const opex = this.num(tb.opex);
+        const gp = rev - cogs;
+        const ni = gp - opex;
+        lines.push(
+          `• AUTHORITATIVE P&L (from sample_trial_balance): Revenue=$${this.fmtK(rev)} | COGS=$${this.fmtK(cogs)} | Operating Expenses=$${this.fmtK(opex)} | Gross Profit=$${this.fmtK(gp)} | Net Income=$${this.fmtK(ni)}`,
+        );
+        lines.push(
+          `• AUTHORITATIVE Balance Sheet: Total Assets=$${this.fmtK(this.num(tb.total_assets))} | Total Liabilities=$${this.fmtK(this.num(tb.total_liabilities))} | Total Equity=$${this.fmtK(this.num(tb.total_equity))}`,
+        );
       }
 
       // ── Trial Balance accounts by type ────────────────────────────────────────
       if (tbAc.length > 0) {
-        const byType = new Map<string, Array<{name: string; balance: number}>>();
+        const byType = new Map<
+          string,
+          Array<{ name: string; balance: number }>
+        >();
         for (const r of tbAc) {
           const at = String(r.account_type);
           if (!byType.has(at)) byType.set(at, []);
-          byType.get(at)!.push({ name: String(r.account_name), balance: this.num(r.balance) });
+          byType
+            .get(at)!
+            .push({
+              name: String(r.account_name),
+              balance: this.num(r.balance),
+            });
         }
         const typeLines: string[] = [];
         for (const [at, accts] of byType.entries()) {
-          typeLines.push(`${at}: ${accts.slice(0,5).map(a => `${a.name} ($${this.fmtK(a.balance)})`).join(', ')}`);
+          typeLines.push(
+            `${at}: ${accts
+              .slice(0, 5)
+              .map((a) => `${a.name} ($${this.fmtK(a.balance)})`)
+              .join(', ')}`,
+          );
         }
-        lines.push(`• sample_trial_balance account types → ${typeLines.join(' | ')}`);
+        lines.push(
+          `• sample_trial_balance account types → ${typeLines.join(' | ')}`,
+        );
       }
 
       // ── GL dump context ────────────────────────────────────────────────────────
       if (glDR) {
-        lines.push(`• sample_gl_dump date range: ${glDR.from_d} → ${glDR.to_d} — USE THESE DATES for time filtering`);
+        lines.push(
+          `• sample_gl_dump date range: ${glDR.from_d} → ${glDR.to_d} — USE THESE DATES for time filtering`,
+        );
       }
       if (glDs.length > 0) {
-        const ds = glDs.map((r: any) => `${r.department} ($${this.fmtK(this.num(r.spend))})`).join(', ');
-        lines.push(`• sample_gl_dump departments (EXACT names, NO Finance): ${ds}`);
+        const ds = glDs
+          .map((r: any) => `${r.department} ($${this.fmtK(this.num(r.spend))})`)
+          .join(', ');
+        lines.push(
+          `• sample_gl_dump departments (EXACT names, NO Finance): ${ds}`,
+        );
       }
       if (glCs.length > 0) {
-        const cs = glCs.map((r: any) => `${r.class} ($${this.fmtK(this.num(r.spend))})`).join(', ');
+        const cs = glCs
+          .map((r: any) => `${r.class} ($${this.fmtK(this.num(r.spend))})`)
+          .join(', ');
         lines.push(`• sample_gl_dump classes (EXACT names): ${cs}`);
       }
       if (glVs.length > 0) {
-        const vs = glVs.slice(0, 12).map((r: any) => `${r.vname} ($${this.fmtK(this.num(r.spend))})`).join(' | ');
+        const vs = glVs
+          .slice(0, 12)
+          .map((r: any) => `${r.vname} ($${this.fmtK(this.num(r.spend))})`)
+          .join(' | ');
         lines.push(`• Top vendors (sample_gl_dump.vendor_customer): ${vs}`);
       }
       if (glJts.length > 0) {
@@ -10566,41 +11363,79 @@ export class AgentService {
           byMonth.get(m)![String(r.department)] = this.num(r.spend);
         }
         const months = Array.from(byMonth.keys()).slice(-3);
-        const deptNames = [...new Set(glMD.map((r: any) => String(r.department)))];
+        const deptNames = [
+          ...new Set(glMD.map((r: any) => String(r.department))),
+        ];
         if (months.length > 0) {
-          const sample = months.map(m => {
-            const row = byMonth.get(m)!;
-            const cols = deptNames.map(d => `${d}=$${this.fmtK(row[d] ?? 0)}`).join(', ');
-            return `${m}: ${cols}`;
-          }).join(' | ');
-          lines.push(`• Monthly dept spend from sample_gl_dump (use sumIf pivot, ONE chart): ${sample}`);
+          const sample = months
+            .map((m) => {
+              const row = byMonth.get(m)!;
+              const cols = deptNames
+                .map((d) => `${d}=$${this.fmtK(row[d] ?? 0)}`)
+                .join(', ');
+              return `${m}: ${cols}`;
+            })
+            .join(' | ');
+          lines.push(
+            `• Monthly dept spend from sample_gl_dump (use sumIf pivot, ONE chart): ${sample}`,
+          );
         }
-        lines.push(`• Dept column names for SQL: ${deptNames.map(d => d.toLowerCase().replace(/\s+/g, '_')).join(', ')}`);
+        lines.push(
+          `• Dept column names for SQL: ${deptNames.map((d) => d.toLowerCase().replace(/\s+/g, '_')).join(', ')}`,
+        );
       }
 
       // ── Journal lines / invoice context ───────────────────────────────────────
       if (dr?.cnt > 0)
-        lines.push(`• GL journal entries: ${dr.cnt} rows | Period: ${dr.from_d} → ${dr.to_d}`);
+        lines.push(
+          `• GL journal entries: ${dr.cnt} rows | Period: ${dr.from_d} → ${dr.to_d}`,
+        );
       if (this.num(inv?.inv_count) > 0)
-        lines.push(`• Invoices: ${inv.inv_count} total | Revenue: $${this.fmtK(this.num(inv.inv_revenue))} | Period: ${inv.from_d} → ${inv.to_d}`);
+        lines.push(
+          `• Invoices: ${inv.inv_count} total | Revenue: $${this.fmtK(this.num(inv.inv_revenue))} | Period: ${inv.from_d} → ${inv.to_d}`,
+        );
       if (depts.length > 0)
-        lines.push(`• Departments in journal lines (use exact names): ${depts.join(', ')}`);
+        lines.push(
+          `• Departments in journal lines (use exact names): ${depts.join(', ')}`,
+        );
       if (jtps.length > 0)
         lines.push(`• Journal source_type values: ${jtps.join(', ')}`);
       if (expAs.length > 0) {
-        const top = expAs.slice(0, 10).map((a: any) => `${a.account_name} ($${this.fmtK(this.num(a.total))})`).join(' | ');
-        lines.push(`• Top expense accounts (source_type IN ('OPEX','COGS'), line_amount > 0): ${top}`);
+        const top = expAs
+          .slice(0, 10)
+          .map(
+            (a: any) => `${a.account_name} ($${this.fmtK(this.num(a.total))})`,
+          )
+          .join(' | ');
+        lines.push(
+          `• Top expense accounts (source_type IN ('OPEX','COGS'), line_amount > 0): ${top}`,
+        );
       }
       if (revAs.length > 0) {
-        const top = revAs.slice(0, 8).map((a: any) => `${a.account_name} ($${this.fmtK(this.num(a.total))})`).join(' | ');
-        lines.push(`• Revenue accounts (source_type = 'REV', use abs(line_amount)): ${top}`);
+        const top = revAs
+          .slice(0, 8)
+          .map(
+            (a: any) => `${a.account_name} ($${this.fmtK(this.num(a.total))})`,
+          )
+          .join(' | ');
+        lines.push(
+          `• Revenue accounts (source_type = 'REV', use abs(line_amount)): ${top}`,
+        );
       }
       if (vends.length > 0) {
-        const top = vends.slice(0, 10).map((v: any) => `${v.vname} ($${this.fmtK(this.num(v.spend))})`).join(' | ');
+        const top = vends
+          .slice(0, 10)
+          .map((v: any) => `${v.vname} ($${this.fmtK(this.num(v.spend))})`)
+          .join(' | ');
         lines.push(`• Top vendors in journal lines (secondary): ${top}`);
       }
       if (clts.length > 0) {
-        const top = clts.slice(0, 6).map((c: any) => `${c.client_name} ($${this.fmtK(this.num(c.billed))})`).join(' | ');
+        const top = clts
+          .slice(0, 6)
+          .map(
+            (c: any) => `${c.client_name} ($${this.fmtK(this.num(c.billed))})`,
+          )
+          .join(' | ');
         lines.push(`• Top clients by invoiced: ${top}`);
       }
 
@@ -10626,20 +11461,24 @@ export class AgentService {
     try {
       // Short-circuit for known patterns where the vocab handler gives exact results
       // and LLM SQL generation is unreliable or produces wrong values.
-      const forcedChartType = this.parseExplicitChartConstraints(query)?.requiredTypes?.[0];
+      const forcedChartType =
+        this.parseExplicitChartConstraints(query)?.requiredTypes?.[0];
       const qLow = query.toLowerCase();
 
       // Monthly dept breakdown (stacked/line/area + dept + time): always use vocab handler
       // which reads directly from sample_gl_dump with correct pivot and values.
       const isMonthlyDept =
         /\b(admin|operations|sales|department)\b/.test(qLow) &&
-        /\b(month|monthly|trend|over\s+time|across\s+the\s+year|last\s+\d+\s+month)\b/.test(qLow) &&
+        /\b(month|monthly|trend|over\s+time|across\s+the\s+year|last\s+\d+\s+month)\b/.test(
+          qLow,
+        ) &&
         /\b(stacked|line|area|multi.?line|multi-series)\b/.test(qLow);
       if (isMonthlyDept) {
-        const deptChartType: ChartType =
-          /\bstacked\b/.test(qLow) ? 'stacked_bar'
-          : /\barea\b/.test(qLow) ? 'area'
-          : 'line';
+        const deptChartType: ChartType = /\bstacked\b/.test(qLow)
+          ? 'stacked_bar'
+          : /\barea\b/.test(qLow)
+            ? 'area'
+            : 'line';
         return {
           kind: 'build',
           plan: {
@@ -10648,14 +11487,17 @@ export class AgentService {
             dashboard: {
               title: query.slice(0, 80),
               description: 'Monthly department spend from sample GL data',
-              widgets: [{
-                title: 'Monthly Spend by Department — Admin, Operations, Sales',
-                description: 'Monthly expense breakdown by department',
-                type: deptChartType,
-                metric: 'expense',
-                grouping: 'month_department',
-                display_order: 0,
-              }] as any,
+              widgets: [
+                {
+                  title:
+                    'Monthly Spend by Department — Admin, Operations, Sales',
+                  description: 'Monthly expense breakdown by department',
+                  type: deptChartType,
+                  metric: 'expense',
+                  grouping: 'month_department',
+                  display_order: 0,
+                },
+              ] as any,
             },
             analysis_focus: query,
           },
@@ -10671,14 +11513,17 @@ export class AgentService {
             dashboard: {
               title: query.slice(0, 80),
               description: 'P&L waterfall from live data',
-              widgets: [{
-                title: 'P&L Waterfall — Revenue to Net Income',
-                description: 'Revenue → COGS → Gross Profit → Operating Expenses → Net Income',
-                type: 'waterfall',
-                metric: 'pl',
-                grouping: 'summary',
-                display_order: 0,
-              }] as any,
+              widgets: [
+                {
+                  title: 'P&L Waterfall — Revenue to Net Income',
+                  description:
+                    'Revenue → COGS → Gross Profit → Operating Expenses → Net Income',
+                  type: 'waterfall',
+                  metric: 'pl',
+                  grouping: 'summary',
+                  display_order: 0,
+                },
+              ] as any,
             },
             analysis_focus: query,
           },
@@ -10686,7 +11531,9 @@ export class AgentService {
       }
 
       // Verify Ollama is reachable before doing the expensive introspection
-      const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
+      const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => null);
       if (!ping?.ok) return null;
 
       const liveContext = await this.introspectLiveSchema(scope);
@@ -10697,13 +11544,18 @@ export class AgentService {
       // request. Multi-series belongs INSIDE a single chart using sumIf pivot columns.
       const hasSingleExplicitType =
         !!this.parseExplicitChartConstraints(query)?.requiredTypes?.length &&
-        !/\b(multiple|several|various|different|all|each|3|4|5|6)\s+(charts?|graphs?|plots?)\b/i.test(q) &&
+        !/\b(multiple|several|various|different|all|each|3|4|5|6)\s+(charts?|graphs?|plots?)\b/i.test(
+          q,
+        ) &&
         !/\b(dashboard|report|board.pack|pack|suite|deep.dive)\b/.test(q);
       const maxCharts =
-        /\b(dashboard|report|board.pack|pack|suite|deep.dive)\b/.test(q) ? 6
-        : hasSingleExplicitType ? 1
-        : /\b(multiple|several|all)\s+(charts?|graphs?)\b/i.test(q) ? 4
-        : 2;
+        /\b(dashboard|report|board.pack|pack|suite|deep.dive)\b/.test(q)
+          ? 6
+          : hasSingleExplicitType
+            ? 1
+            : /\b(multiple|several|all)\s+(charts?|graphs?)\b/i.test(q)
+              ? 4
+              : 2;
 
       const timeHint = range
         ? `Time filter requested: ${JSON.stringify(range)} — apply the equivalent WHERE clause on journal_date or issued_at`
@@ -10720,7 +11572,9 @@ export class AgentService {
         historySnippet,
         `\nUSER REQUEST: "${query}"`,
         `First decide the verdict (build / clarify / no_data). Only on "build", generate up to ${maxCharts} chart(s), each with a precise SQL query using the REAL data values shown above plus accurate xAxisLabel/yAxisLabel. If any named subject is not an exact match to the LIVE DATA above, or the request is ambiguous, return "clarify". If the data genuinely does not exist, return "no_data". Never guess.`,
-      ].filter(Boolean).join('\n');
+      ]
+        .filter(Boolean)
+        .join('\n');
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 120_000);
@@ -10747,8 +11601,12 @@ export class AgentService {
 
       if (!response.ok) return null;
 
-      const body = (await response.json()) as { message?: { content?: string } };
-      const raw = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
+      const body = (await response.json()) as {
+        message?: { content?: string };
+      };
+      const raw = (body.message?.content ?? '')
+        .replace(/```json|```/g, '')
+        .trim();
 
       let parsed: any;
       try {
@@ -10760,7 +11618,9 @@ export class AgentService {
         parsed = JSON.parse(jsonMatch[0]);
       }
 
-      const verdict = String(parsed?.verdict ?? '').toLowerCase().trim();
+      const verdict = String(parsed?.verdict ?? '')
+        .toLowerCase()
+        .trim();
 
       // Guard: the model sometimes leaks raw SQL into user-facing text (it reads
       // "restatement the planner can run as-is" as "write SQL"). NEVER show SQL
@@ -10772,14 +11632,20 @@ export class AgentService {
 
       // ── CLARIFY ───────────────────────────────────────────────────────────
       if (verdict === 'clarify' && parsed?.clarification?.question) {
-        const question = String(parsed.clarification.question).slice(0, 200).trim();
+        const question = String(parsed.clarification.question)
+          .slice(0, 200)
+          .trim();
         const rawOpts = Array.isArray(parsed.clarification.options)
           ? parsed.clarification.options
           : [];
         const options = rawOpts
           .map((o: any) => {
-            const label = String(o?.label ?? '').slice(0, 80).trim();
-            let value = String(o?.value ?? o?.label ?? '').slice(0, 300).trim();
+            const label = String(o?.label ?? '')
+              .slice(0, 80)
+              .trim();
+            let value = String(o?.value ?? o?.label ?? '')
+              .slice(0, 300)
+              .trim();
             // If the model put SQL in the natural-language value, fall back to
             // the label so the resubmitted query is plain language, not SQL.
             if (looksLikeSql(value)) value = label;
@@ -10816,16 +11682,24 @@ export class AgentService {
       }
 
       // ── BUILD ─────────────────────────────────────────────────────────────
-      if (!parsed?.charts || !Array.isArray(parsed.charts) || parsed.charts.length === 0) return null;
+      if (
+        !parsed?.charts ||
+        !Array.isArray(parsed.charts) ||
+        parsed.charts.length === 0
+      )
+        return null;
 
       // If the user EXPLICITLY named a chart type ("create a heatmap", "as a pie
       // chart"), honor it — never silently substitute a different type. Applies
       // when exactly one type was requested.
-      const explicitTypes = this.parseExplicitChartConstraints(query)?.requiredTypes;
+      const explicitTypes =
+        this.parseExplicitChartConstraints(query)?.requiredTypes;
       const forcedType: ChartType | null =
         explicitTypes && explicitTypes.length === 1 ? explicitTypes[0]! : null;
 
-      const widgets: Array<AgentPlan['dashboard']['widgets'][number] & { _sql?: string }> = [];
+      const widgets: Array<
+        AgentPlan['dashboard']['widgets'][number] & { _sql?: string }
+      > = [];
 
       for (let i = 0; i < parsed.charts.length; i++) {
         const c = parsed.charts[i];
@@ -10833,13 +11707,30 @@ export class AgentService {
 
         const chartType = (() => {
           const valid: ChartType[] = [
-            'line','bar','pie','donut','metric','kpi','table','area','treemap',
-            'scatter','stacked_bar','waterfall','histogram','horizontal_bar',
-            'pareto','gauge','bubble','heatmap',
+            'line',
+            'bar',
+            'pie',
+            'donut',
+            'metric',
+            'kpi',
+            'table',
+            'area',
+            'treemap',
+            'scatter',
+            'stacked_bar',
+            'waterfall',
+            'histogram',
+            'horizontal_bar',
+            'pareto',
+            'gauge',
+            'bubble',
+            'heatmap',
           ];
           // Explicit user request wins over the model's pick.
           if (forcedType) return forcedType;
-          return valid.includes(c.type as ChartType) ? (c.type as ChartType) : 'bar';
+          return valid.includes(c.type as ChartType)
+            ? (c.type as ChartType)
+            : 'bar';
         })();
 
         // KPI cards: route to the vocabulary planner's built-in handler which
@@ -10848,7 +11739,9 @@ export class AgentService {
         if (chartType === 'kpi') {
           widgets.push({
             title: String(c.title ?? '').slice(0, 80),
-            description: String(c.description ?? 'Key financial performance indicators'),
+            description: String(
+              c.description ?? 'Key financial performance indicators',
+            ),
             type: 'kpi',
             metric: 'summary',
             grouping: 'overview',
@@ -10860,10 +11753,15 @@ export class AgentService {
         // Waterfall charts: route to the vocabulary planner's pl/summary handler
         // which uses sample_trial_balance for EXACT Power BI-aligned P&L values.
         if (chartType === 'waterfall') {
-          const wtitle = String(c.title ?? 'P&L Waterfall — Revenue to Net Income').slice(0, 80);
+          const wtitle = String(
+            c.title ?? 'P&L Waterfall — Revenue to Net Income',
+          ).slice(0, 80);
           widgets.push({
             title: wtitle,
-            description: String(c.description ?? 'Revenue → COGS → Gross Profit → OpEx → Net Income'),
+            description: String(
+              c.description ??
+                'Revenue → COGS → Gross Profit → OpEx → Net Income',
+            ),
             type: 'waterfall',
             metric: 'pl',
             grouping: 'summary',
@@ -10875,11 +11773,17 @@ export class AgentService {
         // P&L summary metric/table charts: route to pl_summary vocab handler to avoid
         // LLM calculating wrong net income from raw journal lines.
         // Triggered when a metric/table chart title mentions revenue+income or P&L totals.
-        const plSummaryKeywords = /\b(revenue.*net\s+income|net\s+income.*revenue|p&l\s+summary|income\s+statement|financial\s+summary|total\s+revenue.*total|gross\s+profit.*net)\b/i;
-        if ((chartType === 'metric' || chartType === 'table') && plSummaryKeywords.test(c.title ?? query)) {
+        const plSummaryKeywords =
+          /\b(revenue.*net\s+income|net\s+income.*revenue|p&l\s+summary|income\s+statement|financial\s+summary|total\s+revenue.*total|gross\s+profit.*net)\b/i;
+        if (
+          (chartType === 'metric' || chartType === 'table') &&
+          plSummaryKeywords.test(c.title ?? query)
+        ) {
           widgets.push({
             title: String(c.title ?? 'P&L Summary').slice(0, 80),
-            description: String(c.description ?? 'Revenue, Gross Profit, Net Income, Margins'),
+            description: String(
+              c.description ?? 'Revenue, Gross Profit, Net Income, Margins',
+            ),
             type: 'metric',
             metric: 'pl_summary',
             grouping: 'summary',
@@ -10891,13 +11795,28 @@ export class AgentService {
         // Margin / gross profit charts: route to vocab handlers to avoid LLM SQL errors.
         // gross_profit/month, gross_margin_pct/month, net_margin_pct/month use sample_gl_dump
         // with a correct formula; dynamic SQL tends to produce wrong/negative values.
-        const marginKeywords = /\b(gross\s+profit|gross\s+margin|net\s+margin|margin\s+%|margin\s+percent)\b/i;
-        if ((chartType === 'line' || chartType === 'bar' || chartType === 'area') && marginKeywords.test(c.title ?? query)) {
-          const isGrossMarginPct = /gross\s+margin\s*%|gross\s+margin\s+percent/i.test(c.title ?? query);
+        const marginKeywords =
+          /\b(gross\s+profit|gross\s+margin|net\s+margin|margin\s+%|margin\s+percent)\b/i;
+        if (
+          (chartType === 'line' ||
+            chartType === 'bar' ||
+            chartType === 'area') &&
+          marginKeywords.test(c.title ?? query)
+        ) {
+          const isGrossMarginPct =
+            /gross\s+margin\s*%|gross\s+margin\s+percent/i.test(
+              c.title ?? query,
+            );
           const isNetMargin = /net\s+margin/i.test(c.title ?? query);
-          const vocabMetric = isNetMargin ? 'net_margin_pct' : isGrossMarginPct ? 'gross_margin_pct' : 'gross_profit';
+          const vocabMetric = isNetMargin
+            ? 'net_margin_pct'
+            : isGrossMarginPct
+              ? 'gross_margin_pct'
+              : 'gross_profit';
           widgets.push({
-            title: String(c.title ?? '').slice(0, 80) || `Monthly ${vocabMetric.replace(/_/g,' ')} Trend`,
+            title:
+              String(c.title ?? '').slice(0, 80) ||
+              `Monthly ${vocabMetric.replace(/_/g, ' ')} Trend`,
             description: String(c.description ?? ''),
             type: chartType,
             metric: vocabMetric,
@@ -10922,14 +11841,23 @@ export class AgentService {
         }
 
         // Axis labels — omit for chart types where axes are meaningless.
-        const axisless: ChartType[] = ['metric', 'kpi', 'gauge', 'pie', 'donut', 'treemap'];
+        const axisless: ChartType[] = [
+          'metric',
+          'kpi',
+          'gauge',
+          'pie',
+          'donut',
+          'treemap',
+        ];
         const wantsAxes = !axisless.includes(chartType);
-        const xAxisLabel = wantsAxes && c.xAxisLabel
-          ? String(c.xAxisLabel).slice(0, 60).trim()
-          : undefined;
-        const yAxisLabel = wantsAxes && c.yAxisLabel
-          ? String(c.yAxisLabel).slice(0, 60).trim()
-          : undefined;
+        const xAxisLabel =
+          wantsAxes && c.xAxisLabel
+            ? String(c.xAxisLabel).slice(0, 60).trim()
+            : undefined;
+        const yAxisLabel =
+          wantsAxes && c.yAxisLabel
+            ? String(c.yAxisLabel).slice(0, 60).trim()
+            : undefined;
 
         widgets.push({
           title: String(c.title ?? '').slice(0, 80),
@@ -10954,14 +11882,27 @@ export class AgentService {
       const verified = await Promise.all(
         widgets.map(async (w) => {
           // KPI and waterfall vocabulary widgets have no dynamic SQL — always "ok".
-          if (w.metric === 'summary' && w.grouping === 'overview' && w.type === 'kpi') {
+          if (
+            w.metric === 'summary' &&
+            w.grouping === 'overview' &&
+            w.type === 'kpi'
+          ) {
             return { w, ok: true };
           }
-          if (w.metric === 'pl' && w.grouping === 'summary' && w.type === 'waterfall') {
+          if (
+            w.metric === 'pl' &&
+            w.grouping === 'summary' &&
+            w.type === 'waterfall'
+          ) {
             return { w, ok: true };
           }
           // Margin vocab widgets (gross_profit, gross_margin_pct, net_margin_pct)
-          if (['gross_profit','gross_margin_pct','net_margin_pct'].includes(w.metric) && w.grouping === 'month') {
+          if (
+            ['gross_profit', 'gross_margin_pct', 'net_margin_pct'].includes(
+              w.metric,
+            ) &&
+            w.grouping === 'month'
+          ) {
             return { w, ok: true };
           }
           // P&L summary vocab widget
@@ -10993,7 +11934,11 @@ export class AgentService {
           if (!problem) return { w, ok: true };
 
           // Attempt ONE self-repair with the error/shape hint.
-          const repaired = await this.repairSqlViaLLM(sql0, problem, liveContext);
+          const repaired = await this.repairSqlViaLLM(
+            sql0,
+            problem,
+            liveContext,
+          );
           if (!repaired) return { w, ok: false };
           let scoped: string;
           try {
@@ -11001,25 +11946,36 @@ export class AgentService {
               chartType: w.type,
             });
           } catch (e: any) {
-            this.logger.warn(`[SmartPlan] self-repair produced invalid SQL: ${e?.message ?? e}`);
+            this.logger.warn(
+              `[SmartPlan] self-repair produced invalid SQL: ${e?.message ?? e}`,
+            );
             return { w, ok: false };
           }
           const r2 = await this.executeDynamicSqlChecked(scoped, scope, {
             chartType: w.type,
           });
-          if (r2.rows.length > 0 && !this.detectBadChartShape(r2.rows, w.type)) {
+          if (
+            r2.rows.length > 0 &&
+            !this.detectBadChartShape(r2.rows, w.type)
+          ) {
             (w as any)._sql = scoped;
-            this.logger.log(`[SmartPlan] self-repair SUCCEEDED for "${w.title}"`);
+            this.logger.log(
+              `[SmartPlan] self-repair SUCCEEDED for "${w.title}"`,
+            );
             return { w, ok: true };
           }
-          this.logger.warn(`[SmartPlan] self-repair did not yield a clean chart for "${w.title}"`);
+          this.logger.warn(
+            `[SmartPlan] self-repair did not yield a clean chart for "${w.title}"`,
+          );
           return { w, ok: false };
         }),
       );
       const nonEmpty = verified.filter((v) => v.ok).map((v) => v.w);
 
       if (nonEmpty.length === 0) {
-        this.logger.log(`[SmartPlan] BUILD produced only empty charts → NO_DATA for: "${query.slice(0, 80)}"`);
+        this.logger.log(
+          `[SmartPlan] BUILD produced only empty charts → NO_DATA for: "${query.slice(0, 80)}"`,
+        );
         return {
           kind: 'no_data',
           message:
@@ -11034,7 +11990,9 @@ export class AgentService {
       // Re-number display order after dropping empties.
       const finalWidgets = nonEmpty.map((w, i) => ({ ...w, display_order: i }));
 
-      this.logger.log(`[SmartPlan] BUILD — ${finalWidgets.length}/${widgets.length} SQL-backed charts returned data for: "${query.slice(0, 80)}"`);
+      this.logger.log(
+        `[SmartPlan] BUILD — ${finalWidgets.length}/${widgets.length} SQL-backed charts returned data for: "${query.slice(0, 80)}"`,
+      );
 
       return {
         kind: 'build',
@@ -11072,7 +12030,11 @@ export class AgentService {
         )
         .trim();
       // Guard: phrases like "client information" are not a client name.
-      if (/\b(info|information|details|data|list|breakdown|comparison)\b/i.test(chunk)) {
+      if (
+        /\b(info|information|details|data|list|breakdown|comparison)\b/i.test(
+          chunk,
+        )
+      ) {
         return null;
       }
       return chunk.length >= 2 ? chunk : null;
@@ -11254,7 +12216,9 @@ export class AgentService {
     const s = String(name ?? '').trim();
     if (!s) return true;
     // UUID-ish or long numeric IDs are not user-friendly entity labels.
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s))
+    if (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+    )
       return true;
     if (/^\d{8,}$/.test(s)) return true;
     return false;
@@ -11288,7 +12252,9 @@ export class AgentService {
             meta.companyId ??
             orgId,
         ).trim();
-        const provider = String(r.provider ?? '').toLowerCase().trim();
+        const provider = String(r.provider ?? '')
+          .toLowerCase()
+          .trim();
         return { orgId, orgName, provider };
       })
       .filter(
@@ -11335,7 +12301,10 @@ export class AgentService {
     const merged = base.reduce((acc, cur) => {
       const existing = acc.get(cur.orgId);
       if (!existing) acc.set(cur.orgId, cur);
-      else if (this.isOpaqueEntityLabel(existing.orgName) && !this.isOpaqueEntityLabel(cur.orgName))
+      else if (
+        this.isOpaqueEntityLabel(existing.orgName) &&
+        !this.isOpaqueEntityLabel(cur.orgName)
+      )
         acc.set(cur.orgId, cur);
       return acc;
     }, new Map<string, { orgId: string; orgName: string; provider: string }>());
@@ -11607,7 +12576,9 @@ export class AgentService {
         q,
       )
     )
-      addType(/\bstacked\s+bar\b|\bstacked\s+bars\b/.test(q) ? 'stacked_bar' : 'bar');
+      addType(
+        /\bstacked\s+bar\b|\bstacked\s+bars\b/.test(q) ? 'stacked_bar' : 'bar',
+      );
     if (/\bpie\s+chart\b|\bpie\s+graph\b/.test(q)) addType('pie');
     if (/\bdonut\b|\bdoughnut\b/.test(q)) addType('donut');
     if (/\btable\b|\btabular\b/.test(q)) addType('table');
@@ -11620,10 +12591,18 @@ export class AgentService {
     if (/\bhistogram\b/.test(q)) addType('histogram');
     if (/\bpareto\b/.test(q)) addType('pareto');
     if (/\bgauge\b/.test(q)) addType('gauge');
-    if (/\bbubble\s*chart\b|\bbubble\s*plot\b|\bbubble\b/.test(q)) addType('bubble');
-    if (/\bhorizontal\s+bar\b|\branked\s+bar\b/.test(q)) addType('horizontal_bar');
-    if (/\bkpi\s+card\b|\bkpi\s+tile\b|\bkpi\s+dashboard\b|\bkpi\b.*\bcard\b|\bmetric\s+card\b|\bcard\s+dashboard\b/.test(q)) addType('kpi');
-    if (/\bstacked\s+column\b|\bstacked\s+area\b/.test(q)) addType('stacked_bar');
+    if (/\bbubble\s*chart\b|\bbubble\s*plot\b|\bbubble\b/.test(q))
+      addType('bubble');
+    if (/\bhorizontal\s+bar\b|\branked\s+bar\b/.test(q))
+      addType('horizontal_bar');
+    if (
+      /\bkpi\s+card\b|\bkpi\s+tile\b|\bkpi\s+dashboard\b|\bkpi\b.*\bcard\b|\bmetric\s+card\b|\bcard\s+dashboard\b/.test(
+        q,
+      )
+    )
+      addType('kpi');
+    if (/\bstacked\s+column\b|\bstacked\s+area\b/.test(q))
+      addType('stacked_bar');
     if (/\bclustered\s+(bar|column)\b/.test(q)) addType('bar');
 
     const countMatch =
@@ -11693,11 +12672,7 @@ export class AgentService {
       const lower = q.toLowerCase();
 
       // If the user is clearly asking for a dashboard/pack, allow multiple charts.
-      if (
-        /\b(dashboard|report|board pack|pack|suite|deep dive)\b/i.test(
-          lower,
-        )
-      )
+      if (/\b(dashboard|report|board pack|pack|suite|deep dive)\b/i.test(lower))
         return 4;
 
       // If the prompt contains multiple enumerated questions, allow more charts.
@@ -11825,12 +12800,21 @@ export class AgentService {
     // handled upstream in query(), so here we just fall back to the vocabulary
     // planner when the structured planner does not return buildable charts.
     if (scope && scope.externalOrgIds.length > 0) {
-      const smartResult = await this.generateSmartPlan(query, scope, range, conversationHistory);
+      const smartResult = await this.generateSmartPlan(
+        query,
+        scope,
+        range,
+        conversationHistory,
+      );
       if (smartResult?.kind === 'build') {
-        this.logger.log(`[plan] smart-SQL path succeeded — ${smartResult.plan.dashboard.widgets.length} SQL-backed charts`);
+        this.logger.log(
+          `[plan] smart-SQL path succeeded — ${smartResult.plan.dashboard.widgets.length} SQL-backed charts`,
+        );
         return smartResult.plan;
       }
-      this.logger.warn('[plan] smart-SQL path produced no buildable charts — falling back to vocabulary planner');
+      this.logger.warn(
+        '[plan] smart-SQL path produced no buildable charts — falling back to vocabulary planner',
+      );
     }
 
     // ── FALLBACK: Vocabulary-based planner (Ollama picks preset metric+grouping)
@@ -11894,25 +12878,33 @@ export class AgentService {
           ];
 
       const buildCandidate = (cand: (typeof candidates)[number]) => {
-        type PlannedWidget = AgentPlan['dashboard']['widgets'][number] & { _dynamicIntent?: string };
+        type PlannedWidget = AgentPlan['dashboard']['widgets'][number] & {
+          _dynamicIntent?: string;
+        };
         // Separate known widgets from unknown ones (unknown become dynamic SQL candidates)
         const knownWidgets = (cand.widgets ?? []).filter((w) =>
           VALID_WIDGETS.some(
-            (v) => v.type === w.type && v.metric === w.metric && v.grouping === w.grouping,
+            (v) =>
+              v.type === w.type &&
+              v.metric === w.metric &&
+              v.grouping === w.grouping,
           ),
         );
         const unknownWidgets = (cand.widgets ?? []).filter(
           (w) =>
             !VALID_WIDGETS.some(
-              (v) => v.type === w.type && v.metric === w.metric && v.grouping === w.grouping,
+              (v) =>
+                v.type === w.type &&
+                v.metric === w.metric &&
+                v.grouping === w.grouping,
             ),
         );
         // Tag unknown widgets as dynamic — they get SQL generated in Phase 3
-        const dynamicWidgets: PlannedWidget[] = unknownWidgets.map((w: any, i) => ({
-          title: w.title ?? `${w.metric} Chart`,
-          description: w.description ?? '',
-          type: ((
-            [
+        const dynamicWidgets: PlannedWidget[] = unknownWidgets.map(
+          (w: any, i) => ({
+            title: w.title ?? `${w.metric} Chart`,
+            description: w.description ?? '',
+            type: ([
               'line',
               'bar',
               'pie',
@@ -11925,13 +12917,13 @@ export class AgentService {
               'waterfall',
             ].includes(w.type)
               ? w.type
-              : 'bar'
-          ) as any),
-          metric: 'dynamic',
-          grouping: 'query',
-          display_order: knownWidgets.length + i,
-          _dynamicIntent: `${w.title ?? w.metric}: ${w.metric}/${w.grouping} chart for query "${query}"`,
-        }));
+              : 'bar') as any,
+            metric: 'dynamic',
+            grouping: 'query',
+            display_order: knownWidgets.length + i,
+            _dynamicIntent: `${w.title ?? w.metric}: ${w.metric}/${w.grouping} chart for query "${query}"`,
+          }),
+        );
 
         const validWidgets = knownWidgets
           .filter(
@@ -11955,7 +12947,11 @@ export class AgentService {
 
             // Metrics that support breakdown='client' (multi-series per-client pivot)
             const clientBreakdownSupportedMetrics = new Set([
-              'revenue', 'outstanding', 'overdue', 'paid', 'dso',
+              'revenue',
+              'outstanding',
+              'overdue',
+              'paid',
+              'dso',
             ]);
             const normalizedBreakdown: 'client' | undefined =
               breakdown === 'client' &&
@@ -12079,7 +13075,10 @@ export class AgentService {
               const req = constraints.requiredTypes[0]!;
               const first = out[0]!;
               const canConvert = VALID_WIDGETS.some(
-                (v) => v.type === req && v.metric === first.metric && v.grouping === first.grouping,
+                (v) =>
+                  v.type === req &&
+                  v.metric === first.metric &&
+                  v.grouping === first.grouping,
               );
               if (canConvert) {
                 out = [{ ...first, type: req }, ...out.slice(1)];
@@ -12161,13 +13160,22 @@ export class AgentService {
             });
 
             const replaceAll = (next: any[]) =>
-              applyImplicitMax(next).map((w, i) => ({ ...w, display_order: i }));
+              applyImplicitMax(next).map((w, i) => ({
+                ...w,
+                display_order: i,
+              }));
 
             // If user explicitly asked for a waterfall but vocab planner couldn't
             // match it, override everything and return the P&L waterfall.
             if (String(wantsType ?? '') === 'waterfall') {
               return replaceAll([
-                mk('P&L Waterfall — Revenue to Net Income', 'Revenue → COGS → Gross Profit → Operating Expenses → Net Income', 'waterfall', 'pl', 'summary'),
+                mk(
+                  'P&L Waterfall — Revenue to Net Income',
+                  'Revenue → COGS → Gross Profit → Operating Expenses → Net Income',
+                  'waterfall',
+                  'pl',
+                  'summary',
+                ),
               ]);
             }
 
@@ -12176,13 +13184,32 @@ export class AgentService {
             if (
               wantsType &&
               !out.some((w) => w.type === wantsType) &&
-              ['scatter','bubble','heatmap','histogram','pareto','gauge','treemap'].includes(wantsType)
+              [
+                'scatter',
+                'bubble',
+                'heatmap',
+                'histogram',
+                'pareto',
+                'gauge',
+                'treemap',
+              ].includes(wantsType)
             ) {
-              const fallbackWidgets = this.selectWidgetsForQuery(query, activeDashboard);
+              const fallbackWidgets = this.selectWidgetsForQuery(
+                query,
+                activeDashboard,
+              );
               if (fallbackWidgets && fallbackWidgets.length > 0) {
-                const forced = fallbackWidgets.map((w) => ({ ...w, type: wantsType }));
+                const forced = fallbackWidgets.map((w) => ({
+                  ...w,
+                  type: wantsType,
+                }));
                 const valid = forced.filter((w) =>
-                  VALID_WIDGETS.some((v) => v.type === wantsType && v.metric === w.metric && v.grouping === w.grouping),
+                  VALID_WIDGETS.some(
+                    (v) =>
+                      v.type === wantsType &&
+                      v.metric === w.metric &&
+                      v.grouping === w.grouping,
+                  ),
                 );
                 if (valid.length > 0) return replaceAll(valid as any);
               }
@@ -12228,7 +13255,10 @@ export class AgentService {
               errs.includes('TOP_CLIENTS_TREND_REQUIRES_TIME_SERIES') ||
               errs.includes('TOP_CLIENTS_REQUIRES_CLIENT_BREAKDOWN')
             ) {
-              const n = typeof spec.topN === 'number' ? Math.max(1, Math.min(5, spec.topN)) : 2;
+              const n =
+                typeof spec.topN === 'number'
+                  ? Math.max(1, Math.min(5, spec.topN))
+                  : 2;
               const alreadyHasIt = out.some(
                 (w: any) =>
                   w.metric === 'revenue' &&
@@ -12321,13 +13351,37 @@ export class AgentService {
               // Preserve waterfall type when user explicitly asked for it.
               if (String(wantsType ?? '') === 'waterfall') {
                 return replaceAll([
-                  mk('P&L Waterfall — Revenue to Net Income', 'Revenue → COGS → Gross Profit → OpEx → Net Income', 'waterfall', 'pl', 'summary'),
+                  mk(
+                    'P&L Waterfall — Revenue to Net Income',
+                    'Revenue → COGS → Gross Profit → OpEx → Net Income',
+                    'waterfall',
+                    'pl',
+                    'summary',
+                  ),
                 ]);
               }
               return replaceAll([
-                mk('P&L Statement', 'Full income statement by account', 'table', 'pl', 'summary'),
-                mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary'),
-                mk('Net Income Trend', 'Monthly net income (revenue minus expenses)', wantsType === 'bar' ? 'bar' : 'line', 'net_income', 'month'),
+                mk(
+                  'P&L Statement',
+                  'Full income statement by account',
+                  'table',
+                  'pl',
+                  'summary',
+                ),
+                mk(
+                  'P&L KPI Summary',
+                  'Revenue, Expenses, Gross Profit, Net Income, Margins',
+                  'metric',
+                  'pl_summary',
+                  'summary',
+                ),
+                mk(
+                  'Net Income Trend',
+                  'Monthly net income (revenue minus expenses)',
+                  wantsType === 'bar' ? 'bar' : 'line',
+                  'net_income',
+                  'month',
+                ),
               ]);
             }
 
@@ -12335,13 +13389,37 @@ export class AgentService {
             if (errs.includes('EXPENSE_REQUIRES_EXPENSE_WIDGET')) {
               if (String(wantsType ?? '') === 'waterfall') {
                 return replaceAll([
-                  mk('Expense Waterfall by Category', 'How expense categories build up total operating cost', 'waterfall', 'pl', 'summary'),
+                  mk(
+                    'Expense Waterfall by Category',
+                    'How expense categories build up total operating cost',
+                    'waterfall',
+                    'pl',
+                    'summary',
+                  ),
                 ]);
               }
               return replaceAll([
-                mk('Top Expenses by Account', 'GL expense breakdown ranked by spend', wantsType === 'pie' ? 'pie' : 'bar', 'expense', 'account'),
-                mk('Expense Trend', 'Monthly total expense trend', 'line', 'expense', 'month'),
-                mk('Expense KPI Summary', 'Total Expenses, COGS, OPEX, largest account', 'metric', 'expense_summary', 'summary'),
+                mk(
+                  'Top Expenses by Account',
+                  'GL expense breakdown ranked by spend',
+                  wantsType === 'pie' ? 'pie' : 'bar',
+                  'expense',
+                  'account',
+                ),
+                mk(
+                  'Expense Trend',
+                  'Monthly total expense trend',
+                  'line',
+                  'expense',
+                  'month',
+                ),
+                mk(
+                  'Expense KPI Summary',
+                  'Total Expenses, COGS, OPEX, largest account',
+                  'metric',
+                  'expense_summary',
+                  'summary',
+                ),
               ]);
             }
 
@@ -12351,29 +13429,77 @@ export class AgentService {
               // (gross_margin_pct returns 0 rows from demo data).
               if (String(wantsType ?? '') === 'waterfall') {
                 return replaceAll([
-                  mk('P&L Waterfall — Revenue to Net Income', 'Revenue → COGS → Gross Profit → OpEx → Net Income', 'waterfall', 'pl', 'summary'),
+                  mk(
+                    'P&L Waterfall — Revenue to Net Income',
+                    'Revenue → COGS → Gross Profit → OpEx → Net Income',
+                    'waterfall',
+                    'pl',
+                    'summary',
+                  ),
                 ]);
               }
               return replaceAll([
-                mk('Gross Margin % Trend', 'Monthly gross margin percentage', 'line', 'gross_margin_pct', 'month'),
-                mk('Net Margin % Trend', 'Monthly net margin percentage', 'line', 'net_margin_pct', 'month'),
-                mk('P&L KPI Summary', 'Revenue, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary'),
+                mk(
+                  'Gross Margin % Trend',
+                  'Monthly gross margin percentage',
+                  'line',
+                  'gross_margin_pct',
+                  'month',
+                ),
+                mk(
+                  'Net Margin % Trend',
+                  'Monthly net margin percentage',
+                  'line',
+                  'net_margin_pct',
+                  'month',
+                ),
+                mk(
+                  'P&L KPI Summary',
+                  'Revenue, Gross Profit, Net Income, Margins',
+                  'metric',
+                  'pl_summary',
+                  'summary',
+                ),
               ]);
             }
 
             // EBITDA repairs
             if (errs.includes('EBITDA_REQUIRES_EBITDA_WIDGET')) {
               return replaceAll([
-                mk('EBITDA Trend', 'Monthly EBITDA (net income + D&A add-back)', 'line', 'ebitda', 'month'),
-                mk('P&L KPI Summary', 'Revenue, Expenses, Gross Profit, Net Income, Margins', 'metric', 'pl_summary', 'summary'),
+                mk(
+                  'EBITDA Trend',
+                  'Monthly EBITDA (net income + D&A add-back)',
+                  'line',
+                  'ebitda',
+                  'month',
+                ),
+                mk(
+                  'P&L KPI Summary',
+                  'Revenue, Expenses, Gross Profit, Net Income, Margins',
+                  'metric',
+                  'pl_summary',
+                  'summary',
+                ),
               ]);
             }
 
             // GL repairs
             if (errs.includes('GL_REQUIRES_GL_WIDGET')) {
               return replaceAll([
-                mk('GL Journal Entries', 'All journal lines with debit/credit, account, amount', 'table', 'gl_transactions', 'list'),
-                mk('Top Expenses by Account', 'GL expense breakdown ranked by spend', 'bar', 'expense', 'account'),
+                mk(
+                  'GL Journal Entries',
+                  'All journal lines with debit/credit, account, amount',
+                  'table',
+                  'gl_transactions',
+                  'list',
+                ),
+                mk(
+                  'Top Expenses by Account',
+                  'GL expense breakdown ranked by spend',
+                  'bar',
+                  'expense',
+                  'account',
+                ),
               ]);
             }
 
@@ -12467,7 +13593,10 @@ export class AgentService {
     // Safety: if the query clearly asks about clients/top clients, ensure client tools are present
     // even if the widget model expressed it via titles/intent rather than `grouping`/`breakdown`.
     const spec = parseQuerySpec(query);
-    if (spec.wantsTopClients || /\b(client|clients|customer|customers|contact|contacts)\b/i.test(query)) {
+    if (
+      spec.wantsTopClients ||
+      /\b(client|clients|customer|customers|contact|contacts)\b/i.test(query)
+    ) {
       tools.add('client_financial_profile');
       tools.add('client_breakdown');
     }
@@ -12495,7 +13624,9 @@ export class AgentService {
     score += Math.min(widgets.length, 8) * 8;
 
     // Diversity across visualization types.
-    const types = new Set(widgets.map((w) => w.type === 'area' ? 'line' : w.type));
+    const types = new Set(
+      widgets.map((w) => (w.type === 'area' ? 'line' : w.type)),
+    );
     if (types.has('line')) score += 8;
     if (types.has('bar')) score += 8;
     if (types.has('pie')) score += 6;
@@ -12520,7 +13651,9 @@ export class AgentService {
       score += widgets.filter((w) => w.grouping === 'status').length * 3;
     }
     if (has(/trend|growth|momentum|mom\b|yoy|month/))
-      score += widgets.filter((w) => w.type === 'line' || w.type === 'area').length * 5;
+      score +=
+        widgets.filter((w) => w.type === 'line' || w.type === 'area').length *
+        5;
     if (has(/quarter|q[1-4]\b|qoq|quarterly/))
       score += widgets.filter((w) => w.grouping === 'quarter').length * 6;
     if (has(/entity|org\b|entities|compare|versus|vs\b|concentration/))
@@ -12535,16 +13668,38 @@ export class AgentService {
           .length * 6;
 
     // P&L / net income
-    if (has(/p&l|pl\b|profit\s+and\s+loss|income\s+statement|net\s+income|net\s+profit/))
-      score += widgets.filter((w) => ['net_income', 'pl', 'pl_summary'].includes(w.metric)).length * 12;
+    if (
+      has(
+        /p&l|pl\b|profit\s+and\s+loss|income\s+statement|net\s+income|net\s+profit/,
+      )
+    )
+      score +=
+        widgets.filter((w) =>
+          ['net_income', 'pl', 'pl_summary'].includes(w.metric),
+        ).length * 12;
 
     // Expense / OPEX / cost
-    if (has(/expense|expenses|opex|operating\s+expense|cost\s+breakdown|spending|spend|overheads?|cogs|cost\s+of\s+goods|cost\s+of\s+sales|direct\s+cost/))
-      score += widgets.filter((w) => ['expense', 'opex', 'cogs', 'expense_summary'].includes(w.metric)).length * 12;
+    if (
+      has(
+        /expense|expenses|opex|operating\s+expense|cost\s+breakdown|spending|spend|overheads?|cogs|cost\s+of\s+goods|cost\s+of\s+sales|direct\s+cost/,
+      )
+    )
+      score +=
+        widgets.filter((w) =>
+          ['expense', 'opex', 'cogs', 'expense_summary'].includes(w.metric),
+        ).length * 12;
 
     // Margin analysis
     if (has(/gross\s+margin|net\s+margin|margin|profitability|gross\s+profit/))
-      score += widgets.filter((w) => ['gross_margin_pct', 'net_margin_pct', 'gross_profit', 'pl_summary'].includes(w.metric)).length * 12;
+      score +=
+        widgets.filter((w) =>
+          [
+            'gross_margin_pct',
+            'net_margin_pct',
+            'gross_profit',
+            'pl_summary',
+          ].includes(w.metric),
+        ).length * 12;
 
     // EBITDA
     if (has(/ebitda/))
@@ -12552,11 +13707,18 @@ export class AgentService {
 
     // GL / journal
     if (has(/journal|gl\b|general\s+ledger|ledger\s+entries/))
-      score += widgets.filter((w) => ['gl_transactions', 'pl'].includes(w.metric)).length * 10;
+      score +=
+        widgets.filter((w) => ['gl_transactions', 'pl'].includes(w.metric))
+          .length * 10;
 
     // Revenue vs expense comparison
-    if (has(/revenue\s+vs\s+expense|revenue\s+and\s+expense|expense\s+vs\s+revenue/))
-      score += widgets.filter((w) => w.metric === 'revenue_vs_expense').length * 12;
+    if (
+      has(
+        /revenue\s+vs\s+expense|revenue\s+and\s+expense|expense\s+vs\s+revenue/,
+      )
+    )
+      score +=
+        widgets.filter((w) => w.metric === 'revenue_vs_expense').length * 12;
 
     return score;
   }
@@ -12613,7 +13775,8 @@ export class AgentService {
     }
     // Avoid irrelevant venture metric tiles when the query isn't about venture runway/burn.
     if (spec.focus !== 'VENTURE') {
-      if (has((w) => w.metric === 'venture')) errs.push('VENTURE_WIDGET_NOT_RELEVANT');
+      if (has((w) => w.metric === 'venture'))
+        errs.push('VENTURE_WIDGET_NOT_RELEVANT');
     }
 
     if (spec.focus === 'AR_RISK') {
@@ -12638,9 +13801,14 @@ export class AgentService {
     }
 
     if (spec.focus === 'PNL') {
-      const hasPnlWidget = has(
-        (w) =>
-          ['net_income', 'pl', 'pl_summary', 'gross_profit', 'revenue_vs_expense'].includes(w.metric),
+      const hasPnlWidget = has((w) =>
+        [
+          'net_income',
+          'pl',
+          'pl_summary',
+          'gross_profit',
+          'revenue_vs_expense',
+        ].includes(w.metric),
       );
       if (!hasPnlWidget) errs.push('PNL_REQUIRES_PNL_WIDGET');
     }
@@ -12648,25 +13816,41 @@ export class AgentService {
     if (spec.focus === 'EXPENSE') {
       const hasExpenseWidget = has(
         // 'pl' covers waterfall/pl/summary which shows COGS + OpEx breakdown
-        (w) => ['expense', 'opex', 'cogs', 'expense_summary', 'pl', 'pl_summary', 'net_income'].includes(w.metric),
+        (w) =>
+          [
+            'expense',
+            'opex',
+            'cogs',
+            'expense_summary',
+            'pl',
+            'pl_summary',
+            'net_income',
+          ].includes(w.metric),
       );
       if (!hasExpenseWidget) errs.push('EXPENSE_REQUIRES_EXPENSE_WIDGET');
     }
 
     if (spec.focus === 'MARGIN') {
-      const hasMarginWidget = has(
-        (w) =>
-          ['gross_margin_pct', 'net_margin_pct', 'gross_profit', 'pl_summary'].includes(w.metric),
+      const hasMarginWidget = has((w) =>
+        [
+          'gross_margin_pct',
+          'net_margin_pct',
+          'gross_profit',
+          'pl_summary',
+        ].includes(w.metric),
       );
       if (!hasMarginWidget) errs.push('MARGIN_REQUIRES_MARGIN_WIDGET');
     }
 
     if (spec.focus === 'EBITDA') {
-      if (!has((w) => w.metric === 'ebitda')) errs.push('EBITDA_REQUIRES_EBITDA_WIDGET');
+      if (!has((w) => w.metric === 'ebitda'))
+        errs.push('EBITDA_REQUIRES_EBITDA_WIDGET');
     }
 
     if (spec.focus === 'GL') {
-      const hasGlWidget = has((w) => ['gl_transactions', 'pl', 'expense'].includes(w.metric));
+      const hasGlWidget = has((w) =>
+        ['gl_transactions', 'pl', 'expense'].includes(w.metric),
+      );
       if (!hasGlWidget) errs.push('GL_REQUIRES_GL_WIDGET');
     }
 
@@ -12751,10 +13935,24 @@ export class AgentService {
         reason: 'UNSUPPORTED_METRIC',
         question: `Balance sheet and cash flow statements require additional data beyond what is currently synced. I can build P&L, expense breakdowns, margin analysis, and AR dashboards. Which would you like?`,
         options: [
-          { label: 'P&L / Income Statement', value: 'Build a full P&L with net income, gross margin, and expense breakdown.' },
-          { label: 'Expense analysis', value: 'Show expenses by GL account with COGS vs OPEX breakdown.' },
-          { label: 'Revenue & AR', value: 'Focus on revenue trends, outstanding, and overdue.' },
-          { label: 'Executive CFO dashboard', value: 'Build a comprehensive CFO dashboard with P&L, margin, AR, and client data.' },
+          {
+            label: 'P&L / Income Statement',
+            value:
+              'Build a full P&L with net income, gross margin, and expense breakdown.',
+          },
+          {
+            label: 'Expense analysis',
+            value: 'Show expenses by GL account with COGS vs OPEX breakdown.',
+          },
+          {
+            label: 'Revenue & AR',
+            value: 'Focus on revenue trends, outstanding, and overdue.',
+          },
+          {
+            label: 'Executive CFO dashboard',
+            value:
+              'Build a comprehensive CFO dashboard with P&L, margin, AR, and client data.',
+          },
         ],
       };
     }
@@ -13147,16 +14345,16 @@ export class AgentService {
 		             ${arFilter}
 		             AND issued_at IS NOT NULL
 		           GROUP BY month ORDER BY month ASC LIMIT 18`,
-	          {
-	            tenantId: scope.tenantId,
-	            externalOrgIds: scope.externalOrgIds,
-	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-	            ...(spec.clientFilter
-	              ? { clientName: spec.clientFilter.nameLower }
-	              : {}),
-	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	          },
-	        );
+          {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+            ...(spec.clientFilter
+              ? { clientName: spec.clientFilter.nameLower }
+              : {}),
+            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+          },
+        );
       }
 
       case 'entity_comparison': {
@@ -13179,16 +14377,16 @@ export class AgentService {
 		             ${arFilter}
 		             AND issued_at IS NOT NULL
 		           GROUP BY org_name, org_id, provider ORDER BY total_revenue DESC`,
-	          {
-	            tenantId: scope.tenantId,
-	            externalOrgIds: scope.externalOrgIds,
-	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-	            ...(spec.clientFilter
-	              ? { clientName: spec.clientFilter.nameLower }
-	              : {}),
-	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	          },
-	        );
+          {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+            ...(spec.clientFilter
+              ? { clientName: spec.clientFilter.nameLower }
+              : {}),
+            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+          },
+        );
       }
 
       case 'invoice_breakdown': {
@@ -13208,16 +14406,16 @@ export class AgentService {
 		             ${arFilter}
 		             AND issued_at IS NOT NULL
 		           GROUP BY status ORDER BY status_total DESC LIMIT 15`,
-	          {
-	            tenantId: scope.tenantId,
-	            externalOrgIds: scope.externalOrgIds,
-	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-	            ...(spec.clientFilter
-	              ? { clientName: spec.clientFilter.nameLower }
-	              : {}),
-	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	          },
-	        );
+          {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+            ...(spec.clientFilter
+              ? { clientName: spec.clientFilter.nameLower }
+              : {}),
+            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+          },
+        );
       }
 
       case 'venture_metrics': {
@@ -13233,16 +14431,16 @@ export class AgentService {
 		             ${client}
 		             ${entity}
 		             ${time}`,
-	          {
-	            tenantId: scope.tenantId,
-	            externalOrgIds: scope.externalOrgIds,
-	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-	            ...(spec.clientFilter
-	              ? { clientName: spec.clientFilter.nameLower }
-	              : {}),
-	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	          },
-	        );
+          {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+            ...(spec.clientFilter
+              ? { clientName: spec.clientFilter.nameLower }
+              : {}),
+            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+          },
+        );
         const r = rows[0] ?? {};
         const revenue = this.num(r.total_revenue);
         const outflow = this.num(r.total_outflow);
@@ -13264,9 +14462,9 @@ export class AgentService {
         };
       }
 
-	      case 'financial_summary': {
-	        const rows = await this.queryRows<any>(
-	          `WITH invoices AS (
+      case 'financial_summary': {
+        const rows = await this.queryRows<any>(
+          `WITH invoices AS (
              SELECT
                invoice_external_id,
                toDecimal64(total_amount, 4) AS total_amount,
@@ -13313,16 +14511,16 @@ export class AgentService {
              count(DISTINCT provider) AS provider_count,
              count(DISTINCT org_id) AS entity_count
            FROM per_invoice`,
-	          {
-	            tenantId: scope.tenantId,
-	            externalOrgIds: scope.externalOrgIds,
-	            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-	            ...(spec.clientFilter
-	              ? { clientName: spec.clientFilter.nameLower }
-	              : {}),
-	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	          },
-	        );
+          {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+            ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+            ...(spec.clientFilter
+              ? { clientName: spec.clientFilter.nameLower }
+              : {}),
+            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+          },
+        );
         return rows[0] ?? {};
       }
 
@@ -13345,16 +14543,16 @@ export class AgentService {
 		               ${arFilter}
 		             GROUP BY client_name
 		             ORDER BY revenue DESC LIMIT 20`,
-	            {
-	              tenantId: scope.tenantId,
-	              externalOrgIds: scope.externalOrgIds,
-	              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-	              ...(spec.clientFilter
-	                ? { clientName: spec.clientFilter.nameLower }
-	                : {}),
-	              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	            },
-	          );
+            {
+              tenantId: scope.tenantId,
+              externalOrgIds: scope.externalOrgIds,
+              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+              ...(spec.clientFilter
+                ? { clientName: spec.clientFilter.nameLower }
+                : {}),
+              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+            },
+          );
         }
         return this.queryRows<any>(
           `SELECT
@@ -13370,15 +14568,15 @@ export class AgentService {
 		             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
 		             ${spec.clientFilter ? `AND lowerUTF8(client_name) = {clientName:String}` : ''}
 		           ORDER BY total_revenue DESC LIMIT 20`,
-	          {
-	            tenantId: scope.tenantId,
-	            externalOrgIds: scope.externalOrgIds,
-	            ...(spec.clientFilter
-	              ? { clientName: spec.clientFilter.nameLower }
-	              : {}),
-	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	          },
-	        );
+          {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+            ...(spec.clientFilter
+              ? { clientName: spec.clientFilter.nameLower }
+              : {}),
+            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+          },
+        );
       }
 
       case 'client_financial_profile': {
@@ -13424,16 +14622,16 @@ export class AgentService {
              GROUP BY client_name, org_name, org_id
              HAVING client_name != ''
              ORDER BY total_revenue DESC LIMIT 50`,
-	            {
-	              tenantId: scope.tenantId,
-	              externalOrgIds: scope.externalOrgIds,
-	              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
-	              ...(spec.clientFilter
-	                ? { clientName: spec.clientFilter.nameLower }
-	                : {}),
-	              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	            },
-	          );
+            {
+              tenantId: scope.tenantId,
+              externalOrgIds: scope.externalOrgIds,
+              ...(spec.providerHint ? { provider: spec.providerHint } : {}),
+              ...(spec.clientFilter
+                ? { clientName: spec.clientFilter.nameLower }
+                : {}),
+              ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+            },
+          );
         }
         return this.queryRows<any>(
           `SELECT
@@ -13468,15 +14666,15 @@ export class AgentService {
 		             ${spec.entityFilter ? `AND org_id = {orgId:String}` : ''}
 		             ${spec.clientFilter ? `AND lowerUTF8(client_name) = {clientName:String}` : ''}
 		           ORDER BY total_invoiced DESC LIMIT 50`,
-	          {
-	            tenantId: scope.tenantId,
-	            externalOrgIds: scope.externalOrgIds,
-	            ...(spec.clientFilter
-	              ? { clientName: spec.clientFilter.nameLower }
-	              : {}),
-	            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
-	          },
-	        );
+          {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+            ...(spec.clientFilter
+              ? { clientName: spec.clientFilter.nameLower }
+              : {}),
+            ...(spec.entityFilter ? { orgId: spec.entityFilter.orgId } : {}),
+          },
+        );
       }
 
       default:
@@ -13682,7 +14880,9 @@ Write ONE ClickHouse SELECT query that answers this question. Output SQL only.`;
     });
     if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
     const json = (await res.json()) as any;
-    const raw = (json.message?.content ?? '').replace(/```sql|```/gi, '').trim();
+    const raw = (json.message?.content ?? '')
+      .replace(/```sql|```/gi, '')
+      .trim();
 
     if (!raw) throw new Error('LLM returned empty SQL');
     return this.validateAndScopeDynamicSql(raw, scope);
@@ -13728,16 +14928,22 @@ Output SQL ONLY — no explanation, no markdown.`;
       if (!res.ok) return null;
 
       const json = (await res.json()) as any;
-      const raw = (json.message?.content ?? '').replace(/```sql|```/gi, '').trim();
+      const raw = (json.message?.content ?? '')
+        .replace(/```sql|```/gi, '')
+        .trim();
       if (!raw || !/^\s*SELECT\b/i.test(raw)) return null;
-      if (/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)\b/i.test(raw)) return null;
+      if (/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)\b/i.test(raw))
+        return null;
       if (!/\bLIMIT\s+\d+/i.test(raw)) return null;
-      if (!/{externalOrgIds\s*:\s*Array\s*\(\s*String\s*\)}/i.test(raw)) return null;
+      if (!/{externalOrgIds\s*:\s*Array\s*\(\s*String\s*\)}/i.test(raw))
+        return null;
       if (!/{tenantId\s*:\s*String}/i.test(raw)) return null;
 
       return raw.trim().replace(/;+$/, '').trim();
     } catch (err: any) {
-      this.logger.warn(`[Agent:DynamicMetricSql] LLM call failed: ${err.message}`);
+      this.logger.warn(
+        `[Agent:DynamicMetricSql] LLM call failed: ${err.message}`,
+      );
       return null;
     }
   }
@@ -13747,102 +14953,286 @@ Output SQL ONLY — no explanation, no markdown.`;
    * bypassing the Ollama LLM which is unreliable for structured routing.
    * Covers all 60+ canonical query patterns across 5 dashboard categories.
    */
-  private preRouteQuery(query: string): Array<{ type: string; metric: string; grouping: string; title: string }> | null {
+  private preRouteQuery(
+    query: string,
+  ): Array<{
+    type: string;
+    metric: string;
+    grouping: string;
+    title: string;
+  }> | null {
     const q = query.toLowerCase();
 
     // ── Chart-type signals ───────────────────────────────────────────────────
     const isStackedArea = /stacked.area/.test(q);
-    const isStacked     = /stacked|clustered/.test(q);
-    const isDonut       = /\bdonut\b/.test(q);
-    const isWaterfall   = /\bwaterfall\b/.test(q);
-    const isHBar        = /horizontal.bar|ranked.bar|ranked.horizontal/.test(q);
-    const isTreemap     = /\btreemap\b/.test(q);
-    const isPareto      = /\bpareto\b/.test(q);
-    const isScatter     = /\bscatter\b/.test(q);
-    const isBubble      = /\bbubble\b/.test(q);
-    const isPie         = /\bpie\b/.test(q);
-    const isTable       = /\btable\b|\bmatrix\b|\branked table\b/.test(q);
-    const isLine        = /\bline\b|multi.?line/.test(q);
-    const isBar         = /\bbar\b|\bcolumn\b|\bbargraph\b/.test(q);
+    const isStacked = /stacked|clustered/.test(q);
+    const isDonut = /\bdonut\b/.test(q);
+    const isWaterfall = /\bwaterfall\b/.test(q);
+    const isHBar = /horizontal.bar|ranked.bar|ranked.horizontal/.test(q);
+    const isTreemap = /\btreemap\b/.test(q);
+    const isPareto = /\bpareto\b/.test(q);
+    const isScatter = /\bscatter\b/.test(q);
+    const isBubble = /\bbubble\b/.test(q);
+    const isPie = /\bpie\b/.test(q);
+    const isTable = /\btable\b|\bmatrix\b|\branked table\b/.test(q);
+    const isLine = /\bline\b|multi.?line/.test(q);
+    const isBar = /\bbar\b|\bcolumn\b|\bbargraph\b/.test(q);
 
     // ── Content signals ──────────────────────────────────────────────────────
     // NOTE: keep signals specific — broad patterns here prevent Ollama from
     // handling novel queries. Only catch unambiguous intent.
-    const hasDept       = /\bdepartments?\b|\badmin\s+depart|\boperations\s+depart|\bsales\s+depart|\bby\s+department\b|\bper\s+department\b/.test(q);
-    const hasTime       = /\bmonths?\b|trend|over.time|across.year|each.month|per.month|cumulat|growth/.test(q);
-    const hasVendor     = /\bvendors?\b|\bsuppliers?\b/.test(q);
-    const hasClass      = /\bby\s+class\b|\bclass\s+breakdown\b|\bclass\s+split\b|\bgeneral.*marketing.*product\b|\bexpense\s+class\b/.test(q);
-    const hasRevenueCat = /income.source|revenue.categor|revenue.account|revenue.breakdown|revenue.split|sources.of.revenue|where.*revenue.*com/.test(q);
-    const hasExpense    = /\bexpense\b|\bspend\b/.test(q);
+    const hasDept =
+      /\bdepartments?\b|\badmin\s+depart|\boperations\s+depart|\bsales\s+depart|\bby\s+department\b|\bper\s+department\b/.test(
+        q,
+      );
+    const hasTime =
+      /\bmonths?\b|trend|over.time|across.year|each.month|per.month|cumulat|growth/.test(
+        q,
+      );
+    const hasVendor = /\bvendors?\b|\bsuppliers?\b/.test(q);
+    const hasClass =
+      /\bby\s+class\b|\bclass\s+breakdown\b|\bclass\s+split\b|\bgeneral.*marketing.*product\b|\bexpense\s+class\b/.test(
+        q,
+      );
+    const hasRevenueCat =
+      /income.source|revenue.categor|revenue.account|revenue.breakdown|revenue.split|sources.of.revenue|where.*revenue.*com/.test(
+        q,
+      );
+    const hasExpense = /\bexpense\b|\bspend\b/.test(q);
     const hasAccountType = /account.types?|by.account.type/.test(q);
     const hasDebitCredit = /debits?.*credits?|credits?.*debits?/.test(q);
-    const hasAsset      = /\bassets?\b/.test(q);
-    const hasLiability  = /\bliabilit/.test(q);
-    const hasEquity     = /\bequity\b|\bowner.s.equity\b|\bretained.earnings?\b/.test(q);
+    const hasAsset = /\bassets?\b/.test(q);
+    const hasLiability = /\bliabilit/.test(q);
+    const hasEquity =
+      /\bequity\b|\bowner.s.equity\b|\bretained.earnings?\b/.test(q);
     const hasGrossProfit = /gross.profit/.test(q);
-    const hasNetMargin  = /net.margin|margin.percent/.test(q);
+    const hasNetMargin = /net.margin|margin.percent/.test(q);
     const hasExpenseRatio = /expense.ratio/.test(q);
-    const hasNetPosition = /debit.*minus.*credit|debits.minus.credits|net.position|balance.trend|total.debit.*total.credit/.test(q);
-    const hasPLFlow     = /revenue.*gross.profit|flows.into|revenue.*net.income/.test(q);
-    const hasVsRevenue  = /versus.revenue|vs.revenue|compared.to.revenue|spend.vs.revenue|revenue.generated/.test(q);
-    const hasAccount    = /\bby\s+account\b|\baccount\s+name\b|\bper\s+account\b/.test(q) && !hasAccountType;
-    const hasBalanceSheet = /balance.sheet|financial.position|net.worth/.test(q);
+    const hasNetPosition =
+      /debit.*minus.*credit|debits.minus.credits|net.position|balance.trend|total.debit.*total.credit/.test(
+        q,
+      );
+    const hasPLFlow =
+      /revenue.*gross.profit|flows.into|revenue.*net.income/.test(q);
+    const hasVsRevenue =
+      /versus.revenue|vs.revenue|compared.to.revenue|spend.vs.revenue|revenue.generated/.test(
+        q,
+      );
+    const hasAccount =
+      /\bby\s+account\b|\baccount\s+name\b|\bper\s+account\b/.test(q) &&
+      !hasAccountType;
+    const hasBalanceSheet = /balance.sheet|financial.position|net.worth/.test(
+      q,
+    );
     const hasTotalAssets = /total.assets?|assets?.total/.test(q);
-    const hasTotalLiab   = /total.liabilit|liabilit.total/.test(q);
-    const hasNetIncome   = /\bnet.income\b|\bnet.profit\b|\bbottom.line\b/.test(q);
+    const hasTotalLiab = /total.liabilit|liabilit.total/.test(q);
+    const hasNetIncome = /\bnet.income\b|\bnet.profit\b|\bbottom.line\b/.test(
+      q,
+    );
     const hasTrialBalance = /trial.balance/.test(q);
-    const hasGLDump      = /\bgl.dump\b|\bgeneral.ledger.dump\b|\bgl.entries\b/.test(q);
+    const hasGLDump = /\bgl.dump\b|\bgeneral.ledger.dump\b|\bgl.entries\b/.test(
+      q,
+    );
 
     // ═══════════════════════════════════════════════════════════════════════════
     // WATERFALL — highest priority (explicit chart type)
     // ═══════════════════════════════════════════════════════════════════════════
     if (isWaterfall)
-      return [{ type: 'waterfall', metric: 'pl', grouping: 'summary', title: 'P&L Waterfall — Revenue to Net Income' }];
+      return [
+        {
+          type: 'waterfall',
+          metric: 'pl',
+          grouping: 'summary',
+          title: 'P&L Waterfall — Revenue to Net Income',
+        },
+      ];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TRIAL BALANCE / GL DUMP — direct table queries
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasTrialBalance)
-      return [{ type: 'table', metric: 'trial_balance', grouping: 'summary', title: 'Trial Balance — All Accounts' }];
+      return [
+        {
+          type: 'table',
+          metric: 'trial_balance',
+          grouping: 'summary',
+          title: 'Trial Balance — All Accounts',
+        },
+      ];
     if (hasGLDump)
-      return [{ type: 'table', metric: 'gl_dump', grouping: 'detail', title: 'General Ledger — All Transactions' }];
+      return [
+        {
+          type: 'table',
+          metric: 'gl_dump',
+          grouping: 'detail',
+          title: 'General Ledger — All Transactions',
+        },
+      ];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // BALANCE SHEET queries (total assets / liabilities / equity)
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasBalanceSheet)
       return [
-        { type: isDonut ? 'donut' : 'bar', metric: 'balance_sheet', grouping: 'summary', title: 'Balance Sheet — Assets, Liabilities & Equity' },
+        {
+          type: isDonut ? 'donut' : 'bar',
+          metric: 'balance_sheet',
+          grouping: 'summary',
+          title: 'Balance Sheet — Assets, Liabilities & Equity',
+        },
       ];
     if (hasTotalAssets)
-      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'assets', grouping: 'breakdown', title: 'Asset Breakdown by Account' }];
+      return [
+        {
+          type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar',
+          metric: 'assets',
+          grouping: 'breakdown',
+          title: 'Asset Breakdown by Account',
+        },
+      ];
     if (hasTotalLiab)
-      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'liabilities', grouping: 'breakdown', title: 'Liability Breakdown by Account' }];
+      return [
+        {
+          type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar',
+          metric: 'liabilities',
+          grouping: 'breakdown',
+          title: 'Liability Breakdown by Account',
+        },
+      ];
     if (hasEquity && !hasExpense)
-      return [{ type: isDonut ? 'donut' : 'bar', metric: 'equity', grouping: 'breakdown', title: 'Equity Accounts Breakdown' }];
+      return [
+        {
+          type: isDonut ? 'donut' : 'bar',
+          metric: 'equity',
+          grouping: 'breakdown',
+          title: 'Equity Accounts Breakdown',
+        },
+      ];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // NET INCOME — from trial balance (authoritative)
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasNetIncome && !hasTime)
-      return [{ type: 'metric', metric: 'pl_summary', grouping: 'summary', title: 'P&L KPI Summary — Revenue, Gross Profit, Net Income' }];
+      return [
+        {
+          type: 'metric',
+          metric: 'pl_summary',
+          grouping: 'summary',
+          title: 'P&L KPI Summary — Revenue, Gross Profit, Net Income',
+        },
+      ];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // VENDOR queries
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasVendor) {
-      if (isBubble)    return [{ type: 'bubble',        metric: 'vendor_transactions', grouping: 'vendor',       title: 'Vendors — Spend vs Transactions vs Avg Invoice' }];
-      if (isPareto)    return [{ type: 'pareto',         metric: 'expense',             grouping: 'vendor',       title: 'Pareto — Vendor Spend Concentration' }];
-      if (isTable)     return [{ type: 'table',          metric: 'expense',             grouping: 'vendor',       title: 'Vendor Spend — Ranked Table with % Contribution' }];
-      if (isScatter)   return [{ type: 'scatter',        metric: 'expense',             grouping: 'vendor',       title: 'Vendor Spend vs Transaction Count' }];
-      if (isTreemap)   return [{ type: 'treemap',        metric: 'expense',             grouping: 'vendor',       title: 'Vendor Contribution to Operating Expenses' }];
-      if (isDonut)     return [{ type: 'donut',          metric: 'expense',             grouping: 'vendor',       title: 'Spend Share by Vendor' }];
-      if (isPie)       return [{ type: 'pie',            metric: 'expense',             grouping: 'vendor',       title: 'Spend Share by Vendor' }];
-      if (isStacked && hasTime) return [{ type: 'stacked_bar', metric: 'expense',       grouping: 'vendor_month', title: 'Monthly Vendor Spend — Stacked' }];
-      if (isBar && hasTime)    return [{ type: 'stacked_bar', metric: 'expense',       grouping: 'vendor_month', title: 'Top Vendors — Monthly Spend (Bar)' }];
-      if (hasTime || isLine)   return [{ type: 'line',        metric: 'expense',       grouping: 'vendor_month', title: 'Vendor Spend Trend Over Time' }];
-      if (isHBar)      return [{ type: 'horizontal_bar', metric: 'expense',             grouping: 'vendor',       title: 'Vendor Spend Breakdown — Ranked' }];
-      return           [{ type: 'bar',              metric: 'expense',             grouping: 'vendor',       title: 'Top 10 Vendors by Total Spend' }];
+      if (isBubble)
+        return [
+          {
+            type: 'bubble',
+            metric: 'vendor_transactions',
+            grouping: 'vendor',
+            title: 'Vendors — Spend vs Transactions vs Avg Invoice',
+          },
+        ];
+      if (isPareto)
+        return [
+          {
+            type: 'pareto',
+            metric: 'expense',
+            grouping: 'vendor',
+            title: 'Pareto — Vendor Spend Concentration',
+          },
+        ];
+      if (isTable)
+        return [
+          {
+            type: 'table',
+            metric: 'expense',
+            grouping: 'vendor',
+            title: 'Vendor Spend — Ranked Table with % Contribution',
+          },
+        ];
+      if (isScatter)
+        return [
+          {
+            type: 'scatter',
+            metric: 'expense',
+            grouping: 'vendor',
+            title: 'Vendor Spend vs Transaction Count',
+          },
+        ];
+      if (isTreemap)
+        return [
+          {
+            type: 'treemap',
+            metric: 'expense',
+            grouping: 'vendor',
+            title: 'Vendor Contribution to Operating Expenses',
+          },
+        ];
+      if (isDonut)
+        return [
+          {
+            type: 'donut',
+            metric: 'expense',
+            grouping: 'vendor',
+            title: 'Spend Share by Vendor',
+          },
+        ];
+      if (isPie)
+        return [
+          {
+            type: 'pie',
+            metric: 'expense',
+            grouping: 'vendor',
+            title: 'Spend Share by Vendor',
+          },
+        ];
+      if (isStacked && hasTime)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'expense',
+            grouping: 'vendor_month',
+            title: 'Monthly Vendor Spend — Stacked',
+          },
+        ];
+      if (isBar && hasTime)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'expense',
+            grouping: 'vendor_month',
+            title: 'Top Vendors — Monthly Spend (Bar)',
+          },
+        ];
+      if (hasTime || isLine)
+        return [
+          {
+            type: 'line',
+            metric: 'expense',
+            grouping: 'vendor_month',
+            title: 'Vendor Spend Trend Over Time',
+          },
+        ];
+      if (isHBar)
+        return [
+          {
+            type: 'horizontal_bar',
+            metric: 'expense',
+            grouping: 'vendor',
+            title: 'Vendor Spend Breakdown — Ranked',
+          },
+        ];
+      return [
+        {
+          type: 'bar',
+          metric: 'expense',
+          grouping: 'vendor',
+          title: 'Top 10 Vendors by Total Spend',
+        },
+      ];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -13851,62 +15241,304 @@ Output SQL ONLY — no explanation, no markdown.`;
     if (hasDept) {
       // "scatter of expense vs revenue" → let LLM generate proper x=expense, y=revenue SQL
       if (isScatter && hasVsRevenue) return null;
-      if (isScatter)   return [{ type: 'scatter',        metric: 'expense',             grouping: 'dept_stats',       title: 'Departments — Spend vs Vendors vs Transactions' }];
-      if (hasVsRevenue)return [{ type: 'stacked_bar',    metric: 'revenue_vs_expense',  grouping: 'department',       title: 'Department Spend vs Revenue Generated' }];
-      if (isStackedArea) return [{ type: 'area',         metric: 'expense',             grouping: 'month_department', title: 'Cumulative Departmental Spend Across the Year' }];
-      if ((isStacked || isBar) && hasTime) return [{ type: 'stacked_bar', metric: 'expense', grouping: 'month_department', title: 'Monthly Spend by Department — Stacked' }];
-      if ((isLine || hasTime) && !isStacked && !isBar) return [{ type: 'line', metric: 'expense', grouping: 'month_department', title: 'Monthly Spend Trends — Admin, Operations, Sales' }];
-      if (isStacked)   return [{ type: 'stacked_bar',    metric: 'expense',             grouping: 'month_department', title: 'Monthly Department Spend vs Company Total' }];
-      if (isDonut)     return [{ type: 'donut',          metric: 'expense',             grouping: 'department',       title: 'Spend Contribution by Department' }];
-      if (isPie)       return [{ type: 'pie',            metric: 'expense',             grouping: 'department',       title: 'Department Share of Annual Operating Spend' }];
-      if (hasClass)    return [{ type: 'stacked_bar',    metric: 'expense',             grouping: 'dept_class',       title: 'Department Spend by Class' }];
-      if (isHBar)      return [{ type: 'horizontal_bar', metric: 'expense',             grouping: 'department',       title: 'Top Departments by Operating Cost' }];
-      return           [{ type: 'bar',              metric: 'expense',             grouping: 'department',       title: 'Monthly Spend Across All Departments' }];
+      if (isScatter)
+        return [
+          {
+            type: 'scatter',
+            metric: 'expense',
+            grouping: 'dept_stats',
+            title: 'Departments — Spend vs Vendors vs Transactions',
+          },
+        ];
+      if (hasVsRevenue)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'revenue_vs_expense',
+            grouping: 'department',
+            title: 'Department Spend vs Revenue Generated',
+          },
+        ];
+      if (isStackedArea)
+        return [
+          {
+            type: 'area',
+            metric: 'expense',
+            grouping: 'month_department',
+            title: 'Cumulative Departmental Spend Across the Year',
+          },
+        ];
+      if ((isStacked || isBar) && hasTime)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'expense',
+            grouping: 'month_department',
+            title: 'Monthly Spend by Department — Stacked',
+          },
+        ];
+      if ((isLine || hasTime) && !isStacked && !isBar)
+        return [
+          {
+            type: 'line',
+            metric: 'expense',
+            grouping: 'month_department',
+            title: 'Monthly Spend Trends — Admin, Operations, Sales',
+          },
+        ];
+      if (isStacked)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'expense',
+            grouping: 'month_department',
+            title: 'Monthly Department Spend vs Company Total',
+          },
+        ];
+      if (isDonut)
+        return [
+          {
+            type: 'donut',
+            metric: 'expense',
+            grouping: 'department',
+            title: 'Spend Contribution by Department',
+          },
+        ];
+      if (isPie)
+        return [
+          {
+            type: 'pie',
+            metric: 'expense',
+            grouping: 'department',
+            title: 'Department Share of Annual Operating Spend',
+          },
+        ];
+      if (hasClass)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'expense',
+            grouping: 'dept_class',
+            title: 'Department Spend by Class',
+          },
+        ];
+      if (isHBar)
+        return [
+          {
+            type: 'horizontal_bar',
+            metric: 'expense',
+            grouping: 'department',
+            title: 'Top Departments by Operating Cost',
+          },
+        ];
+      return [
+        {
+          type: 'bar',
+          metric: 'expense',
+          grouping: 'department',
+          title: 'Monthly Spend Across All Departments',
+        },
+      ];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CLASS queries (General / Marketing / Product)
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasClass) {
-      if (isStacked && hasTime) return [{ type: 'stacked_bar', metric: 'expense', grouping: 'month_class', title: 'Monthly Spend by Expense Class' }];
-      if (hasTime || isLine)    return [{ type: 'line',        metric: 'expense', grouping: 'month_class', title: 'Monthly Spend Trend by Class' }];
-      if (isDonut)  return [{ type: 'donut', metric: 'expense', grouping: 'class', title: 'Spend Distribution by Class' }];
-      if (isPie)    return [{ type: 'pie',   metric: 'expense', grouping: 'class', title: 'Proportion of General, Marketing, Product Expenses' }];
-      return        [{ type: 'bar',          metric: 'expense', grouping: 'class', title: 'Total Spend by Class' }];
+      if (isStacked && hasTime)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'expense',
+            grouping: 'month_class',
+            title: 'Monthly Spend by Expense Class',
+          },
+        ];
+      if (hasTime || isLine)
+        return [
+          {
+            type: 'line',
+            metric: 'expense',
+            grouping: 'month_class',
+            title: 'Monthly Spend Trend by Class',
+          },
+        ];
+      if (isDonut)
+        return [
+          {
+            type: 'donut',
+            metric: 'expense',
+            grouping: 'class',
+            title: 'Spend Distribution by Class',
+          },
+        ];
+      if (isPie)
+        return [
+          {
+            type: 'pie',
+            metric: 'expense',
+            grouping: 'class',
+            title: 'Proportion of General, Marketing, Product Expenses',
+          },
+        ];
+      return [
+        {
+          type: 'bar',
+          metric: 'expense',
+          grouping: 'class',
+          title: 'Total Spend by Class',
+        },
+      ];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // REVENUE / INCOME queries
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasRevenueCat)
-      return [{ type: isHBar ? 'horizontal_bar' : 'bar', metric: 'revenue', grouping: 'account', title: 'Income Sources by Revenue Category' }];
+      return [
+        {
+          type: isHBar ? 'horizontal_bar' : 'bar',
+          metric: 'revenue',
+          grouping: 'account',
+          title: 'Income Sources by Revenue Category',
+        },
+      ];
 
-    if (hasGrossProfit) return [{ type: 'line', metric: 'gross_profit', grouping: 'month', title: 'Monthly Gross Profit Trend' }];
-    if (hasNetMargin)   return [{ type: 'line', metric: 'net_margin',   grouping: 'month', title: 'Monthly Net Margin %' }];
-    if (hasExpenseRatio)return [{ type: 'line', metric: 'expense_ratio', grouping: 'month', title: 'Expense Ratio % Across the Year' }];
-    if (hasNetPosition) return [{ type: 'line', metric: 'net_position', grouping: 'month', title: 'Monthly Balance — Debits Minus Credits' }];
+    if (hasGrossProfit)
+      return [
+        {
+          type: 'line',
+          metric: 'gross_profit',
+          grouping: 'month',
+          title: 'Monthly Gross Profit Trend',
+        },
+      ];
+    if (hasNetMargin)
+      return [
+        {
+          type: 'line',
+          metric: 'net_margin',
+          grouping: 'month',
+          title: 'Monthly Net Margin %',
+        },
+      ];
+    if (hasExpenseRatio)
+      return [
+        {
+          type: 'line',
+          metric: 'expense_ratio',
+          grouping: 'month',
+          title: 'Expense Ratio % Across the Year',
+        },
+      ];
+    if (hasNetPosition)
+      return [
+        {
+          type: 'line',
+          metric: 'net_position',
+          grouping: 'month',
+          title: 'Monthly Balance — Debits Minus Credits',
+        },
+      ];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ASSET / LIABILITY queries (Balance Sheet) — from sample_trial_balance
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasAsset && !hasExpense)
-      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'assets', grouping: 'breakdown', title: 'Asset Breakdown — Bank, AR, Fixed Assets' }];
+      return [
+        {
+          type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar',
+          metric: 'assets',
+          grouping: 'breakdown',
+          title: 'Asset Breakdown — Bank, AR, Fixed Assets',
+        },
+      ];
 
     if (hasLiability)
-      return [{ type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar', metric: 'liabilities', grouping: 'breakdown', title: 'Liability Breakdown — AP, Current & Long-Term' }];
+      return [
+        {
+          type: isDonut ? 'donut' : isHBar ? 'horizontal_bar' : 'bar',
+          metric: 'liabilities',
+          grouping: 'breakdown',
+          title: 'Liability Breakdown — AP, Current & Long-Term',
+        },
+      ];
 
     // ═══════════════════════════════════════════════════════════════════════════
     // DEBIT / CREDIT / ACCOUNT TYPE queries
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasDebitCredit || hasAccountType) {
-      if (isTreemap)   return [{ type: 'treemap',     metric: 'accounts',       grouping: 'account_type', title: 'Account Type Contribution to Total Balance' }];
-      if (isScatter)   return [{ type: 'scatter',     metric: 'debits_credits', grouping: 'account',      title: 'Account Activity — Debit vs Credit' }];
-      if (isStacked)   return [{ type: 'stacked_bar', metric: 'debits_credits', grouping: 'month',        title: 'Monthly Debits and Credits by Account Type' }];
-      if (isPie)       return [{ type: 'pie',         metric: 'debits_credits', grouping: 'account_type', title: 'Total Balance by Account Type' }];
-      if (isDonut)     return [{ type: 'donut',       metric: 'debits_credits', grouping: 'account_type', title: 'Balance by Account Type' }];
-      if (/top.*debit|debit.*top|debit.balanc/.test(q))  return [{ type: 'bar', metric: 'debits',  grouping: 'account_type', title: 'Top Account Types by Debit Balance' }];
-      if (/top.*credit|credit.*top|credit.balanc/.test(q)) return [{ type: 'bar', metric: 'credits', grouping: 'account_type', title: 'Top Account Types by Credit Balance' }];
-      return [{ type: 'bar', metric: 'debits_credits', grouping: 'account_type', title: 'Debit vs Credit Amounts by Account Type' }];
+      if (isTreemap)
+        return [
+          {
+            type: 'treemap',
+            metric: 'accounts',
+            grouping: 'account_type',
+            title: 'Account Type Contribution to Total Balance',
+          },
+        ];
+      if (isScatter)
+        return [
+          {
+            type: 'scatter',
+            metric: 'debits_credits',
+            grouping: 'account',
+            title: 'Account Activity — Debit vs Credit',
+          },
+        ];
+      if (isStacked)
+        return [
+          {
+            type: 'stacked_bar',
+            metric: 'debits_credits',
+            grouping: 'month',
+            title: 'Monthly Debits and Credits by Account Type',
+          },
+        ];
+      if (isPie)
+        return [
+          {
+            type: 'pie',
+            metric: 'debits_credits',
+            grouping: 'account_type',
+            title: 'Total Balance by Account Type',
+          },
+        ];
+      if (isDonut)
+        return [
+          {
+            type: 'donut',
+            metric: 'debits_credits',
+            grouping: 'account_type',
+            title: 'Balance by Account Type',
+          },
+        ];
+      if (/top.*debit|debit.*top|debit.balanc/.test(q))
+        return [
+          {
+            type: 'bar',
+            metric: 'debits',
+            grouping: 'account_type',
+            title: 'Top Account Types by Debit Balance',
+          },
+        ];
+      if (/top.*credit|credit.*top|credit.balanc/.test(q))
+        return [
+          {
+            type: 'bar',
+            metric: 'credits',
+            grouping: 'account_type',
+            title: 'Top Account Types by Credit Balance',
+          },
+        ];
+      return [
+        {
+          type: 'bar',
+          metric: 'debits_credits',
+          grouping: 'account_type',
+          title: 'Debit vs Credit Amounts by Account Type',
+        },
+      ];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -13914,16 +15546,44 @@ Output SQL ONLY — no explanation, no markdown.`;
     // (chart type or grouping is stated). Generic "show expenses" goes to Ollama.
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasPLFlow)
-      return [{ type: 'waterfall', metric: 'pl', grouping: 'summary', title: 'P&L Waterfall — Revenue to Net Income' }];
+      return [
+        {
+          type: 'waterfall',
+          metric: 'pl',
+          grouping: 'summary',
+          title: 'P&L Waterfall — Revenue to Net Income',
+        },
+      ];
 
     if (hasExpense && hasAccount)
-      return [{ type: isHBar ? 'horizontal_bar' : 'bar', metric: 'expense', grouping: 'account', title: 'Expense Amount by Account Name' }];
+      return [
+        {
+          type: isHBar ? 'horizontal_bar' : 'bar',
+          metric: 'expense',
+          grouping: 'account',
+          title: 'Expense Amount by Account Name',
+        },
+      ];
 
     if (hasExpense && isTreemap)
-      return [{ type: 'treemap', metric: 'expense', grouping: 'account', title: 'Expense Contribution by Account Category' }];
+      return [
+        {
+          type: 'treemap',
+          metric: 'expense',
+          grouping: 'account',
+          title: 'Expense Contribution by Account Category',
+        },
+      ];
 
     if (hasExpense && isHBar)
-      return [{ type: 'horizontal_bar', metric: 'expense', grouping: 'account', title: 'Expense Amount by Account Name — Ranked' }];
+      return [
+        {
+          type: 'horizontal_bar',
+          metric: 'expense',
+          grouping: 'account',
+          title: 'Expense Amount by Account Name — Ranked',
+        },
+      ];
 
     // Fall through to Ollama for everything else (novel queries, client questions,
     // invoice analysis, multi-entity comparisons, free-form questions, etc.)
@@ -13962,15 +15622,18 @@ Output SQL ONLY — no explanation, no markdown.`;
     // function argument (e.g. NULLIF(department, '')) to avoid double-wrapping.
     fixed = fixed.replace(
       /ORDER\s+BY\s+(.*?)(?<!\()department\b(?!\s*\()/gi,
-      (match, prefix) => `ORDER BY ${prefix}COALESCE(NULLIF(department,''),'Other')`,
+      (match, prefix) =>
+        `ORDER BY ${prefix}COALESCE(NULLIF(department,''),'Other')`,
     );
     fixed = fixed.replace(
       /ORDER\s+BY\s+(.*?)(?<!\()vendor_name\b(?!\s*\()/gi,
-      (match, prefix) => `ORDER BY ${prefix}COALESCE(NULLIF(vendor_name,''),'Other')`,
+      (match, prefix) =>
+        `ORDER BY ${prefix}COALESCE(NULLIF(vendor_name,''),'Other')`,
     );
     fixed = fixed.replace(
       /ORDER\s+BY\s+(.*?)(?<!\()class_name\b(?!\s*\()/gi,
-      (match, prefix) => `ORDER BY ${prefix}COALESCE(NULLIF(class_name,''),'Other')`,
+      (match, prefix) =>
+        `ORDER BY ${prefix}COALESCE(NULLIF(class_name,''),'Other')`,
     );
 
     // ── 2b. Fix invalid quarter formatting ───────────────────────────────────────────────────
@@ -14067,7 +15730,11 @@ Output SQL ONLY — no explanation, no markdown.`;
       // Primary attempt
       if (usesNow && shouldAnchor && asOfIso) {
         const rewritten = rewriteRelativeNowToAsOf(normalized);
-        const anchored = this.validateAndScopeDynamicSql(rewritten, scope, opts);
+        const anchored = this.validateAndScopeDynamicSql(
+          rewritten,
+          scope,
+          opts,
+        );
         const rows = await tryQuery(anchored, asOfIso);
         if (rows.length > 0) return { rows, error: null };
         // If anchored returns empty, fall through to original (may be intended "now").
@@ -14079,7 +15746,11 @@ Output SQL ONLY — no explanation, no markdown.`;
       // Retry: if time-relative SQL returned empty, try anchoring to dataset max date.
       if (usesNow && asOfIso) {
         const rewritten = rewriteRelativeNowToAsOf(normalized);
-        const anchored = this.validateAndScopeDynamicSql(rewritten, scope, opts);
+        const anchored = this.validateAndScopeDynamicSql(
+          rewritten,
+          scope,
+          opts,
+        );
         const rows = await tryQuery(anchored, asOfIso);
         return { rows, error: null };
       }
@@ -14167,14 +15838,22 @@ Output SQL ONLY — no explanation, no markdown.`;
         return n === 'admin' || n === 'operations' || n === 'sales';
       });
       if (deptRows.length >= 2) {
-        const ops = deptRows.find((r) => String((r as any).name ?? '').toLowerCase() === 'operations');
-        const admin = deptRows.find((r) => String((r as any).name ?? '').toLowerCase() === 'admin');
+        const ops = deptRows.find(
+          (r) => String((r as any).name ?? '').toLowerCase() === 'operations',
+        );
+        const admin = deptRows.find(
+          (r) => String((r as any).name ?? '').toLowerCase() === 'admin',
+        );
         if (ops && admin) {
           const opsVal = Number((ops as any).value ?? 0);
           const adminVal = Number((admin as any).value ?? 0);
           if (opsVal > 0 && adminVal > opsVal * 5) {
             return (
-              'Department spend values are wrong — Operations ($' + opsVal.toFixed(0) + ') is much less than Admin ($' + adminVal.toFixed(0) + '). ' +
+              'Department spend values are wrong — Operations ($' +
+              opsVal.toFixed(0) +
+              ') is much less than Admin ($' +
+              adminVal.toFixed(0) +
+              '). ' +
               'Your SQL filtered by account_type="Expense" which excludes COGS from Operations. ' +
               'REMOVE the account_type filter. Use: SELECT COALESCE(NULLIF(department,""),"Other") AS name, ' +
               'round(sum(toFloat64(debit)),0) AS value FROM analytics.sample_gl_dump ' +
@@ -14272,7 +15951,9 @@ Output SQL ONLY — no explanation, no markdown.`;
       const rows = await this.queryRows<T>(buildSql(jTime), params);
       if (rows.length > 0) return rows;
       // Time-filtered query returned nothing — data may be historical. Retry without time filter.
-      this.logger.debug('[GL] time-filtered query empty — retrying without date range');
+      this.logger.debug(
+        '[GL] time-filtered query empty — retrying without date range',
+      );
     }
     return this.queryRows<T>(buildSql(''), params);
   }
@@ -14287,8 +15968,10 @@ Output SQL ONLY — no explanation, no markdown.`;
     const col = column;
     const isIsoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-    if (range.kind === 'MTD') return `AND ${col} >= toStartOfMonth(${asOfExpr})`;
-    if (range.kind === 'QTD') return `AND ${col} >= toStartOfQuarter(${asOfExpr})`;
+    if (range.kind === 'MTD')
+      return `AND ${col} >= toStartOfMonth(${asOfExpr})`;
+    if (range.kind === 'QTD')
+      return `AND ${col} >= toStartOfQuarter(${asOfExpr})`;
     if (range.kind === 'YTD') return `AND ${col} >= toStartOfYear(${asOfExpr})`;
 
     if (range.kind === 'SINCE_DATE' && isIsoDate(range.start)) {

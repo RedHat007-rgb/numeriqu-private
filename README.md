@@ -24,9 +24,10 @@ Org-first finance analytics + AI workspace.
 3. Choose your LLM path:
    - Ollama: keep `LLM_PROVIDER=ollama`
    - OpenAI: set `LLM_PROVIDER=openai`, set `OPENAI_API_KEY`, and run the backend normally
+   - Gemini: set `LLM_PROVIDER=gemini`, set `GEMINI_API_KEY`, and run the backend normally
 4. `pnpm dev`
 
-The app still speaks Ollama-shaped requests internally, but OpenAI mode is translated directly at the backend fetch boundary, so Ollama stays untouched.
+The app still speaks Ollama-shaped requests internally, but OpenAI and Gemini modes are translated directly at the backend fetch boundary, so Ollama stays untouched.
 
 ## Local URLs
 

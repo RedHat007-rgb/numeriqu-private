@@ -14,6 +14,7 @@ import {
   validateDynamicSql,
 } from './dynamic-sql';
 import {
+  getLlmProviderLabel,
   resolveLlmRuntimeConfig,
   type LlmProvider,
 } from '../../common/llm/llm-config';
@@ -1901,8 +1902,7 @@ export class AgentService {
       /* offline */
     }
 
-    const backendLabel =
-      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
+    const backendLabel = getLlmProviderLabel(this.llmProvider);
 
     return {
       status: ollamaOnline ? 'operational' : 'degraded',

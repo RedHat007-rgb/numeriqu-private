@@ -5,6 +5,7 @@ import { AgentToolsService } from './agent-tools.service';
 import { classifyIntent, buildMessages } from './prompt-builder';
 import type { FinancialProfile } from './financial-data.service';
 import {
+  getLlmProviderLabel,
   resolveLlmRuntimeConfig,
   type LlmProvider,
 } from '../common/llm/llm-config';
@@ -300,8 +301,7 @@ export class IntelligenceService {
     } catch {
       ollamaStatus = false;
     }
-    const backendLabel =
-      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
+    const backendLabel = getLlmProviderLabel(this.llmProvider);
 
     return {
       status: 'ok',

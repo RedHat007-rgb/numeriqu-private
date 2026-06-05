@@ -6,6 +6,7 @@ import {
 } from '../../database/database.module';
 import type { ClickHouseClient } from '@clickhouse/client';
 import {
+  getLlmProviderLabel,
   resolveLlmRuntimeConfig,
   type LlmProvider,
 } from '../../common/llm/llm-config';
@@ -1075,8 +1076,7 @@ export class RagService {
       /* offline */
     }
 
-    const backendLabel =
-      this.llmProvider === 'openai' ? 'OpenAI' : 'Ollama';
+    const backendLabel = getLlmProviderLabel(this.llmProvider);
 
     return {
       status: ollamaOnline ? 'operational' : 'degraded',

@@ -20,6 +20,7 @@ import { SupabaseAuthGuard } from '../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
 import { UserProvisioningService } from '../common/services/user-provisioning.service';
+import { getLlmProviderLabel } from '../common/llm/llm-config';
 
 @Controller('ai')
 export class IntelligenceController {
@@ -175,7 +176,7 @@ export class IntelligenceController {
   @Get('health')
   async healthCheck() {
     const health = await this.intelligence.healthCheck();
-    const backendLabel = health.provider === 'openai' ? 'OpenAI' : 'Ollama';
+    const backendLabel = getLlmProviderLabel(health.provider);
     return {
       ...health,
       status: health.ollama ? 'operational' : 'degraded',

@@ -20,6 +20,7 @@ import { CurrentUser } from '../common/decorators/user.decorator';
 import type { AuthUser } from '../common/decorators/user.decorator';
 import { OrganizationContextService } from '../modules/org-context/org-context.service';
 import { PersistenceService } from '../common/services/persistence.service';
+import { getLlmProviderLabel } from '../common/llm/llm-config';
 
 @Controller('agent')
 export class AgentController {
@@ -165,7 +166,7 @@ export class AgentController {
   @Get('health')
   async healthCheck() {
     const health = await this.agentService.healthCheck();
-    const backendLabel = health.provider === 'openai' ? 'OpenAI' : 'Ollama';
+    const backendLabel = getLlmProviderLabel(health.provider);
     return {
       ...health,
       status: health.ollama ? 'operational' : 'degraded',

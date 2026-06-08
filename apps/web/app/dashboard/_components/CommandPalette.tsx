@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, LayoutDashboard, LineChart, Bot, BookOpen, PlugZap, Users, Shield, MessageSquare } from "lucide-react";
+import { Search, LayoutDashboard, LineChart, Bot, BookOpen, PlugZap, Users, Shield } from "lucide-react";
 import { cn } from "../../../components/ui/cn";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 
@@ -85,7 +85,7 @@ export function CommandPalette({
         : agent.getMetrics("invoices", "list").then((r) => (r.data ?? []) as any[]).then((rows) => rows as InvoiceRow[]),
       entities
         ? Promise.resolve(entities)
-        : agent.getMetrics("revenue", "org").then((r) => (r.data ?? []) as any[]).then((rows) => rows as EntityRow[]),
+        : agent.getMetrics("expense", "vendor").then((r) => (r.data ?? []) as any[]).then((rows) => rows as EntityRow[]),
       dashList
         ? Promise.resolve(dashList)
         : dashboards.list().then((rows) =>
@@ -114,7 +114,6 @@ export function CommandPalette({
       { href: "/dashboard/rag", label: "Prism", detail: "Evidence-first answers, cited", icon: BookOpen },
       { href: "/dashboard/agent", label: "Astra", detail: "Turn questions into dashboards", icon: Bot },
       { href: "/dashboard/integrations", label: "Integrations", detail: "Connect systems and sync", icon: PlugZap },
-      { href: "/dashboard/messages", label: "Messages", detail: "Decisions, captured in context", icon: MessageSquare },
       { href: "/dashboard/team", label: "Team", detail: "Members, roles, access", icon: Users },
       { href: "/dashboard/settings", label: "Settings", detail: "Workspace and security", icon: Shield },
     ];
@@ -188,7 +187,7 @@ export function CommandPalette({
           icon: Users,
           onSelect: () => {
             onOpenChange(false);
-            router.push(`/dashboard/rag?q=${encodeURIComponent(`Summarize ${String(e.name ?? "")} revenue and overdue exposure.`)}`);
+            router.push(`/dashboard/rag?q=${encodeURIComponent(`Summarize ${String(e.name ?? "")} spend and overdue exposure.`)}`);
           },
         });
       }

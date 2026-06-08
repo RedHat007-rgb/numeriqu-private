@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { MailCheck, ShieldCheck, Timer, Workflow } from "lucide-react";
 import { toast } from "sonner";
+import { Logo } from "../../components/landing/logo";
+import { useNumeriquApi } from "../../lib/useNumeriquApi";
 import { getApiBaseURL } from "../../lib/api/base";
 import { Surface } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
@@ -80,6 +82,7 @@ function OtpBoxes({
 }
 
 export default function LoginPage() {
+  const { isAuthenticated, loading: sessionLoading } = useNumeriquApi();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -89,6 +92,12 @@ export default function LoginPage() {
   const router = useRouter();
 
   const isDemo = DEMO_EMAIL_RE.test(email.trim().toLowerCase());
+
+  useEffect(() => {
+    if (!sessionLoading && isAuthenticated) {
+      router.replace("/dashboard");
+    }
+  }, [isAuthenticated, router, sessionLoading]);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -219,8 +228,8 @@ export default function LoginPage() {
       <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
 
       <div className="relative mx-auto flex max-w-6xl items-center justify-between pb-10">
-        <Link href="/" className="font-serif text-xl font-semibold tracking-tight text-text-primary">
-          NumeriQ
+        <Link href="/" aria-label="NumeriQ home" className="inline-flex items-center">
+          <Logo className="h-10 w-auto" />
         </Link>
       </div>
 
@@ -350,7 +359,7 @@ export default function LoginPage() {
           )}
 
           <div className="border-t border-default pt-5 text-center text-sm text-text-muted">
-            New to NumeriQ?{" "}
+            New here?{" "}
             <Link href="/signup" className="font-medium text-accent-blue hover:underline">
               Create account
             </Link>

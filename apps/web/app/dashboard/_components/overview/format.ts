@@ -1,16 +1,3 @@
-const currencyCompact = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
-
-const currencyFull = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-});
-
 const numberCompact = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
@@ -23,11 +10,28 @@ const percentFormat = new Intl.NumberFormat("en-US", {
 });
 
 export function formatMoney(value: number | null | undefined) {
-  return currencyCompact.format(value ?? 0);
+  return formatMoneyWithCurrency(value, "USD");
 }
 
 export function formatMoneyFull(value: number | null | undefined) {
-  return currencyFull.format(value ?? 0);
+  return formatMoneyWithCurrencyFull(value, "USD");
+}
+
+export function formatMoneyWithCurrency(value: number | null | undefined, currency: string) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency || "USD",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value ?? 0);
+}
+
+export function formatMoneyWithCurrencyFull(value: number | null | undefined, currency: string) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency || "USD",
+    maximumFractionDigits: 0,
+  }).format(value ?? 0);
 }
 
 export function formatNumber(value: number | null | undefined) {

@@ -51,7 +51,7 @@ export function Trust() {
               <p className="mt-6 max-w-md text-[16px] leading-relaxed text-muted-foreground">
                 CFOs don&apos;t buy a product because of a logo on a security
                 page. They buy it because every interaction feels considered.
-                NumeriQ was built that way from the first commit.
+                Numeriqu was built that way from the first commit.
               </p>
             </Reveal>
             <Reveal delay={220}>

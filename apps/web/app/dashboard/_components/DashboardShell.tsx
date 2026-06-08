@@ -9,8 +9,8 @@ import {
   LineChart,
   Bot,
   Search,
-  PlugZap,
   MessageSquare,
+  PlugZap,
   Users,
   Shield,
   ChevronDown,
@@ -19,49 +19,17 @@ import {
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { cn } from "../../../components/ui/cn";
+import { Logo } from "../../../components/landing/logo";
 import { CommandPalette } from "./CommandPalette";
 import type { WorkspaceSummary } from "../../../lib/api/types";
-
-// ── Power BI Microsoft icon ───────────────────────────────────────────────────
-function PowerBIIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="1" y="11" width="4" height="10" rx="1" fill="#F2C811" />
-      <rect x="7" y="7" width="4" height="14" rx="1" fill="#F2C811" opacity="0.85" />
-      <rect x="13" y="3" width="4" height="18" rx="1" fill="#F2C811" opacity="0.7" />
-      <rect x="19" y="6" width="4" height="15" rx="1" fill="#F2C811" opacity="0.55" />
-    </svg>
-  );
-}
-
-/** Builds the Microsoft OAuth authorize URL for Power BI */
-function buildMicrosoftLoginUrl(): string {
-  const clientId =
-    process.env.NEXT_PUBLIC_AZURE_CLIENT_ID ?? "00000000-0000-0000-0000-000000000000";
-  const redirectUri = encodeURIComponent(
-    (typeof window !== "undefined" ? window.location.origin : "") +
-      "/dashboard/powerbi/callback",
-  );
-  const scope = encodeURIComponent(
-    "https://analysis.windows.net/powerbi/api/.default offline_access openid profile",
-  );
-  return (
-    `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` +
-    `?client_id=${clientId}` +
-    `&response_type=code` +
-    `&redirect_uri=${redirectUri}` +
-    `&scope=${scope}` +
-    `&response_mode=query`
-  );
-}
 
 const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon: any }> = [
   { href: "/dashboard", label: "Overview", description: "What changed, at a glance", icon: LayoutDashboard },
   { href: "/dashboard/dashboards", label: "Dashboards", description: "Saved decision surfaces", icon: LineChart },
   { href: "/dashboard/rag", label: "Prism", description: "Evidence-first answers, cited", icon: Search },
   { href: "/dashboard/agent", label: "Astra", description: "Turn questions into dashboards", icon: Bot },
+  { href: "/dashboard/messages", label: "Messages", description: "Team conversations and direct messages", icon: MessageSquare },
   { href: "/dashboard/integrations", label: "Integrations", description: "Connect systems and sync", icon: PlugZap },
-  { href: "/dashboard/messages", label: "Messages", description: "Decisions, captured in context", icon: MessageSquare },
   { href: "/dashboard/team", label: "Team", description: "Members, roles, access", icon: Users },
   { href: "/dashboard/settings", label: "Settings", description: "Workspace and session", icon: Shield },
 ];
@@ -129,53 +97,6 @@ function NavLink({
   );
 }
 
-/** Like NavLink but fires an onClick instead of navigating — used for Power BI / external OAuth */
-function NavButton({
-  label,
-  description,
-  icon: Icon,
-  collapsed,
-  onClick,
-}: {
-  label: string;
-  description: string;
-  icon: any;
-  collapsed: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
-        collapsed && "justify-center px-2",
-        "text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary",
-      )}
-    >
-      <div
-        className={cn(
-          "flex size-9 items-center justify-center rounded-xl ring-1 transition-colors",
-          "bg-bg-surface ring-default text-text-muted group-hover:text-text-primary",
-        )}
-      >
-        <Icon className="size-4" />
-      </div>
-      {!collapsed ? (
-        <div className="min-w-0 flex-1 text-left">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-semibold">{label}</span>
-            <span className="shrink-0 rounded bg-[#F2C811]/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#c9a800]">
-              Microsoft
-            </span>
-          </div>
-          <p className="mt-0.5 line-clamp-1 text-[11px] text-text-muted">{description}</p>
-        </div>
-      ) : null}
-    </button>
-  );
-}
-
 export function DashboardShell({
   tenantLabel,
   userLabel,
@@ -198,7 +119,7 @@ export function DashboardShell({
   const visibleNavItems =
     accountType === "SOLO"
       ? NAV_ITEMS.filter(
-          (item) => item.href !== "/dashboard/messages" && item.href !== "/dashboard/team",
+          (item) => item.href !== "/dashboard/team",
         )
       : NAV_ITEMS;
 
@@ -283,23 +204,8 @@ export function DashboardShell({
                     <ArrowLeft className="size-4" />
                   </button>
                 ) : null}
-                <div className="flex size-9 items-center justify-center rounded-xl bg-accent-blue/15 ring-1 ring-accent-blue/30"
-                  style={{ background: "linear-gradient(135deg, rgba(0,119,255,0.15), rgba(155,77,255,0.15))" }}>
-                  <svg viewBox="0 0 20 20" fill="none" className="size-5" aria-hidden>
-                    <defs>
-                      <linearGradient id="shell-logo" x1="0" y1="0" x2="20" y2="20" gradientUnits="userSpaceOnUse">
-                        <stop stopColor="#0077FF" /><stop offset="1" stopColor="#9B4DFF" />
-                      </linearGradient>
-                    </defs>
-                    <circle cx="8.5" cy="8.5" r="5.5" stroke="url(#shell-logo)" strokeWidth="1.8" fill="none" />
-                    <line x1="12.4" y1="12.4" x2="16.5" y2="16.5" stroke="url(#shell-logo)" strokeWidth="1.8" strokeLinecap="round" />
-                    <line x1="8.5" y1="5.5" x2="8.5" y2="10" stroke="url(#shell-logo)" strokeWidth="1.5" strokeLinecap="round" opacity="0.65" />
-                  </svg>
-                </div>
+                <Logo className="h-10 w-auto shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-text-muted">
-                    NUMERIQU
-                  </p>
                   <h1 className="truncate text-lg font-bold tracking-tight text-text-primary md:text-xl">
                     {activeItem?.label ?? "Workspace"}
                   </h1>
@@ -450,15 +356,6 @@ export function DashboardShell({
                   {visibleNavItems.map((item) => (
                     <NavLink key={item.href} {...item} collapsed={navCollapsed} />
                   ))}
-                  {/* ── Power BI ──────────────────────────────────────── */}
-                  <div className={cn("pt-1", !navCollapsed && "border-t border-default")} />
-                  <NavButton
-                    label="Power BI"
-                    description="Open your Power BI dashboards"
-                    icon={PowerBIIcon}
-                    collapsed={navCollapsed}
-                    onClick={() => { window.open(buildMicrosoftLoginUrl(), '_blank', 'noopener,noreferrer'); }}
-                  />
                 </nav>
               </aside>
             ) : null}
@@ -515,22 +412,6 @@ export function DashboardShell({
                     <span className="font-semibold">{item.label}</span>
                   </Link>
                 ))}
-                {/* ── Power BI ──────────────────────────────────────── */}
-                <div className="border-t border-default pt-1" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNavDrawerOpen(false);
-                    window.open(buildMicrosoftLoginUrl(), '_blank', 'noopener,noreferrer');
-                  }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary"
-                >
-                  <PowerBIIcon className="size-4" />
-                  <span className="font-semibold">Power BI</span>
-                  <span className="ml-auto shrink-0 rounded bg-[#F2C811]/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-[#c9a800]">
-                    Microsoft
-                  </span>
-                </button>
               </nav>
             </div>
           </div>

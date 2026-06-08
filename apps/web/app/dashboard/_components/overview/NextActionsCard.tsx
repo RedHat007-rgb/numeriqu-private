@@ -3,7 +3,7 @@
 import type { DashboardResponse } from "../../../../lib/api";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { StatusPill } from "../../../../components/ui/StatusPill";
-import { formatMoney, formatRelativeTime } from "./format";
+import { formatMoneyWithCurrency, formatRelativeTime } from "./format";
 
 type Tone = "info" | "warning" | "success" | "danger" | "neutral";
 
@@ -16,7 +16,7 @@ function toneFromType(type: string): Tone {
   return "neutral";
 }
 
-function deriveInsights(kpis: DashboardResponse["kpis"]): DashboardResponse["insights"] {
+function deriveInsights(kpis: DashboardResponse["kpis"], currency: string): DashboardResponse["insights"] {
   const now = new Date().toISOString();
   const openAmount = kpis.openInvoiceAmount ?? kpis.totalExpenses ?? 0;
   const openCount = kpis.openInvoiceCount ?? 0;
@@ -27,7 +27,7 @@ function deriveInsights(kpis: DashboardResponse["kpis"]): DashboardResponse["ins
     generated.push({
       id: "nq:connect-source",
       title: "Connect a finance source to unlock metrics",
-      description: "Once data is synced, this overview will populate revenue, overdue exposure, and entity breakdowns.",
+      description: "Once data is synced, this overview will populate spend, overdue exposure, and invoice status.",
       type: "Info",
       createdAt: now,
     });
@@ -37,7 +37,7 @@ function deriveInsights(kpis: DashboardResponse["kpis"]): DashboardResponse["ins
     generated.push({
       id: "nq:overdue-followup",
       title: "Chase overdue invoices",
-      description: `${formatMoney(kpis.overdueAmount)} is overdue across ${kpis.overdueCount} invoices. Prioritize top clients and set follow-up reminders.`,
+      description: `${formatMoneyWithCurrency(kpis.overdueAmount, currency)} is overdue across ${kpis.overdueCount} invoices. Prioritize the largest balances and set follow-up reminders.`,
       type: "Warning",
       createdAt: now,
     });
@@ -45,7 +45,7 @@ function deriveInsights(kpis: DashboardResponse["kpis"]): DashboardResponse["ins
     generated.push({
       id: "nq:open-invoices",
       title: "Review open invoices",
-      description: `${formatMoney(openAmount)} is currently open across ${openCount || "multiple"} invoices. Confirm due dates and expected collection windows.`,
+      description: `${formatMoneyWithCurrency(openAmount, currency)} is currently open across ${openCount || "multiple"} invoices. Confirm due dates and expected collection windows.`,
       type: "Note",
       createdAt: now,
     });
@@ -55,7 +55,7 @@ function deriveInsights(kpis: DashboardResponse["kpis"]): DashboardResponse["ins
     generated.push({
       id: "nq:entities",
       title: "Finish connecting entities",
-      description: "Connect all business entities to avoid missing revenue or exposure in this overview.",
+      description: "Connect all business entities to avoid missing spend or exposure in this overview.",
       type: "Info",
       createdAt: now,
     });
@@ -67,11 +67,13 @@ function deriveInsights(kpis: DashboardResponse["kpis"]): DashboardResponse["ins
 export function NextActionsCard({
   insights,
   kpis,
+  currency,
 }: {
   insights: DashboardResponse["insights"];
   kpis: DashboardResponse["kpis"];
+  currency: string;
 }) {
-  const computed = insights.length > 0 ? insights : deriveInsights(kpis);
+  const computed = insights.length > 0 ? insights : deriveInsights(kpis, currency);
   const top = computed.slice(0, 5);
 
   return (

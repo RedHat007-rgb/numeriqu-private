@@ -5,22 +5,24 @@ import type { DashboardResponse } from "../../../../lib/api";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { Button } from "../../../../components/ui/Button";
 import { StatusPill } from "../../../../components/ui/StatusPill";
-import { formatMoney, formatNumber } from "./format";
+import { formatMoneyWithCurrency, formatNumber } from "./format";
 
 export function ConnectedEntitiesCard({
   orgs,
+  currency,
 }: {
   orgs: DashboardResponse["connectedOrgs"];
+  currency: string;
 }) {
   return (
     <div className="surface-card p-6">
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">
-            Connected entities
+            Connected providers
           </p>
           <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
-            Sources currently feeding the workspace
+            Sources currently feeding spend and invoices
           </h2>
         </div>
         <Link href="/dashboard/integrations">
@@ -59,7 +61,7 @@ export function ConnectedEntitiesCard({
                 </div>
                 <div className="mt-4 flex items-center justify-between text-sm">
                   <span className="text-text-muted">{formatNumber(org.invoiceCount)} invoices</span>
-                  <span className="font-mono text-accent-cyan">{formatMoney(org.totalRevenue)}</span>
+                  <span className="font-mono text-accent-cyan">{formatMoneyWithCurrency(org.totalRevenue, currency)}</span>
                 </div>
               </li>
             ))}

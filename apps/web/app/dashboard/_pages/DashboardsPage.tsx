@@ -29,6 +29,7 @@ import {
   Cell,
   LineChart,
   Line,
+  Treemap,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -125,6 +126,8 @@ function prettyChartType(type: string): string {
   if (t === "line") return "Line chart";
   if (t === "pie") return "Pie chart";
   if (t === "area") return "Area chart";
+  if (t === "heatmap") return "Heatmap";
+  if (t === "matrix") return "Matrix";
   if (t === "metric") return "Metric";
   if (t === "table") return "Table";
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : "Chart";
@@ -287,6 +290,57 @@ function ChartRenderer({
   }
 
   if (type === "line") {
+    const seriesKeys = inferNumericSeriesKeys(data);
+    const hasValueSeries = hasFiniteValueKey(data, "value");
+    const isMultiSeries = !hasValueSeries && seriesKeys.length > 0;
+
+    if (isMultiSeries) {
+      return (
+        <div style={{ height: h }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+              <CartesianGrid {...GRID} />
+              <XAxis
+                dataKey="name"
+                tick={TICK}
+                tickLine={false}
+                axisLine={false}
+                minTickGap={14}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                tick={TICK}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v: number) =>
+                  formatValue(metric, grouping, Number(v) || 0)
+                }
+                width={56}
+                tickMargin={8}
+              />
+              <Tooltip content={<CustomTooltip metric={metric} grouping={grouping} />} />
+              <Legend
+                verticalAlign="top"
+                height={24}
+                wrapperStyle={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
+              />
+              {seriesKeys.slice(0, 6).map((key, idx) => (
+                <Line
+                  key={key}
+                  type="monotone"
+                  dataKey={key}
+                  name={key.replace(/_/g, " ")}
+                  stroke={PIE_COLORS[idx % PIE_COLORS.length]}
+                  strokeWidth={2}
+                  dot={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
     return (
       <div style={{ height: h }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -533,6 +587,194 @@ function ChartRenderer({
     );
   }
 
+  if (type === "treemap") {
+    const seriesKeys = inferNumericSeriesKeys(data);
+    const hasValueSeries = hasFiniteValueKey(data, "value");
+    const nodes = !hasValueSeries && seriesKeys.length > 1
+      ? data.flatMap((d) =>
+          seriesKeys.map((key) => ({
+            name: `${String((d as any).name ?? "")} / ${key.replace(/_/g, " ")}`,
+            size: Number((d as any)[key]) || 0,
+          })),
+        )
+      : data.map((d) => ({
+          name: String((d as any).name ?? ""),
+          size: Number((d as any).value) || 0,
+        }))
+          .filter((n) => n.name && Number.isFinite(n.size) && n.size > 0)
+          .slice(0, 40);
+
+    const TreemapCell = ({ x, y, width, height, name, size, index }: any) => {
+      const color = PIE_COLORS[index % PIE_COLORS.length];
+      const showLabel = width > 60 && height > 30;
+      return (
+        <g>
+          <rect x={x} y={y} width={width} height={height} fill={color} stroke="rgb(var(--color-bg-card))" strokeWidth={2} rx={4} />
+          {showLabel && (
+            <>
+              <text x={x + width / 2} y={y + height / 2 - 6} textAnchor="middle" dominantBaseline="central"
+                fill="white" fontSize={Math.min(12, width / 8)} fontWeight={700} style={{ pointerEvents: "none" }}>
+                {String(name ?? "").length > 14 ? String(name).slice(0, 13) + "…" : name}
+              </text>
+              <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="central"
+                fill="rgba(255,255,255,0.85)" fontSize={Math.min(10, width / 9)} style={{ pointerEvents: "none" }}>
+                {fmtCurrency(size)}
+              </text>
+            </>
+          )}
+        </g>
+      );
+    };
+
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <Treemap
+            data={nodes}
+            dataKey="size"
+            nameKey="name"
+            stroke="rgb(var(--color-bg-card))"
+            fill="rgb(var(--color-accent-violet))"
+            aspectRatio={4 / 3}
+            content={<TreemapCell />}
+          />
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  if (type === "heatmap" || type === "matrix") {
+    const rows = data.filter(Boolean);
+    const colKeys = inferNumericSeriesKeys(rows).filter((k) => k !== "total");
+    const rowAxis = String(grouping ?? "").split("_")[0] || "row";
+    const prettyAxis = (value: string) =>
+      value
+        .split("_")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+    const axisLabel = (axis: string) => prettyAxis(axis || "Name");
+    const amount = (value: number) =>
+      new Intl.NumberFormat("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(value);
+    const lerp = (from: number, to: number, t: number) =>
+      Math.round(from + (to - from) * Math.max(0, Math.min(1, t)));
+    const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
+    const maxVal = Math.max(
+      ...rows.flatMap((row) => colKeys.map((key) => Math.abs(Number((row as any)[key]) || 0))),
+      1,
+    );
+    const cellTheme = (value: number) => {
+      const intensity = Math.min(1, Math.abs(value) / maxVal);
+      if (intensity >= 0.5) {
+        const t = (intensity - 0.5) / 0.5;
+        const r = lerp(245, 22, t);
+        const g = lerp(158, 163, t);
+        const b = lerp(11, 74, t);
+        const fg = intensity >= 0.8 ? "#ffffff" : "#111827";
+        return { bg: rgb(r, g, b), fg };
+      }
+      const t = intensity / 0.5;
+      const r = lerp(248, 245, t);
+      const g = lerp(113, 158, t);
+      const b = lerp(113, 11, t);
+      return { bg: rgb(r, g, b), fg: intensity < 0.25 ? "#ffffff" : "#111827" };
+    };
+    const rowTotals = rows.map((row) =>
+      colKeys.reduce((sum, key) => sum + (Number((row as any)[key]) || 0), 0),
+    );
+    const colTotals = colKeys.map((key) =>
+      rows.reduce((sum, row) => sum + (Number((row as any)[key]) || 0), 0),
+    );
+    const grandTotal = rowTotals.reduce((sum, value) => sum + value, 0);
+
+    return (
+      <div style={{ height: h, width: "100%", overflowX: "auto" }}>
+        <div className="mb-2 flex items-center gap-3 text-[10px] font-semibold text-text-muted">
+          <span className="uppercase tracking-wider">Intensity</span>
+          <span className="flex items-center gap-1">
+            <span className="h-3 w-3 rounded-[3px] bg-[#f87171]" />
+            Low
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-3 w-3 rounded-[3px] bg-[#f5b61b]" />
+            Medium
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-3 w-3 rounded-[3px] bg-[#22c55e]" />
+            High
+          </span>
+        </div>
+        <table className="min-w-full border-separate border-spacing-1">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-semibold text-text-muted shadow-sm">
+                {axisLabel(rowAxis)}
+              </th>
+              {colKeys.map((key) => (
+                <th
+                  key={key}
+                  className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm"
+                >
+                  {prettyAxis(key)}
+                </th>
+              ))}
+              <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => {
+              const rowLabel = String((row as any).name ?? `Row ${rowIndex + 1}`);
+              return (
+                <tr key={rowLabel}>
+                  <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-semibold text-text-muted shadow-sm">
+                    {rowLabel}
+                  </th>
+                  {colKeys.map((key) => {
+                    const value = Number((row as any)[key]) || 0;
+                    const theme = cellTheme(value);
+                    return (
+                      <td
+                        key={key}
+                        className="rounded-md border border-black/10 px-3 py-3 text-center text-[12px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition-transform transition-opacity hover:-translate-y-[1px] hover:opacity-100"
+                        style={{ background: theme.bg, color: theme.fg }}
+                        title={`${rowLabel} / ${prettyAxis(key)}: ${amount(value)}`}
+                      >
+                        {amount(value)}
+                      </td>
+                    );
+                  })}
+                  <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                    {amount(rowTotals[rowIndex] ?? 0)}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr>
+              <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-bold text-text-primary shadow-sm">
+                Total
+              </th>
+              {colTotals.map((value, index) => (
+                <td
+                  key={colKeys[index] ?? index}
+                  className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm"
+                >
+                  {amount(value)}
+                </td>
+              ))}
+              <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                {amount(grandTotal)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   return (
     <div style={{ height: h }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -600,7 +842,16 @@ function ExpandedDashboard({
       {dashboard.charts.map((chart, i) => {
         const data = chartData[chart.id] ?? [];
         const description = (chart.chartConfig as any)?.description as string | undefined;
-        const axisless = ["metric", "kpi", "gauge", "pie", "donut", "treemap"].includes(chart.type);
+        const axisless = [
+          "metric",
+          "kpi",
+          "gauge",
+          "pie",
+          "donut",
+          "treemap",
+          "heatmap",
+          "matrix",
+        ].includes(chart.type);
         const xAxisLabel = !axisless
           ? ((chart.queryConfig as any)?.xAxisLabel as string | undefined)?.trim()
           : undefined;
@@ -778,7 +1029,7 @@ export function DashboardsPage() {
       const dataMap: Record<string, ChartData> = {};
       await Promise.all(
         dashboard.charts.map(async (chart) => {
-          const metric = (chart.queryConfig.metric as string) ?? "revenue";
+          const metric = (chart.queryConfig.metric as string) ?? "expense";
           const grouping = (chart.queryConfig.grouping as string) ?? "month";
           const timeRange = (chart.queryConfig as any)?.timeRange ?? null;
           const providerHint = (chart.queryConfig as any)?.providerHint ?? null;

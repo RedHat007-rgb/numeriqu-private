@@ -34,4 +34,24 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     const wf = widgets.find((w: any) => w.metric === 'net_position' && w.grouping === 'month');
     expect(wf?.type).toBe('waterfall');
   });
+
+  test('detects pure chart-type edit requests like "switch to bar charts"', () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const parser = AgentService.prototype as any;
+
+    const explicit = parser.parseExplicitChartConstraints('switch to bar charts');
+    expect(explicit?.requiredTypes).toContain('bar');
+
+    const pureEdit = parser.detectPureChartTypeEditRequest('switch to bar charts');
+    expect(pureEdit).toBe('bar');
+
+    const mixedEdit = parser.detectPureChartTypeEditRequest(
+      'switch to bar charts and add a monthly trend',
+    );
+    expect(mixedEdit).toBeNull();
+  });
 });

@@ -100,7 +100,7 @@ export function DashboardMockup({ className }: { className?: string }) {
               <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-60 animate-pulse-dot" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
             </span>
-            app.NumeriQ.com / acme-holdings
+            app.Numeriqu.com / acme-holdings
           </div>
           <div className="flex items-center gap-1.5">
             <span className="rounded-md border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -111,7 +111,7 @@ export function DashboardMockup({ className }: { className?: string }) {
 
         {/* Body */}
         <div className="grid grid-cols-12 gap-3 p-3 sm:p-4">
-          {/* Left rail — agent prompt */}
+          {/* Left rail - agent prompt */}
           <div className="col-span-12 lg:col-span-4">
             <div className="flex h-full flex-col gap-3">
               <div className="rounded-xl border border-border/60 bg-background/40 p-3">
@@ -152,7 +152,7 @@ export function DashboardMockup({ className }: { className?: string }) {
             </div>
           </div>
 
-          {/* Right — charts */}
+          {/* Right - charts */}
           <div className="col-span-12 lg:col-span-8 grid grid-cols-12 gap-3">
             {/* Revenue area */}
             <Card className="col-span-12">
@@ -279,7 +279,7 @@ export function DashboardMockup({ className }: { className?: string }) {
         </div>
       </div>
 
-      {/* Floating chip — sync status */}
+      {/* Floating chip - sync status */}
       <div className="absolute -left-3 top-24 hidden rotate-[-3deg] rounded-xl border border-border/60 bg-card/90 p-2.5 shadow-xl backdrop-blur-xl animate-float md:block">
         <div className="flex items-center gap-2 text-[11px]">
           <span className="grid h-6 w-6 place-items-center rounded-md bg-primary/15 text-primary">

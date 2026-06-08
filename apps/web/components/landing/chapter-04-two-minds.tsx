@@ -30,7 +30,7 @@ export function TwoMinds() {
         </div>
 
         <div className="mt-16 grid grid-cols-12 gap-6">
-          {/* The Analyst — RAG */}
+          {/* The Analyst - RAG */}
           <Reveal delay={120} className="col-span-12 lg:col-span-6">
             <article className="group relative h-full overflow-hidden rounded-2xl border border-border/70 bg-card/60 p-7 backdrop-blur-md transition-colors hover:border-primary/40">
               <header className="flex items-center justify-between">
@@ -93,7 +93,7 @@ export function TwoMinds() {
             </article>
           </Reveal>
 
-          {/* The Architect — Agent */}
+          {/* The Architect - Agent */}
           <Reveal delay={220} className="col-span-12 lg:col-span-6">
             <article className="group relative h-full overflow-hidden rounded-2xl border border-border/70 bg-card/60 p-7 backdrop-blur-md transition-colors hover:border-accent/40">
               <header className="flex items-center justify-between">
@@ -120,7 +120,7 @@ export function TwoMinds() {
               </p>
               <p className="mt-3 text-[14px] leading-relaxed text-muted-foreground">
                 Describe the question. The Architect chooses the right charts,
-                KPIs, comparisons, and commentary — then ships a board your CFO
+                KPIs, comparisons, and commentary, then ships a board your CFO
                 can read in three seconds and act on in five.
               </p>
 
@@ -154,7 +154,7 @@ export function TwoMinds() {
                   <Dot tone="accent" /> Re-renders live
                 </li>
                 <li className="flex items-center gap-2">
-                  <Dot tone="accent" /> Saved & sharable
+                  <Dot tone="accent" /> Saved & shareable
                 </li>
                 <li className="flex items-center gap-2">
                   <Dot tone="accent" /> Permission-aware
@@ -168,7 +168,7 @@ export function TwoMinds() {
         <Reveal delay={280} className="mt-12">
           <p className="mx-auto max-w-3xl text-center font-serif text-[18px] italic leading-relaxed text-muted-foreground">
             The Analyst answers. The Architect builds. Each lives in its own
-            chat, its own context, its own permission scope — so trust never
+            chat, its own context, its own permission scope, so trust never
             leaks.
           </p>
         </Reveal>

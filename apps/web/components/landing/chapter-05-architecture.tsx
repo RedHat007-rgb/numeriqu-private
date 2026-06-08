@@ -26,7 +26,7 @@ export function Architecture() {
               <p className="mt-6 max-w-md text-[16px] leading-relaxed text-muted-foreground">
                 Three Xero books in three regions. Two QuickBooks files for
                 two subsidiaries. One brain that holds them all in mind at
-                once — and never lets one room see another room&apos;s
+                once, and never lets one room see another room&apos;s
                 numbers.
               </p>
             </Reveal>
@@ -34,21 +34,21 @@ export function Architecture() {
               <ul className="mt-8 space-y-4 text-[14px] text-muted-foreground">
                 <Bullet>
                   <span className="text-foreground">Per-entity isolation</span>
-                  &nbsp;— enforced at the database, the API, and the UI.
+                  &nbsp;- enforced at the database, the API, and the UI.
                 </Bullet>
                 <Bullet>
                   <span className="text-foreground">Role-aware everything</span>
-                  &nbsp;— what an admin sees, a member never accidentally
+                  &nbsp;- what an admin sees, a member never accidentally
                   glimpses.
                 </Bullet>
                 <Bullet>
                   <span className="text-foreground">Live or scheduled sync</span>
-                  &nbsp;— streaming where it matters, every 8h where it
+                  &nbsp;- streaming where it matters, every 8h where it
                   doesn&apos;t.
                 </Bullet>
                 <Bullet>
                   <span className="text-foreground">One unified schema</span>
-                  &nbsp;— so a question in Acme US is answered the same way
+                  &nbsp;- so a question in Acme US is answered the same way
                   in Acme APAC.
                 </Bullet>
               </ul>
@@ -123,7 +123,7 @@ function OrgGraph() {
       </svg>
 
       <div className="relative mt-8 grid h-[calc(100%-3rem)] grid-cols-12 items-stretch gap-4">
-        {/* Left rail — ledgers */}
+        {/* Left rail - ledgers */}
         <ul className="col-span-5 flex flex-col justify-between gap-2 sm:col-span-4">
           {ledgers.map((l) => (
             <li
@@ -143,7 +143,7 @@ function OrgGraph() {
           ))}
         </ul>
 
-        {/* Center — the brain */}
+        {/* Center - the brain */}
         <div className="relative col-span-7 flex items-center justify-center sm:col-span-8">
           <div className="relative">
             <div
@@ -159,7 +159,7 @@ function OrgGraph() {
               <div className="absolute inset-6 rounded-full border border-border/50" />
               <div className="text-center">
                 <div className="font-mono text-[9px] uppercase tracking-[0.22em] text-muted-foreground">
-                  NumeriQ
+                  Numeriqu
                 </div>
                 <div className="font-serif text-[22px] leading-tight text-foreground sm:text-[26px]">
                   One brain

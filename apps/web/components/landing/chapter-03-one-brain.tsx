@@ -35,9 +35,9 @@ export function OneBrain() {
           <div className="col-span-12 md:col-span-7 lg:col-span-6">
             <Reveal delay={160}>
               <p className="text-[17px] leading-relaxed text-muted-foreground">
-                NumeriQ reads each ledger in its native dialect, normalizes
+                Numeriqu reads each ledger in its native dialect, normalizes
                 every account, reconciles the differences, and builds a single
-                source of truth — refreshed live, never stale, never wrong.
+                source of truth, refreshed live, never stale, never wrong.
               </p>
             </Reveal>
           </div>

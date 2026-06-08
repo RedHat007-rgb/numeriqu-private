@@ -13,6 +13,12 @@ import { Button } from "../../../components/ui/Button";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import { cn } from "../../../components/ui/cn";
+import {
+  DEFAULT_DASHBOARD_PREFERENCES,
+  type DashboardPreferences,
+  loadDashboardPreferences,
+  saveDashboardPreferences,
+} from "../_hooks/dashboardPreferences";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -122,42 +128,6 @@ const TABS: { id: Tab; label: string; description: string }[] = [
   { id: "danger",      label: "Danger zone", description: "Destructive actions" },
 ];
 
-// ─── Preference types ─────────────────────────────────────────────────────────
-
-type Prefs = {
-  fiscalYearStart: string;
-  timezone: string;
-  dateFormat: string;
-  currencyDisplay: string;
-  notifySyncFailures: boolean;
-  notifyOverdueInvoices: boolean;
-  notifyRevenueMilestones: boolean;
-  weeklyDigest: boolean;
-};
-
-const DEFAULT_PREFS: Prefs = {
-  fiscalYearStart: "January",
-  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  dateFormat: "MMM D, YYYY",
-  currencyDisplay: "USD",
-  notifySyncFailures: true,
-  notifyOverdueInvoices: true,
-  notifyRevenueMilestones: false,
-  weeklyDigest: false,
-};
-
-function loadPrefs(): Prefs {
-  if (typeof window === "undefined") return DEFAULT_PREFS;
-  try {
-    const raw = localStorage.getItem("nq_prefs");
-    return raw ? { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<Prefs>) } : DEFAULT_PREFS;
-  } catch { return DEFAULT_PREFS; }
-}
-
-function savePrefs(p: Prefs) {
-  if (typeof window !== "undefined") localStorage.setItem("nq_prefs", JSON.stringify(p));
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -171,9 +141,9 @@ export default function SettingsPage() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  const [prefs, setPrefs] = useState<DashboardPreferences>(DEFAULT_DASHBOARD_PREFERENCES);
 
-  useEffect(() => { setPrefs(loadPrefs()); }, []);
+  useEffect(() => { setPrefs(loadDashboardPreferences()); }, []);
 
   const loadWorkspace = useCallback(async () => {
     setLoading(true);
@@ -208,10 +178,10 @@ export default function SettingsPage() {
   useEffect(() => { void loadWorkspace(); }, [loadWorkspace]);
   useEffect(() => { if (tab === "members") void loadMembers(); }, [tab, loadMembers]);
 
-  function updatePref<K extends keyof Prefs>(key: K, value: Prefs[K]) {
+  function updatePref<K extends keyof DashboardPreferences>(key: K, value: DashboardPreferences[K]) {
     const next = { ...prefs, [key]: value };
     setPrefs(next);
-    savePrefs(next);
+    saveDashboardPreferences(next);
     flash("Preference saved.");
   }
 
@@ -706,7 +676,7 @@ function Select({ label, value, options, onChange, description }: {
 }
 
 function PreferencesTab({ prefs, onUpdate }: {
-  prefs: Prefs; onUpdate: <K extends keyof Prefs>(key: K, value: Prefs[K]) => void;
+  prefs: DashboardPreferences; onUpdate: <K extends keyof DashboardPreferences>(key: K, value: DashboardPreferences[K]) => void;
 }) {
   return (
     <div className="space-y-6">

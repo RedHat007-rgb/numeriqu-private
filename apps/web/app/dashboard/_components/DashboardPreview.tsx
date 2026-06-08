@@ -40,7 +40,7 @@ import {
   RadialBar,
   LabelList,
 } from "recharts";
-import { ApiError, type TimeRange } from "../../../lib/api";
+import { ApiError, type ChatMessage, type TimeRange } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
@@ -75,6 +75,7 @@ interface Chart {
   type: string;
   config: ChartConfig;
   layoutIndex?: number;
+  snapshotData?: DataRow[];
 }
 
 interface Dashboard {
@@ -92,6 +93,41 @@ interface VentureData {
 }
 
 type DataRow = Record<string, number | string>;
+
+type ChartTurnMode = "create" | "edit";
+
+type ChartTurnWidgetSnapshot = {
+  title?: string;
+  chartType?: string;
+  queryConfig?: Record<string, unknown>;
+  chartConfig?: Record<string, unknown>;
+  displayOrder?: number;
+  dataSnapshot?: Array<Record<string, unknown>>;
+  dataSnapshotTruncated?: boolean;
+};
+
+type ChartTurnMetadata = {
+  kind?: string;
+  mode?: ChartTurnMode;
+  versionNumber?: number;
+  previousVersionNumber?: number | null;
+  dashboardId?: string | null;
+  dashboardTitle?: string;
+  widgetCount?: number;
+  prompt?: string;
+  summary?: string;
+  widgetSnapshots?: ChartTurnWidgetSnapshot[];
+  intent?: "CREATE_DASHBOARD" | "EDIT_DASHBOARD" | null;
+};
+
+type ChartVersionSnapshot = {
+  versionNumber: number;
+  mode: ChartTurnMode;
+  previousVersionNumber: number | null;
+  dashboardTitle: string;
+  summary: string;
+  charts: Chart[];
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -132,6 +168,62 @@ function inferNumericSeriesKeys(rows: DataRow[]): string[] {
     .map(([k]) => k);
 }
 
+function isChartTurnMetadata(metadata: unknown): metadata is ChartTurnMetadata {
+  return !!metadata && typeof metadata === "object" && (metadata as ChartTurnMetadata).kind === "chart_turn";
+}
+
+function buildChartVersionHistory(messages: ChatMessage[]): ChartVersionSnapshot[] {
+  const versions: ChartVersionSnapshot[] = [];
+
+  for (const message of messages) {
+    if (message.role !== "assistant" || !isChartTurnMetadata(message.metadata)) continue;
+
+    const metadata = message.metadata;
+    const versionNumber = Number(metadata.versionNumber ?? 0);
+    if (!Number.isFinite(versionNumber) || versionNumber < 1) continue;
+
+    const charts: Chart[] = [];
+    for (const [widgetIndex, widget] of (metadata.widgetSnapshots ?? []).entries()) {
+      const title = String(widget.title ?? `Chart ${widgetIndex + 1}`).trim();
+      if (!title) continue;
+
+      const chartConfig = widget.queryConfig as unknown as ChartConfig;
+      const chartDescription =
+        widget.chartConfig && typeof widget.chartConfig.description === "string"
+          ? widget.chartConfig.description
+          : metadata.summary ?? "";
+
+      charts.push({
+        id: `chart-version-${versionNumber}-${widget.displayOrder ?? widgetIndex}-${title
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")}`,
+        title,
+        description: chartDescription,
+        type: String(widget.chartType ?? "bar").trim(),
+        config: chartConfig,
+        layoutIndex: widget.displayOrder ?? widgetIndex,
+        snapshotData: Array.isArray(widget.dataSnapshot)
+          ? (widget.dataSnapshot as DataRow[])
+          : undefined,
+      });
+    }
+
+    if (charts.length === 0) continue;
+
+    versions.push({
+      versionNumber,
+      mode: metadata.mode ?? "create",
+      previousVersionNumber: metadata.previousVersionNumber ?? null,
+      dashboardTitle: metadata.dashboardTitle ?? "Dashboard",
+      summary: metadata.summary ?? "Chart version",
+      charts,
+    });
+  }
+
+  return versions.sort((a, b) => a.versionNumber - b.versionNumber);
+}
+
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
 function prettyChartType(type: string): string {
@@ -151,6 +243,7 @@ function prettyChartType(type: string): string {
   if (t === "gauge") return "Gauge";
   if (t === "bubble") return "Bubble chart";
   if (t === "heatmap") return "Heatmap";
+  if (t === "matrix") return "Matrix";
   if (t === "kpi") return "KPI cards";
   if (t === "metric") return "Metric";
   if (t === "table") return "Table";
@@ -372,12 +465,12 @@ function VentureMetricCard({ data }: { data: VentureData }) {
       bg: "bg-accent-cyan/8",
       ring: "ring-accent-cyan/15",
     },
-    {
-      label: "Efficiency",
-      value: `${data.efficiencyMultiplier ?? 0}x`,
-      sub: "revenue / burn",
-      icon: Zap,
-      color:
+      {
+        label: "Efficiency",
+        value: `${data.efficiencyMultiplier ?? 0}x`,
+        sub: "cash flow / burn",
+        icon: Zap,
+        color:
         (data.efficiencyMultiplier ?? 0) >= 1.5
           ? "text-feedback-success"
           : "text-feedback-warning",
@@ -843,10 +936,21 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 	  }
 
   if (chart.type === "treemap") {
-    const nodes = data
-      .map((d) => ({ name: String((d as any).name ?? ""), size: Number((d as any).value) || 0 }))
-      .filter((n) => n.name && Number.isFinite(n.size) && n.size > 0)
-      .slice(0, 40);
+    const seriesKeys = inferNumericSeriesKeys(data);
+    const hasValueSeries = hasFiniteValueKey(data, "value");
+    const nodes = !hasValueSeries && seriesKeys.length > 1
+      ? data.flatMap((d) =>
+          seriesKeys.map((key) => ({
+            name: `${String((d as any).name ?? "")} / ${key.replace(/_/g, " ")}`,
+            size: Number((d as any)[key]) || 0,
+          })),
+        )
+      : data.map((d) => ({
+          name: String((d as any).name ?? ""),
+          size: Number((d as any).value) || 0,
+        }))
+          .filter((n) => n.name && Number.isFinite(n.size) && n.size > 0)
+          .slice(0, 40);
 
     const TreemapCell = ({ x, y, width, height, name, size, index }: any) => {
       const color = PIE_COLORS[index % PIE_COLORS.length];
@@ -1221,7 +1325,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
           <p className="text-[10px] text-text-muted">Financial Health Score</p>
           {raw.revenue > 0 && (
             <div className="mt-2 flex gap-4 text-[10px] text-text-muted">
-              <span>Revenue: {fmtCurrency(raw.revenue)}</span>
+              <span>Billed: {fmtCurrency(raw.revenue)}</span>
               <span>Collected: {raw.collectionRate}%</span>
             </div>
           )}
@@ -1242,9 +1346,9 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart margin={{ top: 8, right: 8, left: 8, bottom: 24 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
-            <XAxis type="number" dataKey="x" name="Revenue"
+            <XAxis type="number" dataKey="x" name="Amount"
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
-              tickFormatter={(v: number) => fmtCurrency(v)} label={{ value: "Revenue", position: "bottom", fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
+              tickFormatter={(v: number) => fmtCurrency(v)} label={{ value: "Amount", position: "bottom", fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
             <YAxis type="number" dataKey="y" name="Invoices"
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
               label={{ value: "Invoices", angle: -90, position: "left", fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
@@ -1256,7 +1360,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 return (
                   <div className="rounded-lg border border-default bg-bg-elevated p-2 text-[10px] shadow-lg">
                     <p className="font-semibold text-text-primary">{d.name}</p>
-                    <p className="text-text-muted">Revenue: {fmtCurrency(d.revenue ?? d.x)}</p>
+                    <p className="text-text-muted">Amount: {fmtCurrency(d.revenue ?? d.x)}</p>
                     <p className="text-text-muted">Invoices: {d.invoices ?? d.y}</p>
                     <p className="text-text-muted">Avg Invoice: {fmtCurrency(d.avgInvoice ?? 0)}</p>
                   </div>
@@ -1298,82 +1402,136 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   }
 
   // ── heatmap (general grid: rows = series, columns = categories) ────────────
-  if (chart.type === "heatmap") {
-    // Special case: the Revenue/Expenses/Net comparison grid (kept for P&L heatmaps).
-    const hasRevExp = data.some(
-      (d) => (d as any).Revenue !== undefined || (d as any).Expenses !== undefined,
-    );
-
-    // General case: rows are the numeric series columns (e.g. one per department),
-    // columns are the "name" values (e.g. months / accounts). A single-series
-    // name/value dataset renders as a one-row intensity strip — e.g. "departments
-    // with highest spending" becomes a row of departments where the hottest cell
-    // is the biggest spender.
-    const seriesKeys = hasRevExp
-      ? ["Revenue", "Expenses", "Net"]
-      : (() => {
-          const keys = inferNumericSeriesKeys(data);
-          return keys.length > 0 ? keys : ["value"];
-        })();
-
-    const maxVal = Math.max(
-      ...data.flatMap((d) => seriesKeys.map((k) => Math.abs(Number((d as any)[k]) || 0))),
-      1,
-    );
-
-    const cellColor = (series: string, val: number, intensity: number) => {
-      if (series === "Revenue") return `rgba(124,58,237,${0.1 + intensity * 0.7})`;
-      if (series === "Expenses") return `rgba(239,68,68,${0.1 + intensity * 0.7})`;
-      if (series === "Net")
-        return val < 0
-          ? `rgba(239,68,68,${0.1 + intensity * 0.7})`
-          : `rgba(16,185,129,${0.1 + intensity * 0.7})`;
-      // General series → violet gradient by intensity.
-      return `rgba(124,58,237,${0.1 + intensity * 0.7})`;
+  if (chart.type === "heatmap" || chart.type === "matrix") {
+    const rows = data.filter(Boolean);
+    const colKeys =
+      inferNumericSeriesKeys(rows).filter((k) => k !== "total") ||
+      [];
+    const rowAxis = String(chart.config.grouping ?? "").split("_")[0] || "row";
+    const prettyAxis = (value: string) =>
+      value
+        .split("_")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+    const axisLabel = (axis: string) => prettyAxis(axis || "Name");
+    const amount = (value: number) =>
+      new Intl.NumberFormat("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(value);
+    const lerp = (from: number, to: number, t: number) =>
+      Math.round(from + (to - from) * Math.max(0, Math.min(1, t)));
+    const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
+    const cellTheme = (value: number) => {
+      const maxVal = Math.max(
+        ...rows.flatMap((row) => colKeys.map((key) => Math.abs(Number((row as any)[key]) || 0))),
+        1,
+      );
+      const intensity = Math.min(1, Math.abs(value) / maxVal);
+      if (intensity >= 0.5) {
+        const t = (intensity - 0.5) / 0.5;
+        const r = lerp(245, 22, t);
+        const g = lerp(158, 163, t);
+        const b = lerp(11, 74, t);
+        const fg = intensity >= 0.8 ? "#ffffff" : "#111827";
+        return { bg: rgb(r, g, b), fg };
+      }
+      const t = intensity / 0.5;
+      const r = lerp(248, 245, t);
+      const g = lerp(113, 158, t);
+      const b = lerp(113, 11, t);
+      return { bg: rgb(r, g, b), fg: intensity < 0.25 ? "#ffffff" : "#111827" };
     };
-
-    const labelFor = (series: string) =>
-      series === "value" && seriesKeys.length === 1 ? "Spend" : series;
+    const rowTotals = rows.map((row) =>
+      colKeys.reduce((sum, key) => sum + (Number((row as any)[key]) || 0), 0),
+    );
+    const colTotals = colKeys.map((key) =>
+      rows.reduce((sum, row) => sum + (Number((row as any)[key]) || 0), 0),
+    );
+    const grandTotal = rowTotals.reduce((sum, value) => sum + value, 0);
 
     return (
       <div style={{ height: h, width: "100%", overflowX: "auto" }}>
-        <div className="flex flex-col gap-1 min-w-[400px]">
-          {seriesKeys.map((series) => (
-            <div key={series} className="flex items-center gap-1">
-              <span className="w-20 shrink-0 truncate text-[9px] font-semibold text-text-muted text-right pr-2">
-                {labelFor(series)}
-              </span>
-              <div className="flex flex-1 gap-[2px]">
-                {data.map((d, i) => {
-                  const val = Number((d as any)[series]) || 0;
-                  const intensity = Math.min(1, Math.abs(val) / maxVal);
-                  return (
-                    <div
-                      key={i}
-                      title={`${labelFor(series)} · ${(d as any).name}: ${fmtCurrency(val)}`}
-                      className="flex flex-1 flex-col items-center justify-center rounded py-2 cursor-default transition-opacity hover:opacity-80"
-                      style={{ background: cellColor(series, val, intensity), minWidth: 32 }}
-                    >
-                      <span className="text-[8px] font-semibold text-text-primary">
-                        {fmtCurrency(Math.abs(val)).replace("$", "")}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-          <div className="flex items-center gap-1 mt-1">
-            <span className="w-20 shrink-0" />
-            <div className="flex flex-1 gap-[2px]">
-              {data.map((d, i) => (
-                <div key={i} className="flex flex-1 justify-center">
-                  <span className="text-[8px] text-text-muted truncate">{String((d as any).name ?? "")}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="mb-2 flex items-center gap-3 text-[10px] font-semibold text-text-muted">
+          <span className="uppercase tracking-wider">Intensity</span>
+          <span className="flex items-center gap-1">
+            <span className="h-3 w-3 rounded-[3px] bg-[#f87171]" />
+            Low
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-3 w-3 rounded-[3px] bg-[#f5b61b]" />
+            Medium
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="h-3 w-3 rounded-[3px] bg-[#22c55e]" />
+            High
+          </span>
         </div>
+        <table className="min-w-full border-separate border-spacing-1">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-semibold text-text-muted shadow-sm">
+                {axisLabel(rowAxis)}
+              </th>
+              {colKeys.map((key) => (
+                <th
+                  key={key}
+                  className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm"
+                >
+                  {prettyAxis(key)}
+                </th>
+              ))}
+              <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => {
+              const rowLabel = String((row as any).name ?? `Row ${rowIndex + 1}`);
+              return (
+                <tr key={rowLabel}>
+                  <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-semibold text-text-muted shadow-sm">
+                    {rowLabel}
+                  </th>
+                  {colKeys.map((key) => {
+                    const value = Number((row as any)[key]) || 0;
+                    const theme = cellTheme(value);
+                    return (
+                      <td
+                        key={key}
+                        className="rounded-md border border-black/10 px-3 py-3 text-center text-[12px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition-transform transition-opacity hover:-translate-y-[1px] hover:opacity-100"
+                        style={{ background: theme.bg, color: theme.fg }}
+                        title={`${rowLabel} / ${prettyAxis(key)}: ${amount(value)}`}
+                      >
+                        {amount(value)}
+                      </td>
+                    );
+                  })}
+                  <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                    {amount(rowTotals[rowIndex] ?? 0)}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr>
+              <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-bold text-text-primary shadow-sm">
+                Total
+              </th>
+              {colTotals.map((value, index) => (
+                <td
+                  key={colKeys[index] ?? index}
+                  className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm"
+                >
+                  {amount(value)}
+                </td>
+              ))}
+              <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                {amount(grandTotal)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     );
   }
@@ -1381,30 +1539,76 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   return (
     <div style={{ height: h, width: "100%" }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
-          <CartesianGrid {...gridStyle} />
-          <XAxis dataKey="name" tick={tickStyle} />
-          <YAxis
-            tick={tickStyle}
-            tickFormatter={(v: number) =>
-              formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
-            }
-            width={56}
-            tickMargin={8}
-          />
-          <Tooltip
-            content={
-              <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
-            }
-          />
-          <Line
-            type="monotone"
-            dataKey="value"
-            stroke="rgb(var(--color-accent-blue))"
-            strokeWidth={2}
-            dot={false}
-          />
-        </LineChart>
+        {(() => {
+          const seriesKeys = inferNumericSeriesKeys(data);
+          const hasValueSeries = hasFiniteValueKey(data, "value");
+          const isMultiSeries = !hasValueSeries && seriesKeys.length > 0;
+
+          if (isMultiSeries) {
+            return (
+              <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+                <CartesianGrid {...gridStyle} />
+                <XAxis dataKey="name" tick={tickStyle} />
+                <YAxis
+                  tick={tickStyle}
+                  tickFormatter={(v: number) =>
+                    formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+                  }
+                  width={56}
+                  tickMargin={8}
+                />
+                <Tooltip
+                  content={
+                    <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
+                  }
+                />
+                <Legend
+                  verticalAlign="top"
+                  height={24}
+                  wrapperStyle={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
+                />
+                {seriesKeys.slice(0, 6).map((key, idx) => (
+                  <Line
+                    key={key}
+                    type="monotone"
+                    dataKey={key}
+                    name={key.replace(/_/g, " ")}
+                    stroke={PIE_COLORS[idx % PIE_COLORS.length]}
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                ))}
+              </LineChart>
+            );
+          }
+
+          return (
+            <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+              <CartesianGrid {...gridStyle} />
+              <XAxis dataKey="name" tick={tickStyle} />
+              <YAxis
+                tick={tickStyle}
+                tickFormatter={(v: number) =>
+                  formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+                }
+                width={56}
+                tickMargin={8}
+              />
+              <Tooltip
+                content={
+                  <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
+                }
+              />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke="rgb(var(--color-accent-blue))"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          );
+        })()}
       </ResponsiveContainer>
     </div>
   );
@@ -1424,8 +1628,8 @@ function getEmptyMessage(chart: Chart): string {
   if (chart.config.grouping === 'class')
     return 'Class data requires QuickBooks sync with class tracking enabled';
   if (chart.config.grouping === 'account' || chart.config.grouping === 'category') {
-    if (chart.config.metric === 'revenue')
-      return 'No revenue accounts found in this GL data — this dataset appears to be expense-only';
+    if (chart.config.metric === 'revenue' || chart.config.metric === 'expense')
+      return 'No matching accounts found in this GL data — this dataset may need a different grouping';
   }
   return 'No data for this scope yet';
 }
@@ -1548,6 +1752,7 @@ export function DashboardPreview({
 }) {
   const { agent, loading } = useNumeriquApi();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [chartVersions, setChartVersions] = useState<ChartVersionSnapshot[]>([]);
   const [chartData, setChartData] = useState<Record<string, DataRow[]>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1560,6 +1765,7 @@ export function DashboardPreview({
   if (prevSessionRef.current !== sessionId) {
     prevSessionRef.current = sessionId;
     if (dashboard !== null) setDashboard(null);
+    if (chartVersions.length > 0) setChartVersions([]);
     if (Object.keys(chartData).length > 0) setChartData({});
     setExpandedChartId(null);
   }
@@ -1571,7 +1777,10 @@ export function DashboardPreview({
       setIsLoading(true);
       setError(null);
       try {
-        const latest = sessionId ? await agent.dashboardForSession(sessionId) : await agent.latestDashboard();
+        const [latest, sessionDetail] = await Promise.all([
+          sessionId ? agent.dashboardForSession(sessionId) : agent.latestDashboard(),
+          sessionId ? agent.session(sessionId).catch(() => null) : Promise.resolve(null),
+        ]);
         if (latest) {
           const charts: Chart[] = (latest.charts ?? []).map((c) => ({
             id: c.id,
@@ -1581,16 +1790,26 @@ export function DashboardPreview({
             config: c.config as ChartConfig,
             layoutIndex: c.layoutIndex,
           }));
+          const history = sessionDetail ? buildChartVersionHistory(sessionDetail.messages) : [];
+          const chartsToLoad = history.length > 0 ? history.flatMap((version) => version.charts) : charts;
           setDashboard({
             id: latest.id,
             title: latest.title,
             description: latest.description ?? null,
             charts,
           });
+          setChartVersions(history);
 
           const dataMap: Record<string, DataRow[]> = {};
+          for (const chart of chartsToLoad) {
+            if (Array.isArray(chart.snapshotData) && chart.snapshotData.length > 0) {
+              dataMap[chart.id] = chart.snapshotData;
+            }
+          }
           await Promise.all(
-            charts.map(async (chart) => {
+            chartsToLoad
+              .filter((chart) => !dataMap[chart.id])
+              .map(async (chart) => {
               try {
                 const res = await agent.getMetrics(
                   chart.config.metric,
@@ -1608,11 +1827,12 @@ export function DashboardPreview({
               } catch {
                 dataMap[chart.id] = [];
               }
-            }),
+              }),
           );
           setChartData(dataMap);
         } else {
           setDashboard(null);
+          setChartVersions([]);
           setChartData({});
         }
       } catch (caught) {
@@ -1692,7 +1912,9 @@ export function DashboardPreview({
     );
   }
 
-  const expandedChart = dashboard.charts.find((c) => c.id === expandedChartId);
+  const visibleCharts =
+    chartVersions.length > 0 ? chartVersions.flatMap((version) => version.charts) : dashboard.charts;
+  const expandedChart = visibleCharts.find((c) => c.id === expandedChartId);
   const expandedData = expandedChart ? (chartData[expandedChart.id] ?? []) : [];
 
   return (
@@ -1717,18 +1939,75 @@ export function DashboardPreview({
         </div>
       </motion.div>
 
-      {/* Chart grid — single column so each chart gets full panel width */}
-      <div className="grid grid-cols-1 gap-4 pb-8">
-        {dashboard.charts.map((chart, index) => (
-          <ChartCard
-            key={chart.id}
-            chart={chart}
-            data={chartData[chart.id] ?? []}
-            index={index}
-            onExpand={() => setExpandedChartId(chart.id)}
-          />
-        ))}
-      </div>
+      {chartVersions.length > 0 ? (
+        <div className="space-y-4 pb-8">
+          <div className="rounded-2xl border border-default bg-bg-elevated/25 px-4 py-3">
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-text-muted">
+              Chart history
+            </p>
+            <p className="mt-1 text-xs text-text-muted">
+              Earlier chart versions appear above later ones. The latest version is at the bottom.
+            </p>
+          </div>
+
+          {chartVersions.map((version, versionIndex) => (
+            <motion.div
+              key={version.versionNumber}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: versionIndex * 0.06, duration: 0.25 }}
+              className="rounded-3xl border border-default bg-bg-elevated/20 p-4"
+            >
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-accent-cyan/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-cyan">
+                  Chart v{version.versionNumber}
+                </span>
+                <span className="rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted">
+                  {version.mode === "edit" ? "updated chart" : "new chart"}
+                </span>
+                {typeof version.previousVersionNumber === "number" && (
+                  <span className="rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted">
+                    preserves v{version.previousVersionNumber}
+                  </span>
+                )}
+                <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  {version.dashboardTitle}
+                </span>
+              </div>
+
+              <div className="mb-4 max-w-3xl">
+                <h3 className="text-base font-bold text-text-primary">{version.dashboardTitle}</h3>
+                <p className="mt-1 text-xs text-text-muted">{version.summary}</p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                {version.charts.map((chart, index) => (
+                  <ChartCard
+                    key={chart.id}
+                    chart={chart}
+                    data={chartData[chart.id] ?? []}
+                    index={index}
+                    onExpand={() => setExpandedChartId(chart.id)}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      ) : (
+        /* Chart grid — single column so each chart gets full panel width */
+        <div className="grid grid-cols-1 gap-4 pb-8">
+          {dashboard.charts.map((chart, index) => (
+            <ChartCard
+              key={chart.id}
+              chart={chart}
+              data={chartData[chart.id] ?? []}
+              index={index}
+              onExpand={() => setExpandedChartId(chart.id)}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Expanded view modal */}
       <AnimatePresence>

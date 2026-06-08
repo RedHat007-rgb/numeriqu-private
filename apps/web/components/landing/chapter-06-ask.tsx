@@ -77,9 +77,9 @@ export function Ask() {
           <div className="col-span-12 lg:col-span-5 lg:pt-10">
             <Reveal delay={160}>
               <p className="max-w-md text-[16px] leading-relaxed text-muted-foreground">
-                Type the way you think. NumeriQ plans the answer, queries the
+                Type the way you think. Numeriqu plans the answer, queries the
                 ledgers, picks the right shapes for the data, and renders a
-                dashboard that&apos;s ready to share — or to act on.
+                dashboard that&apos;s ready to share, or to act on.
               </p>
             </Reveal>
           </div>
@@ -91,7 +91,7 @@ export function Ask() {
             <div className="col-span-12 lg:col-span-5">
               <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/70 backdrop-blur-md">
                 <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                  <span>NumeriQ Agent</span>
+                  <span>Numeriqu Agent</span>
                   <span className="flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse-dot" />
                     Live
@@ -230,7 +230,7 @@ export function Ask() {
                 <p className="mt-4 rounded-xl border border-border/60 bg-background/40 p-3 font-serif text-[14px] italic leading-relaxed text-muted-foreground">
                   Q4 came in 8.2% above plan, but Acme EU dragged consolidated
                   margin by 1.6 points on hosting overrun. Two scheduled
-                  receipts move into Jan — flagging short-term cash risk in
+                  receipts move into Jan, flagging short-term cash risk in
                   week 3.
                 </p>
 

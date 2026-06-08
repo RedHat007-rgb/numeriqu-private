@@ -1,15 +1,15 @@
 "use client";
 
-import { useState } from "react";
 import { Button } from "../../../components/ui/Button";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
 import { Skeleton } from "../../../components/ui/Skeleton";
 import { useDashboard } from "../_hooks/useDashboard";
+import { useDashboardPreferences } from "../_hooks/dashboardPreferences";
 import { ConnectedEntitiesCard } from "../_components/overview/ConnectedEntitiesCard";
 import { KpiGrid } from "../_components/overview/KpiGrid";
 import { NextActionsCard } from "../_components/overview/NextActionsCard";
-import { OrgBreakdownCard } from "../_components/overview/OrgBreakdownCard";
-import { RevenueTrendCard } from "../_components/overview/RevenueTrendCard";
+import { InvoiceStatusCard } from "../_components/overview/OrgBreakdownCard";
+import { CashflowCard } from "../_components/overview/RevenueTrendCard";
 import { SystemSnapshot } from "../_components/overview/SystemSnapshot";
 import { TimeRangeSelect } from "../_components/overview/TimeRangeSelect";
 
@@ -36,6 +36,7 @@ function OverviewSkeleton() {
 
 export function OverviewPage() {
   const { state, dashboard, error, refresh, hasLoadedOnce, range, setRange } = useDashboard();
+  const { prefs } = useDashboardPreferences();
 
   if (state === "loading" && !hasLoadedOnce) {
     return <OverviewSkeleton />;
@@ -80,19 +81,24 @@ export function OverviewPage() {
         </ErrorBanner>
       ) : null}
 
-      <KpiGrid kpis={dashboard.kpis} venture={dashboard.venture} charts={dashboard.charts} />
+      <KpiGrid
+        kpis={dashboard.kpis}
+        venture={dashboard.venture}
+        charts={dashboard.charts}
+        currency={prefs.currencyDisplay}
+      />
 
       <section className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
-        <RevenueTrendCard dashboard={dashboard} />
-        <OrgBreakdownCard dashboard={dashboard} />
+        <CashflowCard dashboard={dashboard} currency={prefs.currencyDisplay} />
+        <InvoiceStatusCard dashboard={dashboard} currency={prefs.currencyDisplay} />
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <NextActionsCard insights={dashboard.insights} kpis={dashboard.kpis} />
-        <ConnectedEntitiesCard orgs={dashboard.connectedOrgs} />
+        <NextActionsCard insights={dashboard.insights} kpis={dashboard.kpis} currency={prefs.currencyDisplay} />
+        <ConnectedEntitiesCard orgs={dashboard.connectedOrgs} currency={prefs.currencyDisplay} />
       </section>
 
-      <SystemSnapshot meta={dashboard.meta} />
+      <SystemSnapshot meta={dashboard.meta} fiscalYearStart={prefs.fiscalYearStart} timezone={prefs.timezone} />
     </div>
   );
 }

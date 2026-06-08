@@ -22,7 +22,7 @@ export function Boundaries() {
             <Reveal delay={160}>
               <p className="text-[15px] leading-relaxed text-muted-foreground">
                 Permissions aren&apos;t a setting page nobody opens. They&apos;re
-                woven through every query, every dashboard, every chat — so
+                woven through every query, every dashboard, every chat, so
                 trust is enforced before it&apos;s asked for.
               </p>
             </Reveal>
@@ -109,11 +109,11 @@ export function Boundaries() {
               <ul className="mt-7 space-y-4 text-[14px]">
                 <Row check>Access only the entities they&apos;re invited to</Row>
                 <Row check>Chat the Analyst within that scope</Row>
-                <Row check>Open dashboards their admin shared</Row>
+                <Row check>Open dashboards your admin shared</Row>
                 <Row check={false}>
                   Build new dashboards{" "}
                   <span className="text-muted-foreground">
-                    — only if granted
+                    - only if granted
                   </span>
                 </Row>
                 <Row check={false}>See other entities&apos; numbers</Row>

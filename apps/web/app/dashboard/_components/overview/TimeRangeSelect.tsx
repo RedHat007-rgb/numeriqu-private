@@ -66,11 +66,16 @@ export function TimeRangeSelect({
   );
 }
 
-export function formatRange(range: TimeRange | null | undefined): string {
+export function formatRange(range: TimeRange | null | undefined, fiscalYearStart?: string): string {
   if (!range) return "All time";
   if (range.kind === "MTD") return "Month to date";
   if (range.kind === "QTD") return "Quarter to date";
-  if (range.kind === "YTD") return "Year to date";
+  if (range.kind === "YTD") {
+    if (fiscalYearStart && fiscalYearStart !== "January") {
+      return `Year to date · FY starts ${fiscalYearStart}`;
+    }
+    return "Year to date";
+  }
   if (range.kind === "LAST_N_DAYS") return `Last ${range.days} days`;
   if (range.kind === "LAST_N_WEEKS") return `Last ${range.weeks} weeks`;
   if (range.kind === "LAST_N_MONTHS") return `Last ${range.months} months`;
@@ -78,4 +83,3 @@ export function formatRange(range: TimeRange | null | undefined): string {
   if (range.kind === "LAST_N_YEARS") return `Last ${range.years} years`;
   return "All time";
 }
-

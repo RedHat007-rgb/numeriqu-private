@@ -3,26 +3,50 @@ import { cn } from "@/lib/utils"
 export function Logo({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 32 32"
+      viewBox="0 0 512 128"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      className={cn("h-7 w-7", className)}
+      className={cn("h-10 w-auto", className)}
       aria-hidden="true"
+      focusable="false"
+      preserveAspectRatio="xMidYMid meet"
     >
       <defs>
-        <linearGradient id="nq-logo-grad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#0077FF" />
-          <stop offset="1" stopColor="#9B4DFF" />
+        <linearGradient id="numeriqu-logo-gradient" x1="16" y1="20" x2="104" y2="108" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#1992FF" />
+          <stop offset="1" stopColor="#B45AF7" />
         </linearGradient>
       </defs>
-      {/* Background box */}
-      <rect x="2" y="2" width="28" height="28" rx="8" fill="#0A1128" stroke="#1a2a5a" strokeWidth="0.5" />
-      {/* Magnifying glass circle (the Q) */}
-      <circle cx="13.5" cy="13.5" r="6.5" stroke="url(#nq-logo-grad)" strokeWidth="2.2" fill="none" />
-      {/* Handle — the Q tail */}
-      <line x1="18.1" y1="18.1" x2="24" y2="24" stroke="url(#nq-logo-grad)" strokeWidth="2.2" strokeLinecap="round" />
-      {/* Inner power-symbol stroke */}
-      <line x1="13.5" y1="10" x2="13.5" y2="15.5" stroke="url(#nq-logo-grad)" strokeWidth="1.8" strokeLinecap="round" opacity="0.65" />
+      <g transform="translate(16 16)">
+        <circle
+          cx="48"
+          cy="48"
+          r="32"
+          stroke="url(#numeriqu-logo-gradient)"
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeDasharray="165 40"
+          transform="rotate(36 48 48)"
+        />
+        <path
+          d="M56.5 57.5L82 83"
+          stroke="url(#numeriqu-logo-gradient)"
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </g>
+      <text
+        x="140"
+        y="82"
+        fill="#FFFFFF"
+        fontFamily="var(--font-nunito), var(--font-roboto), Inter, ui-sans-serif, system-ui, sans-serif"
+        fontSize="56"
+        fontWeight="800"
+        letterSpacing="1.2"
+      >
+        NUMERIQU
+      </text>
     </svg>
   )
 }

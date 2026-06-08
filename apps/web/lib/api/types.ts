@@ -208,6 +208,7 @@ export type HealthResponse = {
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  metadata?: Record<string, unknown> | null;
 };
 export type ChatMode = "rag" | "agent";
 

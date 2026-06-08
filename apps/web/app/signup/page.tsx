@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MailCheck, ShieldCheck, Users } from "lucide-react";
 import { toast } from "sonner";
+import { Logo } from "../../components/landing/logo";
+import { useNumeriquApi } from "../../lib/useNumeriquApi";
 import { getApiBaseURL } from "../../lib/api/base";
 import { Surface } from "../../components/ui/Surface";
 import { Button } from "../../components/ui/Button";
@@ -84,6 +86,7 @@ function OtpBoxes({
 }
 
 export default function SignupPage() {
+  const { isAuthenticated, loading: sessionLoading } = useNumeriquApi();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [accountType, setAccountType] = useState<AccountType>("ORGANIZATION");
@@ -107,6 +110,12 @@ export default function SignupPage() {
   }, [resendIn]);
 
   const isEmailValid = useMemo(() => /.+@.+\..+/.test(email), [email]);
+
+  useEffect(() => {
+    if (!sessionLoading && isAuthenticated) {
+      router.replace("/dashboard");
+    }
+  }, [isAuthenticated, router, sessionLoading]);
 
   async function callSendOtp(endpoint: "send-otp" | "resend-otp") {
     const response = await fetch(`${getApiBaseURL()}/auth/${endpoint}`, {
@@ -221,8 +230,8 @@ export default function SignupPage() {
       <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
 
       <div className="relative mx-auto flex max-w-6xl items-center justify-between pb-10">
-        <Link href="/" className="font-serif text-xl font-semibold tracking-tight text-text-primary">
-          NumeriQ
+        <Link href="/" aria-label="NumeriQ home" className="inline-flex items-center">
+          <Logo className="h-10 w-auto" />
         </Link>
       </div>
 

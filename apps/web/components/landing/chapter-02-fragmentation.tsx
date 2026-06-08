@@ -79,15 +79,15 @@ export function Fragmentation() {
             <Reveal delay={260}>
               <ul className="mt-8 space-y-3 font-mono text-[12px] uppercase tracking-[0.18em] text-muted-foreground">
                 <li className="flex items-center gap-3">
-                  <span className="text-primary">—</span> Spreadsheets that age
+                  <span className="text-primary">-</span> Spreadsheets that age
                   in hours
                 </li>
                 <li className="flex items-center gap-3">
-                  <span className="text-primary">—</span> Three answers to one
+                  <span className="text-primary">-</span> Three answers to one
                   question
                 </li>
                 <li className="flex items-center gap-3">
-                  <span className="text-primary">—</span> Decisions made on
+                  <span className="text-primary">-</span> Decisions made on
                   guesswork
                 </li>
               </ul>

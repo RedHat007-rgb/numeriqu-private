@@ -38,11 +38,8 @@ export function Navbar() {
               : "border-transparent bg-transparent",
           )}
         >
-          <Link href="/" className="flex items-center gap-2.5">
-            <Logo />
-            <span className="font-display text-[19px] font-bold tracking-widest text-foreground uppercase">
-              NUMERIQU
-            </span>
+          <Link href="/" aria-label="Numeriqu home" className="inline-flex items-center">
+            <Logo className="h-9 w-auto" />
           </Link>
 
           <ul className="hidden items-center gap-1 md:flex">

@@ -748,6 +748,7 @@ model AgentChatMessage {
   organizationId String   @map("organization_id") @db.Uuid
   role           String
   content        String
+  metadata       Json?    @map("metadata")
   createdAt      DateTime @default(now()) @map("created_at")
 
   session      AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)

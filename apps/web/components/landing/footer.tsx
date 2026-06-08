@@ -37,9 +37,8 @@ export function Footer() {
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
         <div className="grid gap-12 lg:grid-cols-[1.4fr_2fr]">
           <div>
-            <Link href="/" className="inline-flex items-center gap-2.5">
-              <Logo className="h-7 w-7" />
-              <span className="font-serif text-2xl tracking-tight">NumeriQ</span>
+            <Link href="/" aria-label="Numeriqu home" className="inline-flex items-center">
+              <Logo className="h-10 w-auto" />
             </Link>
             <p className="mt-4 max-w-sm text-[14px] leading-relaxed text-muted-foreground">
               The financial brain for modern finance teams. Unify every ERP.
@@ -75,16 +74,11 @@ export function Footer() {
         </div>
 
         <div className="relative mt-16 overflow-hidden">
-          <div
-            aria-hidden
-            className="select-none bg-gradient-to-b from-foreground/10 to-transparent bg-clip-text font-serif text-[clamp(4rem,18vw,16rem)] leading-none tracking-tight text-transparent"
-          >
-            NumeriQ
-          </div>
+          <Logo className="h-auto w-[min(100%,980px)] opacity-[0.08]" />
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-4 border-t border-border/60 pt-6 text-[12px] text-muted-foreground sm:flex-row sm:items-center">
-          <div>© {new Date().getFullYear()} NumeriQ, Inc. All rights reserved.</div>
+          <div>© {new Date().getFullYear()} Numeriqu, Inc. All rights reserved.</div>
           <div className="flex items-center gap-5">
             <Link href="#" className="hover:text-foreground">Privacy</Link>
             <Link href="#" className="hover:text-foreground">Terms</Link>

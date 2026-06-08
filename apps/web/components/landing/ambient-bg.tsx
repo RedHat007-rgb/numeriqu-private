@@ -1,7 +1,7 @@
 export function AmbientBg() {
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      {/* Warm paper warmth — saffron tint, soft */}
+      {/* Warm paper warmth - saffron tint, soft */}
       <div
         className="absolute -top-56 left-1/2 h-[680px] w-[1180px] -translate-x-1/2 rounded-full opacity-50 blur-3xl"
         style={{

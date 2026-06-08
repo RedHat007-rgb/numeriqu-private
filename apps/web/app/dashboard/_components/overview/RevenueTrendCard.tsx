@@ -1,83 +1,62 @@
 "use client";
 
 import { useMemo } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { DashboardResponse } from "../../../../lib/api";
-import { formatMoney, formatRelativeTime } from "./format";
+import { formatMoneyWithCurrency, formatMoneyWithCurrencyFull, formatRelativeTime } from "./format";
 
-function MiniTrendChart({
-  series,
+function CashflowTooltip({
+  active,
+  payload,
+  currency,
 }: {
-  series: Array<{ label: string; revenue: number }>;
+  active?: boolean;
+  payload?: Array<{ value?: number; payload?: { name?: string } }>;
+  currency: string;
 }) {
-  const width = 540;
-  const height = 200;
-
-  const safe = series.length > 0 ? series : [{ label: "—", revenue: 0 }];
-  const allValues = safe.flatMap((row) => [row.revenue]);
-  const min = Math.min(...allValues, 0);
-  const max = Math.max(...allValues, 1);
-  const range = max - min || 1;
-
-  function project(values: number[]) {
-    if (values.length === 0) return [];
-    const denominator = Math.max(values.length - 1, 1);
-    return values.map((value, index) => ({
-      x: (index / denominator) * width,
-      y: height - ((value - min) / range) * (height - 24) - 12,
-    }));
-  }
-
-  const revPoints = project(safe.map((row) => row.revenue));
-
-  function buildPath(points: { x: number; y: number }[]) {
-    if (points.length === 0) return "";
-    return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-  }
-
-  function buildArea(points: { x: number; y: number }[]) {
-    if (points.length === 0) return "";
-    return `${buildPath(points)} L ${width} ${height} L 0 ${height} Z`;
-  }
+  if (!active || !payload?.length) return null;
+  const item = payload[0];
+  const value = Number(item?.value ?? 0);
+  const label = item?.payload?.name ?? "Cash flow";
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className="h-56 w-full overflow-visible"
-      role="img"
-      aria-label="Revenue trend"
-    >
-      <defs>
-        <linearGradient id="revArea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgb(var(--color-accent-blue))" stopOpacity="0.32" />
-          <stop offset="100%" stopColor="rgb(var(--color-accent-blue))" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={buildArea(revPoints)} fill="url(#revArea)" />
-      <path
-        d={buildPath(revPoints)}
-        fill="none"
-        stroke="rgb(var(--color-accent-blue))"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-      {revPoints.map((point) => (
-        <circle key={`r-${point.x}-${point.y}`} cx={point.x} cy={point.y} r="3.5" fill="rgb(var(--color-accent-blue))" />
-      ))}
-    </svg>
+    <div className="rounded-xl border border-default bg-bg-card/95 px-3 py-2 shadow-2xl backdrop-blur-sm">
+      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-text-primary">
+        {formatMoneyWithCurrencyFull(value, currency)}
+      </p>
+    </div>
   );
 }
 
-export function RevenueTrendCard({ dashboard }: { dashboard: DashboardResponse }) {
+export function CashflowCard({
+  dashboard,
+  currency,
+}: {
+  dashboard: DashboardResponse;
+  currency: string;
+}) {
   const series = useMemo(
     () =>
-      dashboard.charts.monthlyTrend.map((row) => ({
-        label: row.month ?? row.name,
-        revenue: row.revenue,
+      dashboard.charts.cashflowWaterfall.map((row) => ({
+        name: row.name,
+        value: row.value,
+        fill: row.fill,
       })),
     [dashboard],
   );
 
-  const latest = series[series.length - 1];
+  const latestSpend = Math.abs(dashboard.kpis.totalExpenses ?? 0);
+  const latestOverdue = Math.abs(dashboard.kpis.overdueAmount ?? 0);
   const computedAt = formatRelativeTime(dashboard.meta.computedAt);
 
   return (
@@ -85,10 +64,10 @@ export function RevenueTrendCard({ dashboard }: { dashboard: DashboardResponse }
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">
-            Revenue
+            Cash flow
           </p>
           <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
-            Monthly performance
+            Spend, runway, and net position
           </h2>
         </div>
         <p className="text-xs text-text-muted">Last computed {computedAt}</p>
@@ -96,25 +75,42 @@ export function RevenueTrendCard({ dashboard }: { dashboard: DashboardResponse }
 
       <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-text-muted">
         <span className="inline-flex items-center gap-2">
-          <span className="h-1.5 w-4 rounded bg-accent-blue" /> Revenue
+          <span className="h-1.5 w-4 rounded bg-feedback-danger" /> Spend
         </span>
-        {latest ? (
-          <span>
-            Latest month:{" "}
-            <span className="font-semibold text-text-primary">{formatMoney(latest.revenue)}</span>{" "}
-            revenue
-          </span>
-        ) : null}
+        <span className="inline-flex items-center gap-2">
+          <span className="h-1.5 w-4 rounded bg-feedback-success" /> Revenue
+        </span>
+        <span>
+          Current spend: <span className="font-semibold text-text-primary">{formatMoneyWithCurrency(latestSpend, currency)}</span>
+        </span>
+        <span>
+          Overdue exposure: <span className="font-semibold text-text-primary">{formatMoneyWithCurrency(latestOverdue, currency)}</span>
+        </span>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-5 h-64">
         {series.length === 0 ? (
-          <div className="flex h-56 flex-col items-center justify-center rounded-2xl border border-dashed border-default text-sm text-text-muted">
-            <p className="font-medium text-text-secondary">No trend yet</p>
-            <p>Connect a finance source and run a sync to see your trend.</p>
+          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-default text-sm text-text-muted">
+            <p className="font-medium text-text-secondary">No cash flow data yet</p>
+            <p>Connect a finance source and run a sync to see spend and net position.</p>
           </div>
         ) : (
-          <MiniTrendChart series={series} />
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--color-text-muted) / 0.12)" />
+              <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 11 }} />
+              <YAxis
+                tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 11 }}
+                tickFormatter={(value) => formatMoneyWithCurrencyFull(Number(value), currency)}
+              />
+              <Tooltip content={<CashflowTooltip currency={currency} />} />
+              <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                {series.map((entry) => (
+                  <Cell key={entry.name} fill={entry.fill ?? "rgb(var(--color-accent-blue))"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         )}
       </div>
     </div>

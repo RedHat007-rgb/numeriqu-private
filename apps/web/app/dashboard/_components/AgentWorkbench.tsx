@@ -39,7 +39,29 @@ import {
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type Message = { role: "user" | "assistant" | "system"; content: string };
+type ChartTurnMetadata = {
+  kind?: string;
+  mode?: "create" | "edit";
+  versionNumber?: number;
+  previousVersionNumber?: number | null;
+  dashboardId?: string | null;
+  dashboardTitle?: string;
+  widgetCount?: number;
+  prompt?: string;
+  summary?: string;
+  widgetSnapshots?: Array<{
+    title?: string;
+    chartType?: string;
+    displayOrder?: number;
+  }>;
+  intent?: "CREATE_DASHBOARD" | "EDIT_DASHBOARD" | null;
+};
+
+type Message = {
+  role: "user" | "assistant" | "system";
+  content: string;
+  metadata?: ChartTurnMetadata | null;
+};
 type Phase = { id: string; label: string; status: "pending" | "running" | "done" };
 type ToolCall = { tool: string; label: string; status: "running" | "done"; rowCount?: number };
 type QueryIntent = "CREATE_DASHBOARD" | "EDIT_DASHBOARD" | null;
@@ -55,7 +77,7 @@ const SAMPLE_PROMPTS = [
   {
     label: "CFO Board Pack",
     icon: BarChart3,
-    prompt: "Build a full CFO board pack with revenue trend, entity breakdown, burn analysis, and an investor-ready summary.",
+    prompt: "Build a full CFO board pack with spend trend, vendor concentration, burn analysis, and an investor-ready summary.",
     color: "text-accent-violet",
     bg: "bg-accent-violet/8",
   },
@@ -76,14 +98,14 @@ const SAMPLE_PROMPTS = [
   {
     label: "Entity Comparison",
     icon: Users,
-    prompt: "Compare revenue performance across all my connected entities. Which is most profitable and why?",
+    prompt: "Compare spend concentration across all my connected entities. Which vendors or entities drive the most cost and why?",
     color: "text-accent-cyan",
     bg: "bg-accent-cyan/8",
   },
   {
     label: "Quarterly Review",
     icon: Search,
-    prompt: "Give me a full quarterly revenue analysis with quarter-over-quarter comparisons and growth signals.",
+    prompt: "Give me a full quarterly spend analysis with quarter-over-quarter comparisons and vendor signals.",
     color: "text-accent-blue",
     bg: "bg-accent-blue/8",
   },
@@ -91,7 +113,7 @@ const SAMPLE_PROMPTS = [
 
 const EDIT_CHIPS = [
   "Add quarterly comparison",
-  "Show entity breakdown",
+  "Show vendor breakdown",
   "Add cash runway",
   "Switch to bar charts",
 ];
@@ -124,6 +146,10 @@ function timeAgo(dateStr?: string): string {
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d ago`;
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(dateStr));
+}
+
+function isChartTurnMetadata(metadata: unknown): metadata is ChartTurnMetadata {
+  return !!metadata && typeof metadata === "object" && (metadata as ChartTurnMetadata).kind === "chart_turn";
 }
 
 // ─── Session Sidebar ───────────────────────────────────────────────────────────
@@ -493,6 +519,7 @@ function MessageBubble({
   isLast: boolean;
 }) {
   const isUser = message.role === "user";
+  const chartTurn = isChartTurnMetadata(message.metadata) ? message.metadata : null;
 
   return (
     <motion.div
@@ -515,6 +542,48 @@ function MessageBubble({
             : "bg-bg-elevated/60 ring-1 ring-default text-text-primary",
         )}
       >
+        {chartTurn && !isUser && (
+          <div className="mb-3 rounded-2xl border border-accent-cyan/20 bg-accent-cyan/5 p-3 shadow-sm">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="rounded-full bg-accent-cyan/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-cyan">
+                Chart v{chartTurn.versionNumber ?? "?"}
+              </span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                {chartTurn.mode === "edit" ? "updated chart" : "new chart"}
+              </span>
+              {typeof chartTurn.previousVersionNumber === "number" && (
+                <span className="rounded-full bg-bg-elevated px-2 py-0.5 text-[10px] font-semibold text-text-muted">
+                  preserves v{chartTurn.previousVersionNumber}
+                </span>
+              )}
+            </div>
+            <p className="text-sm font-semibold text-text-primary">
+              {chartTurn.dashboardTitle ?? "Dashboard"}
+            </p>
+            <p className="mt-1 text-xs text-text-muted">
+              {chartTurn.summary ?? "Chart generated from the current conversation."}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <span className="rounded-full bg-bg-elevated px-2 py-0.5 text-[10px] font-semibold text-text-muted">
+                {chartTurn.widgetCount ?? 0} widgets
+              </span>
+              {chartTurn.intent && (
+                <span className="rounded-full bg-bg-elevated px-2 py-0.5 text-[10px] font-semibold text-text-muted">
+                  {chartTurn.intent === "EDIT_DASHBOARD" ? "edit" : "create"}
+                </span>
+              )}
+              {chartTurn.widgetSnapshots?.slice(0, 3).map((widget) => (
+                <span
+                  key={`${widget.title ?? "widget"}-${widget.displayOrder ?? 0}`}
+                  className="rounded-full bg-bg-elevated px-2 py-0.5 text-[10px] font-semibold text-text-muted"
+                >
+                  {widget.title ?? "Chart"}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {message.content ? (
           <div className="prose prose-sm max-w-none leading-relaxed text-text-primary prose-headings:text-text-primary prose-strong:text-text-primary prose-a:text-accent-violet prose-code:text-accent-cyan prose-table:text-xs">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
@@ -727,6 +796,18 @@ export function AgentWorkbench() {
     });
   }
 
+  function attachAssistantMetadata(metadata: ChartTurnMetadata | null) {
+    if (!metadata) return;
+    setMessages((prev) => {
+      const copy = [...prev];
+      const last = copy[copy.length - 1];
+      if (last?.role === "assistant") {
+        copy[copy.length - 1] = { ...last, metadata };
+      }
+      return copy;
+    });
+  }
+
   async function handleSelectSession(id: string) {
     if (id === sessionId) return;
     resetThinking();
@@ -873,6 +954,9 @@ export function AgentWorkbench() {
             setDashboardInfo({ title: msg.title, widgetCount: msg.widgetCount, isEdit: false });
             setIsDashboardGenerating(false);
             setSyncTrigger((n) => n + 1);
+            if (msg.chartTurn) {
+              attachAssistantMetadata(msg.chartTurn as ChartTurnMetadata);
+            }
             toast.success("Dashboard generated", {
               description: msg.title ?? "Your strategic dashboard is ready.",
             });
@@ -889,6 +973,9 @@ export function AgentWorkbench() {
             });
             setIsDashboardGenerating(false);
             setSyncTrigger((n) => n + 1);
+            if (msg.chartTurn) {
+              attachAssistantMetadata(msg.chartTurn as ChartTurnMetadata);
+            }
             toast.success("Dashboard updated", {
               description: (msg.summary as string) ?? "Your dashboard has been updated.",
             });
@@ -1203,7 +1290,7 @@ export function AgentWorkbench() {
                 <DashboardPreview
                   triggerSync={syncTrigger}
                   isGenerating={isDashboardGenerating}
-                  sessionId={isHistoricalSession ? sessionId : null}
+                  sessionId={sessionId}
                 />
               </motion.div>
             )}

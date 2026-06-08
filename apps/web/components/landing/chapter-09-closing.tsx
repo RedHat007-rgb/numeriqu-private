@@ -31,7 +31,7 @@ export function Closing() {
         <Reveal delay={220}>
           <p className="mx-auto mt-8 max-w-xl text-pretty text-[17px] leading-relaxed text-muted-foreground">
             With your numbers. Connecting your first ledger takes less than a
-            second — then your books answer back.
+            second, then your books answer back.
           </p>
         </Reveal>
 

@@ -29,6 +29,8 @@ interface OrgScope {
 
 type MembershipRole = 'ADMIN' | 'USER';
 
+type PivotAxis = 'month' | 'department' | 'class' | 'vendor' | 'account';
+
 type ChartType =
   | 'line'
   | 'bar'
@@ -47,7 +49,8 @@ type ChartType =
   | 'pareto'
   | 'gauge'
   | 'bubble'
-  | 'heatmap';
+  | 'heatmap'
+  | 'matrix';
 
 interface ToolResult {
   tool: string;
@@ -121,6 +124,34 @@ interface ActiveDashboard {
     displayOrder: number;
   }>;
 }
+
+type ChartTurnMode = 'create' | 'edit';
+
+type ChartTurnWidgetSnapshot = {
+  id?: string;
+  title: string;
+  chartType: string;
+  queryConfig: Record<string, unknown>;
+  chartConfig: Record<string, unknown>;
+  displayOrder: number;
+  dataSnapshot?: Array<Record<string, unknown>>;
+  dataSnapshotTruncated?: boolean;
+};
+
+type ChartTurnMetadata = {
+  kind: 'chart_turn';
+  mode: ChartTurnMode;
+  versionNumber: number;
+  previousVersionNumber: number | null;
+  sessionId: string;
+  dashboardId: string | null;
+  dashboardTitle: string;
+  widgetCount: number;
+  prompt: string;
+  summary: string;
+  widgetSnapshots: ChartTurnWidgetSnapshot[];
+  intent: QueryIntent;
+};
 
 type QueryIntent = 'CREATE_DASHBOARD' | 'EDIT_DASHBOARD';
 
@@ -215,6 +246,9 @@ const VALID_WIDGETS = [
   { type: 'bar', metric: 'revenue', grouping: 'category' },
   { type: 'horizontal_bar', metric: 'revenue', grouping: 'category' },
   { type: 'pie', metric: 'revenue', grouping: 'category' },
+  { type: 'treemap', metric: 'revenue', grouping: 'account' },
+  { type: 'treemap', metric: 'revenue', grouping: 'category' },
+  { type: 'bar', metric: 'pl_comparison', grouping: 'summary' },
   { type: 'pie', metric: 'invoices', grouping: 'status' },
   { type: 'pie', metric: 'outstanding', grouping: 'client' },
   // ── Metric tiles
@@ -322,10 +356,27 @@ const VALID_WIDGETS = [
   { type: 'stacked_bar', metric: 'expense', grouping: 'month_department' },
   { type: 'line', metric: 'expense', grouping: 'month_department' },
   { type: 'area', metric: 'expense', grouping: 'month_department' },
+  { type: 'heatmap', metric: 'expense', grouping: 'month_department' },
+  { type: 'line', metric: 'expense', grouping: 'month_account' },
+  { type: 'line', metric: 'expense', grouping: 'month_class' },
+  { type: 'line', metric: 'expense', grouping: 'month_vendor' },
+  { type: 'heatmap', metric: 'expense', grouping: 'month_account' },
+  { type: 'heatmap', metric: 'expense', grouping: 'account_month' },
+  { type: 'heatmap', metric: 'expense', grouping: 'account_department' },
+  { type: 'heatmap', metric: 'expense', grouping: 'account_vendor' },
+  { type: 'heatmap', metric: 'expense', grouping: 'department_account' },
+  { type: 'heatmap', metric: 'expense', grouping: 'department_class' },
+  { type: 'heatmap', metric: 'expense', grouping: 'class_department' },
+  { type: 'matrix', metric: 'expense', grouping: 'department_vendor' },
+  { type: 'matrix', metric: 'expense', grouping: 'account_vendor' },
+  { type: 'heatmap', metric: 'expense', grouping: 'vendor_department' },
+  { type: 'heatmap', metric: 'expense', grouping: 'vendor_month' },
+  { type: 'matrix', metric: 'expense', grouping: 'vendor_account' },
+  { type: 'matrix', metric: 'expense', grouping: 'month_vendor' },
+  { type: 'matrix', metric: 'expense', grouping: 'vendor_month' },
   // ── Vendor spend trend (multi-series line per vendor over months)
-  { type: 'line', metric: 'expense', grouping: 'vendor_month' },
-  { type: 'stacked_bar', metric: 'expense', grouping: 'vendor_month' },
-  { type: 'area', metric: 'expense', grouping: 'vendor_month' },
+  { type: 'stacked_bar', metric: 'expense', grouping: 'month_vendor' },
+  { type: 'area', metric: 'expense', grouping: 'month_vendor' },
 
   // ── Vendor transactions (scatter / bubble for risk / concentration)
   { type: 'scatter', metric: 'vendor_transactions', grouping: 'vendor' },
@@ -384,8 +435,12 @@ const VALID_WIDGETS = [
 
   // ── Account type treemap / top debits / top credits / scatter
   { type: 'treemap', metric: 'accounts', grouping: 'account_type' },
+  { type: 'treemap', metric: 'assets', grouping: 'account_type' },
+  { type: 'treemap', metric: 'liabilities', grouping: 'account_type' },
+  { type: 'treemap', metric: 'equity', grouping: 'breakdown' },
   { type: 'bar', metric: 'debits', grouping: 'account_type' },
   { type: 'bar', metric: 'credits', grouping: 'account_type' },
+  { type: 'bar', metric: 'pl_comparison', grouping: 'summary' },
   { type: 'scatter', metric: 'debits_credits', grouping: 'account' },
 
   // ── Monthly debits vs credits stacked
@@ -409,7 +464,7 @@ CHART TYPE MAPPING — map user language to EXACT type. This rule is ABSOLUTE �
   "treemap" → treemap            "scatter plot" / "scatter chart" → scatter
   "histogram" → histogram        "horizontal bar" / "ranked horizontal bar" / "ranked bar" → horizontal_bar
   "pareto chart" → pareto        "gauge chart" / "speedometer" → gauge
-  "bubble chart" → bubble        "heatmap" / "heat map" → heatmap
+  "bubble chart" → bubble        "heatmap" / "heat map" → heatmap   "matrix" → matrix
   "KPI cards" / "KPI tiles" / "metric cards" → kpi    "metric" / "tile" → metric
   "table" / "list" → table       "clustered bar" / "clustered column" → bar
   "multi-line" → line (use breakdown param)   "box plot" → horizontal_bar
@@ -423,7 +478,8 @@ LINE:
   line/dso/month                  line/net_income/month           line/expense/month
   line/gross_profit/month         line/gross_margin_pct/month     line/net_margin_pct/month
   line/ebitda/month               line/revenue_vs_expense/month   line/revenue_cumulative/month
-  line/running_balance/month
+  line/running_balance/month      line/expense/month_account      line/expense/month_class
+  line/expense/month_vendor
 
 BAR:
   bar/revenue/month               bar/revenue/org                 bar/revenue/quarter
@@ -434,7 +490,7 @@ BAR:
   bar/net_income/quarter          bar/revenue_vs_expense/month    bar/debits_credits/month
   bar/net_position/month          bar/invoice_count/month         bar/top_invoices/value
   bar/expense_by_type/source      bar/pl_accounts/account         bar/bs_accounts/account
-  bar/accounts_by_type/classification
+  bar/accounts_by_type/classification  bar/pl_comparison/summary
 
 HORIZONTAL_BAR (horizontal ranked bars):
   horizontal_bar/revenue/client   horizontal_bar/top_invoices/value
@@ -463,6 +519,9 @@ DONUT (ring display, same data sources as pie):
 TREEMAP:
   treemap/expense/account         treemap/revenue/client
   treemap/expense/department      treemap/expense/class           treemap/expense/vendor
+  treemap/expense/department_class treemap/expense/department_vendor treemap/expense/vendor_department
+  treemap/revenue/account         treemap/revenue/category         treemap/assets/account_type
+  treemap/liabilities/account_type treemap/equity/breakdown
 
 SCATTER:
   scatter/invoice_amount/time     scatter/expense/vendor          scatter/vendor_transactions/vendor
@@ -477,7 +536,17 @@ BUBBLE:
   bubble/clients/revenue_invoices_avg   bubble/expense/vendor     bubble/vendor_transactions/vendor
 
 HEATMAP:
-  heatmap/revenue_expense/month
+  heatmap/revenue_expense/month  heatmap/expense/month_department
+  heatmap/expense/month_account   heatmap/expense/account_month    heatmap/expense/account_department
+  heatmap/expense/department_account  heatmap/expense/department_class  heatmap/expense/class_department
+  heatmap/expense/department_vendor   heatmap/expense/vendor_department heatmap/expense/vendor_month
+  heatmap/expense/month_vendor
+
+MATRIX:
+  matrix/expense/department_vendor matrix/expense/vendor_department
+  matrix/expense/month_account    matrix/expense/account_month    matrix/expense/account_department
+  matrix/expense/department_account matrix/expense/department_class matrix/expense/class_department
+  matrix/expense/vendor_account   matrix/expense/account_vendor   matrix/expense/month_vendor
 
 GAUGE:
   gauge/financial_health/summary
@@ -574,6 +643,8 @@ Q: "Create a bubble chart showing clients by total revenue, number of invoices, 
 Q: "Create KPI cards showing total revenue, total expenses, net profit, avg invoice value, number of invoices, and ending balance" → {"candidates":[{"title":"Executive KPI Dashboard","tools":["financial_summary"],"widgets":[{"type":"kpi","metric":"summary","grouping":"overview","title":"Key Financial Performance Indicators"}]}]}
 Q: "Create a gauge chart showing current financial health" → {"candidates":[{"title":"Financial Health Gauge","tools":["financial_summary"],"widgets":[{"type":"gauge","metric":"financial_health","grouping":"summary","title":"Overall Financial Health Score"}]}]}
 Q: "Create a heatmap showing monthly revenue and expenses side by side" → {"candidates":[{"title":"Revenue vs Expenses Heatmap","tools":["financial_summary","revenue_trend"],"widgets":[{"type":"heatmap","metric":"revenue_expense","grouping":"month","title":"Monthly Revenue vs Expenses Heatmap"}]}]}
+Q: "Create a heatmap showing department spending across different months" → {"candidates":[{"title":"Department Spend Heatmap","tools":["expense_trend"],"widgets":[{"type":"heatmap","metric":"expense","grouping":"month_department","title":"Department Spend by Month"}]}]}
+Q: "Create a matrix showing Department by Vendor with Spend inside" → {"candidates":[{"title":"Department by Vendor Matrix","tools":["expense_trend"],"widgets":[{"type":"matrix","metric":"expense","grouping":"department_vendor","title":"Department by Vendor Spend Matrix"}]}]}
 Q: "Create a bar chart showing total expenses by account name" → {"candidates":[{"title":"Expense Breakdown by Account","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"expense","grouping":"account","title":"Total Expenses by Account Name"}]}]}
 Q: "Create a stacked column chart showing monthly expenses broken down by account category" → {"candidates":[{"title":"Monthly Expenses by Category","tools":["financial_summary"],"widgets":[{"type":"stacked_bar","metric":"expense_by_type","grouping":"month","title":"Monthly Expenses by Source Category"}]}]}
 Q: "Create a bar chart showing total transaction amount by account type" → {"candidates":[{"title":"Transactions by Account Type","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"accounts_by_type","grouping":"classification","title":"Total by Account Classification"}]}]}
@@ -625,6 +696,7 @@ const PLANNER_SCHEMA = {
                     'gauge',
                     'bubble',
                     'heatmap',
+                    'matrix',
                   ],
                 },
                 metric: { type: 'string' },
@@ -672,6 +744,9 @@ CLASS: expense/class
 VENDOR: expense/vendor
 DEBIT_CREDIT: debits_credits/account_type
 
+If the user asks to switch the chart type, preserve the existing metric/grouping and only change the widget type.
+Do not "solve" a type switch by adding a new pie chart or by keeping the old type.
+
 OUTPUT: Respond with ONLY valid JSON. Zero explanation. Zero markdown.
 
 {
@@ -704,21 +779,30 @@ const EDITOR_SCHEMA = {
         properties: {
           title: { type: 'string' },
           description: { type: 'string' },
-          type: {
-            type: 'string',
-            enum: [
-              'line',
-              'bar',
-              'pie',
-              'metric',
-              'table',
-              'area',
-              'treemap',
-              'scatter',
-              'stacked_bar',
-              'waterfall',
-            ],
-          },
+            type: {
+              type: 'string',
+              enum: [
+                'line',
+                'bar',
+                'pie',
+                'donut',
+                'metric',
+                'kpi',
+                'table',
+                'area',
+                'treemap',
+                'scatter',
+                'stacked_bar',
+                'waterfall',
+                'histogram',
+                'horizontal_bar',
+                'pareto',
+                'gauge',
+                'bubble',
+                'heatmap',
+                'matrix',
+              ],
+            },
           metric: { type: 'string' },
           grouping: { type: 'string' },
         },
@@ -733,21 +817,30 @@ const EDITOR_SCHEMA = {
         properties: {
           index: { type: 'integer' },
           title: { type: 'string' },
-          type: {
-            type: 'string',
-            enum: [
-              'line',
-              'bar',
-              'pie',
-              'metric',
-              'table',
-              'area',
-              'treemap',
-              'scatter',
-              'stacked_bar',
-              'waterfall',
-            ],
-          },
+            type: {
+              type: 'string',
+              enum: [
+                'line',
+                'bar',
+                'pie',
+                'donut',
+                'metric',
+                'kpi',
+                'table',
+                'area',
+                'treemap',
+                'scatter',
+                'stacked_bar',
+                'waterfall',
+                'histogram',
+                'horizontal_bar',
+                'pareto',
+                'gauge',
+                'bubble',
+                'heatmap',
+                'matrix',
+              ],
+            },
           description: { type: 'string' },
         },
         required: ['index'],
@@ -1236,6 +1329,7 @@ Message template: "Sorry, [what was asked] is not available in this financial da
 SCATTER: use COUNT() for transaction count (never sum(id)). Output: name, x (spend), y (count).
   Example: SELECT dept AS name, round(sum(debit),0) AS x, count() AS y FROM sample_gl_dump WHERE ... GROUP BY dept LIMIT 20
 HEATMAP: ALWAYS return type="heatmap". NEVER substitute bar. SQL: name=entity, value=intensity.
+MATRIX: ALWAYS return type="matrix". Use a wide pivot with row labels in name and spend columns by the cross dimension.
 TREEMAP: values MUST be positive. Use abs() or sumIf(>0).
 WATERFALL: P&L order with signed values. Revenue(+), COGS(-), GrossProfit(+), OpEx(-), NetIncome(+). Use sample_trial_balance UNION ALL queries.
 KPI CARD: return type="kpi" for "KPI card/dashboard/tile". SQL: name=metric label, value=amount.
@@ -1947,6 +2041,7 @@ export class AgentService {
       messages: session.messages.map((m) => ({
         role: m.role.toLowerCase(),
         content: m.content,
+        metadata: m.metadata ?? null,
       })),
     };
   }
@@ -6253,6 +6348,34 @@ export class AgentService {
       };
     }
 
+    // ── pl_comparison/summary (bar — side-by-side P&L comparison) ───────────
+    if (metric === 'pl_comparison' && grouping === 'summary') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const tbRows = await this.queryRows<any>(
+        `SELECT
+           round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS total_revenue,
+           round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0) AS total_cogs,
+           round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0) AS total_expenses
+         FROM ${tbTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)})`,
+        { externalOrgIds: scope.externalOrgIds },
+      );
+      const rev = this.num((tbRows[0] as any)?.total_revenue ?? 0);
+      const cogs = this.num((tbRows[0] as any)?.total_cogs ?? 0);
+      const exp = this.num((tbRows[0] as any)?.total_expenses ?? 0);
+      const gp = rev - cogs;
+      const totalExpenses = exp + cogs;
+      const ni = gp - totalExpenses;
+      return {
+        data: [
+          { name: 'Revenue', value: rev },
+          { name: 'Gross Profit', value: gp },
+          { name: 'Expenses', value: totalExpenses },
+          { name: 'Net Income', value: ni },
+        ],
+      };
+    }
+
     // ── expense_summary/summary (metric tile) — expense KPIs from trial_balance ─
     if (metric === 'expense_summary' && grouping === 'summary') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
@@ -7340,12 +7463,85 @@ export class AgentService {
           const row: Record<string, any> = { name: month };
           for (const d of depts) row[d] = vals[d] ?? 0;
           return row;
-        });
+      });
       return { data, keys: [...depts] };
     }
 
-    // ── expense/vendor_month (multi-series line — top vendors by month) ─────────
-    if (metric === 'expense' && grouping === 'vendor_month') {
+    // ── expense/department_vendor (matrix — departments as rows, vendors as cols) ─────────
+    if (metric === 'expense' && grouping === 'department_vendor') {
+      if (scope.externalOrgIds.length === 0) return { data: [] };
+      const topVendors = await this.queryRowsWithTimeFallback<any>(
+        (t) => `SELECT
+           COALESCE(NULLIF(vendor_name, ''), 'Unassigned') AS vendor,
+           round(sum(toFloat64(line_amount)), 0) AS total
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${t}
+           AND line_amount > 0 AND journal_date IS NOT NULL ${BS_EXCL}
+         GROUP BY vendor
+         ORDER BY total DESC
+         LIMIT 8`,
+        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+        jTime,
+      );
+      if (topVendors.length === 0)
+        return { data: [], _noVendorData: true } as any;
+      const vendorNames = (topVendors as any[]).map((r: any) =>
+        String(r.vendor),
+      );
+      const rows = await this.queryRows<any>(
+        `SELECT
+           COALESCE(NULLIF(department, ''), 'Unassigned') AS dept,
+           COALESCE(NULLIF(vendor_name, ''), 'Unassigned') AS vendor,
+           round(sum(toFloat64(line_amount)), 0) AS value
+         FROM ${jTbl}
+         WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
+           AND line_amount > 0 AND journal_date IS NOT NULL
+           AND vendor_name IN ({vendorNames:Array(String)}) ${BS_EXCL}
+         GROUP BY dept, vendor
+         ORDER BY dept ASC, value DESC`,
+        { externalOrgIds: scope.externalOrgIds, vendorNames, ...entityParam },
+      );
+      const deptMap = new Map<string, { sort: string; [key: string]: any }>();
+      const vendors = new Set<string>();
+      for (const r of rows as any[]) {
+        const dept = String(r.dept);
+        if (!deptMap.has(dept)) deptMap.set(dept, { sort: dept });
+        deptMap.get(dept)![String(r.vendor)] = this.num(r.value);
+        vendors.add(String(r.vendor));
+      }
+      const data = [...deptMap.entries()]
+        .sort(([, a], [, b]) => a.sort.localeCompare(b.sort))
+        .map(([dept, vals]) => {
+          const row: Record<string, any> = { name: dept };
+          for (const vendor of vendors) row[vendor] = vals[vendor] ?? 0;
+          return row;
+        });
+      return { data, keys: [...vendors] };
+    }
+
+    // ── generic expense pivots for heatmap/matrix/line comparisons ──────────
+    if (metric === 'expense') {
+      const pivotGroupings = new Set([
+        'month_account',
+        'account_month',
+        'account_department',
+        'department_account',
+        'department_class',
+        'class_department',
+        'vendor_department',
+        'vendor_month',
+        'account_vendor',
+        'vendor_account',
+        'class_month',
+      ]);
+      if (pivotGroupings.has(grouping)) {
+        const [rowAxis, colAxis] = grouping.split('_') as [PivotAxis, PivotAxis];
+        return this.buildExpensePivot(rowAxis, colAxis, scope, entityParam, range);
+      }
+    }
+
+    // ── expense/month_vendor (multi-series line — top vendors by month) ─────────
+    if (metric === 'expense' && grouping === 'month_vendor') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
       // Get top 8 vendors by total spend; fall back to all-time if time-filtered data is empty
       const topVendors = await this.queryRowsWithTimeFallback<any>(
@@ -9217,6 +9413,7 @@ export class AgentService {
       let dashboardId: string | null = null;
       let dashboardTitle = '';
       let actualWidgetCount = 0;
+      let chartTurnMetadata: ChartTurnMetadata | null = null;
 
       if (intent === 'EDIT_DASHBOARD' && activeDashboard && editPlan) {
         yield this.chunk('phase', {
@@ -9235,16 +9432,46 @@ export class AgentService {
           dashboardId = updated.id;
           dashboardTitle = updated.title;
           actualWidgetCount = updated.widgetCount;
+          const widgetSnapshots = await this.buildChartTurnWidgetSnapshots(
+            organizationId,
+            role,
+            updated.widgets,
+          );
+          const versionNumber = await this.nextChartTurnVersion(
+            currentSession.id,
+            organizationId,
+          );
+          chartTurnMetadata = {
+            kind: 'chart_turn',
+            mode: 'edit',
+            versionNumber,
+            previousVersionNumber: versionNumber > 1 ? versionNumber - 1 : null,
+            sessionId: currentSession.id,
+            dashboardId,
+            dashboardTitle,
+            widgetCount: actualWidgetCount,
+            prompt: queryText,
+            summary: this.describeChartTurnSummary({
+              mode: 'edit',
+              dashboardTitle,
+              widgetSnapshots,
+              rawSummary: editPlan.summary,
+            }),
+            widgetSnapshots,
+            intent,
+          };
 
           await logEvent('DASHBOARD_UPDATED', {
             dashboardId,
             summary: editPlan.summary,
+            versionNumber: (chartTurnMetadata as ChartTurnMetadata).versionNumber,
           });
           yield this.chunk('dashboard_updated', {
             dashboardId,
             title: updated.title,
             summary: editPlan.summary,
             widgetCount: updated.widgetCount,
+            chartTurn: chartTurnMetadata as ChartTurnMetadata,
           });
           yield this.chunk('system', { action: 'DASHBOARD_REFRESH' });
         } catch (editErr: any) {
@@ -9263,11 +9490,15 @@ export class AgentService {
         });
 
         try {
+          const finalDashboardTitle = this.normalizeDashboardTitle(
+            plan.dashboard.title,
+            queryText,
+          );
           const dashboard = await this.prisma.dashboard.create({
             data: {
               organizationId,
               ownerId: userId,
-              title: plan.dashboard.title || this.deriveQueryTitle(queryText),
+              title: finalDashboardTitle,
               description:
                 plan.dashboard.description ||
                 'AI-generated strategic intelligence dashboard',
@@ -9404,6 +9635,46 @@ export class AgentService {
             data: widgetDataList,
           });
 
+          const persistedWidgets = await this.prisma.dashboardWidget.findMany({
+            where: { dashboardId: dashboard.id },
+            orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          });
+          const widgetSnapshots = await this.buildChartTurnWidgetSnapshots(
+            organizationId,
+            role,
+            persistedWidgets.map((w) => ({
+              id: w.id,
+              title: w.title,
+              chartType: w.chartType,
+              queryConfig: w.queryConfig as Record<string, unknown>,
+              chartConfig: w.chartConfig as Record<string, unknown>,
+              displayOrder: w.displayOrder,
+            })),
+          );
+          const versionNumber = await this.nextChartTurnVersion(
+            currentSession.id,
+            organizationId,
+          );
+          chartTurnMetadata = {
+            kind: 'chart_turn',
+            mode: 'create',
+            versionNumber,
+            previousVersionNumber: null,
+            sessionId: currentSession.id,
+            dashboardId: dashboard.id,
+            dashboardTitle: dashboard.title,
+            widgetCount: widgetSnapshots.length,
+            prompt: queryText,
+            summary: this.describeChartTurnSummary({
+              mode: 'create',
+              dashboardTitle: dashboard.title,
+              widgetSnapshots,
+              rawSummary: plan.dashboard.description || 'Dashboard generated',
+            }),
+            widgetSnapshots,
+            intent,
+          };
+
           // Link request to the generated dashboard
           await this.prisma.agentDashboardRequest.update({
             where: { id: request.id },
@@ -9414,12 +9685,14 @@ export class AgentService {
           await logEvent('DASHBOARD_CREATED', {
             dashboardId,
             widgetCount: widgets.length,
+            versionNumber: (chartTurnMetadata as ChartTurnMetadata).versionNumber,
           });
           yield this.chunk('dashboard_created', {
             dashboardId,
             title: dashboard.title,
             description: plan.dashboard.description,
             widgetCount: widgets.length,
+            chartTurn: chartTurnMetadata as ChartTurnMetadata,
           });
           yield this.chunk('system', { action: 'DASHBOARD_REFRESH' });
         } catch (permErr: any) {
@@ -9464,7 +9737,7 @@ export class AgentService {
           intent,
           dashboardTitle,
           widgetCount: actualWidgetCount,
-          editSummary: editPlan?.summary ?? null,
+          editSummary: chartTurnMetadata?.summary ?? editPlan?.summary ?? null,
         },
       );
 
@@ -9481,6 +9754,9 @@ export class AgentService {
           organizationId,
           role: 'assistant',
           content: fullResponse.trim() || 'Analysis complete.',
+          ...(chartTurnMetadata
+            ? { metadata: chartTurnMetadata as Prisma.InputJsonValue }
+            : {}),
         },
       });
 
@@ -9656,7 +9932,7 @@ export class AgentService {
     const messages = await this.prisma.agentChatMessage.findMany({
       where: { sessionId, organizationId },
       orderBy: { createdAt: 'desc' },
-      take: 6,
+      take: 10,
     });
 
     if (messages.length <= 1) return '(No prior conversation in this session)';
@@ -9668,9 +9944,182 @@ export class AgentService {
         const role = m.role.toUpperCase();
         const preview =
           m.content.length > 180 ? m.content.slice(0, 180) + '...' : m.content;
-        return `${role}: ${preview}`;
+        const chartLine =
+          role === 'ASSISTANT'
+            ? this.formatChartTurnHistoryLine((m as any).metadata ?? null)
+            : null;
+        return chartLine ? `${role}: ${preview}\n${chartLine}` : `${role}: ${preview}`;
       })
       .join('\n');
+  }
+
+  private formatChartTurnHistoryLine(metadata: unknown): string | null {
+    if (!metadata || typeof metadata !== 'object') return null;
+    const record = metadata as Partial<ChartTurnMetadata>;
+    if (record.kind !== 'chart_turn') return null;
+
+    const widgetTitles = Array.isArray(record.widgetSnapshots)
+      ? record.widgetSnapshots
+          .slice(0, 3)
+          .map((w) => `${w.title} [${w.chartType}]`)
+          .join(' | ')
+      : '';
+
+    return [
+      `CHART v${record.versionNumber ?? '?'}: ${record.dashboardTitle ?? 'Dashboard'}`,
+      `MODE=${record.mode ?? 'create'}; WIDGETS=${record.widgetCount ?? 0}`,
+      record.previousVersionNumber
+        ? `PREVIOUS=v${record.previousVersionNumber}`
+        : null,
+      record.summary ? `SUMMARY=${record.summary}` : null,
+      widgetTitles ? `DETAILS=${widgetTitles}` : null,
+    ]
+      .filter(Boolean)
+      .join(' | ');
+  }
+
+  private describeChartTurnSummary(input: {
+    mode: ChartTurnMode;
+    dashboardTitle: string;
+    widgetSnapshots: ChartTurnWidgetSnapshot[];
+    rawSummary: string;
+  }): string {
+    const primaryWidget = input.widgetSnapshots[0];
+    const chartType = this.humanizeChartType(primaryWidget?.chartType);
+    const chartLabel = chartType ?? 'chart';
+    const normalizedRaw = input.rawSummary.trim().replace(/\s+/g, ' ');
+
+    if (input.mode === 'edit') {
+      const detail = normalizedRaw ? ` (${normalizedRaw})` : '';
+      return `Added a new ${chartLabel} version for "${input.dashboardTitle}" and preserved the previous version in chat${detail}.`;
+    }
+
+    const detail = normalizedRaw ? ` (${normalizedRaw})` : '';
+    return `Created a new ${chartLabel} version for "${input.dashboardTitle}"${detail}.`;
+  }
+
+  private humanizeChartType(chartType?: string): string | null {
+    const value = String(chartType ?? '').trim().toLowerCase();
+    if (!value) return null;
+    if (value === 'donut' || value === 'pie') return `${value} chart`;
+    if (value === 'stacked_bar') return 'stacked bar chart';
+    if (value === 'horizontal_bar') return 'horizontal bar chart';
+    if (value === 'heatmap' || value === 'matrix' || value === 'treemap') return value;
+    if (value === 'line' || value === 'bar' || value === 'area' || value === 'scatter') {
+      return `${value} chart`;
+    }
+    return `${value} chart`;
+  }
+
+  private async buildChartTurnWidgetSnapshots(
+    organizationId: string,
+    role: MembershipRole,
+    widgets: Array<{
+      id?: string;
+      title: string;
+      chartType: string;
+      queryConfig: Record<string, unknown>;
+      chartConfig: Record<string, unknown>;
+      displayOrder: number;
+    }>,
+  ): Promise<ChartTurnWidgetSnapshot[]> {
+    const MAX_SNAPSHOT_ROWS = 100;
+
+    const snapshots = await Promise.all(
+      widgets.map(async (widget) => {
+        const metric = String(widget.queryConfig.metric ?? '').trim();
+        const grouping = String(widget.queryConfig.grouping ?? '').trim();
+        const timeRange = (widget.queryConfig.timeRange ?? null) as TimeRange | null;
+        const providerHint = (widget.queryConfig.providerHint ?? null) as
+          | string
+          | null;
+        const clientName = (widget.queryConfig.clientName ?? null) as string | null;
+        const clientNames = Array.isArray(widget.queryConfig.clientNames)
+          ? (widget.queryConfig.clientNames as string[])
+          : null;
+        const orgId = (widget.queryConfig.orgId ?? null) as string | null;
+        const breakdown = (widget.queryConfig.breakdown ?? null) as string | null;
+        const topNRaw = widget.queryConfig.topN ?? null;
+        const topN =
+          typeof topNRaw === 'number'
+            ? topNRaw
+            : typeof topNRaw === 'string' && topNRaw.trim()
+              ? Number(topNRaw)
+              : null;
+
+        if (!metric || !grouping) {
+          return {
+            ...widget,
+            dataSnapshot: [],
+            dataSnapshotTruncated: false,
+          };
+        }
+
+        try {
+          const result = await this.metricData(
+            organizationId,
+            role,
+            metric,
+            grouping,
+            timeRange ?? undefined,
+            providerHint ?? undefined,
+            clientName ?? undefined,
+            clientNames ?? undefined,
+            orgId ?? undefined,
+            breakdown ?? undefined,
+            Number.isFinite(topN ?? NaN) ? (topN as number) : undefined,
+            widget.id,
+          );
+          const data = Array.isArray(result.data) ? result.data : [];
+          return {
+            ...widget,
+            dataSnapshot: data.slice(0, MAX_SNAPSHOT_ROWS) as Array<
+              Record<string, unknown>
+            >,
+            dataSnapshotTruncated: data.length > MAX_SNAPSHOT_ROWS,
+          };
+        } catch (err: any) {
+          this.logger.warn(
+            `[Agent:ChartSnapshot] Failed to snapshot widget "${widget.title}": ${err.message}`,
+          );
+          return {
+            ...widget,
+            dataSnapshot: [],
+            dataSnapshotTruncated: false,
+          };
+        }
+      }),
+    );
+
+    return snapshots.sort(
+      (a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0),
+    );
+  }
+
+  private async nextChartTurnVersion(
+    sessionId: string,
+    organizationId: string,
+  ): Promise<number> {
+    const assistantMessages = await this.prisma.agentChatMessage.findMany({
+      where: {
+        sessionId,
+        organizationId,
+        role: 'assistant',
+      },
+      select: { metadata: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const chartTurns = assistantMessages.filter((message) => {
+      const metadata = message.metadata;
+      return (
+        metadata &&
+        typeof metadata === 'object' &&
+        (metadata as Partial<ChartTurnMetadata>).kind === 'chart_turn'
+      );
+    });
+
+    return chartTurns.length + 1;
   }
 
   private extractSelectedOptionFromPriorClarification(
@@ -9887,9 +10336,8 @@ export class AgentService {
           const requestedType = ((): W['type'] => {
             // UI currently renders “gauge” requests best as a KPI/metric tile.
             if (wants(/gauge/)) return 'metric';
-            // Heatmaps aren't a first-class widget yet; map to bar/stacked bar as best-effort.
-            if (wants(/heatmap/))
-              return wants(/stacked/) ? 'stacked_bar' : 'bar';
+            if (wants(/heatmap/)) return 'heatmap';
+            if (wants(/matrix/)) return 'matrix';
             if (wants(/waterfall/)) return 'waterfall';
             if (wants(/treemap/)) return 'treemap';
             if (wants(/scatter/)) return 'scatter';
@@ -9949,6 +10397,20 @@ export class AgentService {
               return { metric: 'revenue_vs_expense', grouping: 'month' };
             if (wants(/heatmap/) && wants(/revenue/) && wants(/expense/))
               return { metric: 'revenue_vs_expense', grouping: 'month' };
+            if (
+              wants(/heatmap/) &&
+              wants(/expense|spend/) &&
+              wants(/department|dept/) &&
+              wants(/month|months|trend|time/)
+            )
+              return { metric: 'expense', grouping: 'month_department' };
+            if (
+              wants(/matrix/) &&
+              wants(/expense|spend/) &&
+              wants(/department|dept/) &&
+              wants(/vendor|supplier/)
+            )
+              return { metric: 'expense', grouping: 'department_vendor' };
 
             // Net position (credits - debits)
             if (
@@ -10849,6 +11311,52 @@ export class AgentService {
       : 'Financial Analysis';
   }
 
+  private buildPivotDashboardTitle(
+    pivotType: ChartType,
+    rowAxis: PivotAxis,
+    colAxis: PivotAxis,
+  ): string {
+    const label = (axis: PivotAxis): string =>
+      axis
+        .split('_')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+
+    if (pivotType === 'line') {
+      return `Monthly ${label(colAxis)} Spend Trend`;
+    }
+
+    if (pivotType === 'treemap') {
+      return `${label(rowAxis)} / ${label(colAxis)} Spend`;
+    }
+
+    if (pivotType === 'matrix') {
+      return `${label(rowAxis)} by ${label(colAxis)} Matrix`;
+    }
+
+    return `${label(rowAxis)} by ${label(colAxis)} Heatmap`;
+  }
+
+  private normalizeDashboardTitle(
+    candidate: string | null | undefined,
+    query: string,
+  ): string {
+    const cleaned = String(candidate ?? '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) return this.deriveQueryTitle(query);
+
+    const queryCleaned = query.replace(/\s+/g, ' ').trim().toLowerCase();
+    const titleCleaned = cleaned.toLowerCase();
+    const promptLike = /^(can you|could you|please|build|create|give me|show me|i[' ]?d like|i want)/i.test(
+      cleaned,
+    );
+
+    if (promptLike || titleCleaned === queryCleaned) {
+      return this.deriveQueryTitle(query);
+    }
+
+    return cleaned.slice(0, 100);
+  }
+
   // ─── Dashboard → Session Lookup ───────────────────────────────────────────
 
   async getDashboardSession(
@@ -11474,6 +11982,7 @@ export class AgentService {
         ) &&
         /\b(stacked|line|area|multi.?line|multi-series)\b/.test(qLow);
       if (isMonthlyDept) {
+        const dashboardTitle = 'Monthly Department Spend Trend';
         const deptChartType: ChartType = /\bstacked\b/.test(qLow)
           ? 'stacked_bar'
           : /\barea\b/.test(qLow)
@@ -11485,7 +11994,7 @@ export class AgentService {
             tools_to_execute: [],
             should_generate_dashboard: true,
             dashboard: {
-              title: query.slice(0, 80),
+              title: dashboardTitle,
               description: 'Monthly department spend from sample GL data',
               widgets: [
                 {
@@ -11505,13 +12014,14 @@ export class AgentService {
       }
 
       if (forcedChartType === 'waterfall') {
+        const dashboardTitle = 'P&L Waterfall';
         return {
           kind: 'build',
           plan: {
             tools_to_execute: [],
             should_generate_dashboard: true,
             dashboard: {
-              title: query.slice(0, 80),
+              title: dashboardTitle,
               description: 'P&L waterfall from live data',
               widgets: [
                 {
@@ -11524,6 +12034,114 @@ export class AgentService {
                   display_order: 0,
                 },
               ] as any,
+            },
+            analysis_focus: query,
+          },
+        };
+      }
+
+      const pivotType: ChartType | null =
+        /\bheat\s*map\b|\bheatmap\b/.test(qLow)
+          ? 'heatmap'
+          : /\bmatrix\b/.test(qLow)
+            ? 'matrix'
+            : /\btreemap\b/.test(qLow)
+              ? 'treemap'
+            : /\bline\s+chart\b/.test(qLow)
+              ? 'line'
+              : null;
+
+      const axisPatterns: Array<{ axis: PivotAxis; patterns: RegExp[] }> = [
+        {
+          axis: 'month',
+          patterns: [/\bmonth(?:s)?\b/, /\bmonthly\b/, /\bover\s+time\b/, /\btrend\b/],
+        },
+        {
+          axis: 'department',
+          patterns: [/\bdepartment(?:s)?\b/, /\bdept\b/, /\badmin\b/, /\boperations\b/, /\bsales\b/],
+        },
+        { axis: 'class', patterns: [/\bclass(?:es)?\b/, /\bgeneral\b/, /\bmarketing\b/, /\bproduct\b/] },
+        { axis: 'vendor', patterns: [/\bvendor(?:s)?\b/, /\bsupplier(?:s)?\b/] },
+        { axis: 'account', patterns: [/\baccount(?:s)?\b/, /\bgl\b/, /\bexpense\s+account\b/] },
+      ];
+      const axisFromText = (text: string): PivotAxis | null => {
+        const lower = text.toLowerCase();
+        if (/\bmonth(?:s)?\b|\bmonthly\b|\bover\s+time\b|\btrend\b/.test(lower)) return 'month';
+        if (/\bdepartment(?:s)?\b|\bdept\b|\badmin\b|\boperations\b|\bsales\b/.test(lower))
+          return 'department';
+        if (/\bclass(?:es)?\b|\bgeneral\b|\bmarketing\b|\bproduct\b/.test(lower)) return 'class';
+        if (/\bvendor(?:s)?\b|\bsupplier(?:s)?\b/.test(lower)) return 'vendor';
+        if (/\baccount(?:s)?\b|\bgl\b|\bexpense\s+account\b/.test(lower)) return 'account';
+        return null;
+      };
+      const explicitRowAxis = (() => {
+        const m =
+          qLow.match(/\brows?\s+(?:are|as)\s+([^,.;]+?)(?:,|\bcolumns?\b|\band\b|$)/i) ??
+          qLow.match(/\b([a-z\s/&-]+?)\s+as\s+rows?\b/i);
+        return m ? axisFromText(m[1] ?? '') : null;
+      })();
+      const explicitColAxis = (() => {
+        const m =
+          qLow.match(/\bcolumns?\s+(?:are|as)\s+([^,.;]+?)(?:,|\band\b|$)/i) ??
+          qLow.match(/\b([a-z\s/&-]+?)\s+as\s+columns?\b/i);
+        return m ? axisFromText(m[1] ?? '') : null;
+      })();
+      const axesByOccurrence = axisPatterns
+        .map(({ axis, patterns }) => ({
+          axis,
+          index: Math.min(
+            ...patterns.map((r) => {
+              const idx = qLow.search(r);
+              return idx >= 0 ? idx : Number.POSITIVE_INFINITY;
+            }),
+          ),
+        }))
+        .filter((x) => Number.isFinite(x.index))
+        .sort((a, b) => a.index - b.index)
+        .map((x) => x.axis);
+      const pickPivotAxes = (): { rowAxis: PivotAxis; colAxis: PivotAxis } | null => {
+        if (explicitRowAxis && explicitColAxis) return { rowAxis: explicitRowAxis, colAxis: explicitColAxis };
+        if ((pivotType === 'line' || pivotType === 'heatmap' || pivotType === 'matrix' || pivotType === 'treemap') && axesByOccurrence.includes('month')) {
+          const other = axesByOccurrence.find((a) => a !== 'month');
+          if (other) return { rowAxis: 'month', colAxis: other };
+        }
+        if (axesByOccurrence.length >= 2) {
+          return { rowAxis: axesByOccurrence[0]!, colAxis: axesByOccurrence[1]! };
+        }
+        return null;
+      };
+      const pivotAxes = pivotType ? pickPivotAxes() : null;
+      if (pivotType && pivotAxes) {
+        const dashboardTitle = this.buildPivotDashboardTitle(
+          pivotType,
+          pivotAxes.rowAxis,
+          pivotAxes.colAxis,
+        );
+        return {
+          kind: 'build',
+          plan: {
+            tools_to_execute: [],
+            should_generate_dashboard: true,
+            dashboard: {
+              title: dashboardTitle,
+              description: 'Deterministic pivot chart',
+              widgets: [
+                {
+                  title:
+                    pivotType === 'line'
+                      ? `Monthly ${pivotAxes.colAxis.replace(/_/g, ' ')} Spend Trend`
+                      : pivotType === 'treemap'
+                        ? `${pivotAxes.rowAxis.replace(/_/g, ' ')} / ${pivotAxes.colAxis.replace(/_/g, ' ')} Spend`
+                      : pivotType === 'matrix'
+                        ? `${pivotAxes.rowAxis.replace(/_/g, ' ')} by ${pivotAxes.colAxis.replace(/_/g, ' ')} Matrix`
+                        : `${pivotAxes.rowAxis.replace(/_/g, ' ')} by ${pivotAxes.colAxis.replace(/_/g, ' ')} Heatmap`,
+                  description: query.slice(0, 160),
+                  type: pivotType,
+                  metric: 'expense',
+                  grouping: `${pivotAxes.rowAxis}_${pivotAxes.colAxis}`,
+                  display_order: 0,
+                } as any,
+              ],
             },
             analysis_focus: query,
           },
@@ -11725,6 +12343,7 @@ export class AgentService {
             'gauge',
             'bubble',
             'heatmap',
+            'matrix',
           ];
           // Explicit user request wins over the model's pick.
           if (forcedType) return forcedType;
@@ -11848,6 +12467,8 @@ export class AgentService {
           'pie',
           'donut',
           'treemap',
+          'heatmap',
+          'matrix',
         ];
         const wantsAxes = !axisless.includes(chartType);
         const xAxisLabel =
@@ -12562,48 +13183,52 @@ export class AgentService {
     };
 
     if (
-      /\bline\s*chart\b|\bline\s*graph\b|\bline\b/.test(q) &&
+      /\bline\s*charts?\b|\bline\s*graphs?\b|\bline\b/.test(q) &&
       /\bchart\b|\bgraph\b/.test(q)
     )
       addType('line');
     if (
-      /\barea\s*chart\b|\barea\s*graph\b|\barea\b/.test(q) &&
+      /\barea\s*charts?\b|\barea\s*graphs?\b|\barea\b/.test(q) &&
       /\bchart\b|\bgraph\b/.test(q)
     )
       addType('area');
     if (
-      /\bbar\s*chart\b|\bbarchart\b|\bbar\s*graph\b|\bstacked\s+bar\b|\bstacked\s+bars\b/.test(
+      /\bbar\s*charts?\b|\bbarcharts?\b|\bbar\s*graphs?\b|\bstacked\s+bars?\b/.test(
         q,
       )
     )
       addType(
-        /\bstacked\s+bar\b|\bstacked\s+bars\b/.test(q) ? 'stacked_bar' : 'bar',
+        /\bstacked\s+bar\s*charts?\b|\bstacked\s+bars?\b/.test(q)
+          ? 'stacked_bar'
+          : 'bar',
       );
-    if (/\bpie\s+chart\b|\bpie\s+graph\b/.test(q)) addType('pie');
-    if (/\bdonut\b|\bdoughnut\b/.test(q)) addType('donut');
-    if (/\btable\b|\btabular\b/.test(q)) addType('table');
+    if (/\bpie\s+charts?\b|\bpie\s+graphs?\b/.test(q)) addType('pie');
+    if (/\bdonut\b|\bdoughnut\b|\bring\s+charts?\b/.test(q)) addType('donut');
+    if (/\btable\b|\btables\b|\btabular\b/.test(q)) addType('table');
     if (/\bmetric\s+tile\b|\bmetric\b/.test(q) && /\btile\b/.test(q))
       addType('metric');
-    if (/\bwaterfall\s+chart\b|\bwaterfall\b/.test(q)) addType('waterfall');
+    if (/\bwaterfall\s+charts?\b|\bwaterfall\b/.test(q))
+      addType('waterfall');
     if (/\btreemap\b/.test(q)) addType('treemap');
-    if (/\bscatter\s*plot\b|\bscatter\b/.test(q)) addType('scatter');
-    if (/\bheat\s*map\b|\bheatmap\b/.test(q)) addType('heatmap');
-    if (/\bhistogram\b/.test(q)) addType('histogram');
+    if (/\bscatter\s*plots?\b|\bscatter\b/.test(q)) addType('scatter');
+    if (/\bheat\s*maps?\b|\bheatmaps?\b/.test(q)) addType('heatmap');
+    if (/\bmatrix\b/.test(q)) addType('matrix');
+    if (/\bhistograms?\b/.test(q)) addType('histogram');
     if (/\bpareto\b/.test(q)) addType('pareto');
-    if (/\bgauge\b/.test(q)) addType('gauge');
-    if (/\bbubble\s*chart\b|\bbubble\s*plot\b|\bbubble\b/.test(q))
+    if (/\bgauges?\b/.test(q)) addType('gauge');
+    if (/\bbubble\s*charts?\b|\bbubble\s*plots?\b|\bbubble\b/.test(q))
       addType('bubble');
-    if (/\bhorizontal\s+bar\b|\branked\s+bar\b/.test(q))
+    if (/\bhorizontal\s+bars?\b|\branked\s+bars?\b/.test(q))
       addType('horizontal_bar');
     if (
-      /\bkpi\s+card\b|\bkpi\s+tile\b|\bkpi\s+dashboard\b|\bkpi\b.*\bcard\b|\bmetric\s+card\b|\bcard\s+dashboard\b/.test(
+      /\bkpi\s+cards?\b|\bkpi\s+tiles?\b|\bkpi\s+dashboard\b|\bkpi\b.*\bcard\b|\bmetric\s+cards?\b|\bcard\s+dashboard\b/.test(
         q,
       )
     )
       addType('kpi');
-    if (/\bstacked\s+column\b|\bstacked\s+area\b/.test(q))
+    if (/\bstacked\s+column(?:s)?\b|\bstacked\s+areas?\b/.test(q))
       addType('stacked_bar');
-    if (/\bclustered\s+(bar|column)\b/.test(q)) addType('bar');
+    if (/\bclustered\s+(bars?|columns?)\b/.test(q)) addType('bar');
 
     const countMatch =
       q.match(
@@ -12633,6 +13258,25 @@ export class AgentService {
       out.exactCount = 1;
 
     return out.exactCount || out.requiredTypes ? out : null;
+  }
+
+  private detectPureChartTypeEditRequest(editRequest: string): ChartType | null {
+    const explicitTypes =
+      this.parseExplicitChartConstraints(editRequest)?.requiredTypes ?? [];
+    if (explicitTypes.length !== 1) return null;
+
+    const q = editRequest.toLowerCase();
+    const hasEditVerb =
+      /\b(switch|change|convert|replace|turn|make|set|update|transform|swap)\b/.test(
+        q,
+      );
+    const hasBroadScopeHint =
+      /\b(add|remove|delete|also|and|plus|another|new|additional|instead of|as well as)\b/.test(
+        q,
+      );
+
+    if (!hasEditVerb || hasBroadScopeHint) return null;
+    return explicitTypes[0] ?? null;
   }
 
   // ─── Plan Generation — Ollama is the sole dashboard architect ───────────────
@@ -13188,6 +13832,7 @@ export class AgentService {
                 'scatter',
                 'bubble',
                 'heatmap',
+                'matrix',
                 'histogram',
                 'pareto',
                 'gauge',
@@ -14041,6 +14686,19 @@ export class AgentService {
     activeDashboard: ActiveDashboard,
     editRequest: string,
   ): Promise<DashboardEditPlan> {
+    const explicitType = this.detectPureChartTypeEditRequest(editRequest);
+    if (explicitType && activeDashboard.widgets.length > 0) {
+      return {
+        summary: `Switched existing chart${activeDashboard.widgets.length > 1 ? 's' : ''} to ${this.humanizeChartType(explicitType)}.`,
+        add: [],
+        remove_indices: [],
+        modify: activeDashboard.widgets.map((_, index) => ({
+          index,
+          type: explicitType,
+        })),
+      };
+    }
+
     const widgetList = activeDashboard.widgets
       .map((w, i) => {
         const cfg = (w.queryConfig as any) ?? {};
@@ -14141,7 +14799,12 @@ export class AgentService {
     editPlan: DashboardEditPlan,
     organizationId: string,
     spec?: QuerySpec,
-  ): Promise<{ id: string; title: string; widgetCount: number }> {
+  ): Promise<{
+    id: string;
+    title: string;
+    widgetCount: number;
+    widgets: ChartTurnWidgetSnapshot[];
+  }> {
     return this.prisma.$transaction(async (tx) => {
       const currentWidgets = await tx.dashboardWidget.findMany({
         where: { dashboardId },
@@ -14264,7 +14927,19 @@ export class AgentService {
       const widgetCount = await tx.dashboardWidget.count({
         where: { dashboardId },
       });
-      return { id: dashboard.id, title: dashboard.title, widgetCount };
+      return {
+        id: dashboard.id,
+        title: dashboard.title,
+        widgetCount,
+        widgets: remaining.map((widget) => ({
+          id: widget.id,
+          title: widget.title,
+          chartType: widget.chartType,
+          queryConfig: widget.queryConfig as Record<string, unknown>,
+          chartConfig: widget.chartConfig as Record<string, unknown>,
+          displayOrder: widget.displayOrder,
+        })),
+      };
     });
   }
 
@@ -14970,11 +15645,13 @@ Output SQL ONLY — no explanation, no markdown.`;
     const isWaterfall = /\bwaterfall\b/.test(q);
     const isHBar = /horizontal.bar|ranked.bar|ranked.horizontal/.test(q);
     const isTreemap = /\btreemap\b/.test(q);
+    const isHeatmap = /\bheat\s*map\b|\bheatmap\b/.test(q);
+    const isMatrix = /\bmatrix\b/.test(q);
     const isPareto = /\bpareto\b/.test(q);
     const isScatter = /\bscatter\b/.test(q);
     const isBubble = /\bbubble\b/.test(q);
     const isPie = /\bpie\b/.test(q);
-    const isTable = /\btable\b|\bmatrix\b|\branked table\b/.test(q);
+    const isTable = /\btable\b|\branked table\b/.test(q);
     const isLine = /\bline\b|multi.?line/.test(q);
     const isBar = /\bbar\b|\bcolumn\b|\bbargraph\b/.test(q);
 
@@ -15126,6 +15803,15 @@ Output SQL ONLY — no explanation, no markdown.`;
     // VENDOR queries
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasVendor) {
+      if (isMatrix && hasDept)
+        return [
+          {
+            type: 'matrix',
+            metric: 'expense',
+            grouping: 'department_vendor',
+            title: 'Department by Vendor Spend Matrix',
+          },
+        ];
       if (isBubble)
         return [
           {
@@ -15194,7 +15880,7 @@ Output SQL ONLY — no explanation, no markdown.`;
           {
             type: 'stacked_bar',
             metric: 'expense',
-            grouping: 'vendor_month',
+            grouping: 'month_vendor',
             title: 'Monthly Vendor Spend — Stacked',
           },
         ];
@@ -15203,7 +15889,7 @@ Output SQL ONLY — no explanation, no markdown.`;
           {
             type: 'stacked_bar',
             metric: 'expense',
-            grouping: 'vendor_month',
+            grouping: 'month_vendor',
             title: 'Top Vendors — Monthly Spend (Bar)',
           },
         ];
@@ -15212,7 +15898,7 @@ Output SQL ONLY — no explanation, no markdown.`;
           {
             type: 'line',
             metric: 'expense',
-            grouping: 'vendor_month',
+            grouping: 'month_vendor',
             title: 'Vendor Spend Trend Over Time',
           },
         ];
@@ -15241,6 +15927,24 @@ Output SQL ONLY — no explanation, no markdown.`;
     if (hasDept) {
       // "scatter of expense vs revenue" → let LLM generate proper x=expense, y=revenue SQL
       if (isScatter && hasVsRevenue) return null;
+      if (isHeatmap && hasTime)
+        return [
+          {
+            type: 'heatmap',
+            metric: 'expense',
+            grouping: 'month_department',
+            title: 'Department Spend Heatmap by Month',
+          },
+        ];
+      if (isHeatmap && hasClass)
+        return [
+          {
+            type: 'heatmap',
+            metric: 'expense',
+            grouping: 'department_class',
+            title: 'Department Spend Heatmap by Class',
+          },
+        ];
       if (isScatter)
         return [
           {
@@ -15275,6 +15979,15 @@ Output SQL ONLY — no explanation, no markdown.`;
             metric: 'expense',
             grouping: 'month_department',
             title: 'Monthly Spend by Department — Stacked',
+          },
+        ];
+      if (isMatrix && hasVendor)
+        return [
+          {
+            type: 'matrix',
+            metric: 'expense',
+            grouping: 'department_vendor',
+            title: 'Department by Vendor Spend Matrix',
           },
         ];
       if ((isLine || hasTime) && !isStacked && !isBar)
@@ -15345,6 +16058,15 @@ Output SQL ONLY — no explanation, no markdown.`;
     // CLASS queries (General / Marketing / Product)
     // ═══════════════════════════════════════════════════════════════════════════
     if (hasClass) {
+      if (isHeatmap && hasDept)
+        return [
+          {
+            type: 'heatmap',
+            metric: 'expense',
+            grouping: 'department_class',
+            title: 'Department Spend Heatmap by Class',
+          },
+        ];
       if (isStacked && hasTime)
         return [
           {
@@ -15761,6 +16483,109 @@ Output SQL ONLY — no explanation, no markdown.`;
       this.logger.warn(`[Agent:Dynamic] SQL execution failed: ${msg}`);
       return { rows: [], error: msg };
     }
+  }
+
+  private pivotAxisExpr(axis: PivotAxis): {
+    labelExpr: string;
+    sortExpr: string;
+  } {
+    switch (axis) {
+      case 'month':
+        return {
+          labelExpr: `formatDateTime(toStartOfMonth(journal_date), '%b %y')`,
+          sortExpr: `toStartOfMonth(journal_date)`,
+        };
+      case 'department':
+        return {
+          labelExpr: `COALESCE(NULLIF(department, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(department, ''), 'Unassigned')`,
+        };
+      case 'class':
+        return {
+          labelExpr: `COALESCE(NULLIF(class_name, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(class_name, ''), 'Unassigned')`,
+        };
+      case 'vendor':
+        return {
+          labelExpr: `COALESCE(NULLIF(vendor_name, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(vendor_name, ''), 'Unassigned')`,
+        };
+      case 'account':
+        return {
+          labelExpr: `COALESCE(NULLIF(account_name, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(account_name, ''), 'Unassigned')`,
+        };
+    }
+  }
+
+  private async buildExpensePivot(
+    rowAxis: PivotAxis,
+    colAxis: PivotAxis,
+    scope: OrgScope,
+    entityParam: Record<string, unknown>,
+    range: TimeRange | undefined,
+    maxColumns = 8,
+  ): Promise<{ data: Array<Record<string, unknown>>; keys: string[] }> {
+    if (scope.externalOrgIds.length === 0) return { data: [], keys: [] };
+
+    const jTbl = `${this.analyticsDb}.v_fact_accounting_journal_lines_enriched_latest`;
+    const entity =
+      entityParam && Object.keys(entityParam).length > 0
+        ? 'AND org_id = {orgId:String}'
+        : '';
+    const jTime = this.timeWhereOn('journal_date', range);
+    const row = this.pivotAxisExpr(rowAxis);
+    const col = this.pivotAxisExpr(colAxis);
+
+    const rows = await this.queryRows<any>(
+      `SELECT
+         ${row.labelExpr} AS row_label,
+         ${row.sortExpr} AS row_sort,
+         ${col.labelExpr} AS col_label,
+         round(sum(toFloat64(line_amount)), 0) AS value
+       FROM ${jTbl}
+       WHERE org_id IN ({externalOrgIds:Array(String)}) ${entity} ${jTime}
+         AND line_amount > 0 AND journal_date IS NOT NULL
+       GROUP BY row_label, row_sort, col_label
+       HAVING value > 0
+       ORDER BY row_sort ASC, value DESC`,
+      { externalOrgIds: scope.externalOrgIds, ...entityParam },
+    );
+
+    const colTotals = new Map<string, number>();
+    const rowMap = new Map<string, { sort: string; total: number; [key: string]: any }>();
+
+    for (const r of rows as any[]) {
+      const rowLabel = String(r.row_label ?? '');
+      const colLabel = String(r.col_label ?? '');
+      const value = this.num(r.value);
+      if (!rowLabel || !colLabel || !Number.isFinite(value) || value <= 0) continue;
+      colTotals.set(colLabel, (colTotals.get(colLabel) ?? 0) + value);
+      if (!rowMap.has(rowLabel)) {
+        rowMap.set(rowLabel, { sort: String(r.row_sort ?? rowLabel), total: 0 });
+      }
+      const entry = rowMap.get(rowLabel)!;
+      entry[colLabel] = (entry[colLabel] ?? 0) + value;
+      entry.total += value;
+    }
+
+    const sortedCols = Array.from(colTotals.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, Math.max(1, Math.min(maxColumns, colTotals.size)))
+      .map(([key]) => key);
+
+    const sortedRows = Array.from(rowMap.entries())
+      .sort((a, b) => {
+        if (rowAxis === 'month') return a[1].sort.localeCompare(b[1].sort);
+        return b[1].total - a[1].total || a[0].localeCompare(b[0]);
+      })
+      .map(([label, vals]) => {
+        const out: Record<string, unknown> = { name: label };
+        for (const colLabel of sortedCols) out[colLabel] = vals[colLabel] ?? 0;
+        return out;
+      });
+
+    return { data: sortedRows, keys: sortedCols };
   }
 
   // Detect a chart whose SQL ran but produced an unusable SHAPE — most commonly

@@ -1,7 +1,7 @@
 "use client";
 
 import type { DashboardResponse } from "../../../../lib/api";
-import { formatMoney, formatNumber, formatPercentDelta } from "./format";
+import { formatMoneyWithCurrency, formatNumber, formatPercentDelta } from "./format";
 import { StatCard } from "./StatCard";
 
 type Tone = "neutral" | "positive" | "negative";
@@ -23,9 +23,10 @@ type Props = {
   kpis: DashboardResponse["kpis"];
   venture: DashboardResponse["venture"];
   charts: DashboardResponse["charts"];
+  currency: string;
 };
 
-export function KpiGrid({ kpis, venture, charts }: Props) {
+export function KpiGrid({ kpis, venture, charts, currency }: Props) {
   const trend = charts.monthlyTrend ?? [];
   const last = trend[trend.length - 1];
   const prev = trend[trend.length - 2];
@@ -45,11 +46,9 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
     >
       <StatCard
         className="lg:col-span-6"
-        label="Total Revenue"
-        value={formatMoney(kpis.totalRevenue)}
-        detail={`${formatNumber(kpis.totalInvoices)} invoices · avg ${formatMoney(
-          kpis.avgInvoiceValue,
-        )}`}
+        label="Total Billed"
+        value={formatMoneyWithCurrency(kpis.totalRevenue, currency)}
+        detail={`${formatNumber(kpis.totalInvoices)} invoices · avg ${formatMoneyWithCurrency(kpis.avgInvoiceValue, currency)}`}
         delta={revenueDelta}
         emphasis="primary"
       />
@@ -57,8 +56,8 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
       <StatCard
         className="lg:col-span-3"
         label="Open Invoices"
-        value={formatMoney(openInvoiceAmount)}
-        detail={`${formatNumber(openInvoiceCount)} open · ${formatMoney(kpis.overdueAmount)} overdue`}
+        value={formatMoneyWithCurrency(openInvoiceAmount, currency)}
+        detail={`${formatNumber(openInvoiceCount)} open · ${formatMoneyWithCurrency(kpis.overdueAmount, currency)} overdue`}
         delta={
           openInvoiceAmount === 0 ? { value: "clear", tone: "positive" } : { value: "monitor", tone: openTone }
         }
@@ -68,7 +67,7 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
         className="lg:col-span-3"
         label="Cash Runway"
         value={`${venture.runwayMonths.toFixed(1)} mo`}
-        detail={`${formatMoney(venture.burnRate)} monthly burn`}
+        detail={`${formatMoneyWithCurrency(venture.burnRate, currency)} monthly burn`}
         delta={
           venture.runwayMonths === 0
             ? null
@@ -82,14 +81,14 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
       <StatCard
         className="lg:col-span-3"
         label="Cash on Hand"
-        value={formatMoney(venture.cashOnHand)}
+        value={formatMoneyWithCurrency(venture.cashOnHand, currency)}
         detail={`${kpis.orgCount} connected entities`}
       />
 
       <StatCard
         className="lg:col-span-3"
         label="Overdue"
-        value={formatMoney(kpis.overdueAmount)}
+        value={formatMoneyWithCurrency(kpis.overdueAmount, currency)}
         detail={`${formatNumber(kpis.overdueCount)} invoices past due`}
         delta={
           kpis.overdueAmount > 0
@@ -109,7 +108,7 @@ export function KpiGrid({ kpis, venture, charts }: Props) {
       <StatCard
         className="lg:col-span-3"
         label="Avg invoice"
-        value={formatMoney(kpis.avgInvoiceValue)}
+        value={formatMoneyWithCurrency(kpis.avgInvoiceValue, currency)}
         detail="Across the selected scope"
       />
     </section>

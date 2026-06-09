@@ -52,7 +52,11 @@ type ChartTurnMetadata = {
   widgetSnapshots?: Array<{
     title?: string;
     chartType?: string;
+    queryConfig?: Record<string, unknown>;
+    chartConfig?: Record<string, unknown>;
     displayOrder?: number;
+    dataSnapshot?: Array<Record<string, unknown>>;
+    dataSnapshotTruncated?: boolean;
   }>;
   intent?: "CREATE_DASHBOARD" | "EDIT_DASHBOARD" | null;
 };
@@ -707,6 +711,7 @@ export function AgentWorkbench() {
   const [syncTrigger, setSyncTrigger] = useState(0);
   const [isDashboardGenerating, setIsDashboardGenerating] = useState(false);
   const [activeDashboardTitle, setActiveDashboardTitle] = useState<string | null>(null);
+  const [latestChartTurn, setLatestChartTurn] = useState<ChartTurnMetadata | null>(null);
   // True when the user clicked an old session from the sidebar (not a live/new chat)
   const [isHistoricalSession, setIsHistoricalSession] = useState(false);
 
@@ -816,6 +821,7 @@ export function AgentWorkbench() {
     setMessages([]);
     setSessionId(id);
     setActiveDashboardTitle(null);
+    setLatestChartTurn(null);
     setIsHistoricalSession(true); // loaded from sidebar — not a live session
     try {
       const detail = await agent.session(id);
@@ -829,6 +835,7 @@ export function AgentWorkbench() {
     setMessages([]);
     setSessionId(null);
     setActiveDashboardTitle(null);
+    setLatestChartTurn(null);
     setIsHistoricalSession(false);
     resetThinking();
     setError(null);
@@ -949,13 +956,15 @@ export function AgentWorkbench() {
           }
 
           if (msg.type === "dashboard_created") {
+            const chartTurn = isChartTurnMetadata(msg.chartTurn) ? msg.chartTurn : null;
             setActiveDashboardTitle(msg.title ?? null);
             setIsHistoricalSession(false); // now a live session with its own dashboard
+            setLatestChartTurn(chartTurn);
             setDashboardInfo({ title: msg.title, widgetCount: msg.widgetCount, isEdit: false });
             setIsDashboardGenerating(false);
             setSyncTrigger((n) => n + 1);
-            if (msg.chartTurn) {
-              attachAssistantMetadata(msg.chartTurn as ChartTurnMetadata);
+            if (chartTurn) {
+              attachAssistantMetadata(chartTurn);
             }
             toast.success("Dashboard generated", {
               description: msg.title ?? "Your strategic dashboard is ready.",
@@ -963,8 +972,10 @@ export function AgentWorkbench() {
           }
 
           if (msg.type === "dashboard_updated") {
+            const chartTurn = isChartTurnMetadata(msg.chartTurn) ? msg.chartTurn : null;
             setIsHistoricalSession(false); // now live — user continued from old session
             setActiveDashboardTitle((msg.title as string) ?? null);
+            setLatestChartTurn(chartTurn);
             setDashboardInfo({
               title: msg.title,
               widgetCount: msg.widgetCount,
@@ -973,8 +984,8 @@ export function AgentWorkbench() {
             });
             setIsDashboardGenerating(false);
             setSyncTrigger((n) => n + 1);
-            if (msg.chartTurn) {
-              attachAssistantMetadata(msg.chartTurn as ChartTurnMetadata);
+            if (chartTurn) {
+              attachAssistantMetadata(chartTurn);
             }
             toast.success("Dashboard updated", {
               description: (msg.summary as string) ?? "Your dashboard has been updated.",
@@ -1291,6 +1302,7 @@ export function AgentWorkbench() {
                   triggerSync={syncTrigger}
                   isGenerating={isDashboardGenerating}
                   sessionId={sessionId}
+                  liveChartTurn={isHistoricalSession ? null : latestChartTurn}
                 />
               </motion.div>
             )}

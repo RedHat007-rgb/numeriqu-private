@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useId, useRef } from "react";
 import {
   ApiError,
   type OrganizationContextResponse,
@@ -56,20 +56,68 @@ function avatarColor(seed: string) {
 
 function CopyButton({ value, label }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const resetTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) window.clearTimeout(resetTimer.current);
+    };
+  }, []);
+
   function copy() {
-    void navigator.clipboard.writeText(value).then(() => {
+    setFailed(false);
+
+    const finish = () => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+      if (resetTimer.current) window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => {
+        setCopied(false);
+        resetTimer.current = null;
+      }, 1800);
+    };
+
+    const fallbackCopy = () => {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      textarea.style.pointerEvents = "none";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const success = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (!success) throw new Error("Clipboard copy failed");
+    };
+
+    void (async () => {
+      try {
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+        else fallbackCopy();
+        finish();
+      } catch {
+        setCopied(false);
+        setFailed(true);
+      }
+    })();
   }
   return (
     <button
       type="button"
       onClick={copy}
-      className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors"
-      style={{ color: copied ? "#00F5D4" : "#888", border: "1px solid", borderColor: copied ? "#00F5D4" : "#333" }}
+      aria-live="polite"
+      aria-label={failed ? "Copy failed, try again" : copied ? "Copied to clipboard" : label ? `Copy ${label.toLowerCase()}` : "Copy to clipboard"}
+      className={cn(
+        "ml-2 inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] transition-all",
+        copied
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+          : failed
+            ? "border-rose-500/30 bg-rose-500/10 text-rose-400"
+            : "border-default bg-bg-surface text-text-muted hover:border-accent-blue/30 hover:bg-bg-elevated/70 hover:text-text-primary",
+      )}
     >
-      {copied ? "Copied!" : (label ?? "Copy")}
+      {failed ? "Retry" : copied ? "Copied" : (label ?? "Copy")}
     </button>
   );
 }
@@ -230,12 +278,14 @@ export default function SettingsPage() {
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
         {/* Tab nav */}
         <aside>
-          <nav className="space-y-1">
+          <nav className="space-y-1" role="tablist" aria-label="Settings sections">
             {TABS.map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
+                role="tab"
+                aria-selected={tab === t.id}
                 className={cn(
                   "w-full rounded-xl border px-3.5 py-3 text-left text-sm transition-all",
                   tab === t.id
@@ -548,9 +598,10 @@ function SecurityTab({
   context: OrganizationContextResponse | null;
   onRefreshSession: () => void;
 }) {
-  const loginTime = typeof window !== "undefined"
-    ? (sessionStorage.getItem("nq_login_time") ?? new Date().toISOString())
-    : new Date().toISOString();
+  const [loginTime] = useState(() => {
+    if (typeof window === "undefined") return new Date().toISOString();
+    return sessionStorage.getItem("nq_login_time") ?? new Date().toISOString();
+  });
 
   return (
     <div className="space-y-6">
@@ -632,16 +683,19 @@ function SecurityTab({
 function Toggle({ checked, onChange, label, description }: {
   checked: boolean; onChange: (v: boolean) => void; label: string; description?: string;
 }) {
+  const id = useId();
   return (
     <div className="flex items-center justify-between rounded-xl border border-default bg-bg-elevated/40 px-4 py-3">
       <div>
-        <p className="text-sm font-semibold text-text-primary">{label}</p>
-        {description ? <p className="mt-0.5 text-xs text-text-muted">{description}</p> : null}
+        <p id={`${id}-label`} className="text-sm font-semibold text-text-primary">{label}</p>
+        {description ? <p id={`${id}-description`} className="mt-0.5 text-xs text-text-muted">{description}</p> : null}
       </div>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={description ? `${id}-description` : undefined}
         onClick={() => onChange(!checked)}
         className={cn(
           "relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200",

@@ -1745,10 +1745,12 @@ export function DashboardPreview({
   triggerSync,
   isGenerating = false,
   sessionId,
+  liveChartTurn,
 }: {
   triggerSync: number;
   isGenerating?: boolean;
   sessionId?: string | null;
+  liveChartTurn?: ChartTurnMetadata | null;
 }) {
   const { agent, loading } = useNumeriquApi();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -1790,7 +1792,13 @@ export function DashboardPreview({
             config: c.config as ChartConfig,
             layoutIndex: c.layoutIndex,
           }));
-          const history = sessionDetail ? buildChartVersionHistory(sessionDetail.messages) : [];
+          const sessionHistory = sessionDetail ? buildChartVersionHistory(sessionDetail.messages) : [];
+          const liveHistory = liveChartTurn
+            ? buildChartVersionHistory([
+                { role: "assistant", content: "", metadata: liveChartTurn } as ChatMessage,
+              ])
+            : [];
+          const history = sessionHistory.length > 0 ? sessionHistory : liveHistory;
           const chartsToLoad = history.length > 0 ? history.flatMap((version) => version.charts) : charts;
           setDashboard({
             id: latest.id,
@@ -1847,7 +1855,7 @@ export function DashboardPreview({
     };
 
     void fetchDashboard();
-  }, [agent, loading, triggerSync, sessionId]);
+  }, [agent, loading, triggerSync, sessionId, liveChartTurn]);
 
   // ── Loading / Generating state ──────────────────────────────────────────────
   // Show the generating skeleton whenever a generation is in flight — even if a

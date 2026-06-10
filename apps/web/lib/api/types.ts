@@ -237,6 +237,11 @@ export type ChartConfig = {
   orgName?: string | null;
   breakdown?: Breakdown | null;
   topN?: number | null;
+  display?: {
+    donut?: boolean | null;
+    highlightMaxMin?: boolean | null;
+    labelMode?: "percent" | "value" | null;
+  } | null;
   /** Axis titles describing what X and Y actually represent (with units). */
   xAxisLabel?: string | null;
   yAxisLabel?: string | null;

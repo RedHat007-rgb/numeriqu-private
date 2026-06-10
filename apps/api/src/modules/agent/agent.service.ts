@@ -79,6 +79,7 @@ interface AgentPlan {
       display?: {
         donut?: boolean;
         highlightMaxMin?: boolean;
+        labelMode?: 'percent' | 'value';
       };
       display_order: number;
     }>;
@@ -103,6 +104,16 @@ interface DashboardEditPlan {
     grouping: string;
     breakdown?: 'client';
     topN?: number;
+    xAxisLabel?: string;
+    yAxisLabel?: string;
+    // SQL-first editor: full live ClickHouse SQL for a brand-new chart.
+    // When present, the widget is stored as a dynamic-SQL widget (metric='dynamic').
+    dynamicSql?: string;
+    display?: {
+      donut?: boolean | null;
+      highlightMaxMin?: boolean | null;
+      labelMode?: 'percent' | 'value' | null;
+    } | null;
   }>;
   remove_indices: number[];
   modify: Array<{
@@ -110,6 +121,21 @@ interface DashboardEditPlan {
     title?: string;
     type?: ChartType;
     description?: string;
+    metric?: string;
+    grouping?: string;
+    breakdown?: 'client';
+    topN?: number;
+    xAxisLabel?: string;
+    yAxisLabel?: string;
+    // SQL-first editor: rewritten live ClickHouse SQL for an existing chart.
+    // When present, the widget's stored dynamicSql is replaced so the DATA changes,
+    // not just the presentation.
+    dynamicSql?: string;
+    display?: {
+      donut?: boolean | null;
+      highlightMaxMin?: boolean | null;
+      labelMode?: 'percent' | 'value' | null;
+    } | null;
   }>;
 }
 
@@ -746,6 +772,9 @@ DEBIT_CREDIT: debits_credits/account_type
 
 If the user asks to switch the chart type, preserve the existing metric/grouping and only change the widget type.
 Do not "solve" a type switch by adding a new pie chart or by keeping the old type.
+If the user asks to change an axis, percentages/values, or the meaning of the chart, you may also change metric/grouping and axis labels so the updated widget matches the request.
+Prefer the smallest change that satisfies the request.
+If the user asks to show whole values instead of percentages on a pie or donut chart, set display.labelMode to "value".
 
 OUTPUT: Respond with ONLY valid JSON. Zero explanation. Zero markdown.
 
@@ -768,6 +797,51 @@ Rules:
 - If the request is ambiguous, add the most relevant widget without removing anything.
 - If asked to change a chart type, use "modify" with the correct "type" value.`;
 
+// SQL-first dashboard editor. Unlike EDITOR_SYSTEM (which is limited to a fixed
+// vocabulary of metric/grouping pairs), this prompt edits charts by REWRITING the
+// underlying live ClickHouse SQL, so it can satisfy ANY modification — change the
+// axis/dimension, switch percentages to absolute values, change top-N, add filters,
+// change the metric, switch chart types, add or remove charts. The chart's data is
+// driven entirely by its SQL, so a request that changes WHAT is shown must rewrite
+// the SQL — changing only the chart type does not change the data.
+const SMART_SQL_EDITOR_SYSTEM = `You are a world-class CFO analytics AI editing an EXISTING dashboard. Each chart already has live ClickHouse SQL and a chart type. The user wants to change one or more charts. Apply the SMALLEST change that fully satisfies the request.
+
+CRITICAL: the chart's data comes ENTIRELY from its SQL. If the request changes WHAT the chart shows — the axis, the dimension/grouping, the metric, percentages vs absolute values, a filter, the sort order, the top-N count, or the time range — you MUST rewrite that chart's SQL. Switching only the chart type does NOT change the data.
+
+You can, per chart: update it (rewrite its SQL and/or change its type/title/axis labels/label mode), keep it unchanged, or remove it. You can also add a brand-new chart with its own SQL.
+
+CLICKHOUSE SQL RULES (identical to how the charts were built):
+- Every query MUST keep the scope predicate exactly: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) and MUST end with a LIMIT.
+- Output shape: the x-axis / category column MUST be aliased AS name. A single-series chart returns ONE numeric column AS value. A multi-series (WIDE) chart returns >=2 numeric columns, one per series (use sumIf(...) pivots). NEVER emit a stray free-text column beside name.
+- Date columns are PER-TABLE — never mix: sample_gl_dump uses 'date'; v_fact_accounting_journal_lines_latest uses 'journal_date'; invoices use 'issued_at'. sample_trial_balance has NO date column.
+- GROUP BY the expression (e.g. toStartOfMonth(date)), never the alias name.
+- Window functions are lagInFrame() / leadInFrame() only (never lag/lead). There is NO '%Q' token — build quarter labels with toQuarter()/toYear().
+- PERCENTAGE -> VALUES: if the current SQL outputs a ratio/percentage (e.g. x / sum(x) OVER () * 100) and the user wants whole values/amounts/numbers, rewrite it to output the absolute sum AS value and drop the ratio. VALUES -> PERCENTAGE: divide by the windowed total and multiply by 100.
+- CHANGE THE AXIS / DIMENSION: change the column aliased AS name and the GROUP BY to the requested dimension.
+- TOP N: change the LIMIT; keep ORDER BY <value> DESC.
+- pie / donut / treemap: SQL must return name + a single POSITIVE value (use abs()). scatter/bubble: return name + x + y. line / bar / area: name (x) + value (y), or WIDE multi-series.
+
+Use ONLY tables and columns shown in the LIVE SCHEMA provided in the user message. Keep each chart's analytical intent unless the user asks to change it.
+
+OUTPUT: respond with ONLY valid JSON — zero markdown, zero prose:
+{
+  "summary": "one short sentence describing what changed",
+  "widgets": [
+    { "index": 0, "action": "update", "sql": "SELECT ... AS name, ... AS value FROM analytics.sample_gl_dump WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) GROUP BY ... ORDER BY value DESC LIMIT 50", "type": "bar", "title": "New title", "xAxisLabel": "Month", "yAxisLabel": "Amount (USD)" },
+    { "index": 1, "action": "keep" },
+    { "index": 2, "action": "remove" }
+  ],
+  "add": [
+    { "title": "New chart", "description": "One sentence insight", "type": "line", "sql": "SELECT ... AS name, ... AS value FROM ... LIMIT 50", "xAxisLabel": "...", "yAxisLabel": "..." }
+  ]
+}
+
+Rules:
+- Include "sql" ONLY when the chart's data must change. For a pure type/title/label change, set action "update" with just "type"/"title"/"xAxisLabel"/"yAxisLabel"/"labelMode" and no "sql".
+- "labelMode" is "value" or "percent" (only meaningful for pie/donut).
+- Reference charts by their exact 0-based "index" as listed. Charts you do not mention are left unchanged (you may omit them or use action "keep").
+- After all edits the dashboard MUST have between 1 and 8 charts.`;
+
 const EDITOR_SCHEMA = {
   type: 'object',
   properties: {
@@ -779,32 +853,44 @@ const EDITOR_SCHEMA = {
         properties: {
           title: { type: 'string' },
           description: { type: 'string' },
-            type: {
-              type: 'string',
-              enum: [
-                'line',
-                'bar',
-                'pie',
-                'donut',
-                'metric',
-                'kpi',
-                'table',
-                'area',
-                'treemap',
-                'scatter',
-                'stacked_bar',
-                'waterfall',
-                'histogram',
-                'horizontal_bar',
-                'pareto',
-                'gauge',
-                'bubble',
-                'heatmap',
-                'matrix',
-              ],
-            },
+          type: {
+            type: 'string',
+            enum: [
+              'line',
+              'bar',
+              'pie',
+              'donut',
+              'metric',
+              'kpi',
+              'table',
+              'area',
+              'treemap',
+              'scatter',
+              'stacked_bar',
+              'waterfall',
+              'histogram',
+              'horizontal_bar',
+              'pareto',
+              'gauge',
+              'bubble',
+              'heatmap',
+              'matrix',
+            ],
+          },
           metric: { type: 'string' },
           grouping: { type: 'string' },
+          breakdown: { type: 'string' },
+          topN: { type: 'number' },
+          xAxisLabel: { type: 'string' },
+          yAxisLabel: { type: 'string' },
+          display: {
+            type: ['object', 'null'],
+            properties: {
+              donut: { type: ['boolean', 'null'] },
+              highlightMaxMin: { type: ['boolean', 'null'] },
+              labelMode: { type: ['string', 'null'], enum: ['percent', 'value', null] },
+            },
+          },
         },
         required: ['title', 'description', 'type', 'metric', 'grouping'],
       },
@@ -817,31 +903,45 @@ const EDITOR_SCHEMA = {
         properties: {
           index: { type: 'integer' },
           title: { type: 'string' },
-            type: {
-              type: 'string',
-              enum: [
-                'line',
-                'bar',
-                'pie',
-                'donut',
-                'metric',
-                'kpi',
-                'table',
-                'area',
-                'treemap',
-                'scatter',
-                'stacked_bar',
-                'waterfall',
-                'histogram',
-                'horizontal_bar',
-                'pareto',
-                'gauge',
-                'bubble',
-                'heatmap',
-                'matrix',
-              ],
-            },
+          type: {
+            type: 'string',
+            enum: [
+              'line',
+              'bar',
+              'pie',
+              'donut',
+              'metric',
+              'kpi',
+              'table',
+              'area',
+              'treemap',
+              'scatter',
+              'stacked_bar',
+              'waterfall',
+              'histogram',
+              'horizontal_bar',
+              'pareto',
+              'gauge',
+              'bubble',
+              'heatmap',
+              'matrix',
+            ],
+          },
           description: { type: 'string' },
+          metric: { type: 'string' },
+          grouping: { type: 'string' },
+          breakdown: { type: 'string' },
+          topN: { type: 'number' },
+          xAxisLabel: { type: 'string' },
+          yAxisLabel: { type: 'string' },
+          display: {
+            type: ['object', 'null'],
+            properties: {
+              donut: { type: ['boolean', 'null'] },
+              highlightMaxMin: { type: ['boolean', 'null'] },
+              labelMode: { type: ['string', 'null'], enum: ['percent', 'value', null] },
+            },
+          },
         },
         required: ['index'],
       },
@@ -884,6 +984,73 @@ TABLE: v_dim_clients_latest
     total_invoiced, total_paid, outstanding, overdue, invoice_count,
     avg_invoice_amount, last_invoice_date, updated_at
   Filters always required: org_id IN ({externalOrgIds:Array(String)})
+
+EBPO SAMPLE COMPANY SEMANTIC VIEWS
+  Use these when the user asks about the EBPO sample dataset, payroll, employees, AR/AP aging,
+  cash flow, DSO/DPO, SLA, CSAT, utilization, delivery centers, fixed assets, business units,
+  contract types, or executive KPI metrics from the new sample company workbook.
+
+TABLE: v_ebpo_kpi_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    total_revenue_usd, total_cost_usd, gross_margin_usd, gross_margin_pct,
+    total_payroll_usd, payroll_to_revenue_pct, ar_outstanding_usd, ap_outstanding_usd,
+    operating_cash_flow_usd, free_cash_flow_usd, cash_balance_usd,
+    sla_compliance_pct, csat_pct, utilization_pct, dso_days, dpo_days
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_revenue_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    total_revenue_usd, total_cost_usd, gross_margin_usd, gross_margin_pct
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_revenue_by_client
+  Columns: tenant_id, org_id, client_name, industry, total_revenue_usd, total_cost_usd,
+    gross_margin_usd, gross_margin_pct
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_revenue_by_business_unit
+  Columns: tenant_id, org_id, business_unit, contract_type, total_revenue_usd,
+    total_cost_usd, gross_margin_usd, gross_margin_pct
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_payroll_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    department, country, employee_count, total_base_salary_usd, total_overtime_usd,
+    total_bonus_usd, total_benefits_usd, total_payroll_usd
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_gl_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    account_number, account_name, department, business_unit, country,
+    total_debit_usd, total_credit_usd, net_movement_usd
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_ar_aging
+  Columns: tenant_id, org_id, period_date, client_name, industry, aging_bucket,
+    invoice_amount_usd, collected_amount_usd, outstanding_balance_usd, collection_rate_pct
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_ap_aging
+  Columns: tenant_id, org_id, period_date, vendor_name, aging_bucket,
+    invoice_amount_usd, paid_amount_usd, outstanding_balance_usd
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_operations_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    delivery_center, region, country, market_type, calls_handled, tickets_resolved,
+    avg_aht_minutes, sla_compliance_pct, csat_pct, utilization_pct
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_cash_flow_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    operating_cash_flow_usd, investing_cash_flow_usd, financing_cash_flow_usd,
+    free_cash_flow_usd, cash_balance_usd
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_fixed_assets_by_center
+  Columns: tenant_id, org_id, delivery_center, asset_type, asset_count,
+    asset_cost_usd, accumulated_depreciation_usd, net_book_value_usd
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 
 TABLE: v_fact_accounting_journal_lines_latest
   Columns: connection_id, tenant_id, org_id, provider, journal_id, line_id,
@@ -931,6 +1098,7 @@ IMPORTANT ClickHouse rules:
 - Additional numeric columns are fine (they render as multi-series)
 - Add ORDER BY on the time or dimension column
 - Always add LIMIT (max 500 rows)
+- For EBPO monthly charts, use period_date for time grouping and month labels.
 - NEVER access system tables or tables not listed above
 - NEVER use INSERT, UPDATE, DELETE, DROP, CREATE, ALTER
 - Output column aliases must be simple snake_case (no spaces)
@@ -1025,7 +1193,73 @@ TABLE analytics.v_dim_clients_latest
   avg_invoice_amount (Float64)  first_invoice_date (Date)  last_invoice_date (Date)
   *** NOTE: column is total_revenue NOT total_paid ***
 
+EBPO SAMPLE COMPANY SEMANTIC VIEWS  ← USE THESE for the new EBPO workbook dataset
+  These are curated chart views over raw workbook star tables. They preserve workbook data and expose
+  clean measures for Astra charts. ALWAYS filter: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE analytics.v_ebpo_kpi_monthly
+  period_date (Date)  year UInt16  quarter UInt8  month UInt8  month_name String
+  total_revenue_usd Float64  total_cost_usd Float64  gross_margin_usd Float64  gross_margin_pct Float64
+  total_payroll_usd Float64  payroll_to_revenue_pct Float64
+  ar_outstanding_usd Float64  ap_outstanding_usd Float64
+  operating_cash_flow_usd Float64  free_cash_flow_usd Float64  cash_balance_usd Float64
+  sla_compliance_pct Float64  csat_pct Float64  utilization_pct Float64  dso_days Float64  dpo_days Float64
+  Use for executive dashboards, KPI cards, revenue/cost/margin trends, DSO/DPO, payroll/revenue %, and cash charts.
+
+TABLE analytics.v_ebpo_revenue_monthly
+  period_date (Date)  year UInt16  quarter UInt8  month UInt8  month_name String
+  total_revenue_usd Float64  total_cost_usd Float64  gross_margin_usd Float64  gross_margin_pct Float64
+  Use for monthly revenue, cost, gross margin, and margin % charts.
+
+TABLE analytics.v_ebpo_revenue_by_client
+  client_name String  industry String  total_revenue_usd Float64  total_cost_usd Float64
+  gross_margin_usd Float64  gross_margin_pct Float64
+  Use for top clients, client profitability, and industry revenue charts.
+
+TABLE analytics.v_ebpo_revenue_by_business_unit
+  business_unit String  contract_type String  total_revenue_usd Float64  total_cost_usd Float64
+  gross_margin_usd Float64  gross_margin_pct Float64
+  Use for business unit and contract type revenue/margin charts.
+
+TABLE analytics.v_ebpo_payroll_monthly
+  period_date (Date)  department String  country String  employee_count UInt64
+  total_base_salary_usd Float64  total_overtime_usd Float64  total_bonus_usd Float64
+  total_benefits_usd Float64  total_payroll_usd Float64
+  Use for payroll by department/country/month, salary mix, overtime, bonus, benefits, and headcount-style charts.
+
+TABLE analytics.v_ebpo_gl_monthly
+  period_date (Date)  account_number String  account_name String  department String
+  business_unit String  country String  total_debit_usd Float64  total_credit_usd Float64  net_movement_usd Float64
+  Use for GL account movement, department spend, country spend, and account-level debit/credit charts.
+
+TABLE analytics.v_ebpo_ar_aging
+  period_date (Date)  client_name String  industry String  aging_bucket String
+  invoice_amount_usd Float64  collected_amount_usd Float64  outstanding_balance_usd Float64  collection_rate_pct Float64
+  Use for AR aging, collection rate, client outstanding balances, and DSO-adjacent views.
+
+TABLE analytics.v_ebpo_ap_aging
+  period_date (Date)  vendor_name String  aging_bucket String
+  invoice_amount_usd Float64  paid_amount_usd Float64  outstanding_balance_usd Float64
+  Use for AP aging, vendor outstanding balances, and DPO-adjacent views.
+
+TABLE analytics.v_ebpo_operations_monthly
+  period_date (Date)  delivery_center String  region String  country String  market_type String
+  calls_handled Float64  tickets_resolved Float64  avg_aht_minutes Float64
+  sla_compliance_pct Float64  csat_pct Float64  utilization_pct Float64
+  Use for SLA, CSAT, utilization, delivery-center volume, AHT, calls, and ticket operations charts.
+
+TABLE analytics.v_ebpo_cash_flow_monthly
+  period_date (Date)  operating_cash_flow_usd Float64  investing_cash_flow_usd Float64
+  financing_cash_flow_usd Float64  free_cash_flow_usd Float64  cash_balance_usd Float64
+  Use for operating/investing/financing/free cash flow and cash balance trends.
+
+TABLE analytics.v_ebpo_fixed_assets_by_center
+  delivery_center String  asset_type String  asset_count UInt64  asset_cost_usd Float64
+  accumulated_depreciation_usd Float64  net_book_value_usd Float64
+  Use for fixed asset mix, NBV, asset cost, depreciation, delivery-center asset charts.
+
 TABLE SELECTION GUIDE (tenant_id + org_id scope required on ALL tables):
+  EBPO workbook requests / payroll / operations / cash flow / AR/AP / DSO / DPO / assets / delivery centers → use analytics.v_ebpo_* semantic views
   P&L totals / balance sheet / account type breakdown → analytics.sample_trial_balance (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
   Vendor spend / department spend / class spend / GL detail → analytics.sample_gl_dump (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
   Monthly trends / time-series → analytics.v_fact_accounting_journal_lines_latest (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
@@ -1033,6 +1267,7 @@ TABLE SELECTION GUIDE (tenant_id + org_id scope required on ALL tables):
 
 ⚠️ COLUMNS ARE PER-TABLE — DO NOT MIX. Using a column that belongs to another table = 0-row error:
   • sample_gl_dump        → date column is 'date' (NOT journal_date). Amounts: debit / credit. Vendor: vendor_customer.
+  • v_ebpo_* views        → time column is 'period_date' (NOT journal_date). Amount columns end in _usd or _pct.
   • v_fact_accounting_journal_lines_latest → date column is 'journal_date'. Amount: line_amount. Vendor: vendor_name. Has source_type.
   • v_fact_accounting_invoices_latest      → dates are issued_at / due_at / paid_at. Amounts: total_amount / amount_due / amount_paid. Party: contact_name.
   • sample_trial_balance  → NO date column at all (it is a balance snapshot). Use net_balance / debit / credit by account_type.
@@ -8477,9 +8712,17 @@ export class AgentService {
       });
       const wasAwaitingClarification = priorRequest?.status === 'NEEDS_INPUT';
 
-      const unsupported = wasAwaitingClarification
-        ? null
-        : this.detectUnsupportedOrAmbiguousAsk(queryText);
+      // These hardcoded "missing-dataset" gates (budget/forecast/headcount/etc.)
+      // are CREATE-oriented. On an EDIT the chart's subject is already
+      // established, and the SQL-first editor's verify→repair loop is the honest
+      // safety net (it keeps the original chart when a rewrite can't be
+      // satisfied). Running the gates on edits only causes false positives
+      // (e.g. renaming a chart to "Q3 Plan Review" trips the budget regex), so
+      // skip them for edits — same policy getClarificationPrompt already uses.
+      const unsupported =
+        wasAwaitingClarification || intent === 'EDIT_DASHBOARD'
+          ? null
+          : this.detectUnsupportedOrAmbiguousAsk(queryText);
       if (unsupported) {
         await logEvent('NEEDS_INPUT', { reason: unsupported.reason });
 
@@ -9223,7 +9466,13 @@ export class AgentService {
             scope,
             spec.timeRange,
           ),
-          this.generateEditPlan(activeDashboard, queryText),
+          this.generateEditPlan(
+            activeDashboard,
+            queryText,
+            scope,
+            spec.timeRange,
+            conversationHistory,
+          ),
         ]);
         plan = resolvedPlan;
         plan.should_generate_dashboard = false; // We're editing, not creating
@@ -9513,10 +9762,12 @@ export class AgentService {
           dashboardId = dashboard.id;
           dashboardTitle = dashboard.title;
 
-          const widgets =
+          const widgets = this.applyPieDonutLabelModeToWidgets(
             plan.dashboard.widgets.length > 0
               ? plan.dashboard.widgets
-              : this.queryAwareFallbackWidgets(queryText);
+              : this.queryAwareFallbackWidgets(queryText),
+            queryText,
+          );
 
           const compareClients = this.extractCompareClients(queryText);
           const hasExplicitClientPairDirective =
@@ -9605,7 +9856,7 @@ export class AgentService {
                   orgId: spec.entityFilter?.orgId ?? null,
                   orgName: spec.entityFilter?.orgName ?? null,
                   breakdown: dynamicSql ? null : breakdown,
-                  display: dynamicSql ? null : ((w as any)?.display ?? null),
+                  display: (w as any)?.display ?? null,
                   topN: dynamicSql
                     ? null
                     : applyClientPair
@@ -9880,7 +10131,7 @@ export class AgentService {
       /\b(chart|graph|barchart|bar\s*chart|line\s*chart|pie\s*chart|table)\b/.test(
         q,
       ) || /\b(as|in)\s+a?\s*(bar|line|pie)\s*chart\b/.test(q);
-    if (asksForChart) return 'CREATE_DASHBOARD';
+    if (asksForChart) return hasActiveDashboard ? 'EDIT_DASHBOARD' : 'CREATE_DASHBOARD';
 
     // Active dashboard exists + no signals → default to edit (follow-up refinement).
     return 'EDIT_DASHBOARD';
@@ -10050,6 +10301,10 @@ export class AgentService {
         if (!metric || !grouping) {
           return {
             ...widget,
+            chartConfig: {
+              ...(widget.chartConfig ?? {}),
+              display: (widget.queryConfig as any)?.display ?? null,
+            },
             dataSnapshot: [],
             dataSnapshotTruncated: false,
           };
@@ -10073,6 +10328,10 @@ export class AgentService {
           const data = Array.isArray(result.data) ? result.data : [];
           return {
             ...widget,
+            chartConfig: {
+              ...(widget.chartConfig ?? {}),
+              display: (widget.queryConfig as any)?.display ?? null,
+            },
             dataSnapshot: data.slice(0, MAX_SNAPSHOT_ROWS) as Array<
               Record<string, unknown>
             >,
@@ -10084,6 +10343,10 @@ export class AgentService {
           );
           return {
             ...widget,
+            chartConfig: {
+              ...(widget.chartConfig ?? {}),
+              display: (widget.queryConfig as any)?.display ?? null,
+            },
             dataSnapshot: [],
             dataSnapshotTruncated: false,
           };
@@ -10094,6 +10357,48 @@ export class AgentService {
     return snapshots.sort(
       (a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0),
     );
+  }
+
+  private applyPieDonutLabelModeToWidgets(
+    widgets: any[],
+    query: string,
+  ): any[] {
+    const wantsValueLabels =
+      /\b(whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?|remove\s+percent(?:age|ages)?|show\s+values?|raw\s+values?)\b/i.test(
+        query,
+      ) ||
+      /\bneed\s+values?\b/i.test(query) ||
+      /\babsolute\s+values?\b/i.test(query) ||
+      /\bnumbers?\s+instead\s+of\s+percent(?:age|ages)?\b/i.test(query) ||
+      /\bwithout\s+percent(?:age|ages)?\b/i.test(query) ||
+      /\bno\s+percent(?:age|ages)?\b/i.test(query) ||
+      /\bpercentage\s+to\s+values?\b/i.test(query) ||
+      /\bpercent(?:age|ages)?\s+to\s+values?\b/i.test(query);
+    const wantsPercentLabels =
+      /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(query) ||
+      /\bshow\s+percent(?:age|ages)?\b/i.test(query) ||
+      /\bpercent(?:age|ages)?\s+labels?\b/i.test(query) ||
+      /\bpercent(?:age|ages)?\s+values?\b/i.test(query) ||
+      /\bshow\s+percent(?:age|ages)?\s+in\s+the\s+chart\b/i.test(query);
+
+    const labelMode = wantsValueLabels ? 'value' : wantsPercentLabels ? 'percent' : null;
+    if (!labelMode) return widgets;
+
+    return widgets.map((widget) => {
+      const chartType = String(widget.type ?? '').toLowerCase();
+      if (chartType !== 'pie' && chartType !== 'donut') return widget;
+      const existingDisplay =
+        widget.display && typeof widget.display === 'object' && !Array.isArray(widget.display)
+          ? (widget.display as Record<string, unknown>)
+          : {};
+      return {
+        ...widget,
+        display: {
+          ...existingDisplay,
+          labelMode,
+        },
+      };
+    });
   }
 
   private async nextChartTurnVersion(
@@ -10349,13 +10654,37 @@ export class AgentService {
             return 'line';
           })();
 
+          const wantsValueLabels =
+            wants(/whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?/) ||
+            wants(/remove\s+percent(?:age|ages)?/) ||
+            wants(/show\s+values?/) ||
+            wants(/need\s+values?/) ||
+            wants(/absolute\s+values?/) ||
+            wants(/raw\s+values?/) ||
+            wants(/numbers?\s+instead\s+of\s+percent(?:age|ages)?/) ||
+            wants(/without\s+percent(?:age|ages)?/) ||
+            wants(/no\s+percent(?:age|ages)?/) ||
+            wants(/percentage\s+to\s+values?/) ||
+            wants(/percent(?:age|ages)?\s+to\s+values?/);
+          const wantsPercentLabels =
+            wants(/percent(?:age|ages)?\s+to\s+percent(?:age|ages)?/) ||
+            wants(/show\s+percent(?:age|ages)?/) ||
+            wants(/percent(?:age|ages)?\s+labels?/) ||
+            wants(/percent(?:age|ages)?\s+values?/);
           const display: W['display'] | undefined =
             wants(/donut/) ||
+            wantsValueLabels ||
+            wantsPercentLabels ||
             (wants(/highlight/) && wants(/highest|lowest|max|min/))
               ? {
                   donut: wants(/donut/),
                   highlightMaxMin:
                     wants(/highlight/) && wants(/highest|lowest|max|min/),
+                  labelMode: wantsValueLabels
+                    ? 'value'
+                    : wantsPercentLabels
+                      ? 'percent'
+                      : undefined,
                 }
               : undefined;
 
@@ -11973,10 +12302,20 @@ export class AgentService {
         this.parseExplicitChartConstraints(query)?.requiredTypes?.[0];
       const qLow = query.toLowerCase();
 
-      // Monthly dept breakdown (stacked/line/area + dept + time): always use vocab handler
-      // which reads directly from sample_gl_dump with correct pivot and values.
+      // Monthly dept breakdown (stacked/line/area + dept + time): use the vocab
+      // handler which reads sample_gl_dump with the correct pivot/values.
+      // IMPORTANT: only short-circuit on a GENUINE cross-department pivot — i.e.
+      // the user said "department"/"dept", or named ≥2 distinct departments.
+      // A lone "sales"/"admin"/"operations" is ambiguous (e.g. "sales by month"
+      // usually means sales REVENUE, not the Sales department), so defer those to
+      // the generic SQL planner instead of forcing a department chart.
+      const DEPT_NAMES = ['admin', 'operations', 'sales'];
+      const distinctDeptMentions = DEPT_NAMES.filter((d) =>
+        new RegExp(`\\b${d}\\b`).test(qLow),
+      ).length;
+      const hasExplicitDept = /\bdepartments?\b|\bdept\b/.test(qLow);
       const isMonthlyDept =
-        /\b(admin|operations|sales|department)\b/.test(qLow) &&
+        (hasExplicitDept || distinctDeptMentions >= 2) &&
         /\b(month|monthly|trend|over\s+time|across\s+the\s+year|last\s+\d+\s+month)\b/.test(
           qLow,
         ) &&
@@ -13381,6 +13720,55 @@ export class AgentService {
         }));
     };
 
+    const resolvePieDonutLabelMode = (
+      text: string,
+    ): 'percent' | 'value' | null => {
+      const wantsValueLabels =
+        /\b(whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?|remove\s+percent(?:age|ages)?|show\s+values?|raw\s+values?)\b/i.test(
+          text,
+        ) ||
+        /\bneed\s+values?\b/i.test(text) ||
+        /\babsolute\s+values?\b/i.test(text) ||
+        /\bnumbers?\s+instead\s+of\s+percent(?:age|ages)?\b/i.test(text) ||
+        /\bwithout\s+percent(?:age|ages)?\b/i.test(text) ||
+        /\bno\s+percent(?:age|ages)?\b/i.test(text) ||
+        /\bpercentage\s+to\s+values?\b/i.test(text) ||
+        /\bpercent(?:age|ages)?\s+to\s+values?\b/i.test(text);
+      const wantsPercentLabels =
+        /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(text) ||
+        /\bshow\s+percent(?:age|ages)?\b/i.test(text) ||
+        /\bpercent(?:age|ages)?\s+labels?\b/i.test(text) ||
+        /\bpercent(?:age|ages)?\s+values?\b/i.test(text) ||
+        /\bshow\s+percent(?:age|ages)?\s+in\s+the\s+chart\b/i.test(text);
+
+      if (wantsValueLabels) return 'value';
+      if (wantsPercentLabels) return 'percent';
+      return null;
+    };
+
+    const applyPieDonutLabelMode = (
+      widgets: AgentPlan['dashboard']['widgets'],
+      text: string,
+    ): AgentPlan['dashboard']['widgets'] => {
+      const labelMode = resolvePieDonutLabelMode(text);
+      if (!labelMode) return widgets;
+
+      return widgets.map((widget) => {
+        if (widget.type !== 'pie' && widget.type !== 'donut') return widget;
+        const existingDisplay =
+          widget.display && typeof widget.display === 'object' && !Array.isArray(widget.display)
+            ? (widget.display as Record<string, unknown>)
+            : {};
+        return {
+          ...widget,
+          display: {
+            ...existingDisplay,
+            labelMode,
+          },
+        };
+      });
+    };
+
     // Emergency fallback — only used if Ollama crashes/times out
     const fallback: AgentPlan = {
       tools_to_execute: this.selectToolsForQuery(query),
@@ -13389,7 +13777,10 @@ export class AgentService {
         title: this.deriveQueryTitle(query),
         description: 'AI-generated financial intelligence dashboard',
         widgets: applyImplicitMax(
-          applyConstraints(this.selectWidgetsForQuery(query, activeDashboard)),
+          applyPieDonutLabelMode(
+            applyConstraints(this.selectWidgetsForQuery(query, activeDashboard)),
+            query,
+          ),
         ),
       },
       analysis_focus: query,
@@ -13774,9 +14165,14 @@ export class AgentService {
           return withImplicit;
         })();
 
+        const constrainedWidgetsWithLabelMode = applyPieDonutLabelMode(
+          constrainedWidgets,
+          query,
+        );
+
         const validationErrors = this.validateWidgetsAgainstSpec(
           spec,
-          constrainedWidgets,
+          constrainedWidgetsWithLabelMode,
         );
         if (validationErrors.length > 0) {
           const repair = (
@@ -14151,7 +14547,10 @@ export class AgentService {
             return out;
           };
 
-          const repaired = repair(validationErrors, constrainedWidgets);
+          const repaired = applyPieDonutLabelMode(
+            repair(validationErrors, constrainedWidgetsWithLabelMode),
+            query,
+          );
           const remaining = this.validateWidgetsAgainstSpec(spec, repaired);
           if (remaining.length > 0) {
             this.logger.warn(
@@ -14177,16 +14576,16 @@ export class AgentService {
         this.logger.log(
           `[Agent:Planner] Ollama succeeded — picked plan score=${best.score.toFixed(1)}, widgets=${best.widgets.length}, tools=${best.tools.length}`,
         );
-        return {
-          tools_to_execute: this.deriveToolsFromWidgets(
-            constrainedWidgets,
+          return {
+            tools_to_execute: this.deriveToolsFromWidgets(
+            constrainedWidgetsWithLabelMode,
             query,
           ),
           should_generate_dashboard: true,
           dashboard: {
             title: best.title,
             description: 'AI-generated financial intelligence dashboard',
-            widgets: constrainedWidgets,
+            widgets: constrainedWidgetsWithLabelMode,
           },
           analysis_focus: query,
         };
@@ -14682,13 +15081,343 @@ export class AgentService {
 
   // ─── Edit Plan Generation ─────────────────────────────────────────────────
 
+  // ─── SQL-first Dashboard Editor ───────────────────────────────────────────
+  // Mirrors generateSmartPlan, but for EDITS: it feeds the LLM each chart's
+  // current live SQL plus the user's modification request and asks it to rewrite
+  // the SQL (and/or type/title/axis labels/label mode) for the charts that must
+  // change. Every rewritten SQL goes through the same validate -> execute ->
+  // one-shot self-repair loop the builder uses, so a chart only changes if the
+  // new query actually returns clean data. Returns a DashboardEditPlan whose
+  // modify/add entries carry the new dynamicSql, or null when the editor is
+  // unavailable / declines to act (caller then falls back to the vocab editor).
+  private async generateSmartEditPlan(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+    range?: TimeRange,
+    conversationHistory?: string,
+  ): Promise<DashboardEditPlan | null> {
+    try {
+      if (activeDashboard.widgets.length === 0) return null;
+      if (scope.externalOrgIds.length === 0) return null;
+
+      // Verify Ollama is reachable before the expensive introspection.
+      const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => null);
+      if (!ping?.ok) return null;
+
+      const liveContext = await this.introspectLiveSchema(scope);
+
+      const widgetList = activeDashboard.widgets
+        .map((w, i) => {
+          const cfg = (w.queryConfig as any) ?? {};
+          const sql =
+            typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim()
+              ? cfg.dynamicSql.trim()
+              : `(vocabulary widget — no editable SQL; metric=${cfg.metric ?? '?'}, grouping=${cfg.grouping ?? '?'})`;
+          const labelMode = cfg?.display?.labelMode
+            ? `, labelMode=${cfg.display.labelMode}`
+            : '';
+          return `INDEX ${i}: type=${w.chartType}${labelMode}, title="${w.title}"\n  SQL: ${sql}`;
+        })
+        .join('\n\n');
+
+      const historySnippet =
+        conversationHistory && !conversationHistory.includes('(No prior')
+          ? `\nCONVERSATION CONTEXT:\n${conversationHistory.slice(0, 800)}\n`
+          : '';
+      const timeHint = range
+        ? `\nTime filter in effect: ${JSON.stringify(range)} — preserve it unless the user changes the time range.`
+        : '';
+
+      const userMsg = [
+        `LIVE SCHEMA / DATA:\n${liveContext}`,
+        `\nCURRENT DASHBOARD: "${activeDashboard.title}"`,
+        `CURRENT CHARTS (0-indexed):\n${widgetList}`,
+        historySnippet,
+        timeHint,
+        `\nUSER EDIT REQUEST: "${editRequest}"`,
+        `Return the edit JSON now. Rewrite the SQL of any chart whose DATA must change (axis, dimension, metric, percentage vs values, filter, sort, top-N, time). For a pure type/title/label change, omit "sql".`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 120_000);
+      const response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.OLLAMA_MODEL,
+          messages: [
+            { role: 'system', content: SMART_SQL_EDITOR_SYSTEM },
+            { role: 'user', content: userMsg },
+          ],
+          stream: false,
+          options: { temperature: 0.05, num_predict: 4000, num_ctx: 16384 },
+        }),
+      });
+      clearTimeout(timer);
+      if (!response.ok) return null;
+
+      const body = (await response.json()) as { message?: { content?: string } };
+      const rawText = (body.message?.content ?? '')
+        .replace(/```json|```/g, '')
+        .trim();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        const m = rawText.match(/\{[\s\S]*\}/);
+        if (!m) return null;
+        parsed = JSON.parse(m[0]);
+      }
+
+      const opsIn = Array.isArray(parsed?.widgets) ? parsed.widgets : [];
+      const addsIn = Array.isArray(parsed?.add) ? parsed.add : [];
+      if (opsIn.length === 0 && addsIn.length === 0) return null;
+
+      // Validate + execute + one self-repair. Returns final scoped SQL or null.
+      const verifySql = async (
+        rawSql: string,
+        chartType: ChartType,
+      ): Promise<string | null> => {
+        let scoped: string;
+        try {
+          scoped = this.validateAndScopeDynamicSql(
+            String(rawSql).trim().replace(/;+$/, ''),
+            scope,
+            { chartType },
+          );
+        } catch {
+          return null;
+        }
+        const r1 = await this.executeDynamicSqlChecked(scoped, scope, {
+          chartType,
+        });
+        let problem: string | null = null;
+        if (r1.error) problem = r1.error;
+        else if (r1.rows.length === 0) return null;
+        else problem = this.detectBadChartShape(r1.rows, chartType);
+        if (!problem) return scoped;
+
+        const repaired = await this.repairSqlViaLLM(scoped, problem, liveContext);
+        if (!repaired) return null;
+        let scoped2: string;
+        try {
+          scoped2 = this.validateAndScopeDynamicSql(repaired, scope, {
+            chartType,
+          });
+        } catch {
+          return null;
+        }
+        const r2 = await this.executeDynamicSqlChecked(scoped2, scope, {
+          chartType,
+        });
+        if (r2.rows.length > 0 && !this.detectBadChartShape(r2.rows, chartType))
+          return scoped2;
+        return null;
+      };
+
+      const plan: DashboardEditPlan = {
+        summary: String(parsed?.summary ?? 'Updated your dashboard').slice(
+          0,
+          200,
+        ),
+        add: [],
+        remove_indices: [],
+        modify: [],
+      };
+
+      for (const op of opsIn) {
+        const index = Number(op?.index);
+        if (
+          !Number.isInteger(index) ||
+          index < 0 ||
+          index >= activeDashboard.widgets.length
+        )
+          continue;
+        const action = String(op?.action ?? 'update').toLowerCase();
+        if (action === 'keep') continue;
+        if (action === 'remove') {
+          plan.remove_indices.push(index);
+          continue;
+        }
+
+        const widget = activeDashboard.widgets[index]!;
+        const nextType =
+          typeof op?.type === 'string' && op.type.trim()
+            ? (op.type.trim() as ChartType)
+            : (widget.chartType as ChartType);
+        const mod: DashboardEditPlan['modify'][number] = { index };
+        if (typeof op?.title === 'string' && op.title.trim())
+          mod.title = op.title.trim().slice(0, 80);
+        if (typeof op?.type === 'string' && op.type.trim())
+          mod.type = op.type.trim() as ChartType;
+        if (typeof op?.xAxisLabel === 'string')
+          mod.xAxisLabel = op.xAxisLabel.slice(0, 60);
+        if (typeof op?.yAxisLabel === 'string')
+          mod.yAxisLabel = op.yAxisLabel.slice(0, 60);
+        if (op?.labelMode === 'value' || op?.labelMode === 'percent')
+          mod.display = { labelMode: op.labelMode };
+
+        if (typeof op?.sql === 'string' && op.sql.trim()) {
+          const finalSql = await verifySql(op.sql, nextType);
+          if (finalSql) {
+            mod.dynamicSql = finalSql;
+          } else {
+            this.logger.warn(
+              `[SmartEdit] rewritten SQL for chart ${index} failed verification — keeping original data`,
+            );
+          }
+        }
+
+        const hasChange =
+          mod.title !== undefined ||
+          mod.type !== undefined ||
+          mod.xAxisLabel !== undefined ||
+          mod.yAxisLabel !== undefined ||
+          mod.display !== undefined ||
+          mod.dynamicSql !== undefined;
+        if (hasChange) plan.modify.push(mod);
+      }
+
+      const slotsLeft = () =>
+        8 -
+        (activeDashboard.widgets.length -
+          plan.remove_indices.length +
+          plan.add.length);
+      for (const a of addsIn) {
+        if (slotsLeft() <= 0) break;
+        if (typeof a?.sql !== 'string' || !a.sql.trim()) continue;
+        const type =
+          typeof a?.type === 'string' && a.type.trim()
+            ? (a.type.trim() as ChartType)
+            : ('bar' as ChartType);
+        const finalSql = await verifySql(a.sql, type);
+        if (!finalSql) continue;
+        plan.add.push({
+          title: String(a?.title ?? 'New chart').slice(0, 45),
+          description: String(a?.description ?? ''),
+          type,
+          metric: 'dynamic',
+          grouping: 'query',
+          ...(typeof a?.xAxisLabel === 'string'
+            ? { xAxisLabel: a.xAxisLabel.slice(0, 60) }
+            : {}),
+          ...(typeof a?.yAxisLabel === 'string'
+            ? { yAxisLabel: a.yAxisLabel.slice(0, 60) }
+            : {}),
+          dynamicSql: finalSql,
+        });
+      }
+
+      if (
+        plan.modify.length === 0 &&
+        plan.add.length === 0 &&
+        plan.remove_indices.length === 0
+      )
+        return null;
+
+      this.logger.log(
+        `[SmartEdit] ${plan.modify.length} modified, ${plan.add.length} added, ${plan.remove_indices.length} removed for: "${editRequest.slice(0, 60)}"`,
+      );
+      return plan;
+    } catch (err: any) {
+      this.logger.warn(`[SmartEdit] failed: ${err?.message ?? err}`);
+      return null;
+    }
+  }
+
   private async generateEditPlan(
     activeDashboard: ActiveDashboard,
     editRequest: string,
+    scope?: OrgScope,
+    range?: TimeRange,
+    conversationHistory?: string,
   ): Promise<DashboardEditPlan> {
+    const wantsValueLabels =
+      /\b(whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?|remove\s+percent(?:age|ages)?|show\s+values?|raw\s+values?)\b/i.test(
+        editRequest,
+      ) ||
+      /\bneed\s+values?\b/i.test(editRequest) ||
+      /\babsolute\s+values?\b/i.test(editRequest) ||
+      /\bnumbers?\s+instead\s+of\s+percent(?:age|ages)?\b/i.test(editRequest) ||
+      /\bwithout\s+percent(?:age|ages)?\b/i.test(editRequest) ||
+      /\bno\s+percent(?:age|ages)?\b/i.test(editRequest) ||
+      /\bpercentage\s+to\s+values?\b/i.test(editRequest) ||
+      /\bpercent(?:age|ages)?\s+to\s+values?\b/i.test(editRequest);
+    const wantsPercentLabels =
+      /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(
+        editRequest,
+      ) ||
+      /\bshow\s+percent(?:age|ages)?\b/i.test(editRequest) ||
+      /\bpercent(?:age|ages)?\s+labels?\b/i.test(editRequest) ||
+      /\bpercent(?:age|ages)?\s+values?\b/i.test(editRequest) ||
+      /\bshow\s+percent(?:age|ages)?\s+in\s+the\s+chart\b/i.test(editRequest);
+
+    const requestedLabelMode: 'value' | 'percent' | null = wantsValueLabels
+      ? 'value'
+      : wantsPercentLabels
+        ? 'percent'
+        : null;
+
+    // Deterministically force pie/donut label mode (percent <-> whole values) on
+    // top of whatever plan we return. This is cheaper and more reliable than
+    // depending on the LLM to honor the exact phrasing.
+    const injectPieDonutLabelMode = (
+      plan: DashboardEditPlan,
+    ): DashboardEditPlan => {
+      if (!requestedLabelMode || activeDashboard.widgets.length === 0)
+        return plan;
+      const pieOrDonutTargets = activeDashboard.widgets
+        .map((widget, index) => ({ widget, index }))
+        .filter(
+          ({ widget }) =>
+            String(widget.chartType ?? '').toLowerCase() === 'donut' ||
+            String(widget.chartType ?? '').toLowerCase() === 'pie',
+        );
+      if (pieOrDonutTargets.length === 0) return plan;
+
+      const summarySuffix =
+        requestedLabelMode === 'value'
+          ? 'Switched pie/donut labels to whole values.'
+          : 'Switched pie/donut labels to percentages.';
+      plan.summary = plan.summary
+        ? `${plan.summary} ${summarySuffix}`
+        : summarySuffix;
+
+      for (const { widget, index } of pieOrDonutTargets) {
+        const existingModify = plan.modify.find(
+          (entry) => entry.index === index,
+        );
+        const existingDisplay =
+          existingModify?.display ??
+          (widget.queryConfig as any)?.display ??
+          null;
+        const mergedDisplay = {
+          ...(existingDisplay && typeof existingDisplay === 'object'
+            ? existingDisplay
+            : {}),
+          labelMode: requestedLabelMode,
+        };
+        if (existingModify) {
+          existingModify.display = mergedDisplay;
+        } else {
+          plan.modify.push({
+            index,
+            display: mergedDisplay,
+          } as DashboardEditPlan['modify'][number]);
+        }
+      }
+      return plan;
+    };
+
     const explicitType = this.detectPureChartTypeEditRequest(editRequest);
     if (explicitType && activeDashboard.widgets.length > 0) {
-      return {
+      return injectPieDonutLabelMode({
         summary: `Switched existing chart${activeDashboard.widgets.length > 1 ? 's' : ''} to ${this.humanizeChartType(explicitType)}.`,
         add: [],
         remove_indices: [],
@@ -14696,7 +15425,27 @@ export class AgentService {
           index,
           type: explicitType,
         })),
-      };
+      });
+    }
+
+    // ── PRIMARY: SQL-first editor ─────────────────────────────────────────
+    // Rewrites the underlying live SQL so ANY data/axis/metric/percentage change
+    // actually takes effect. Falls back to the vocabulary editor below only when
+    // the SQL editor is unavailable (Ollama offline) or declines to act.
+    if (scope) {
+      const smartEdit = await this.generateSmartEditPlan(
+        activeDashboard,
+        editRequest,
+        scope,
+        range,
+        conversationHistory,
+      ).catch((err: any) => {
+        this.logger.warn(
+          `[Agent:Editor] SQL-first editor failed (${err?.message ?? err}) — falling back to vocabulary editor`,
+        );
+        return null;
+      });
+      if (smartEdit) return injectPieDonutLabelMode(smartEdit);
     }
 
     const widgetList = activeDashboard.widgets
@@ -14757,6 +15506,8 @@ export class AgentService {
         .trim();
       const parsed = JSON.parse(cleaned) as DashboardEditPlan;
 
+      injectPieDonutLabelMode(parsed);
+
       // Validate add widgets against known pairs
       if (Array.isArray(parsed.add)) {
         parsed.add = parsed.add.filter((w) =>
@@ -14810,6 +15561,29 @@ export class AgentService {
         where: { dashboardId },
         orderBy: { displayOrder: 'asc' },
       });
+      const resolveWidgetType = (
+        metric: string,
+        grouping: string,
+        preferredType?: string,
+      ): ChartType => {
+        const normalizedMetric = String(metric ?? '').trim();
+        const normalizedGrouping = String(grouping ?? '').trim();
+        const validMatch = VALID_WIDGETS.find(
+          (widget) =>
+            widget.metric === normalizedMetric && widget.grouping === normalizedGrouping,
+        );
+        if (preferredType) {
+          const preferredMatch = VALID_WIDGETS.find(
+            (widget) =>
+              widget.type === preferredType &&
+              widget.metric === normalizedMetric &&
+              widget.grouping === normalizedGrouping,
+          );
+          if (preferredMatch) return preferredMatch.type;
+        }
+        if (validMatch) return validMatch.type;
+        return (preferredType ?? 'bar') as ChartType;
+      };
       const existingRange =
         (currentWidgets[0]?.queryConfig as any)?.timeRange ?? null;
       const existingProviderHint =
@@ -14850,8 +15624,63 @@ export class AgentService {
         const widget = currentWidgets[mod.index];
         if (!widget || removeIds.includes(widget.id)) continue;
         const changes: Record<string, unknown> = {};
+        const existingConfig = (widget.queryConfig as Record<string, unknown>) ?? {};
+        const nextConfig: Record<string, unknown> = { ...existingConfig };
         if (mod.title) changes.title = mod.title;
-        if (mod.type) changes.chartType = mod.type;
+        const nextMetric =
+          typeof mod.metric === 'string' && mod.metric.trim()
+            ? mod.metric.trim()
+            : String(existingConfig.metric ?? '').trim();
+        const nextGrouping =
+          typeof mod.grouping === 'string' && mod.grouping.trim()
+            ? mod.grouping.trim()
+            : String(existingConfig.grouping ?? '').trim();
+        const preferredType = mod.type ?? (widget.chartType as ChartType | undefined);
+        // SQL-first edit: a rewritten dynamicSql turns this into (or keeps it) a
+        // dynamic-SQL widget. The data endpoint runs queryConfig.dynamicSql, so we
+        // must replace it AND force metric/grouping to dynamic/query. The chart
+        // type is taken verbatim from the requested/current type (skip the
+        // vocabulary resolver, which would otherwise snap it to a preset).
+        const hasNewSql =
+          typeof mod.dynamicSql === 'string' && mod.dynamicSql.trim().length > 0;
+        const nextType = hasNewSql
+          ? (preferredType ?? (widget.chartType as ChartType))
+          : resolveWidgetType(nextMetric, nextGrouping, preferredType);
+        if (nextType !== widget.chartType) changes.chartType = nextType;
+        if (hasNewSql) {
+          nextConfig.dynamicSql = mod.dynamicSql!.trim();
+          nextConfig.metric = 'dynamic';
+          nextConfig.grouping = 'query';
+        }
+        if (!hasNewSql && typeof mod.metric === 'string' && mod.metric.trim()) {
+          nextConfig.metric = mod.metric.trim();
+        }
+        if (!hasNewSql && typeof mod.grouping === 'string' && mod.grouping.trim()) {
+          nextConfig.grouping = mod.grouping.trim();
+        }
+        if (mod.breakdown !== undefined) nextConfig.breakdown = mod.breakdown;
+        if (mod.topN !== undefined) nextConfig.topN = mod.topN;
+        if (mod.xAxisLabel !== undefined) nextConfig.xAxisLabel = mod.xAxisLabel;
+        if (mod.yAxisLabel !== undefined) nextConfig.yAxisLabel = mod.yAxisLabel;
+        if (mod.display !== undefined) {
+          if (mod.display === null) {
+            nextConfig.display = null;
+          } else {
+            const existingDisplay =
+              existingConfig.display &&
+              typeof existingConfig.display === 'object' &&
+              !Array.isArray(existingConfig.display)
+                ? (existingConfig.display as Record<string, unknown>)
+                : {};
+            nextConfig.display = {
+              ...existingDisplay,
+              ...mod.display,
+            };
+          }
+        }
+        if (JSON.stringify(nextConfig) !== JSON.stringify(existingConfig)) {
+          changes.queryConfig = nextConfig as Prisma.InputJsonValue;
+        }
         if (mod.description)
           changes.chartConfig = {
             description: mod.description,
@@ -14892,6 +15721,14 @@ export class AgentService {
               orgName: nextOrgName,
               breakdown: (w as any)?.breakdown ?? null,
               topN: (w as any)?.topN ?? null,
+              xAxisLabel: (w as any)?.xAxisLabel ?? null,
+              yAxisLabel: (w as any)?.yAxisLabel ?? null,
+              display: (w as any)?.display ?? null,
+              // SQL-first add: carry the live SQL so the data endpoint can run it.
+              ...(typeof (w as any)?.dynamicSql === 'string' &&
+              (w as any).dynamicSql.trim()
+                ? { dynamicSql: (w as any).dynamicSql.trim() }
+                : {}),
             } as Prisma.InputJsonValue,
             chartConfig: {
               description: w.description,

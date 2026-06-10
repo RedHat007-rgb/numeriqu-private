@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Maximize2,
@@ -65,6 +65,7 @@ interface ChartConfig {
   display?: {
     donut?: boolean | null;
     highlightMaxMin?: boolean | null;
+    labelMode?: "percent" | "value" | null;
   } | null;
 }
 
@@ -131,7 +132,24 @@ type ChartVersionSnapshot = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PIE_COLORS = ["#7c3aed", "#3b82f6", "#06b6d4", "#14b8a6", "#f59e0b", "#ef4444", "#8b5cf6"];
+// Single source of truth for categorical chart colours. A 12-hue, perceptually
+// balanced palette harmonised around the brand violet/blue — used by EVERY chart
+// type (pie, donut, scatter, bubble, heatmap, multi-series bars) so colours stay
+// consistent across the dashboard and only repeat past 12 distinct categories.
+const PIE_COLORS = [
+  "#7c3aed", // violet (brand)
+  "#3b82f6", // blue
+  "#06b6d4", // cyan
+  "#10b981", // emerald
+  "#f59e0b", // amber
+  "#ef4444", // red
+  "#ec4899", // pink
+  "#8b5cf6", // purple
+  "#14b8a6", // teal
+  "#f97316", // orange
+  "#6366f1", // indigo
+  "#84cc16", // lime
+];
 
 // ─── Series Key Inference ─────────────────────────────────────────────────────
 
@@ -187,10 +205,20 @@ function buildChartVersionHistory(messages: ChatMessage[]): ChartVersionSnapshot
       const title = String(widget.title ?? `Chart ${widgetIndex + 1}`).trim();
       if (!title) continue;
 
-      const chartConfig = widget.queryConfig as unknown as ChartConfig;
+      const queryConfig = widget.queryConfig ?? {};
+      const chartConfigSource = widget.chartConfig ?? {};
+      const displayFromQuery = queryConfig.display as ChartConfig["display"];
+      const displayFromChart = chartConfigSource.display as ChartConfig["display"];
+      const chartConfig = {
+        ...(queryConfig as Record<string, unknown>),
+        ...(typeof chartConfigSource.description === "string"
+          ? { description: chartConfigSource.description }
+          : {}),
+        display: displayFromQuery ?? displayFromChart ?? null,
+      } as unknown as ChartConfig;
       const chartDescription =
-        widget.chartConfig && typeof widget.chartConfig.description === "string"
-          ? widget.chartConfig.description
+        typeof chartConfigSource.description === "string"
+          ? chartConfigSource.description
           : metadata.summary ?? "";
 
       charts.push({
@@ -222,6 +250,23 @@ function buildChartVersionHistory(messages: ChatMessage[]): ChartVersionSnapshot
   }
 
   return versions.sort((a, b) => a.versionNumber - b.versionNumber);
+}
+
+function mergeChartVersionHistories(
+  sessionHistory: ChartVersionSnapshot[],
+  liveHistory: ChartVersionSnapshot[],
+): ChartVersionSnapshot[] {
+  const merged = new Map<number, ChartVersionSnapshot>();
+
+  for (const version of sessionHistory) {
+    merged.set(version.versionNumber, version);
+  }
+
+  for (const version of liveHistory) {
+    merged.set(version.versionNumber, version);
+  }
+
+  return Array.from(merged.values()).sort((a, b) => a.versionNumber - b.versionNumber);
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -335,7 +380,7 @@ const CustomTooltip = ({ active, payload, label, metric, grouping }: any) => {
   );
 };
 
-const PieTooltip = ({ active, payload, metric, grouping }: any) => {
+const PieTooltip = ({ active, payload, metric, grouping, labelMode }: any) => {
   if (!active || !payload?.length) return null;
   const entry = payload[0];
   const total = entry?.payload?.total;
@@ -347,7 +392,7 @@ const PieTooltip = ({ active, payload, metric, grouping }: any) => {
         {typeof entry.value === "number"
           ? formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
           : entry.value}
-        {pct ? ` · ${pct}%` : ""}
+        {pct && labelMode !== "value" ? ` · ${pct}%` : ""}
       </p>
     </div>
   );
@@ -510,6 +555,39 @@ function VentureMetricCard({ data }: { data: VentureData }) {
 }
 
 // ─── Chart Renderer ───────────────────────────────────────────────────────────
+
+// Isolates a single chart's render. A malformed row or an unexpected data shape
+// throws inside Recharts; without this, one bad chart would blank the entire
+// dashboard. Here it degrades to a friendly inline message and the rest render.
+class ChartErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: unknown) {
+    // eslint-disable-next-line no-console
+    console.error("[ChartErrorBoundary] chart failed to render:", error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl bg-bg-elevated/30">
+          <p className="px-4 text-center text-xs text-text-muted">
+            This chart couldn&apos;t be displayed. The data may be in an
+            unexpected shape — try regenerating or rephrasing it.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   const h = isExpanded ? 480 : 240;
@@ -927,6 +1005,15 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 		                      );
 	                    })
 	                  : null}
+                {(useHorizontalBars ? trimmed.length <= 15 : trimmed.length <= 12) && (
+                  <LabelList
+                    dataKey="value"
+                    position={useHorizontalBars ? "right" : "top"}
+                    offset={useHorizontalBars ? 6 : 4}
+                    style={{ fill: "rgb(var(--color-text-secondary))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
+                    formatter={(v: unknown) => formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)}
+                  />
+                )}
 	              </Bar>
 	            )}
 	          </BarChart>
@@ -1000,10 +1087,17 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     const yKey = hasXY ? "y" : (numKeys[0] ?? "y");
     const nameKey = firstRow && typeof firstRow.name === "string" ? "name" : undefined;
 
+    // Rich visualization: every point gets its own colour, its name printed on
+    // the chart, and a colour-coded legend below so the user always knows which
+    // dot is which. Labels are only drawn on the chart when the point count is
+    // small enough to stay legible; otherwise the legend + tooltip carry it.
+    const xLabel = xKey.replaceAll("_", " ");
+    const showInlineLabels = !!nameKey && data.length <= 18;
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: h, width: "100%" }} className="flex flex-col">
+        <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 8, right: 10, left: 12, bottom: 24 }}>
+          <ScatterChart margin={{ top: 14, right: 16, left: 12, bottom: 24 }}>
             <CartesianGrid {...gridStyle} />
             <XAxis
               dataKey={xKey}
@@ -1013,7 +1107,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               tickLine={false}
               axisLine={false}
               tickFormatter={(v: number) => fmtNumber(Number(v) || 0)}
-              label={{ value: xKey.replaceAll("_", " "), position: "insideBottom", offset: -8, fontSize: 10, fill: "rgb(var(--color-text-muted))" }}
+              label={{ value: xLabel, position: "insideBottom", offset: -8, fontSize: 10, fill: "rgb(var(--color-text-muted))" }}
             />
             <YAxis
               dataKey={yKey}
@@ -1041,14 +1135,38 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 );
               }}
             />
-            <Scatter data={data as any} fill="rgb(var(--color-accent-violet))" fillOpacity={0.8} />
+            <Scatter data={data as any} fillOpacity={0.9}>
+              {data.map((_, i) => (
+                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+              ))}
+              {showInlineLabels && (
+                <LabelList
+                  dataKey={nameKey}
+                  position="top"
+                  offset={8}
+                  style={{ fontSize: 9, fontWeight: 600, fill: "rgb(var(--color-text-secondary))" }}
+                />
+              )}
+            </Scatter>
           </ScatterChart>
         </ResponsiveContainer>
+        </div>
+        {nameKey && (
+          <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
+            {data.map((d, i) => (
+              <span key={i} className="inline-flex items-center gap-1 text-[9px] text-text-secondary">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                {String((d as any)[nameKey])}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
 
   if (chart.type === "pie") {
+    const labelMode = chart.config.display?.labelMode ?? "percent";
     // Filter only positive values and find the label key (may be "name", "dept", "vendor", etc.)
     const labelKey = (() => {
       const row = data[0] as any;
@@ -1062,16 +1180,28 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     const total = cleaned.reduce((s, d) => s + d.value, 0);
     const enriched = cleaned.map((d) => ({ ...d, total }));
 
-    const renderLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+    const renderLabel = ({
+      cx,
+      cy,
+      midAngle,
+      innerRadius,
+      outerRadius,
+      percent,
+      value,
+    }: any) => {
       if (percent < 0.06) return null;
       const RADIAN = Math.PI / 180;
       const r = innerRadius + (outerRadius - innerRadius) * 0.55;
       const x = cx + r * Math.cos(-midAngle * RADIAN);
       const y = cy + r * Math.sin(-midAngle * RADIAN);
+      const labelText =
+        labelMode === "value"
+          ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
+          : `${(percent * 100).toFixed(0)}%`;
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
           fontSize={isExpanded ? 12 : 10} fontWeight="700">
-          {`${(percent * 100).toFixed(0)}%`}
+          {labelText}
         </text>
       );
     };
@@ -1087,7 +1217,15 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="none" />
               ))}
             </Pie>
-            <Tooltip content={<PieTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+            <Tooltip
+              content={
+                <PieTooltip
+                  metric={chart.config.metric}
+                  grouping={chart.config.grouping}
+                  labelMode={labelMode}
+                />
+              }
+            />
             <Legend layout="vertical" align="right" verticalAlign="middle" iconType="circle" iconSize={8}
               formatter={(value: string) => (
                 <span style={{ fontSize: isExpanded ? 11 : 10, color: "rgb(var(--color-text-secondary))", fontWeight: 600 }}>
@@ -1166,7 +1304,8 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 
   // ── donut (pie with inner hole) ────────────────────────────────────────────
   if (chart.type === "donut") {
-    const COLORS = ["#7C3AED","#0EA5E9","#10B981","#F59E0B","#EF4444","#8B5CF6","#06B6D4","#84CC16"];
+    const labelMode = chart.config.display?.labelMode ?? "percent";
+    const COLORS = PIE_COLORS;
     // Detect label key — may be "name", "dept", "vendor", "cls", etc.
     const labelKey = (() => {
       const row = data[0] as any;
@@ -1183,16 +1322,28 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       .filter((d) => d.value > 0);
     const donutTotal = donutData.reduce((s, d) => s + d.value, 0);
 
-    const renderDonutLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+    const renderDonutLabel = ({
+      cx,
+      cy,
+      midAngle,
+      innerRadius,
+      outerRadius,
+      percent,
+      value,
+    }: any) => {
       if (percent < 0.07) return null;
       const RADIAN = Math.PI / 180;
       const r = innerRadius + (outerRadius - innerRadius) * 0.5;
       const x = cx + r * Math.cos(-midAngle * RADIAN);
       const y = cy + r * Math.sin(-midAngle * RADIAN);
+      const labelText =
+        labelMode === "value"
+          ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
+          : `${(percent * 100).toFixed(0)}%`;
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
           fontSize={isExpanded ? 11 : 9} fontWeight="700">
-          {`${(percent * 100).toFixed(0)}%`}
+          {labelText}
         </text>
       );
     };
@@ -1212,7 +1363,15 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               paddingAngle={2} labelLine={false} label={renderDonutLabel}>
               {donutData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
             </Pie>
-            <Tooltip content={<PieTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+            <Tooltip
+              content={
+                <PieTooltip
+                  metric={chart.config.metric}
+                  grouping={chart.config.grouping}
+                  labelMode={labelMode}
+                />
+              }
+            />
             <Legend iconType="circle" iconSize={8}
               verticalAlign="bottom" align="center"
               wrapperStyle={{ fontSize: isExpanded ? 11 : 10, paddingTop: 8 }}
@@ -1341,10 +1500,13 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       ...(d as any),
       z: Math.max(4, Math.round((Number((d as any).z) / maxZ) * 30)),
     }));
+    const bubbleHasName = bubbleData[0] && typeof (bubbleData[0] as any).name === "string";
+    const showBubbleLabels = bubbleHasName && bubbleData.length <= 16;
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: h, width: "100%" }} className="flex flex-col">
+        <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 8, right: 8, left: 8, bottom: 24 }}>
+          <ScatterChart margin={{ top: 14, right: 12, left: 8, bottom: 24 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
             <XAxis type="number" dataKey="x" name="Amount"
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
@@ -1366,9 +1528,32 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   </div>
                 );
               }} />
-            <Scatter data={bubbleData} fill="rgb(var(--color-accent-violet))" fillOpacity={0.7} />
+            <Scatter data={bubbleData} fillOpacity={0.75}>
+              {bubbleData.map((_, i) => (
+                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+              ))}
+              {showBubbleLabels && (
+                <LabelList
+                  dataKey="name"
+                  position="top"
+                  offset={6}
+                  style={{ fontSize: 9, fontWeight: 600, fill: "rgb(var(--color-text-secondary))" }}
+                />
+              )}
+            </Scatter>
           </ScatterChart>
         </ResponsiveContainer>
+        </div>
+        {bubbleHasName && (
+          <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
+            {bubbleData.map((d, i) => (
+              <span key={i} className="inline-flex items-center gap-1 text-[9px] text-text-secondary">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                {String((d as any).name)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -1720,7 +1905,7 @@ function ChartCard({
             </p>
           </div>
         ) : (
-          renderChart(chart, data, false)
+          <ChartErrorBoundary>{renderChart(chart, data, false)}</ChartErrorBoundary>
         )}
       </div>
 
@@ -1736,6 +1921,57 @@ function ChartCard({
         )}
       </div>
     </motion.div>
+  );
+}
+
+function VersionSection({
+  version,
+  charts,
+  chartData,
+  onExpandChart,
+}: {
+  version: ChartVersionSnapshot | null;
+  charts: Chart[];
+  chartData: Record<string, DataRow[]>;
+  onExpandChart: (chartId: string) => void;
+}) {
+  const versionLabel = version ? `Chart v${version.versionNumber}` : "Current dashboard";
+  const modeLabel = version
+    ? version.mode === "edit"
+      ? "updated chart"
+      : "new chart"
+    : "latest charts";
+
+  return (
+    <div className="rounded-2xl border border-default bg-bg-elevated/20 p-4">
+      {version ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-accent-cyan/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-cyan">
+            {versionLabel}
+          </span>
+          <span className="rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted">
+            {modeLabel}
+          </span>
+          {typeof version.previousVersionNumber === "number" && (
+            <span className="rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted">
+              preserves v{version.previousVersionNumber}
+            </span>
+          )}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-4">
+        {charts.map((chart, index) => (
+          <ChartCard
+            key={chart.id}
+            chart={chart}
+            data={chartData[chart.id] ?? []}
+            index={index}
+            onExpand={() => onExpandChart(chart.id)}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1798,7 +2034,7 @@ export function DashboardPreview({
                 { role: "assistant", content: "", metadata: liveChartTurn } as ChatMessage,
               ])
             : [];
-          const history = sessionHistory.length > 0 ? sessionHistory : liveHistory;
+          const history = mergeChartVersionHistories(sessionHistory, liveHistory);
           const chartsToLoad = history.length > 0 ? history.flatMap((version) => version.charts) : charts;
           setDashboard({
             id: latest.id,
@@ -1920,8 +2156,20 @@ export function DashboardPreview({
     );
   }
 
-  const visibleCharts =
-    chartVersions.length > 0 ? chartVersions.flatMap((version) => version.charts) : dashboard.charts;
+  const visibleVersions =
+    chartVersions.length > 0
+      ? chartVersions
+      : [
+          {
+            versionNumber: 0,
+            mode: "create" as const,
+            previousVersionNumber: null,
+            dashboardTitle: dashboard.title,
+            summary: dashboard.description ?? "Current dashboard",
+            charts: dashboard.charts,
+          },
+        ];
+  const visibleCharts = visibleVersions.flatMap((version) => version.charts);
   const expandedChart = visibleCharts.find((c) => c.id === expandedChartId);
   const expandedData = expandedChart ? (chartData[expandedChart.id] ?? []) : [];
 
@@ -1948,74 +2196,26 @@ export function DashboardPreview({
       </motion.div>
 
       {chartVersions.length > 0 ? (
-        <div className="space-y-4 pb-8">
-          <div className="rounded-2xl border border-default bg-bg-elevated/25 px-4 py-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-text-muted">
-              Chart history
-            </p>
-            <p className="mt-1 text-xs text-text-muted">
-              Earlier chart versions appear above later ones. The latest version is at the bottom.
-            </p>
-          </div>
-
-          {chartVersions.map((version, versionIndex) => (
-            <motion.div
-              key={version.versionNumber}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: versionIndex * 0.06, duration: 0.25 }}
-              className="rounded-3xl border border-default bg-bg-elevated/20 p-4"
-            >
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-accent-cyan/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-cyan">
-                  Chart v{version.versionNumber}
-                </span>
-                <span className="rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted">
-                  {version.mode === "edit" ? "updated chart" : "new chart"}
-                </span>
-                {typeof version.previousVersionNumber === "number" && (
-                  <span className="rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted">
-                    preserves v{version.previousVersionNumber}
-                  </span>
-                )}
-                <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                  {version.dashboardTitle}
-                </span>
-              </div>
-
-              <div className="mb-4 max-w-3xl">
-                <h3 className="text-base font-bold text-text-primary">{version.dashboardTitle}</h3>
-                <p className="mt-1 text-xs text-text-muted">{version.summary}</p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4">
-                {version.charts.map((chart, index) => (
-                  <ChartCard
-                    key={chart.id}
-                    chart={chart}
-                    data={chartData[chart.id] ?? []}
-                    index={index}
-                    onExpand={() => setExpandedChartId(chart.id)}
-                  />
-                ))}
-              </div>
-            </motion.div>
-          ))}
+        <div className="rounded-2xl border border-default bg-bg-elevated/25 px-4 py-3">
+          <p className="text-xs text-text-muted">
+            Live dashboard keeps every chart version below the previous one, so edits extend the
+            history instead of replacing it.
+          </p>
         </div>
-      ) : (
-        /* Chart grid — single column so each chart gets full panel width */
-        <div className="grid grid-cols-1 gap-4 pb-8">
-          {dashboard.charts.map((chart, index) => (
-            <ChartCard
-              key={chart.id}
-              chart={chart}
-              data={chartData[chart.id] ?? []}
-              index={index}
-              onExpand={() => setExpandedChartId(chart.id)}
-            />
-          ))}
-        </div>
-      )}
+      ) : null}
+
+      {/* Chart history — each version stacks downward in the live dashboard */}
+      <div className="space-y-4 pb-8">
+        {visibleVersions.map((version) => (
+          <VersionSection
+            key={`${version.versionNumber}-${version.dashboardTitle}`}
+            version={version.versionNumber > 0 ? version : null}
+            charts={version.charts}
+            chartData={chartData}
+            onExpandChart={(chartId) => setExpandedChartId(chartId)}
+          />
+        ))}
+      </div>
 
       {/* Expanded view modal */}
       <AnimatePresence>
@@ -2077,7 +2277,9 @@ export function DashboardPreview({
               </div>
 
               <div className="min-h-0 w-full flex-1 rounded-2xl border border-default bg-bg-elevated/30 p-6">
-                {renderChart(expandedChart, expandedData, true)}
+                <ChartErrorBoundary>
+                  {renderChart(expandedChart, expandedData, true)}
+                </ChartErrorBoundary>
               </div>
 
               <div className="mt-5 flex items-center justify-between">

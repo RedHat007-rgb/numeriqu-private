@@ -54,4 +54,19 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
     expect(mixedEdit).toBeNull();
   });
+
+  test('treats chart refinements as edits when a dashboard already exists', () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const parser = AgentService.prototype as any;
+
+    expect(parser.detectIntent('switch to bar charts', true)).toBe('EDIT_DASHBOARD');
+    expect(parser.detectIntent('change the y axis from percentage to values', true)).toBe(
+      'EDIT_DASHBOARD',
+    );
+    expect(parser.detectIntent('switch to bar charts', false)).toBe('CREATE_DASHBOARD');
+  });
 });

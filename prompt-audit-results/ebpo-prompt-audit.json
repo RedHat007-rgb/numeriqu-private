@@ -1,0 +1,32 @@
+{
+  "summary": {
+    "total": 1,
+    "pass": 1,
+    "expectedGap": 0,
+    "fail": 0,
+    "error": 0
+  },
+  "results": [
+    {
+      "id": "rev-10",
+      "prompt": "Create a waterfall chart showing revenue, cost, and gross margin by month.",
+      "expectedType": "waterfall",
+      "reference": "Waterfall equivalent",
+      "note": "",
+      "status": "pass",
+      "reason": "type and data verified",
+      "resultKind": "build",
+      "generatedType": "waterfall",
+      "title": "Monthly Revenue, Cost, and Gross Margin Waterfall",
+      "metric": "dynamic",
+      "grouping": "dynamic",
+      "rowCount": 144,
+      "columns": [
+        "name",
+        "value"
+      ],
+      "durationMs": 10140,
+      "sql": "WITH monthly AS (\n                SELECT\n                  period_date,\n                  total_revenue_usd,\n                  total_cost_usd,\n                  gross_margin_usd\n                FROM analytics.v_ebpo_revenue_monthly\n                WHERE tenant_id = {tenantId:String}\n                  AND org_id IN ({externalOrgIds:Array(String)})\n              )\n              SELECT name, value\n              FROM (\n                SELECT\n                  period_date,\n                  1 AS display_order,\n                  concat(formatDateTime(period_date, '%b %Y'), ' Revenue') AS name,\n                  round(total_revenue_usd, 2) AS value\n                FROM monthly\n                UNION ALL\n                SELECT\n                  period_date,\n                  2 AS display_order,\n                  concat(formatDateTime(period_date, '%b %Y'), ' Cost') AS name,\n                  round(-total_cost_usd, 2) AS value\n                FROM monthly\n                UNION ALL\n                SELECT\n                  period_date,\n                  3 AS display_order,\n                  concat(formatDateTime(period_date, '%b %Y'), ' Gross Margin') AS name,\n                  round(gross_margin_usd, 2) AS value\n                FROM monthly\n              )\n              ORDER BY period_date ASC, display_order ASC\n              LIMIT 144"
+    }
+  ]
+}

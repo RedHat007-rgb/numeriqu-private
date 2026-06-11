@@ -492,22 +492,43 @@ function semanticViewDdls(db: string) {
     `
       CREATE VIEW ${db}.v_ebpo_revenue_monthly AS
       SELECT
-        revenue.tenant_id AS tenant_id,
-        revenue.org_id AS org_id,
-        any(revenue.org_name) AS org_name,
-        dates.date AS period_date,
-        dates.year,
-        dates.quarter,
-        dates.month,
-        dates.month_name,
-        round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
-        round(sum(revenue.cost_usd), 2) AS total_cost_usd,
-        round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
-        round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
-      FROM ${db}.ebpo_fact_revenue revenue
-      INNER JOIN ${db}.ebpo_dim_date dates
-        ON dates.tenant_id = revenue.tenant_id AND dates.org_id = revenue.org_id AND dates.date_key = revenue.date_key
-      GROUP BY revenue.tenant_id, revenue.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name
+        tenant_id,
+        org_id,
+        org_name,
+        period_date,
+        year,
+        quarter,
+        month,
+        month_name,
+        total_revenue_usd,
+        total_cost_usd,
+        gross_margin_usd,
+        gross_margin_pct,
+        round(
+          (total_revenue_usd - lagInFrame(total_revenue_usd, 12) OVER w)
+          / nullIf(lagInFrame(total_revenue_usd, 12) OVER w, 0) * 100,
+          2
+        ) AS revenue_yoy_pct
+      FROM (
+        SELECT
+          revenue.tenant_id AS tenant_id,
+          revenue.org_id AS org_id,
+          any(revenue.org_name) AS org_name,
+          dates.date AS period_date,
+          dates.year AS year,
+          dates.quarter AS quarter,
+          dates.month AS month,
+          dates.month_name AS month_name,
+          round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+          round(sum(revenue.cost_usd), 2) AS total_cost_usd,
+          round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+          round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
+        FROM ${db}.ebpo_fact_revenue revenue
+        INNER JOIN ${db}.ebpo_dim_date dates
+          ON dates.tenant_id = revenue.tenant_id AND dates.org_id = revenue.org_id AND dates.date_key = revenue.date_key
+        GROUP BY revenue.tenant_id, revenue.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name
+      )
+      WINDOW w AS (PARTITION BY tenant_id, org_id ORDER BY period_date ASC ROWS BETWEEN 12 PRECEDING AND CURRENT ROW)
     `,
     `
       CREATE VIEW ${db}.v_ebpo_revenue_by_client AS
@@ -527,6 +548,25 @@ function semanticViewDdls(db: string) {
       GROUP BY revenue.tenant_id, revenue.org_id, clients.client_name, clients.industry
     `,
     `
+      CREATE VIEW ${db}.v_ebpo_revenue_by_client_contract AS
+      SELECT
+        revenue.tenant_id AS tenant_id,
+        revenue.org_id AS org_id,
+        any(revenue.org_name) AS org_name,
+        clients.client_name AS client_name,
+        clients.industry AS industry,
+        revenue.contract_type AS contract_type,
+        revenue.business_unit AS business_unit,
+        round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+        round(sum(revenue.cost_usd), 2) AS total_cost_usd,
+        round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+        round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
+      FROM ${db}.ebpo_fact_revenue revenue
+      INNER JOIN ${db}.ebpo_dim_client clients
+        ON clients.tenant_id = revenue.tenant_id AND clients.org_id = revenue.org_id AND clients.client_key = revenue.client_key
+      GROUP BY revenue.tenant_id, revenue.org_id, clients.client_name, clients.industry, revenue.contract_type, revenue.business_unit
+    `,
+    `
       CREATE VIEW ${db}.v_ebpo_revenue_by_business_unit AS
       SELECT
         tenant_id,
@@ -540,6 +580,56 @@ function semanticViewDdls(db: string) {
         round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
       FROM ${db}.ebpo_fact_revenue revenue
       GROUP BY tenant_id, org_id, business_unit, contract_type
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_revenue_by_business_unit_monthly AS
+      SELECT
+        revenue.tenant_id AS tenant_id,
+        revenue.org_id AS org_id,
+        any(revenue.org_name) AS org_name,
+        dates.date AS period_date,
+        dates.year AS year,
+        dates.quarter AS quarter,
+        dates.month AS month,
+        dates.month_name AS month_name,
+        revenue.business_unit AS business_unit,
+        revenue.contract_type AS contract_type,
+        round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+        round(sum(revenue.cost_usd), 2) AS total_cost_usd,
+        round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+        round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
+      FROM ${db}.ebpo_fact_revenue revenue
+      INNER JOIN ${db}.ebpo_dim_date dates
+        ON dates.tenant_id = revenue.tenant_id AND dates.org_id = revenue.org_id AND dates.date_key = revenue.date_key
+      GROUP BY revenue.tenant_id, revenue.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name,
+        revenue.business_unit, revenue.contract_type
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_revenue_by_client_contract_monthly AS
+      SELECT
+        revenue.tenant_id AS tenant_id,
+        revenue.org_id AS org_id,
+        any(revenue.org_name) AS org_name,
+        dates.date AS period_date,
+        dates.year AS year,
+        dates.quarter AS quarter,
+        dates.month AS month,
+        dates.month_name AS month_name,
+        clients.client_name AS client_name,
+        clients.industry AS industry,
+        revenue.contract_type AS contract_type,
+        revenue.business_unit AS business_unit,
+        round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+        round(sum(revenue.cost_usd), 2) AS total_cost_usd,
+        round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+        round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
+      FROM ${db}.ebpo_fact_revenue revenue
+      INNER JOIN ${db}.ebpo_dim_date dates
+        ON dates.tenant_id = revenue.tenant_id AND dates.org_id = revenue.org_id AND dates.date_key = revenue.date_key
+      INNER JOIN ${db}.ebpo_dim_client clients
+        ON clients.tenant_id = revenue.tenant_id AND clients.org_id = revenue.org_id AND clients.client_key = revenue.client_key
+      GROUP BY revenue.tenant_id, revenue.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name,
+        clients.client_name, clients.industry, revenue.contract_type, revenue.business_unit
     `,
     `
       CREATE VIEW ${db}.v_ebpo_payroll_monthly AS
@@ -564,6 +654,22 @@ function semanticViewDdls(db: string) {
       INNER JOIN ${db}.ebpo_dim_date dates
         ON dates.tenant_id = payroll.tenant_id AND dates.org_id = payroll.org_id AND dates.date_key = payroll.date_key
       GROUP BY payroll.tenant_id, payroll.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name, payroll.department, payroll.country
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_employee_headcount AS
+      SELECT
+        emp.tenant_id AS tenant_id,
+        emp.org_id AS org_id,
+        any(emp.org_name) AS org_name,
+        emp.department AS department,
+        emp.country AS country,
+        emp.delivery_center AS delivery_center,
+        emp.grade AS grade,
+        count() AS employee_count,
+        round(avg(emp.monthly_salary_usd), 2) AS avg_monthly_salary_usd,
+        round(sum(emp.monthly_salary_usd), 2) AS total_monthly_salary_usd
+      FROM ${db}.ebpo_dim_employee emp
+      GROUP BY emp.tenant_id, emp.org_id, emp.department, emp.country, emp.delivery_center, emp.grade
     `,
     `
       CREATE VIEW ${db}.v_ebpo_gl_monthly AS
@@ -591,6 +697,31 @@ function semanticViewDdls(db: string) {
         ledger.account_number, ledger.account_name, ledger.department, ledger.business_unit, ledger.country
     `,
     `
+      CREATE VIEW ${db}.v_ebpo_trial_balance_monthly AS
+      SELECT
+        trial.tenant_id AS tenant_id,
+        trial.org_id AS org_id,
+        any(trial.org_name) AS org_name,
+        dates.date AS period_date,
+        dates.year AS year,
+        dates.quarter AS quarter,
+        dates.month AS month,
+        dates.month_name AS month_name,
+        trial.account_number AS account_number,
+        any(accounts.account_name) AS account_name,
+        round(sum(trial.opening_balance_usd), 2) AS opening_balance_usd,
+        round(sum(trial.debit_movement_usd), 2) AS debit_movement_usd,
+        round(sum(trial.credit_movement_usd), 2) AS credit_movement_usd,
+        round(sum(trial.closing_balance_usd), 2) AS closing_balance_usd,
+        round(sum(trial.debit_movement_usd - trial.credit_movement_usd), 2) AS net_movement_usd
+      FROM ${db}.ebpo_fact_trial_balance trial
+      INNER JOIN ${db}.ebpo_dim_date dates
+        ON dates.tenant_id = trial.tenant_id AND dates.org_id = trial.org_id AND dates.date_key = trial.date_key
+      LEFT JOIN ${db}.ebpo_dim_account accounts
+        ON accounts.tenant_id = trial.tenant_id AND accounts.org_id = trial.org_id AND accounts.account_number = trial.account_number
+      GROUP BY trial.tenant_id, trial.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name, trial.account_number
+    `,
+    `
       CREATE VIEW ${db}.v_ebpo_ar_aging AS
       SELECT
         ar.tenant_id AS tenant_id,
@@ -603,7 +734,9 @@ function semanticViewDdls(db: string) {
         round(sum(ar.invoice_amount_usd), 2) AS invoice_amount_usd,
         round(sum(ar.collected_amount_usd), 2) AS collected_amount_usd,
         round(sum(ar.outstanding_balance_usd), 2) AS outstanding_balance_usd,
-        round(sum(ar.collected_amount_usd) / nullIf(sum(ar.invoice_amount_usd), 0) * 100, 2) AS collection_rate_pct
+        round(sum(ar.outstanding_balance_usd), 2) AS outstanding_usd,
+        round(sum(ar.collected_amount_usd) / nullIf(sum(ar.invoice_amount_usd), 0) * 100, 2) AS collection_rate_pct,
+        round(sum(ar.collected_amount_usd) / nullIf(sum(ar.invoice_amount_usd), 0) * 100, 2) AS collection_rate_percentage
       FROM ${db}.ebpo_fact_accounts_receivable ar
       INNER JOIN ${db}.ebpo_dim_date dates
         ON dates.tenant_id = ar.tenant_id AND dates.org_id = ar.org_id AND dates.date_key = ar.date_key
@@ -622,7 +755,8 @@ function semanticViewDdls(db: string) {
         ap.aging_bucket AS aging_bucket,
         round(sum(ap.invoice_amount_usd), 2) AS invoice_amount_usd,
         round(sum(ap.paid_amount_usd), 2) AS paid_amount_usd,
-        round(sum(ap.outstanding_balance_usd), 2) AS outstanding_balance_usd
+        round(sum(ap.outstanding_balance_usd), 2) AS outstanding_balance_usd,
+        round(sum(ap.outstanding_balance_usd), 2) AS outstanding_usd
       FROM ${db}.ebpo_fact_accounts_payable ap
       INNER JOIN ${db}.ebpo_dim_date dates
         ON dates.tenant_id = ap.tenant_id AND dates.org_id = ap.org_id AND dates.date_key = ap.date_key
@@ -648,9 +782,13 @@ function semanticViewDdls(db: string) {
         round(sum(operations.calls_handled), 2) AS calls_handled,
         round(sum(operations.tickets_resolved), 2) AS tickets_resolved,
         round(avg(operations.aht_minutes), 2) AS avg_aht_minutes,
+        round(avg(operations.aht_minutes), 2) AS average_handling_time_minutes,
         round(avg(operations.sla_compliance_pct), 2) AS sla_compliance_pct,
+        round(avg(operations.sla_compliance_pct), 2) AS sla_compliance_percentage,
         round(avg(operations.csat_pct), 2) AS csat_pct,
-        round(avg(operations.utilization_pct), 2) AS utilization_pct
+        round(avg(operations.csat_pct), 2) AS csat_percentage,
+        round(avg(operations.utilization_pct), 2) AS utilization_pct,
+        round(avg(operations.utilization_pct), 2) AS utilization_percentage
       FROM ${db}.ebpo_fact_operations operations
       INNER JOIN ${db}.ebpo_dim_date dates
         ON dates.tenant_id = operations.tenant_id AND dates.org_id = operations.org_id AND dates.date_key = operations.date_key
@@ -690,9 +828,169 @@ function semanticViewDdls(db: string) {
         count() AS asset_count,
         round(sum(assets.asset_cost_usd), 2) AS asset_cost_usd,
         round(sum(assets.accumulated_depreciation_usd), 2) AS accumulated_depreciation_usd,
-        round(sum(assets.net_book_value_usd), 2) AS net_book_value_usd
+        round(sum(assets.net_book_value_usd), 2) AS net_book_value_usd,
+        round(sum(assets.net_book_value_usd), 2) AS net_book_value,
+        round(sum(assets.accumulated_depreciation_usd) / nullIf(sum(assets.asset_cost_usd), 0) * 100, 2) AS depreciation_pct
       FROM ${db}.ebpo_fact_fixed_assets assets
       GROUP BY assets.tenant_id, assets.org_id, assets.delivery_center, assets.asset_type
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_client_revenue_collection AS
+      SELECT
+        revenue.tenant_id AS tenant_id,
+        revenue.org_id AS org_id,
+        revenue.org_name AS org_name,
+        revenue.client_name AS client_name,
+        revenue.industry AS industry,
+        revenue.total_revenue_usd AS total_revenue_usd,
+        revenue.total_cost_usd AS total_cost_usd,
+        revenue.gross_margin_usd AS gross_margin_usd,
+        revenue.gross_margin_pct AS gross_margin_pct,
+        coalesce(ar.invoice_amount_usd, 0) AS invoice_amount_usd,
+        coalesce(ar.collected_amount_usd, 0) AS collected_amount_usd,
+        coalesce(ar.outstanding_balance_usd, 0) AS outstanding_balance_usd,
+        coalesce(ar.outstanding_balance_usd, 0) AS outstanding_usd,
+        coalesce(ar.collection_rate_pct, 0) AS collection_rate_pct
+      FROM (
+        SELECT
+          fact.tenant_id AS tenant_id,
+          fact.org_id AS org_id,
+          any(fact.org_name) AS org_name,
+          client.client_name AS client_name,
+          client.industry AS industry,
+          round(sum(fact.revenue_usd), 2) AS total_revenue_usd,
+          round(sum(fact.cost_usd), 2) AS total_cost_usd,
+          round(sum(fact.gross_margin_usd), 2) AS gross_margin_usd,
+          round(sum(fact.gross_margin_usd) / nullIf(sum(fact.revenue_usd), 0) * 100, 2) AS gross_margin_pct
+        FROM ${db}.ebpo_fact_revenue fact
+        INNER JOIN ${db}.ebpo_dim_client client
+          ON client.tenant_id = fact.tenant_id AND client.org_id = fact.org_id AND client.client_key = fact.client_key
+        GROUP BY fact.tenant_id, fact.org_id, client.client_name, client.industry
+      ) revenue
+      LEFT JOIN (
+        SELECT
+          ar.tenant_id AS tenant_id,
+          ar.org_id AS org_id,
+          client.client_name AS client_name,
+          round(sum(ar.invoice_amount_usd), 2) AS invoice_amount_usd,
+          round(sum(ar.collected_amount_usd), 2) AS collected_amount_usd,
+          round(sum(ar.outstanding_balance_usd), 2) AS outstanding_balance_usd,
+          round(sum(ar.collected_amount_usd) / nullIf(sum(ar.invoice_amount_usd), 0) * 100, 2) AS collection_rate_pct
+        FROM ${db}.ebpo_fact_accounts_receivable ar
+        INNER JOIN ${db}.ebpo_dim_client client
+          ON client.tenant_id = ar.tenant_id AND client.org_id = ar.org_id AND client.client_key = ar.client_key
+        GROUP BY ar.tenant_id, ar.org_id, client.client_name
+      ) ar
+        ON ar.tenant_id = revenue.tenant_id AND ar.org_id = revenue.org_id AND ar.client_name = revenue.client_name
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_department_efficiency_monthly AS
+      SELECT
+        payroll.tenant_id AS tenant_id,
+        payroll.org_id AS org_id,
+        any(payroll.org_name) AS org_name,
+        dates.date AS period_date,
+        dates.year AS year,
+        dates.quarter AS quarter,
+        dates.month AS month,
+        dates.month_name AS month_name,
+        payroll.department AS department,
+        uniqExact(payroll.employee_key) AS employee_count,
+        round(sum(payroll.total_payroll_usd), 2) AS total_payroll_usd,
+        round(any(revenue.total_revenue_usd), 2) AS total_revenue_usd,
+        round(any(revenue.total_cost_usd), 2) AS total_cost_usd,
+        round(any(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+        round(any(revenue.total_revenue_usd) / nullIf(uniqExact(payroll.employee_key), 0), 2) AS revenue_per_employee_usd,
+        round(sum(payroll.total_payroll_usd) / nullIf(uniqExact(payroll.employee_key), 0), 2) AS cost_per_employee_usd
+      FROM ${db}.ebpo_fact_payroll payroll
+      INNER JOIN ${db}.ebpo_dim_date dates
+        ON dates.tenant_id = payroll.tenant_id AND dates.org_id = payroll.org_id AND dates.date_key = payroll.date_key
+      LEFT JOIN (
+        SELECT tenant_id, org_id, date_key, sum(revenue_usd) AS total_revenue_usd, sum(cost_usd) AS total_cost_usd, sum(gross_margin_usd) AS gross_margin_usd
+        FROM ${db}.ebpo_fact_revenue
+        GROUP BY tenant_id, org_id, date_key
+      ) revenue
+        ON revenue.tenant_id = payroll.tenant_id AND revenue.org_id = payroll.org_id AND revenue.date_key = payroll.date_key
+      GROUP BY payroll.tenant_id, payroll.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name, payroll.department
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_business_unit_efficiency AS
+      SELECT
+        revenue.tenant_id AS tenant_id,
+        revenue.org_id AS org_id,
+        any(revenue.org_name) AS org_name,
+        revenue.business_unit AS business_unit,
+        round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+        round(sum(revenue.cost_usd), 2) AS total_cost_usd,
+        round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+        any(headcount.employee_count) AS employee_count,
+        round(sum(revenue.revenue_usd) / nullIf(any(headcount.employee_count), 0), 2) AS revenue_per_employee_usd
+      FROM ${db}.ebpo_fact_revenue revenue
+      LEFT JOIN (
+        SELECT tenant_id, org_id, count() AS employee_count
+        FROM ${db}.ebpo_dim_employee
+        GROUP BY tenant_id, org_id
+      ) headcount
+        ON headcount.tenant_id = revenue.tenant_id AND headcount.org_id = revenue.org_id
+      GROUP BY revenue.tenant_id, revenue.org_id, revenue.business_unit
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_delivery_center_efficiency_monthly AS
+      SELECT
+        operations.tenant_id AS tenant_id,
+        operations.org_id AS org_id,
+        any(operations.org_name) AS org_name,
+        dates.date AS period_date,
+        dates.year AS year,
+        dates.quarter AS quarter,
+        dates.month AS month,
+        dates.month_name AS month_name,
+        operations.delivery_center AS delivery_center,
+        any(geo.region) AS region,
+        any(geo.country) AS country,
+        round(sum(operations.calls_handled), 2) AS calls_handled,
+        round(avg(operations.utilization_pct), 2) AS utilization_pct,
+        any(headcount.employee_count) AS employee_count,
+        round(any(revenue.total_revenue_usd) * sum(operations.calls_handled) / nullIf(any(total_calls.calls_handled), 0), 2) AS allocated_revenue_usd,
+        round(any(revenue.total_revenue_usd) * sum(operations.calls_handled) / nullIf(any(total_calls.calls_handled), 0) / nullIf(any(headcount.employee_count), 0), 2) AS revenue_per_employee_usd
+      FROM ${db}.ebpo_fact_operations operations
+      INNER JOIN ${db}.ebpo_dim_date dates
+        ON dates.tenant_id = operations.tenant_id AND dates.org_id = operations.org_id AND dates.date_key = operations.date_key
+      LEFT JOIN ${db}.ebpo_dim_geography geo
+        ON geo.tenant_id = operations.tenant_id AND geo.org_id = operations.org_id AND geo.delivery_center = operations.delivery_center
+      LEFT JOIN (
+        SELECT tenant_id, org_id, date_key, sum(calls_handled) AS calls_handled
+        FROM ${db}.ebpo_fact_operations
+        GROUP BY tenant_id, org_id, date_key
+      ) total_calls
+        ON total_calls.tenant_id = operations.tenant_id AND total_calls.org_id = operations.org_id AND total_calls.date_key = operations.date_key
+      LEFT JOIN (
+        SELECT tenant_id, org_id, date_key, sum(revenue_usd) AS total_revenue_usd
+        FROM ${db}.ebpo_fact_revenue
+        GROUP BY tenant_id, org_id, date_key
+      ) revenue
+        ON revenue.tenant_id = operations.tenant_id AND revenue.org_id = operations.org_id AND revenue.date_key = operations.date_key
+      LEFT JOIN (
+        SELECT tenant_id, org_id, delivery_center, count() AS employee_count
+        FROM ${db}.ebpo_dim_employee
+        GROUP BY tenant_id, org_id, delivery_center
+      ) headcount
+        ON headcount.tenant_id = operations.tenant_id AND headcount.org_id = operations.org_id AND headcount.delivery_center = operations.delivery_center
+      GROUP BY operations.tenant_id, operations.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name, operations.delivery_center
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_salary_by_dept_grade AS
+      SELECT
+        emp.tenant_id AS tenant_id,
+        emp.org_id AS org_id,
+        any(emp.org_name) AS org_name,
+        emp.department AS department,
+        emp.grade AS grade,
+        count() AS employee_count,
+        round(avg(emp.monthly_salary_usd), 2) AS avg_monthly_salary_usd,
+        round(sum(emp.monthly_salary_usd), 2) AS total_monthly_salary_usd
+      FROM ${db}.ebpo_dim_employee emp
+      GROUP BY emp.tenant_id, emp.org_id, emp.department, emp.grade
     `,
     `
       CREATE VIEW ${db}.v_ebpo_kpi_monthly AS
@@ -771,16 +1069,26 @@ async function createRawTables(client: ReturnType<typeof createClickHouseClient>
 
 async function recreateSemanticViews(client: ReturnType<typeof createClickHouseClient>, db: string) {
   const viewNames = [
+    "v_ebpo_client_revenue_collection",
+    "v_ebpo_department_efficiency_monthly",
+    "v_ebpo_business_unit_efficiency",
+    "v_ebpo_delivery_center_efficiency_monthly",
     "v_ebpo_revenue_monthly",
     "v_ebpo_revenue_by_client",
+    "v_ebpo_revenue_by_client_contract",
     "v_ebpo_revenue_by_business_unit",
+    "v_ebpo_revenue_by_business_unit_monthly",
+    "v_ebpo_revenue_by_client_contract_monthly",
     "v_ebpo_payroll_monthly",
+    "v_ebpo_employee_headcount",
     "v_ebpo_gl_monthly",
+    "v_ebpo_trial_balance_monthly",
     "v_ebpo_ar_aging",
     "v_ebpo_ap_aging",
     "v_ebpo_operations_monthly",
     "v_ebpo_cash_flow_monthly",
     "v_ebpo_fixed_assets_by_center",
+    "v_ebpo_salary_by_dept_grade",
     "v_ebpo_kpi_monthly",
   ];
   for (const viewName of viewNames) {
@@ -866,7 +1174,8 @@ async function validateViews(client: ReturnType<typeof createClickHouseClient>, 
 }
 
 async function main() {
-  const filePath = requiredArg("--file");
+  const viewsOnly = hasFlag("--views-only");
+  const filePath = viewsOnly ? undefined : requiredArg("--file");
   const userEmail = getArg("--user-email") ?? "demo1@numeriqu.com";
   const orgName = getArg("--org-name") ?? "Sample Company 2024";
   const orgSlug = getArg("--org-slug") ?? "sample-company-2024";
@@ -874,7 +1183,35 @@ async function main() {
   const dryRun = hasFlag("--dry-run");
   const allowRemote = hasFlag("--allow-remote");
 
-  const absFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+  if (!process.env.CLICKHOUSE_ANALYTICS_URL) throw new Error("CLICKHOUSE_ANALYTICS_URL is not set.");
+  assertRemoteAllowed(process.env.CLICKHOUSE_ANALYTICS_URL, allowRemote, "ClickHouse");
+
+  const analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || "analytics";
+  const clickhouse = createClickHouseClient({
+    url: process.env.CLICKHOUSE_ANALYTICS_URL,
+    username: process.env.CLICKHOUSE_ANALYTICS_USER || "dbt_transformer",
+    password: process.env.CLICKHOUSE_ANALYTICS_PASSWORD || "",
+    database: analyticsDb,
+  });
+
+  if (viewsOnly) {
+    await recreateSemanticViews(clickhouse, analyticsDb);
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          viewsOnly: true,
+          clickhouse: { db: analyticsDb },
+          views: semanticViewDdls(analyticsDb).length,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  const absFilePath = path.isAbsolute(filePath!) ? filePath! : path.resolve(process.cwd(), filePath!);
   if (!fs.existsSync(absFilePath)) throw new Error(`XLSX not found: ${absFilePath}`);
 
   const workbook = extractWorkbook(absFilePath);
@@ -903,10 +1240,7 @@ async function main() {
   }
 
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set.");
-  if (!process.env.CLICKHOUSE_ANALYTICS_URL) throw new Error("CLICKHOUSE_ANALYTICS_URL is not set.");
-
   assertRemoteAllowed(process.env.DATABASE_URL, allowRemote, "Postgres");
-  assertRemoteAllowed(process.env.CLICKHOUSE_ANALYTICS_URL, allowRemote, "ClickHouse");
 
   const user = await upsertUser(userEmail);
   const org = await upsertOrganization({ slug: orgSlug, name: orgName, createdById: user.id });
@@ -926,14 +1260,6 @@ async function main() {
     org_id: externalOrgId,
     org_name: orgName,
   };
-
-  const analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || "analytics";
-  const clickhouse = createClickHouseClient({
-    url: process.env.CLICKHOUSE_ANALYTICS_URL,
-    username: process.env.CLICKHOUSE_ANALYTICS_USER || "dbt_transformer",
-    password: process.env.CLICKHOUSE_ANALYTICS_PASSWORD || "",
-    database: analyticsDb,
-  });
 
   await createRawTables(clickhouse, analyticsDb);
   await recreateSemanticViews(clickhouse, analyticsDb);

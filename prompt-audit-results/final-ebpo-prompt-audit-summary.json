@@ -1,0 +1,36 @@
+{
+  "referenceDashboard": "file:///Users/basanireddy/Downloads/new%20dataset%20dashboard.html",
+  "fullAuditBeforeFinalPatch": {
+    "total": 100,
+    "pass": 98,
+    "expectedGap": 1,
+    "fail": 1,
+    "error": 0
+  },
+  "finalFailedPromptRerun": {
+    "id": "rev-10",
+    "prompt": "Create a waterfall chart showing revenue, cost, and gross margin by month.",
+    "expectedType": "waterfall",
+    "generatedType": "waterfall",
+    "rowCount": 144,
+    "status": "pass"
+  },
+  "effectiveFinalSummary": {
+    "total": 100,
+    "pass": 99,
+    "expectedGap": 1,
+    "fail": 0,
+    "error": 0
+  },
+  "expectedGap": {
+    "id": "pay-09",
+    "reason": "A true box plot is not supported by the current chart vocabulary/frontend, so the correct behavior is unsupported/no-data rather than faking another chart."
+  },
+  "screenshots": [
+    "/private/tmp/chart-audit-screenshots/p1-executive-summary.png",
+    "/private/tmp/chart-audit-screenshots/p2-revenue-p-l.png",
+    "/private/tmp/chart-audit-screenshots/p3-cash-flow-liquidity.png",
+    "/private/tmp/chart-audit-screenshots/p5-ar-ap-working-capital.png",
+    "/private/tmp/chart-audit-screenshots/p6-payroll-headcount.png"
+  ]
+}

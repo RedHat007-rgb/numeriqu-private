@@ -1,0 +1,2 @@
+id,status,expectedType,generatedType,rowCount,reason,prompt
+rev-10,pass,waterfall,waterfall,144,"type and data verified","Create a waterfall chart showing revenue, cost, and gross margin by month."

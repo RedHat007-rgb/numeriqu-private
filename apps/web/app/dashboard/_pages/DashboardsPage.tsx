@@ -120,10 +120,15 @@ function fmtNumber(value: number): string {
   return value.toFixed(0);
 }
 
+function fmtPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
 function prettyChartType(type: string): string {
   const t = String(type || "").toLowerCase();
   if (t === "bar") return "Bar chart";
   if (t === "line") return "Line chart";
+  if (t === "combo") return "Combo chart";
   if (t === "pie") return "Pie chart";
   if (t === "area") return "Area chart";
   if (t === "heatmap") return "Heatmap";
@@ -134,8 +139,12 @@ function prettyChartType(type: string): string {
 }
 
 function formatValue(metric: string, grouping: string, value: number): string {
-  const isPercent = metric === "collection_rate" || metric === "overdue_rate";
-  if (isPercent) return `${value.toFixed(1)}%`;
+  const metricKey = String(metric ?? "").toLowerCase();
+  const isPercent =
+    metric === "collection_rate" ||
+    metric === "overdue_rate" ||
+    /\b(pct|percent|percentage|share|ratio|rate)\b/.test(metricKey);
+  if (isPercent) return fmtPercent(value);
 
   if (metric === "dso") return `${value.toFixed(1)}d`;
 
@@ -146,7 +155,10 @@ function formatValue(metric: string, grouping: string, value: number): string {
     metric === "paid" ||
     metric === "total_invoiced" ||
     metric === "avg_invoice" ||
-    (metric === "invoices" && grouping === "status");
+    (metric === "invoices" && grouping === "status") ||
+    /\b(spend|expense|revenue|income|cost|profit|margin|balance|cash|asset|liabil|equity|payable|receivable|debit|credit|amount|value)\b/.test(
+      metricKey,
+    );
 
   if (isCurrencyMetric) return fmtCurrency(value);
 
@@ -228,12 +240,17 @@ function ChartRenderer({
   chartId,
   metric,
   grouping,
+  display,
 }: {
   type: string;
   data: ChartData;
   chartId: string;
   metric: string;
   grouping: string;
+  display?: {
+    conditionalThreshold?: number | null;
+    conditionalColor?: "green" | null;
+  } | null;
 }) {
   const h = 200;
 
@@ -324,7 +341,7 @@ function ChartRenderer({
                 height={24}
                 wrapperStyle={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
               />
-              {seriesKeys.slice(0, 6).map((key, idx) => (
+              {seriesKeys.slice(0, 8).map((key, idx) => (
                 <Line
                   key={key}
                   type="monotone"
@@ -606,20 +623,30 @@ function ChartRenderer({
 
     const TreemapCell = ({ x, y, width, height, name, size, index }: any) => {
       const color = PIE_COLORS[index % PIE_COLORS.length];
-      const showLabel = width > 60 && height > 30;
+      const showLabel = width > 38 && height > 18;
+      const showValue = width > 50 && height > 34;
+      const label = String(name ?? "");
+      const charBudget = Math.max(3, Math.floor(width / 7));
       return (
         <g>
+          <title>{`${label}: ${fmtCurrency(size)}`}</title>
           <rect x={x} y={y} width={width} height={height} fill={color} stroke="rgb(var(--color-bg-card))" strokeWidth={2} rx={4} />
           {showLabel && (
             <>
-              <text x={x + width / 2} y={y + height / 2 - 6} textAnchor="middle" dominantBaseline="central"
-                fill="white" fontSize={Math.min(12, width / 8)} fontWeight={700} style={{ pointerEvents: "none" }}>
-                {String(name ?? "").length > 14 ? String(name).slice(0, 13) + "…" : name}
+              <text x={x + width / 2} y={y + height / 2 - (showValue ? 6 : 0)} textAnchor="middle" dominantBaseline="central"
+                fill="white" fontSize={Math.min(12, Math.max(8, width / 9))} fontWeight={700}
+                paintOrder="stroke" stroke="rgba(0,0,0,0.35)" strokeWidth={2}
+                style={{ pointerEvents: "none" }}>
+                {label.length > charBudget ? label.slice(0, charBudget - 1) + "…" : label}
               </text>
-              <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="central"
-                fill="rgba(255,255,255,0.85)" fontSize={Math.min(10, width / 9)} style={{ pointerEvents: "none" }}>
-                {fmtCurrency(size)}
-              </text>
+              {showValue && (
+                <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="central"
+                  fill="rgba(255,255,255,0.9)" fontSize={Math.min(10, width / 10)}
+                  paintOrder="stroke" stroke="rgba(0,0,0,0.3)" strokeWidth={1.5}
+                  style={{ pointerEvents: "none" }}>
+                  {fmtCurrency(size)}
+                </text>
+              )}
             </>
           )}
         </g>
@@ -653,11 +680,7 @@ function ChartRenderer({
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
         .join(" ");
     const axisLabel = (axis: string) => prettyAxis(axis || "Name");
-    const amount = (value: number) =>
-      new Intl.NumberFormat("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(value);
+    const amount = (value: number) => formatValue(metric, grouping, value);
     const lerp = (from: number, to: number, t: number) =>
       Math.round(from + (to - from) * Math.max(0, Math.min(1, t)));
     const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
@@ -665,7 +688,18 @@ function ChartRenderer({
       ...rows.flatMap((row) => colKeys.map((key) => Math.abs(Number((row as any)[key]) || 0))),
       1,
     );
+    const conditionalThreshold =
+      typeof display?.conditionalThreshold === "number"
+        ? display.conditionalThreshold
+        : null;
     const cellTheme = (value: number) => {
+      if (
+        conditionalThreshold !== null &&
+        value >= conditionalThreshold &&
+        display?.conditionalColor === "green"
+      ) {
+        return { bg: "#16a34a", fg: "#ffffff" };
+      }
       const intensity = Math.min(1, Math.abs(value) / maxVal);
       if (intensity >= 0.5) {
         const t = (intensity - 0.5) / 0.5;
@@ -934,6 +968,7 @@ function ExpandedDashboard({
                   chartId={chart.id}
                   metric={String((chart.queryConfig as any)?.metric ?? "")}
                   grouping={String((chart.queryConfig as any)?.grouping ?? "")}
+                  display={(chart.queryConfig as any)?.display ?? null}
                 />
               )}
             </div>
@@ -1110,6 +1145,7 @@ export function DashboardsPage() {
                       chartId={zoomChart.chart.id}
                       metric={String((zoomChart.chart.queryConfig as any)?.metric ?? "")}
                       grouping={String((zoomChart.chart.queryConfig as any)?.grouping ?? "")}
+                      display={(zoomChart.chart.queryConfig as any)?.display ?? null}
                     />
                   </div>
                 )}

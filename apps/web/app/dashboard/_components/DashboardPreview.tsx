@@ -66,6 +66,15 @@ interface ChartConfig {
     donut?: boolean | null;
     highlightMaxMin?: boolean | null;
     labelMode?: "percent" | "value" | null;
+    // Layer D follow-up render hints.
+    normalized?: boolean | null; // values are 0–100 %, format axis as %
+    referenceSeries?: string | null; // column drawn as a flat reference line, not a series
+    movingAverageSuffix?: string | null; // series ending in this suffix render dashed
+    secondaryAxisFormat?: "number" | "currency" | "percent" | null; // combo right-axis format
+    secondaryLabel?: string | null; // combo second-measure label
+    showTotals?: boolean | null; // matrix/heatmap totals are rendered when true/default
+    conditionalThreshold?: number | null; // matrix cells at/above this value use conditional color
+    conditionalColor?: "green" | null;
   } | null;
 }
 
@@ -186,6 +195,37 @@ function inferNumericSeriesKeys(rows: DataRow[]): string[] {
     .map(([k]) => k);
 }
 
+function toSeriesKey(value: unknown): string {
+  return String(value ?? "series")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "series";
+}
+
+function pivotLongSeriesRows(rows: DataRow[]): DataRow[] {
+  if (!rows.length) return rows;
+  const canPivot = rows.every(
+    (row) =>
+      typeof (row as any).name === "string" &&
+      typeof (row as any).series === "string" &&
+      toFiniteNumber((row as any).value) !== null,
+  );
+  if (!canPivot) return rows;
+
+  const byName = new Map<string, DataRow>();
+  for (const row of rows) {
+    const name = String((row as any).name);
+    const seriesKey = toSeriesKey((row as any).series);
+    const value = toFiniteNumber((row as any).value) ?? 0;
+    const current = byName.get(name) ?? { name };
+    current[seriesKey] = (Number((current as any)[seriesKey]) || 0) + value;
+    byName.set(name, current);
+  }
+
+  return Array.from(byName.values());
+}
+
 function isChartTurnMetadata(metadata: unknown): metadata is ChartTurnMetadata {
   return !!metadata && typeof metadata === "object" && (metadata as ChartTurnMetadata).kind === "chart_turn";
 }
@@ -277,6 +317,7 @@ function prettyChartType(type: string): string {
   if (t === "stacked_bar") return "Stacked bar";
   if (t === "horizontal_bar") return "Ranked bar";
   if (t === "line") return "Line chart";
+  if (t === "combo") return "Combo chart";
   if (t === "pie") return "Pie chart";
   if (t === "donut") return "Donut chart";
   if (t === "area") return "Area chart";
@@ -311,14 +352,20 @@ function fmtNumber(value: number): string {
   return value.toFixed(0);
 }
 
+function fmtPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
 function formatValue(metric: string, grouping: string, value: number): string {
+  const metricKey = String(metric ?? "").toLowerCase();
   const isPercent =
     metric === "collection_rate" ||
     metric === "overdue_rate" ||
     metric === "mom_growth" ||
     metric === "top5_revenue_share" ||
-    metric === "collected_vs_outstanding";
-  if (isPercent) return `${value.toFixed(1)}%`;
+    metric === "collected_vs_outstanding" ||
+    /\b(pct|percent|percentage|share|ratio|rate)\b/.test(metricKey);
+  if (isPercent) return fmtPercent(value);
 
   if (metric === "dso") return `${value.toFixed(1)}d`;
 
@@ -343,7 +390,10 @@ function formatValue(metric: string, grouping: string, value: number): string {
     metric === "invoice_value" ||
     (metric === "invoice_amount" && grouping === "time") ||
     metric === "debits_credits" ||
-    (metric === "invoices" && grouping === "status");
+    (metric === "invoices" && grouping === "status") ||
+    /\b(spend|expense|revenue|income|cost|profit|margin|balance|cash|asset|liabil|equity|payable|receivable|debit|credit|amount|value)\b/.test(
+      metricKey,
+    );
 
   if (isCurrencyMetric) return fmtCurrency(value);
   return fmtNumber(value);
@@ -351,7 +401,7 @@ function formatValue(metric: string, grouping: string, value: number): string {
 
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
 
-const CustomTooltip = ({ active, payload, label, metric, grouping }: any) => {
+const CustomTooltip = ({ active, payload, label, metric, grouping, valueFormatter }: any) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-xl border border-default bg-bg-card/95 p-3 shadow-2xl backdrop-blur-sm">
@@ -368,7 +418,9 @@ const CustomTooltip = ({ active, payload, label, metric, grouping }: any) => {
           />
           <span className="text-xs font-semibold text-text-primary">
             {typeof entry.value === "number"
-              ? formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
+              ? typeof valueFormatter === "function"
+                ? valueFormatter(entry.value, entry)
+                : formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
               : entry.value}
           </span>
           {entry.name && entry.name !== "value" && (
@@ -635,9 +687,35 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     stroke: "rgb(var(--color-text-muted) / 0.12)",
   };
 
+  // ── Layer D follow-up render hints ──────────────────────────────────────
+  const dispNormalized = Boolean(chart.config.display?.normalized);
+  const refSeriesKey = chart.config.display?.referenceSeries ?? null;
+  const maSuffix = chart.config.display?.movingAverageSuffix ?? null;
+  const pctTick = (v: number) => fmtPercent(Number(v) || 0);
+  const yTick = (v: number) =>
+    dispNormalized
+      ? pctTick(v)
+      : formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0);
+  // Constant value of the reference column (it's the same on every row).
+  const refValue =
+    refSeriesKey && data.length > 0 ? Number((data[0] as any)[refSeriesKey]) : null;
+  // Color a moving-average series to match its parent series.
+  const colorAt = (i: number): string =>
+    PIE_COLORS[((i % PIE_COLORS.length) + PIE_COLORS.length) % PIE_COLORS.length] ?? PIE_COLORS[0]!;
+  const seriesColor = (key: string, keys: string[], idx: number): string => {
+    if (maSuffix && key.endsWith(maSuffix)) {
+      const parent = key.slice(0, -maSuffix.length);
+      const pIdx = keys.indexOf(parent);
+      if (pIdx >= 0) return colorAt(pIdx);
+    }
+    return colorAt(idx);
+  };
+
   if (chart.type === "line" || chart.type === "area") {
-    const seriesKeys = inferNumericSeriesKeys(data);
+    const allKeys = inferNumericSeriesKeys(data);
     const hasValueSeries = hasFiniteValueKey(data, "value");
+    // Reference column is drawn as a flat ReferenceLine, not a plotted series.
+    const seriesKeys = allKeys.filter((k) => k !== refSeriesKey);
     const isMultiSeries = !hasValueSeries && seriesKeys.length > 0;
 
     const vals = isMultiSeries
@@ -668,18 +746,34 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v: number) =>
-                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
-              }
+              tickFormatter={yTick}
               width={56}
               tickMargin={8}
             />
             <Tooltip
               content={
-                <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
+                <CustomTooltip
+                  metric={chart.config.metric}
+                  grouping={chart.config.grouping}
+                  valueFormatter={(value: number) => yTick(Number(value) || 0)}
+                />
               }
             />
-            {!isMultiSeries && isExpanded && avg > 0 && (
+            {refSeriesKey && refValue != null && Number.isFinite(refValue) && (
+              <ReferenceLine
+                y={refValue}
+                stroke="rgb(var(--color-accent-cyan))"
+                strokeDasharray="6 3"
+                strokeWidth={1.6}
+                label={{
+                  value: refSeriesKey.replace(/_/g, " "),
+                  position: "insideTopRight",
+                  fill: "rgb(var(--color-accent-cyan))",
+                  fontSize: 10,
+                }}
+              />
+            )}
+            {!isMultiSeries && isExpanded && avg > 0 && refValue == null && (
               <ReferenceLine
                 y={avg}
                 stroke="rgb(var(--color-accent-cyan))"
@@ -695,25 +789,44 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             )}
 	            {isMultiSeries ? (
               <>
-                {seriesKeys.slice(0, 6).map((k, idx) => (
-                  <Area
-                    key={k}
-                    type="monotone"
-                    dataKey={k}
-                    name={k.replace(/_/g, " ")}
-                    stroke={PIE_COLORS[idx % PIE_COLORS.length]}
-                    strokeWidth={isExpanded ? 2.3 : 2}
-                    fill={PIE_COLORS[idx % PIE_COLORS.length]}
-                    fillOpacity={chart.type === "area" ? 0.18 : 0.08}
-                    dot={false}
-                    activeDot={{
-                      r: 5,
-                      fill: PIE_COLORS[idx % PIE_COLORS.length],
-                      strokeWidth: 2,
-                      stroke: "rgb(var(--color-bg-card))",
-                    }}
-                  />
-                ))}
+                {seriesKeys.slice(0, isExpanded ? 12 : 8).map((k, idx) => {
+                  const isMa = Boolean(maSuffix && k.endsWith(maSuffix));
+                  const color = seriesColor(k, seriesKeys, idx);
+                  return (
+                    <Area
+                      key={k}
+                      type="monotone"
+                      dataKey={k}
+                      name={k.replace(/_/g, " ")}
+                      stroke={color}
+                      strokeWidth={isExpanded ? 2.3 : 2}
+                      strokeDasharray={isMa ? "5 3" : undefined}
+                      fill={color}
+                      fillOpacity={isMa ? 0 : chart.type === "area" ? 0.18 : 0.08}
+                      dot={false}
+                      activeDot={{
+                        r: 5,
+                        fill: color,
+                        strokeWidth: 2,
+                        stroke: "rgb(var(--color-bg-card))",
+                      }}
+                    >
+                      {!isMa && data.length <= 12 && seriesKeys.length <= 4 && (
+                        <LabelList
+                          dataKey={k}
+                          position="top"
+                          offset={8}
+                          style={{
+                            fill: "rgb(var(--color-text-secondary))",
+                            fontSize: isExpanded ? 10 : 9,
+                            fontWeight: 600,
+                          }}
+                          formatter={(v: unknown) => yTick(Number(v) || 0)}
+                        />
+                      )}
+                    </Area>
+                  );
+                })}
                 <Legend
                   verticalAlign="bottom"
                   height={28}
@@ -745,7 +858,13 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   strokeWidth: 2,
                   stroke: "rgb(var(--color-bg-card))",
                 }}
-	              />
+	              >
+	                {data.length <= 12 && (
+	                  <LabelList dataKey="value" position="top" offset={8}
+	                    style={{ fill: "rgb(var(--color-text-secondary))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
+	                    formatter={(v: unknown) => yTick(Number(v) || 0)} />
+	                )}
+	              </Area>
 	            )}
 	          </AreaChart>
 	        </ResponsiveContainer>
@@ -806,12 +925,122 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 	        </ResponsiveContainer>
 	      </div>
 	    );
-	  }
+		  }
+
+  if (chart.type === "combo") {
+    const lineKeys = inferNumericSeriesKeys(data);
+    const lineKey = lineKeys[0] ?? null;
+    const secFmt = chart.config.display?.secondaryAxisFormat ?? "percent";
+    const secTick = (v: number) =>
+      secFmt === "currency"
+        ? fmtCurrency(Number(v) || 0)
+        : secFmt === "number"
+          ? fmtNumber(Number(v) || 0)
+          : `${(Number(v) || 0).toFixed(1)}%`;
+
+    return (
+      <div style={{ height: h, width: "100%" }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={data} margin={{ top: 8, right: 12, left: 12, bottom: 0 }}>
+            <defs>
+              <linearGradient id={`grad-bar-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgb(var(--color-accent-blue))" stopOpacity={1} />
+                <stop offset="100%" stopColor="rgb(var(--color-accent-violet))" stopOpacity={0.8} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid {...gridStyle} vertical={false} />
+            <XAxis
+              dataKey="name"
+              tick={tickStyle}
+              tickLine={false}
+              axisLine={false}
+              minTickGap={14}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              yAxisId="left"
+              tick={tickStyle}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v: number) =>
+                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+              }
+              width={56}
+              tickMargin={8}
+            />
+            {lineKey && (
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                tick={tickStyle}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={secTick}
+                width={44}
+                tickMargin={8}
+              />
+            )}
+            <Tooltip
+              content={
+                <CustomTooltip
+                  metric={chart.config.metric}
+                  grouping={chart.config.grouping}
+                  valueFormatter={(value: number, entry: any) =>
+                    entry?.dataKey === "value"
+                      ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
+                      : secTick(Number(value) || 0)
+                  }
+                />
+              }
+            />
+            <Bar
+              yAxisId="left"
+              dataKey="value"
+              name="value"
+              fill={`url(#grad-bar-${chart.id})`}
+              radius={[6, 6, 0, 0]}
+              maxBarSize={56}
+            />
+            {lineKey && (
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey={lineKey}
+                name={lineKey.replace(/_/g, " ")}
+                stroke="rgb(var(--color-accent-cyan))"
+                strokeWidth={isExpanded ? 2.5 : 2}
+                dot={isExpanded ? { r: 4, fill: "rgb(var(--color-accent-cyan))", strokeWidth: 0 } : false}
+                activeDot={{
+                  r: 5,
+                  fill: "rgb(var(--color-accent-cyan))",
+                  strokeWidth: 2,
+                  stroke: "rgb(var(--color-bg-card))",
+                }}
+              />
+            )}
+            <Legend
+              verticalAlign="bottom"
+              height={28}
+              iconType="circle"
+              iconSize={8}
+              wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
+              formatter={(value: string) => (
+                <span style={{ color: "rgb(var(--color-text-secondary))" }}>
+                  {String(value).replace(/_/g, " ")}
+                </span>
+              )}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
 
 	  if (chart.type === "bar" || chart.type === "stacked_bar") {
+    const barData = chart.type === "stacked_bar" ? pivotLongSeriesRows(data) : data;
     // Detect multi-series FIRST (pivot data with one column per entity, no "value" key)
-    const rawSeriesKeys = inferNumericSeriesKeys(data);
-    const rawHasValueSeries = hasFiniteValueKey(data, "value");
+    const rawSeriesKeys = inferNumericSeriesKeys(barData);
+    const rawHasValueSeries = hasFiniteValueKey(barData, "value");
     const isActuallyMultiSeries = !rawHasValueSeries && rawSeriesKeys.length >= 1;
 
     // Only use horizontal bars for single-series client ranking (NOT for multi-series pivots)
@@ -819,11 +1048,23 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
     const useHorizontalBars = isClientGrouping && !isActuallyMultiSeries && data.length > 6;
 
     const trimmed = useHorizontalBars
-      ? data.slice(0, isExpanded ? 15 : 8)
-      : data;
+      ? barData.slice(0, isExpanded ? 15 : 8)
+      : barData;
 
-    const seriesKeys = isActuallyMultiSeries ? rawSeriesKeys : inferNumericSeriesKeys(trimmed);
+    const seriesKeys = (
+      isActuallyMultiSeries ? rawSeriesKeys : inferNumericSeriesKeys(trimmed)
+    ).filter((k) => k !== refSeriesKey);
     const hasValueSeries = isActuallyMultiSeries ? false : hasFiniteValueKey(trimmed, "value");
+    const barRefValue =
+      refSeriesKey && trimmed.length > 0 ? Number((trimmed[0] as any)[refSeriesKey]) : null;
+    // Time-series bars (months) keep one color; categorical bars get per-category colors.
+    const barLooksTimeSeries =
+      trimmed.length > 0 &&
+      trimmed.filter((d: any) =>
+        /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b|\b(19|20)\d{2}\b|^\d{4}-\d{2}/i.test(
+          String((d as any).name ?? ""),
+        ),
+      ).length >= trimmed.length / 2;
 	    const isMultiSeries = !useHorizontalBars && isActuallyMultiSeries;
 	    const highlightMaxMin = Boolean(chart.config.display?.highlightMaxMin) && !isMultiSeries;
 	    const highlight = (() => {
@@ -938,9 +1179,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   tick={tickStyle}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={(v: number) =>
-                    formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
-                  }
+                  tickFormatter={yTick}
                   width={56}
                   tickMargin={8}
                 />
@@ -948,9 +1187,27 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             )}
             <Tooltip
               content={
-                <CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />
+                <CustomTooltip
+                  metric={chart.config.metric}
+                  grouping={chart.config.grouping}
+                  valueFormatter={(value: number) => yTick(Number(value) || 0)}
+                />
               }
             />
+            {refSeriesKey && barRefValue != null && Number.isFinite(barRefValue) && !useHorizontalBars && (
+              <ReferenceLine
+                y={barRefValue}
+                stroke="rgb(var(--color-accent-cyan))"
+                strokeDasharray="6 3"
+                strokeWidth={1.6}
+                label={{
+                  value: refSeriesKey.replace(/_/g, " "),
+                  position: "insideTopRight",
+                  fill: "rgb(var(--color-accent-cyan))",
+                  fontSize: 10,
+                }}
+              />
+            )}
             {isMultiSeries ? (
               <>
                 {displayKeys.map((k, idx) => (
@@ -962,7 +1219,21 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                     radius={isStackedBarChart ? [0, 0, 0, 0] : [4, 4, 0, 0]}
                     maxBarSize={isStackedBarChart ? (isExpanded ? 48 : 36) : (isExpanded ? 20 : 16)}
                     stackId={isStackedBarChart ? "stack" : undefined}
-                  />
+                  >
+                    {!isStackedBarChart && displayKeys.length <= 4 && chartData.length <= 12 && (
+                      <LabelList
+                        dataKey={k}
+                        position="top"
+                        offset={4}
+                        style={{
+                          fill: "rgb(var(--color-text-secondary))",
+                          fontSize: isExpanded ? 10 : 9,
+                          fontWeight: 600,
+                        }}
+                        formatter={(v: unknown) => yTick(Number(v) || 0)}
+                      />
+                    )}
+                  </Bar>
                 ))}
                 {isStackedBarChart && (
                   <Bar dataKey="_total" stackId="stack" fill="transparent"
@@ -1004,7 +1275,11 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 		                        />
 		                      );
 	                    })
-	                  : null}
+	                  : !barLooksTimeSeries
+	                    ? trimmed.map((_: any, idx: number) => (
+	                        <Cell key={idx} fill={colorAt(idx)} />
+	                      ))
+	                    : null}
                 {(useHorizontalBars ? trimmed.length <= 15 : trimmed.length <= 12) && (
                   <LabelList
                     dataKey="value"
@@ -1041,20 +1316,32 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 
     const TreemapCell = ({ x, y, width, height, name, size, index }: any) => {
       const color = PIE_COLORS[index % PIE_COLORS.length];
-      const showLabel = width > 60 && height > 30;
+      // Lower thresholds so smaller cells (e.g. all 24 vendors) still get a label,
+      // and always provide a hover tooltip so nothing is unreadable/"empty".
+      const showLabel = width > 38 && height > 18;
+      const showValue = width > 50 && height > 34;
+      const charBudget = Math.max(3, Math.floor(width / 7));
+      const label = String(name ?? "");
       return (
         <g>
+          <title>{`${label}: ${fmtCurrency(size)}`}</title>
           <rect x={x} y={y} width={width} height={height} fill={color} stroke="rgb(var(--color-bg-card))" strokeWidth={2} rx={4} />
           {showLabel && (
             <>
-              <text x={x + width / 2} y={y + height / 2 - 6} textAnchor="middle" dominantBaseline="central"
-                fill="white" fontSize={Math.min(12, width / 8)} fontWeight={700} style={{ pointerEvents: "none" }}>
-                {String(name ?? "").length > 14 ? String(name).slice(0, 13) + "…" : name}
+              <text x={x + width / 2} y={y + height / 2 - (showValue ? 6 : 0)} textAnchor="middle" dominantBaseline="central"
+                fill="white" fontSize={Math.min(12, Math.max(8, width / 9))} fontWeight={700}
+                paintOrder="stroke" stroke="rgba(0,0,0,0.35)" strokeWidth={2}
+                style={{ pointerEvents: "none" }}>
+                {label.length > charBudget ? label.slice(0, charBudget - 1) + "…" : label}
               </text>
-              <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="central"
-                fill="rgba(255,255,255,0.85)" fontSize={Math.min(10, width / 9)} style={{ pointerEvents: "none" }}>
-                {fmtCurrency(size)}
-              </text>
+              {showValue && (
+                <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="central"
+                  fill="rgba(255,255,255,0.9)" fontSize={Math.min(10, width / 10)}
+                  paintOrder="stroke" stroke="rgba(0,0,0,0.3)" strokeWidth={1.5}
+                  style={{ pointerEvents: "none" }}>
+                  {fmtCurrency(size)}
+                </text>
+              )}
             </>
           )}
         </g>
@@ -1197,7 +1484,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       const labelText =
         labelMode === "value"
           ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
-          : `${(percent * 100).toFixed(0)}%`;
+          : fmtPercent((Number(percent) || 0) * 100);
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
           fontSize={isExpanded ? 12 : 10} fontWeight="700">
@@ -1321,6 +1608,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       }))
       .filter((d) => d.value > 0);
     const donutTotal = donutData.reduce((s, d) => s + d.value, 0);
+    const donutDataWithTotal = donutData.map((d) => ({ ...d, total: donutTotal }));
 
     const renderDonutLabel = ({
       cx,
@@ -1339,7 +1627,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       const labelText =
         labelMode === "value"
           ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
-          : `${(percent * 100).toFixed(0)}%`;
+          : fmtPercent((Number(percent) || 0) * 100);
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
           fontSize={isExpanded ? 11 : 9} fontWeight="700">
@@ -1358,10 +1646,10 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 {fmtCurrency(donutTotal)}
               </text>
             )}
-            <Pie data={donutData} dataKey="value" nameKey="name" cx="50%" cy={isExpanded ? "50%" : "44%"}
+            <Pie data={donutDataWithTotal} dataKey="value" nameKey="name" cx="50%" cy={isExpanded ? "50%" : "44%"}
               innerRadius={isExpanded ? 70 : 52} outerRadius={isExpanded ? 120 : 88}
               paddingAngle={2} labelLine={false} label={renderDonutLabel}>
-              {donutData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              {donutDataWithTotal.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
             </Pie>
             <Tooltip
               content={
@@ -1600,14 +1888,22 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
         .join(" ");
     const axisLabel = (axis: string) => prettyAxis(axis || "Name");
     const amount = (value: number) =>
-      new Intl.NumberFormat("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(value);
+      formatValue(chart.config.metric, chart.config.grouping, value);
     const lerp = (from: number, to: number, t: number) =>
       Math.round(from + (to - from) * Math.max(0, Math.min(1, t)));
     const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
+    const conditionalThreshold =
+      typeof chart.config.display?.conditionalThreshold === "number"
+        ? chart.config.display.conditionalThreshold
+        : null;
     const cellTheme = (value: number) => {
+      if (
+        conditionalThreshold !== null &&
+        value >= conditionalThreshold &&
+        chart.config.display?.conditionalColor === "green"
+      ) {
+        return { bg: "#16a34a", fg: "#ffffff" };
+      }
       const maxVal = Math.max(
         ...rows.flatMap((row) => colKeys.map((key) => Math.abs(Number((row as any)[key]) || 0))),
         1,

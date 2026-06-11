@@ -13,6 +13,8 @@
     "db:seed": "dotenv -e .env.local -- prisma db seed",
     "seed:sample-gl": "node scripts/seed-sample-gl-v2.cjs",
     "seed:ebpo-clickhouse": "tsx scripts/seed-ebpo-clickhouse.ts",
+    "cleanup:ebpo-from-org": "tsx scripts/cleanup-ebpo-from-org.ts",
+    "attach:demo-users": "tsx scripts/attach-demo-users-to-org.ts",
     "seed:demo-users-sample-org": "node scripts/seed-demo-users-sample-org.cjs --only-sample-org",
     "db:format": "prisma format",
     "build": "tsc -b"

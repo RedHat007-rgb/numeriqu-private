@@ -82,7 +82,7 @@ function OtpBoxes({
 }
 
 export default function LoginPage() {
-  const { isAuthenticated, loading: sessionLoading } = useNumeriquApi();
+  const { isAuthenticated, loading: sessionLoading, refreshSession } = useNumeriquApi();
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -146,9 +146,12 @@ export default function LoginPage() {
             (json as any)?.message ?? mapAuthError(res.status, "Demo login failed.")
           );
         }
+        // Populate the session cache BEFORE navigating so the dashboard sees us
+        // as authenticated immediately — otherwise its auth guard bounces back to
+        // /login until the next refresh (~2s "stuck at login").
+        await refreshSession();
         toast.success("Signed in as demo account.");
-        router.push("/dashboard");
-        router.refresh();
+        router.replace("/dashboard");
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Demo login failed.");
       } finally {
@@ -196,9 +199,11 @@ export default function LoginPage() {
         throw new Error(mapAuthError(response.status, "OTP verification failed."));
       }
 
+      // Refresh the session cache before navigating so the dashboard reads us as
+      // authenticated on first paint (no bounce back to /login).
+      await refreshSession();
       toast.success("Signed in successfully.");
-      router.push("/dashboard");
-      router.refresh();
+      router.replace("/dashboard");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "OTP verification failed.");
     } finally {

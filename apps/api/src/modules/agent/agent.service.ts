@@ -18,6 +18,12 @@ import {
   resolveLlmRuntimeConfig,
   type LlmProvider,
 } from '../../common/llm/llm-config';
+import {
+  CATALOG,
+  catalogPromptText,
+  compileSpec,
+  type ChartSpec,
+} from './chart-spec';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,6 +134,9 @@ interface DashboardEditPlan {
     // When present, the widget's stored dynamicSql is replaced so the DATA changes,
     // not just the presentation.
     dynamicSql?: string;
+    // Phase 3: the new ChartSpec when the edit was a spec delta (persisted so the
+    // next follow-up edits this updated spec).
+    spec?: ChartSpec;
     display?: DisplayHints | null;
   }>;
   // Layer D: when a follow-up cannot be satisfied from the data (e.g. YoY with a
@@ -156,6 +165,13 @@ interface DisplayHints {
   // Matrix / heatmap formatting hints.
   showTotals?: boolean | null;
   conditionalThreshold?: number | null;
+  // Dynamic threshold: highlight cells above the column/row/overall average
+  // instead of a fixed number (e.g. "highlight cells above department average").
+  conditionalThresholdMode?:
+    | 'columnAverage'
+    | 'rowAverage'
+    | 'overallAverage'
+    | null;
   conditionalColor?: 'green' | null;
 }
 
@@ -171,7 +187,15 @@ interface SecondMeasure {
 }
 
 type FollowUpTransform =
-  | { kind: 'yoy' | 'prior_year' | 'normalize' | 'reference_line' | 'variance' }
+  | {
+      kind:
+        | 'yoy'
+        | 'prior_year'
+        | 'normalize'
+        | 'reference_line'
+        | 'variance'
+        | 'growth_pct';
+    }
   | { kind: 'moving_average'; window: number }
   | { kind: 'second_axis'; second: SecondMeasure };
 
@@ -864,6 +888,46 @@ Rules:
 // change the metric, switch chart types, add or remove charts. The chart's data is
 // driven entirely by its SQL, so a request that changes WHAT is shown must rewrite
 // the SQL — changing only the chart type does not change the data.
+// Phase-2 spec-first planner. The model does NOT write SQL — it chooses a chart
+// from the catalog as a small ChartSpec. compileSpec turns it into safe SQL.
+const SPEC_PLANNER_SYSTEM = `You translate a user's analytics request into a ChartSpec chosen ONLY from the catalog provided in the user message. You NEVER write SQL and NEVER invent measures, dimensions, or columns.
+
+Output ONLY valid JSON, no markdown, in ONE of these two shapes:
+1) A chart:
+{ "title": "Short human title", "spec": { "measure": "<measure id>", "dimension": "<dimension id>", "breakdown": "<dimension id or null>", "filters": [{ "dimension": "<id>", "op": "in", "values": ["A","B"] }], "sort": "value_desc|value_asc|name_asc|time_asc", "topN": 10, "chartType": "<chart type>", "transforms": [{ "kind": "normalize|growth_pct|reference_line" } or { "kind": "moving_average", "window": 3 }] } }
+2) A refusal (when the request needs data or a feature NOT in the catalog):
+{ "refusal": "One sentence naming exactly what is missing." }
+
+RULES:
+- "measure" and "dimension" are REQUIRED and MUST be ids from the MEASURES / DIMENSIONS lists. "breakdown" is optional (a second dimension to split into series; use for matrix/heatmap/grouped/stacked charts).
+- Use a time dimension (month/quarter) for trends; rank entities (vendor/account/department/class) with sort + topN.
+- Only include "filters"/"transforms" when the user asks for them. Omit fields you don't need (don't send null spam).
+- If the request needs anything in the NOT AVAILABLE list (budget, forecast, target, region, segment, headcount, cash flow, prior year), return a refusal — do NOT substitute.
+- Pick the chartType the user asked for; otherwise choose a sensible default (trend→line, ranking→bar, share→pie/donut, two dimensions→heatmap/matrix).
+
+EXAMPLES:
+"monthly spend by department as a heatmap" → { "title": "Monthly Spend by Department", "spec": { "measure": "spend", "dimension": "month", "breakdown": "department", "chartType": "heatmap" } }
+"top 10 vendors by spend" → { "title": "Top 10 Vendors by Spend", "spec": { "measure": "spend", "dimension": "vendor", "sort": "value_desc", "topN": 10, "chartType": "bar" } }
+"how does spend compare to budget" → { "refusal": "There's no budget or plan data in this dataset, only actuals." }`;
+
+// Phase-3 spec-first editor. A follow-up is a DELTA on the chart's current spec.
+const SPEC_EDITOR_SYSTEM = `You edit an existing chart by returning its UPDATED ChartSpec. You are given the chart's CURRENT spec (JSON) and the catalog. Apply the user's change to the spec and return the WHOLE new spec — keep every field the user did not ask to change.
+
+You NEVER write SQL. You only choose from the catalog. Output ONLY valid JSON, ONE of:
+1) { "spec": { ...the full updated ChartSpec... } }
+2) { "refusal": "One sentence naming what's missing." }  (when the change needs data/feature not in the catalog)
+
+COMMON DELTAS:
+- "make it quarterly / monthly" → change "dimension" between month and quarter.
+- "top N" / "show more" → set "topN".
+- "break it down by X" / "split by X" → set "breakdown" to dimension X.
+- "use <measure> instead" → change "measure".
+- "as a <type>" → change "chartType".
+- "normalize to 100%" / "growth %" / "moving average" / "average line" → add to "transforms".
+- "filter to A and B" / "exclude X" → set "filters".
+- "sort by …" → set "sort".
+Return a refusal for budget/forecast/target/region/segment/headcount/cash-flow/prior-year, and for unsupported visual features (drill-down on click, animation, sunburst, log axis).`;
+
 const SMART_SQL_EDITOR_SYSTEM = `You are a world-class CFO analytics AI editing an EXISTING dashboard. Each chart already has live ClickHouse SQL and a chart type. The user wants to change one or more charts. Apply the SMALLEST change that fully satisfies the request.
 
 CRITICAL: the chart's data comes ENTIRELY from its SQL. If the request changes WHAT the chart shows — the axis, the dimension/grouping, the metric, percentages vs absolute values, a filter, the sort order, the top-N count, or the time range — you MUST rewrite that chart's SQL. Switching only the chart type does NOT change the data.
@@ -883,9 +947,22 @@ CLICKHOUSE SQL RULES (identical to how the charts were built):
 
 Use ONLY tables and columns shown in the LIVE SCHEMA provided in the user message. Keep each chart's analytical intent unless the user asks to change it.
 
+⛔ NEVER INVENT DATA — REFUSE INSTEAD. The dataset is exactly what the LIVE SCHEMA shows (general-ledger transactions + a trial balance, a single fiscal year). If the request needs a column, measure, dimension, or period that is NOT in the LIVE SCHEMA — e.g. budget / plan / forecast / target, year-over-year or prior-year (only one year exists), region / geography, customer or market segment, headcount / FTE, cash-flow / runway, or any other field you do not actually see — you MUST NOT fabricate a column name or guess a table. Instead return a "refusal" (see below) that names exactly what is missing in plain language. A query that references a column not in the schema is a FAILURE, never an option.
+
+⛔ UNSUPPORTED VISUAL / INTERACTIVE FEATURES. These cannot be produced and MUST be refused (or replaced by the closest supported STATIC alternative, stated honestly in the summary): click/drill-down/expand-on-click, dropdowns/slicers/filter controls, animation/play-axis, log-scale axes, conditional cell formatting beyond matrix totals, sparklines inside cells, and chart types not in the supported set (sunburst, tree-ring, bullet, gauge beyond a single KPI, 3D/rotating). Supported types: bar, horizontal_bar, line, area, pie, donut, scatter, bubble, treemap, heatmap, matrix, kpi, combo, waterfall, stacked_bar, stacked_area.
+
+✅ SEPARATE THE VISUAL WRAPPER FROM THE DATA ASK. Many requests bundle an unsupported visual gesture with a perfectly doable DATA change — DO THE DATA, skip only the gesture (and say so). Examples you MUST satisfy, not refuse:
+- "explode/highlight the largest slice and show its top N subcategories" → rewrite the SQL to drill INTO the single largest category and return its top N sub-items (e.g. the biggest asset type broken into its top N accounts). The 'explode' animation isn't applied, but the requested data IS.
+- "show the min/max range" or "high-low range" → add min() and max() series columns (doable). Only a statistical confidence interval (needs variance/std assumptions) is unsupported.
+- "reorder so the largest is on top/bottom" → change ORDER BY.
+A request is only refused when the DATA itself can't be produced from the LIVE SCHEMA.
+
+When you refuse, set ONLY the top-level "refusal" string (no widgets/add) and STOP — be specific about what's missing and, when useful, suggest a supported alternative the user could ask for. Do NOT half-apply.
+
 OUTPUT: respond with ONLY valid JSON — zero markdown, zero prose:
 {
   "summary": "one short sentence describing what changed",
+  "refusal": "(OPTIONAL) set this INSTEAD of widgets/add when the request needs data or a feature that does not exist — name exactly what is missing",
   "widgets": [
     { "index": 0, "action": "update", "sql": "SELECT ... AS name, ... AS value FROM analytics.sample_gl_dump WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) GROUP BY ... ORDER BY value DESC LIMIT 50", "type": "bar", "title": "New title", "xAxisLabel": "Month", "yAxisLabel": "Amount (USD)" },
     { "index": 1, "action": "keep" },
@@ -2057,6 +2134,39 @@ export class AgentService {
           'Build a static chart using the requested filter or show separate series for each category.',
       };
     }
+    return null;
+  }
+
+  // General missing-DATA boundary. The sample dataset is a single fiscal year of
+  // general-ledger transactions + a trial balance — it has NO budget/plan/forecast/
+  // target, no prior year, no region/geography, no customer/market segment, no
+  // headcount, no cash-flow statement. Follow-ups that need those must be refused
+  // clearly (never answered with fabricated columns). Returns a ready refusal
+  // message, or null when the ask is satisfiable from real data.
+  private detectUnavailableData(queryText: string): string | null {
+    const q = String(queryText ?? '').toLowerCase();
+    if (!q.trim()) return null;
+
+    const tail =
+      ' This dataset has a single year of general-ledger transactions and a trial balance — I left the chart unchanged.';
+
+    if (/\b(budget|budgeted|plan(?:ned)?\s+(?:vs|versus|amount|figure)|vs\.?\s*plan|over\/under\s+budget)\b/.test(q))
+      return `I can't add a budget comparison — there's no budget or plan data in this dataset, only actuals.${tail}`;
+    if (/\b(forecast|projection|projected|run\s*rate\s+forecast|expected\s+future|predict(?:ed|ion)?|next\s+\d+\s+(?:months|quarters))\b/.test(q))
+      return `I can't add a forecast — this dataset only holds recorded actuals, with no forward-looking or projection data.${tail}`;
+    if (/\b(target|goal|quota|benchmark\s+target|against\s+target|vs\.?\s*target|performance\s+against)\b/.test(q))
+      return `I can't compare against targets — there are no target or goal figures in this dataset.${tail}`;
+    if (/\b(year[\s-]*over[\s-]*year|yoy|year[\s-]*on[\s-]*year|prior[\s-]*year|previous\s+year|last\s+year|vs\.?\s*\d{4})\b/.test(q))
+      return `I can't add a year-over-year or prior-year comparison — this dataset only covers a single year, so there's no earlier period to compare against.${tail}`;
+    if (/\b(region|regional|geograph|country|countries|location|territory|by\s+state|by\s+city|map\b)\b/.test(q))
+      return `I can't break this down by region or geography — there's no location/region field in this dataset.${tail}`;
+    if (/\b(segment|customer\s+segment|market\s+segment|tier|cohort|persona|industry\s+vertical)\b/.test(q))
+      return `I can't split this by segment — there's no customer or market-segment field in this dataset.${tail}`;
+    if (/\b(headcount|head\s+count|fte|employee\s+count|number\s+of\s+employees|staff\s+count|per\s+employee)\b/.test(q))
+      return `I can't add headcount or per-employee metrics — there's no employee/headcount data in this dataset.${tail}`;
+    if (/\b(cash\s*flow|cash\s+runway|runway|burn\s+rate|liquidity\s+forecast|months\s+of\s+(?:operating|opex|cash))\b/.test(q))
+      return `I can't compute cash flow or runway — this dataset has GL transactions and balances, not a cash-flow statement.${tail}`;
+
     return null;
   }
 
@@ -10058,6 +10168,8 @@ export class AgentService {
                           : (spec.topN ?? 2)
                         : ((w as any)?.topN ?? null),
                   ...(dynamicSql ? { dynamicSql } : {}),
+                  // Phase 3: persist the ChartSpec so a follow-up is a delta on it.
+                  ...((w as any)?._spec ? { spec: (w as any)._spec } : {}),
                   ...((w as any)?.xAxisLabel
                     ? { xAxisLabel: (w as any).xAxisLabel }
                     : {}),
@@ -10429,15 +10541,15 @@ export class AgentService {
     const primaryWidget = input.widgetSnapshots[0];
     const chartType = this.humanizeChartType(primaryWidget?.chartType);
     const chartLabel = chartType ?? 'chart';
-    const normalizedRaw = input.rawSummary.trim().replace(/\s+/g, ' ');
+    // The summary the user sees is the CHANGE itself — never internal mechanics
+    // ("new version", "preserved in chat"). Strip trailing punctuation so it
+    // composes cleanly with the surrounding sentence.
+    const clean = input.rawSummary.trim().replace(/\s+/g, ' ').replace(/[.\s]+$/, '');
 
     if (input.mode === 'edit') {
-      const detail = normalizedRaw ? ` (${normalizedRaw})` : '';
-      return `Added a new ${chartLabel} version for "${input.dashboardTitle}" and preserved the previous version in chat${detail}.`;
+      return clean || `Updated the ${chartLabel}`;
     }
-
-    const detail = normalizedRaw ? ` (${normalizedRaw})` : '';
-    return `Created a new ${chartLabel} version for "${input.dashboardTitle}"${detail}.`;
+    return clean || `Built a ${chartLabel}`;
   }
 
   private humanizeChartType(chartType?: string): string | null {
@@ -12714,12 +12826,183 @@ export class AgentService {
   // when the planner itself is unavailable (Ollama offline) so callers can fall
   // back. A confident "build", an honest "no_data", and a focused "clarify" are
   // all valid first-class results — never a guessed chart.
+  // ─── Phase 2: spec-first planner (behind AGENT_SPEC_MODE flag) ──────────────
+  // Instead of free-writing SQL, the LLM emits a small ChartSpec chosen ONLY from
+  // the catalog; compileSpec turns it into deterministic, scoped SQL. The model
+  // cannot reference a column that doesn't exist, and a request needing
+  // unavailable data is refused by catalog lookup. Returns a SmartPlanResult so it
+  // slots into the existing create path; null = unavailable → caller falls back.
+  // Chart classes the spec compiler faithfully models (measure × dimension ×
+  // optional breakdown). Anything else — multi-widget dashboards, waterfall, KPI
+  // cards, scatter/bubble (need x/y), treemap hierarchies, sunburst — must defer
+  // to the proven legacy planner rather than risk a confident wrong chart.
+  private static readonly SPEC_SUPPORTED_TYPES: ReadonlySet<string> = new Set([
+    'bar',
+    'horizontal_bar',
+    'line',
+    'area',
+    'pie',
+    'donut',
+    'heatmap',
+    'matrix',
+    'stacked_bar',
+    'stacked_area',
+    // Single-dimension treemap = name+value (compiler models it). A 2-level
+    // (breakdown) treemap hierarchy is still deferred — see the breakdown guard.
+    'treemap',
+  ]);
+
+  // A treemap with a breakdown is a 2-level hierarchy the compiler doesn't model
+  // (it would emit a WIDE pivot, not a hierarchy) — defer those to legacy.
+  private specCanModelChart(spec: ChartSpec): boolean {
+    const ct = String(spec.chartType ?? '').toLowerCase();
+    if (!AgentService.SPEC_SUPPORTED_TYPES.has(ct)) return false;
+    if (ct === 'treemap' && spec.breakdown) return false;
+    return true;
+  }
+
+  // Decline (→ legacy fallback) when the REQUEST is for a multi-widget dashboard
+  // or a chart type the spec compiler doesn't model.
+  private specModeCanHandle(query: string): boolean {
+    const q = String(query ?? '').toLowerCase();
+    if (
+      /\b(dashboard|executive|cfo|scorecard|c-?suite|board\s+deck|multiple\s+charts|several\s+charts|set\s+of\s+charts|a\s+few\s+charts)\b/.test(
+        q,
+      )
+    )
+      return false;
+    if (
+      /\b(waterfall|scatter|bubble|sun\s*burst|gauge|funnel|kpis?\b|kpi\s+card|score\s*card)\b/.test(
+        q,
+      )
+    )
+      return false;
+    return true;
+  }
+
+  private async generateSpecPlan(
+    query: string,
+    scope: OrgScope,
+    conversationHistory?: string,
+  ): Promise<SmartPlanResult | null> {
+    try {
+      if (scope.externalOrgIds.length === 0) return null;
+      // Only handle the chart classes the compiler models; defer the rest.
+      if (!this.specModeCanHandle(query)) return null;
+      const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => null);
+      if (!ping?.ok) return null;
+
+      const history =
+        conversationHistory && !conversationHistory.includes('(No prior')
+          ? `\nCONVERSATION SO FAR:\n${conversationHistory.slice(0, 600)}\n`
+          : '';
+      const userMsg = `${catalogPromptText()}\n${history}\nUSER REQUEST: "${query}"\nReturn the JSON now.`;
+
+      const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(60_000),
+        body: JSON.stringify({
+          model: this.OLLAMA_MODEL,
+          messages: [
+            { role: 'system', content: SPEC_PLANNER_SYSTEM },
+            { role: 'user', content: userMsg },
+          ],
+          stream: false,
+          options: { temperature: 0.05, num_predict: 600 },
+        }),
+      });
+      if (!resp.ok) return null;
+      const body = (await resp.json()) as { message?: { content?: string } };
+      const raw = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        const m = raw.match(/\{[\s\S]*\}/);
+        if (!m) return null;
+        parsed = JSON.parse(m[0]);
+      }
+
+      // ADDITIVE, NOT REPLACING: spec mode only OWNS a result when it can
+      // confidently build the requested chart. For anything it can't model — the
+      // model declined, the dimension/measure isn't catalogued, an unmodeled chart
+      // type, or the compile can't satisfy it — DEFER (return null) so the proven
+      // legacy planner handles it (including its own honest refusals). Never
+      // short-circuit legacy with a spec-mode refusal/no_data.
+      if (typeof parsed?.refusal === 'string' && parsed.refusal.trim() && !parsed?.spec)
+        return null;
+      const spec = parsed?.spec as ChartSpec | undefined;
+      if (!spec || typeof spec !== 'object') return null;
+      if (!this.specCanModelChart(spec)) return null;
+
+      const compiled = await compileSpec(spec, this.analyticsDb, (sql) =>
+        this.queryRows<Record<string, unknown>>(sql, {
+          tenantId: scope.tenantId,
+          externalOrgIds: scope.externalOrgIds,
+        }),
+      );
+      if (!compiled.ok) return null;
+
+      // Verify the compiled SQL actually returns data before claiming a build.
+      const chartType = (spec.chartType ?? 'bar') as ChartType;
+      const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+        chartType,
+      }).catch(() => null);
+      if (!check || check.error || check.rows.length === 0) return null;
+
+      const title = String(parsed?.title ?? compiled.measure.label).slice(0, 80);
+      this.logger.log(
+        `[SpecPlan] built "${title}" from spec ${JSON.stringify(spec).slice(0, 120)}`,
+      );
+      return {
+        kind: 'build',
+        plan: {
+          tools_to_execute: [],
+          should_generate_dashboard: true,
+          dashboard: {
+            title,
+            description: '',
+            widgets: [
+              {
+                title,
+                description: '',
+                type: chartType,
+                metric: 'dynamic',
+                grouping: 'dynamic',
+                display_order: 0,
+                _sql: compiled.sql,
+                _spec: spec,
+              } as any,
+            ],
+          },
+          analysis_focus: query,
+        },
+      };
+    } catch (err: any) {
+      this.logger.warn(`[SpecPlan] failed: ${err?.message ?? err}`);
+      return null;
+    }
+  }
+
   private async generateSmartPlan(
     query: string,
     scope: OrgScope,
     range?: TimeRange,
     conversationHistory?: string,
   ): Promise<SmartPlanResult | null> {
+    // Phase-2 opt-in: try the spec-first planner before the SQL-writing planner.
+    // Default-off so existing behavior is untouched until you flip the flag.
+    if (process.env.AGENT_SPEC_MODE === '1') {
+      const specPlan = await this.generateSpecPlan(
+        query,
+        scope,
+        conversationHistory,
+      ).catch(() => null);
+      if (specPlan) return specPlan;
+    }
     try {
       // The deterministic short-circuits below read the GL sample tables
       // (sample_gl_dump / sample_trial_balance). For an EBPO org those tables are
@@ -14535,6 +14818,11 @@ export class AgentService {
       this.parseExplicitChartConstraints(editRequest)?.requiredTypes ?? [];
     if (explicitTypes.length !== 1) return null;
 
+    // A recognized DATA transform (normalize, growth %, variance, moving average,
+    // reference line, second axis…) takes precedence — "replace spend with MoM
+    // growth % in that table" must NOT be treated as a pure switch to a table.
+    if (this.detectFollowUpTransform(editRequest)) return null;
+
     const q = editRequest.toLowerCase();
     const hasEditVerb =
       /\b(switch|change|convert|replace|turn|make|set|update|transform|swap)\b/.test(
@@ -16022,6 +16310,15 @@ export class AgentService {
   // new query actually returns clean data. Returns a DashboardEditPlan whose
   // modify/add entries carry the new dynamicSql, or null when the editor is
   // unavailable / declines to act (caller then falls back to the vocab editor).
+  // Shared guard so a "refusal"/clarify field never leaks raw SQL to the user.
+  private looksLikeSqlText(s: string): boolean {
+    return (
+      /\bSELECT\b[\s\S]*\bFROM\b/i.test(s) ||
+      /\{(?:externalOrgIds|tenantId|asOf)\s*:/i.test(s) ||
+      /\b(sumIf|formatDateTime|toStartOf|toFloat64|GROUP\s+BY)\b/i.test(s)
+    );
+  }
+
   private async generateSmartEditPlan(
     activeDashboard: ActiveDashboard,
     editRequest: string,
@@ -16107,8 +16404,31 @@ export class AgentService {
         parsed = JSON.parse(m[0]);
       }
 
+      // The model may decline when the ask needs data/columns or a feature that
+      // does not exist. Honor that as a CLEAR refusal rather than silently keeping
+      // the chart (which reads to the user as "same output"). Guard against the
+      // model leaking SQL into the refusal text.
+      const refusalText =
+        typeof parsed?.refusal === 'string' ? parsed.refusal.trim() : '';
       const opsIn = Array.isArray(parsed?.widgets) ? parsed.widgets : [];
       const addsIn = Array.isArray(parsed?.add) ? parsed.add : [];
+      if (refusalText && !this.looksLikeSqlText(refusalText)) {
+        const hasRealOps =
+          opsIn.some(
+            (op: any) =>
+              String(op?.action ?? 'update').toLowerCase() !== 'keep' &&
+              (typeof op?.sql === 'string' ? op.sql.trim().length > 0 : false),
+          ) || addsIn.length > 0;
+        if (!hasRealOps) {
+          return {
+            summary: '',
+            add: [],
+            remove_indices: [],
+            modify: [],
+            refusal: refusalText.slice(0, 400),
+          };
+        }
+      }
       if (opsIn.length === 0 && addsIn.length === 0) return null;
 
       // Validate + execute + one self-repair. Returns final scoped SQL or null.
@@ -16328,6 +16648,25 @@ export class AgentService {
       const m = q.match(/(\d+)[\s-]*(?:month|day|period|week)/);
       return { kind: 'moving_average', window: m ? Math.max(2, Math.min(12, Number(m[1]))) : 3 };
     }
+    // Period-over-period growth % (replace each value with its % change vs the
+    // previous period). Distinct from normalize (% of total) and variance ($
+    // change). Must be checked before normalize/variance. "month-over-month",
+    // "MoM", "growth %", "% change", "percentage change", "rate of change".
+    const momPeriod =
+      /\bmonth[\s-]*over[\s-]*month\b|\bm\/m\b|\bmom\b|\bperiod[\s-]*over[\s-]*period\b|\bquarter[\s-]*over[\s-]*quarter\b|\bq\/q\b/.test(
+        q,
+      );
+    const growthPct =
+      /\bgrowth\s*(?:rate|%|percent(?:age)?)\b|\b(?:%|percent(?:age)?)\s*growth\b|\b(?:percent(?:age)?|%)\s*change\b|\bchange\s*(?:%|percent(?:age)?)\b|\brate\s+of\s+change\b/.test(
+        q,
+      );
+    if (
+      (momPeriod && (growthPct || /\bgrowth\b/.test(q))) ||
+      (growthPct &&
+        /\b(replace|show|display|convert|express|as)\b/.test(q) &&
+        !/\bof\s+(?:the\s+)?total\b/.test(q))
+    )
+      return { kind: 'growth_pct' };
     // Variance column ($ change vs the previous period). Period-over-period only —
     // prior-year/prior-quarter against single-year data is handled by the yoy/
     // prior_year refusal above (checked first).
@@ -16364,6 +16703,28 @@ export class AgentService {
     return null;
   }
 
+  // Pure presentation toggle for pie/donut labels (percent ↔ whole values).
+  // Shared by the legacy editor and the spec editor so "change the percentage to
+  // values" works regardless of which path handles the edit.
+  private detectLabelModeEdit(req: string): 'value' | 'percent' | null {
+    const q = String(req ?? '');
+    const wantsValue =
+      /\b(whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?|remove\s+percent(?:age|ages)?|show\s+values?|raw\s+values?)\b/i.test(q) ||
+      /\bneed\s+values?\b/i.test(q) ||
+      /\babsolute\s+values?\b/i.test(q) ||
+      /\bnumbers?\s+instead\s+of\s+percent(?:age|ages)?\b/i.test(q) ||
+      /\bwithout\s+percent(?:age|ages)?\b/i.test(q) ||
+      /\bno\s+percent(?:age|ages)?\b/i.test(q) ||
+      /\bpercent(?:age|ages)?\s+to\s+values?\b/i.test(q);
+    if (wantsValue) return 'value';
+    const wantsPercent =
+      /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(q) ||
+      /\bshow\s+percent(?:age|ages)?\b/i.test(q) ||
+      /\bpercent(?:age|ages)?\s+labels?\b/i.test(q) ||
+      /\bas\s+percent(?:age|ages)?\b/i.test(q);
+    return wantsPercent ? 'percent' : null;
+  }
+
   private detectMatrixDisplayEdit(req: string): DisplayHints | null {
     const q = (req ?? '').toLowerCase();
     if (!q.trim()) return null;
@@ -16387,11 +16748,29 @@ export class AgentService {
     };
     const threshold = parseThreshold();
 
+    // Dynamic "above average" threshold (no fixed number) — e.g. "highlight cells
+    // above department average". Column/row/overall variants.
+    const wantsAvgCompare =
+      /\b(above|over|exceed(?:ing|s)?|greater\s+than|more\s+than|higher\s+than)\b/.test(
+        q,
+      ) && /\baverage|\bmean\b/.test(q);
+    const avgMode: DisplayHints['conditionalThresholdMode'] | null = wantsAvgCompare
+      ? /\brow\s+average\b/.test(q)
+        ? 'rowAverage'
+        : /\b(column|columns)\s+average\b/.test(q) ||
+            /\b(department|dept|class|account|vendor|month|category|each)\b[^.]*\baverage\b/.test(
+              q,
+            )
+          ? 'columnAverage'
+          : 'overallAverage'
+      : null;
+
     const hints: DisplayHints = {};
     if (wantsTotals) hints.showTotals = true;
-    if (wantsHighlight || threshold !== null) {
+    if (wantsHighlight || threshold !== null || avgMode) {
       hints.conditionalColor = 'green';
       if (threshold !== null) hints.conditionalThreshold = threshold;
+      if (avgMode) hints.conditionalThresholdMode = avgMode;
     }
     return Object.keys(hints).length > 0 ? hints : null;
   }
@@ -16506,6 +16885,24 @@ export class AgentService {
         'round(value - anyOrNull(value) OVER (ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING), 2) AS variance';
       return { sql: wrap(proj) };
     }
+
+    if (transform.kind === 'growth_pct') {
+      // REPLACE each value with its period-over-period % change vs the prior row.
+      // Caller guarantees the base is time-ordered (else it refuses). Works for a
+      // single-series chart (value) and for WIDE pivots (one growth column per
+      // series, e.g. a Month×Department matrix → each department's MoM growth %).
+      const pct = (c: string) => {
+        const cur = id(c);
+        const prev = `anyOrNull(${cur}) OVER (ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING)`;
+        return `round((${cur} - ${prev}) / nullIf(${prev}, 0) * 100, 1) AS ${cur}`;
+      };
+      const proj = ['name', ...numeric.map(pct)].join(', ');
+      return {
+        sql: wrap(proj),
+        display: { normalized: true, ...(numeric.length === 1 ? { labelMode: 'percent' } : {}) },
+        yAxisLabel: '% change vs prior period',
+      };
+    }
     return null;
   }
 
@@ -16546,7 +16943,10 @@ export class AgentService {
     const baseIsTimeSeries = (s: string) =>
       !/sample_trial_balance/i.test(s) &&
       /toStartOf(?:Month|Quarter|Year)|formatDateTime|journal_date|\bdate\b/i.test(s);
-    let varianceNoPeriod = false;
+    // variance ($ change) and growth_pct (% change) both need a time-ordered base.
+    const needsPeriod =
+      transform.kind === 'variance' || transform.kind === 'growth_pct';
+    let noPriorPeriod = false;
 
     const modify: DashboardEditPlan['modify'] = [];
     for (let i = 0; i < activeDashboard.widgets.length; i++) {
@@ -16556,8 +16956,8 @@ export class AgentService {
         typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim() ? cfg.dynamicSql.trim() : null;
       if (!sql) continue;
       const chartType = w.chartType as ChartType;
-      if (transform.kind === 'variance' && !baseIsTimeSeries(sql)) {
-        varianceNoPeriod = true;
+      if (needsPeriod && !baseIsTimeSeries(sql)) {
+        noPriorPeriod = true;
         continue;
       }
       const probe = await this.executeDynamicSqlChecked(sql, scope, { chartType }).catch(
@@ -16594,13 +16994,17 @@ export class AgentService {
       });
     }
     if (modify.length === 0) {
-      if (transform.kind === 'variance' && varianceNoPeriod) {
+      if (needsPeriod && noPriorPeriod) {
+        const what =
+          transform.kind === 'growth_pct'
+            ? 'period-over-period growth %'
+            : 'a prior-period variance column';
         return {
           summary: '',
           add: [],
           remove_indices: [],
           modify: [],
-          refusal: `I can't add a prior-period variance column — this is a single-period snapshot (balances have no time dimension), so there's no previous period to compare against. I left the chart unchanged.`,
+          refusal: `I can't add ${what} — this is a single-period snapshot (balances have no time dimension), so there's no previous period to compare against. I left the chart unchanged.`,
         };
       }
       return null;
@@ -16614,6 +17018,7 @@ export class AgentService {
           ? `Added ${transform.second.label} on a secondary axis.`
           : 'Added a secondary axis.',
       variance: 'Added a period-over-period variance column.',
+      growth_pct: 'Replaced values with period-over-period growth %.',
     };
     return {
       summary: summaryByKind[transform.kind] ?? 'Applied the requested transform.',
@@ -16626,6 +17031,167 @@ export class AgentService {
   // Give vocabulary widgets (metric/grouping, no stored SQL) an editable
   // dynamicSql by synthesizing + verifying an equivalent query. Returns a copy of
   // the dashboard with backfilled widgets so follow-up edits can rewrite them.
+  // sample_gl_dump column expressions per pivot axis (mirror of the closure inside
+  // buildExpensePivot) so vocab reconstruction can build the SAME data via a single
+  // WIDE SQL the SQL-first edit pipeline can rewrite.
+  private glPivotAxisExpr(
+    axis: PivotAxis,
+  ): { labelExpr: string; sortExpr: string; notEmpty: string } {
+    switch (axis) {
+      case 'month':
+        return {
+          labelExpr: `formatDateTime(toStartOfMonth(date), '%b %y')`,
+          sortExpr: `toStartOfMonth(date)`,
+          notEmpty: `date IS NOT NULL`,
+        };
+      case 'department':
+        return {
+          labelExpr: `COALESCE(NULLIF(department, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(department, ''), 'Unassigned')`,
+          notEmpty: `department != ''`,
+        };
+      case 'class':
+        return {
+          labelExpr: `COALESCE(NULLIF(class, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(class, ''), 'Unassigned')`,
+          notEmpty: `class != ''`,
+        };
+      case 'vendor':
+        return {
+          labelExpr: `COALESCE(NULLIF(vendor_customer, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(vendor_customer, ''), 'Unassigned')`,
+          notEmpty: `vendor_customer != ''`,
+        };
+      case 'account':
+        return {
+          labelExpr: `COALESCE(NULLIF(account_name, ''), 'Unassigned')`,
+          sortExpr: `COALESCE(NULLIF(account_name, ''), 'Unassigned')`,
+          notEmpty: `account_name != ''`,
+        };
+    }
+  }
+
+  private static readonly PIVOT_AXES: ReadonlySet<string> = new Set([
+    'month',
+    'department',
+    'class',
+    'vendor',
+    'account',
+  ]);
+
+  // Rebuild the EXACT data of a vocabulary expense chart as one WIDE pivot SQL,
+  // derived from its structured metric+grouping (e.g. metric='expense',
+  // grouping='department_class') — NOT guessed from the title. This is what makes
+  // follow-ups on heatmap/treemap/matrix/line charts reliable: the edit pipeline
+  // now has correct, rewritable SQL to transform. Returns null when the pattern
+  // isn't a known expense pivot (caller falls back to title synthesis).
+  private async buildVocabExpenseSql(
+    metric: string,
+    grouping: string,
+    scope: OrgScope,
+  ): Promise<string | null> {
+    const m = String(metric ?? '').toLowerCase();
+    if (m !== 'expense' && m !== 'spend') return null;
+    const parts = String(grouping ?? '')
+      .toLowerCase()
+      .split('_')
+      .filter(Boolean);
+    if (!parts.every((p) => AgentService.PIVOT_AXES.has(p))) return null;
+
+    const SCOPE_WHERE =
+      'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+    const tbl = `${this.analyticsDb}.sample_gl_dump`;
+    const quoteIdent = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+    const quoteLit = (v: string) => `'${String(v).replace(/'/g, "''")}'`;
+
+    // Single-axis expense → simple ranked bar (name + value).
+    if (parts.length === 1) {
+      const ax = this.glPivotAxisExpr(parts[0] as PivotAxis);
+      const order =
+        parts[0] === 'month' ? `${ax.sortExpr} ASC` : `value DESC`;
+      return `SELECT ${ax.labelExpr} AS name, round(sum(toFloat64(debit)), 0) AS value FROM ${tbl} WHERE ${SCOPE_WHERE} AND toFloat64(debit) > 0 AND ${ax.notEmpty} GROUP BY ${ax.sortExpr} ORDER BY ${order} LIMIT 100`;
+    }
+
+    if (parts.length !== 2) return null;
+    const [rowAxis, colAxis] = parts as [PivotAxis, PivotAxis];
+
+    // Determine the actual column set (sorted by spend, capped) the same way the
+    // vocab renderer does, so the WIDE SQL columns match what the chart shows.
+    const pivot = await this.buildExpensePivot(
+      rowAxis,
+      colAxis,
+      scope,
+      {},
+      undefined,
+    ).catch(() => null);
+    const colValues = (pivot?.keys ?? []).filter(
+      (k) => typeof k === 'string' && k.length > 0,
+    );
+    if (colValues.length === 0) return null;
+
+    const row = this.glPivotAxisExpr(rowAxis);
+    const col = this.glPivotAxisExpr(colAxis);
+    const seriesCols = colValues
+      .map(
+        (v) =>
+          `round(sumIf(toFloat64(debit), ${col.labelExpr} = ${quoteLit(v)}), 0) AS ${quoteIdent(v)}`,
+      )
+      .join(', ');
+    const order =
+      rowAxis === 'month'
+        ? `${row.sortExpr} ASC`
+        : `sum(toFloat64(debit)) DESC`;
+    const rowLimit = rowAxis === 'month' ? 24 : 50;
+    return `SELECT ${row.labelExpr} AS name, ${seriesCols} FROM ${tbl} WHERE ${SCOPE_WHERE} AND toFloat64(debit) > 0 AND ${row.notEmpty} AND ${col.notEmpty} GROUP BY ${row.sortExpr} ORDER BY ${order} LIMIT ${rowLimit}`;
+  }
+
+  // Reconstruct waterfall (metric='pl') and KPI (metric='summary') vocab charts as
+  // editable name/value SQL over the trial balance — mirroring the exact P&L
+  // formulas the vocab handlers use (Revenue, -COGS, Gross Profit, -OpEx, Net
+  // Income). Lets follow-ups convert/edit these charts instead of silently no-op.
+  private buildVocabPnlSql(
+    metric: string,
+    grouping: string,
+    scope: OrgScope,
+  ): string | null {
+    if (scope.externalOrgIds.length === 0) return null;
+    const m = String(metric ?? '').toLowerCase();
+    const g = String(grouping ?? '').toLowerCase();
+    const tb = `${this.analyticsDb}.sample_trial_balance`;
+    const SCOPE =
+      'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+    const rev = `abs(sumIf(toFloat64(net_balance), account_type = 'Income'))`;
+    const cogs = `sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold')`;
+    const opex = `sumIf(toFloat64(net_balance), account_type = 'Expense')`;
+    const branch = (label: string, expr: string, ord: number) =>
+      `SELECT '${label}' AS name, round(${expr}, 0) AS value, ${ord} AS ord FROM ${tb} WHERE ${SCOPE}`;
+
+    if (m === 'pl' && g === 'summary') {
+      const rows = [
+        branch('Revenue', rev, 1),
+        branch('Cost of Goods Sold', `-${cogs}`, 2),
+        branch('Gross Profit', `${rev} - ${cogs}`, 3),
+        branch('Operating Expenses', `-${opex}`, 4),
+        branch('Net Income', `${rev} - ${cogs} - ${opex}`, 5),
+      ];
+      return `SELECT name, value FROM (\n${rows.join('\n  UNION ALL ')}\n) ORDER BY ord ASC LIMIT 10`;
+    }
+
+    if (
+      (m === 'summary' && g === 'overview') ||
+      (m === 'pl_comparison' && g === 'summary')
+    ) {
+      const rows = [
+        branch('Total Revenue', rev, 1),
+        branch('Total Expenses', `${opex} + ${cogs}`, 2),
+        branch('Gross Profit', `${rev} - ${cogs}`, 3),
+        branch('Net Income', `${rev} - ${cogs} - ${opex}`, 4),
+      ];
+      return `SELECT name, value FROM (\n${rows.join('\n  UNION ALL ')}\n) ORDER BY ord ASC LIMIT 10`;
+    }
+    return null;
+  }
+
   private async backfillVocabSql(
     ad: ActiveDashboard,
     scope: OrgScope,
@@ -16635,12 +17201,23 @@ export class AgentService {
         const cfg = (w.queryConfig as any) ?? {};
         if (typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim()) return w;
         if (!cfg.metric && !cfg.grouping) return w;
-        const sql = await this.generateDynamicSql(
-          w.title,
-          w.title,
-          scope,
-          undefined,
-        ).catch(() => null);
+        // Prefer deterministic reconstruction from the structured metric+grouping
+        // (correct columns, no title guessing); fall back to title synthesis.
+        const reconstructed =
+          (await this.buildVocabExpenseSql(
+            cfg.metric,
+            cfg.grouping,
+            scope,
+          ).catch(() => null)) ??
+          this.buildVocabPnlSql(cfg.metric, cfg.grouping, scope);
+        const sql =
+          reconstructed ??
+          (await this.generateDynamicSql(
+            w.title,
+            w.title,
+            scope,
+            undefined,
+          ).catch(() => null));
         if (!sql) return w;
         const r = await this.executeDynamicSqlChecked(sql, scope, {
           chartType: w.chartType as ChartType,
@@ -16664,6 +17241,179 @@ export class AgentService {
     return { ...ad, widgets };
   }
 
+  // ─── Phase 3: spec-first editor (behind AGENT_SPEC_MODE flag) ───────────────
+  // A follow-up on a spec-backed chart is a DELTA on its stored ChartSpec: the LLM
+  // returns the updated spec (catalog-constrained), we recompile to SQL. No SQL
+  // rewriting, no regex transform detection, no vocab/dynamic split. Returns a
+  // DashboardEditPlan (change or refusal), or null when no widget has a spec / the
+  // LLM is unavailable → caller falls back to the legacy editor.
+  // A clean, human sentence describing what an edit actually changed (for the chat
+  // summary) — derived from the spec diff, no internal mechanics.
+  private describeSpecChange(
+    prev: ChartSpec,
+    next: ChartSpec,
+    labelMode: 'value' | 'percent' | null,
+  ): string {
+    const tname = (t: any) => (typeof t === 'string' ? t : t?.kind);
+    const TLABEL: Record<string, string> = {
+      normalize: 'normalized it to 100% of the total',
+      growth_pct: 'switched to period-over-period growth %',
+      moving_average: 'added a moving average',
+      reference_line: 'added an average reference line',
+    };
+    const bits: string[] = [];
+    if (next.chartType !== prev.chartType)
+      bits.push(`switched it to a ${this.humanizeChartType(next.chartType) ?? next.chartType}`);
+    if (next.measure !== prev.measure)
+      bits.push(`now showing ${(CATALOG.MEASURES[next.measure]?.label ?? next.measure).toLowerCase()}`);
+    if (next.dimension !== prev.dimension)
+      bits.push(`grouped by ${CATALOG.DIMENSIONS[next.dimension]?.label?.toLowerCase() ?? next.dimension}`);
+    if ((next.breakdown ?? null) !== (prev.breakdown ?? null))
+      bits.push(next.breakdown ? `broken down by ${CATALOG.DIMENSIONS[next.breakdown]?.label?.toLowerCase() ?? next.breakdown}` : 'removed the breakdown');
+    if ((next.topN ?? null) !== (prev.topN ?? null) && next.topN)
+      bits.push(`limited to the top ${next.topN}`);
+    const oldT = (prev.transforms ?? []).map(tname);
+    for (const t of (next.transforms ?? []).map(tname))
+      if (t && !oldT.includes(t)) bits.push(TLABEL[t] ?? String(t));
+    if (next.having && !prev.having) bits.push('applied a value threshold');
+    if (labelMode === 'value') bits.push('showing values instead of percentages');
+    else if (labelMode === 'percent') bits.push('showing percentages');
+    if (bits.length === 0) return 'Refreshed the chart.';
+    const s = bits.join(', ');
+    return s.charAt(0).toUpperCase() + s.slice(1) + '.';
+  }
+
+  private async generateSpecEditPlan(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+    conversationHistory?: string,
+  ): Promise<DashboardEditPlan | null> {
+    try {
+      const targets = activeDashboard.widgets
+        .map((w, index) => ({ w, index, spec: (w.queryConfig as any)?.spec as ChartSpec | undefined }))
+        .filter((t) => t.spec && typeof t.spec === 'object');
+      if (targets.length === 0) return null;
+
+      // Recognized analytical transforms (moving average, normalize, growth %,
+      // variance, reference line, second axis, YoY/prior-year) are applied/refused
+      // RELIABLY by the deterministic transform builder — the spec-editor LLM tends
+      // to echo the spec without adding them, yielding a silent no-op. Defer those.
+      if (this.detectFollowUpTransform(editRequest)) return null;
+
+      const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => null);
+      if (!ping?.ok) return null;
+
+      const history =
+        conversationHistory && !conversationHistory.includes('(No prior')
+          ? `\nCONVERSATION SO FAR:\n${conversationHistory.slice(0, 500)}\n`
+          : '';
+      // Presentation-only intent (pie/donut label mode, matrix highlighting) that
+      // the ChartSpec doesn't model — apply it on top of any spec delta so display
+      // edits ("change the percentage to values") aren't dropped in spec mode.
+      const labelMode = this.detectLabelModeEdit(editRequest);
+      const matrixHints = this.detectMatrixDisplayEdit(editRequest);
+
+      const modify: DashboardEditPlan['modify'] = [];
+      let changeSummary = '';
+
+      for (const t of targets) {
+        const userMsg =
+          `${catalogPromptText()}\n${history}\nCURRENT SPEC: ${JSON.stringify(t.spec)}\n` +
+          `USER CHANGE: "${editRequest}"\nReturn the updated spec JSON now.`;
+        const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(60_000),
+          body: JSON.stringify({
+            model: this.OLLAMA_MODEL,
+            messages: [
+              { role: 'system', content: SPEC_EDITOR_SYSTEM },
+              { role: 'user', content: userMsg },
+            ],
+            stream: false,
+            options: { temperature: 0.05, num_predict: 600 },
+          }),
+        });
+        if (!resp.ok) continue;
+        const body = (await resp.json()) as { message?: { content?: string } };
+        const rawText = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
+        let parsed: any;
+        try {
+          parsed = JSON.parse(rawText);
+        } catch {
+          const m = rawText.match(/\{[\s\S]*\}/);
+          if (!m) continue;
+          parsed = JSON.parse(m[0]);
+        }
+
+        // Spec mode is ADDITIVE: if it can't model the edit (the model declined,
+        // an unmodeled type, or the compile can't satisfy it), DEFER to the legacy
+        // editor (which has variance/second-axis/threshold-filter/explode-drill/
+        // matrix-format + its own honest refusals). Never refuse from here.
+        if (typeof parsed?.refusal === 'string' && parsed.refusal.trim() && !parsed?.spec)
+          continue;
+        const newSpec = parsed?.spec as ChartSpec | undefined;
+        if (!newSpec || typeof newSpec !== 'object') continue;
+        if (!this.specCanModelChart(newSpec)) continue;
+
+        // Did the spec actually change? If the model echoed the same spec with no
+        // presentation delta either, it couldn't model the edit → defer to legacy
+        // (prevents a silent no-op that claims success).
+        const specChanged = JSON.stringify(newSpec) !== JSON.stringify(t.spec);
+        if (!specChanged && !labelMode && !matrixHints) continue;
+
+        const compiled = await compileSpec(newSpec, this.analyticsDb, (sql) =>
+          this.queryRows<Record<string, unknown>>(sql, {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+          }),
+        );
+        if (!compiled.ok) continue;
+        const nextType = (newSpec.chartType ?? t.w.chartType) as ChartType;
+        // NO-OP GUARD: if the recompiled SQL is identical to what's already on the
+        // chart and there's no type/label change, the "edit" changed nothing —
+        // defer to legacy instead of claiming success ("Refreshed the chart").
+        const curSql = String((t.w.queryConfig as any)?.dynamicSql ?? '').trim();
+        const sameSql = curSql && curSql === compiled.sql.trim();
+        const sameType = String(t.w.chartType) === String(nextType);
+        if (sameSql && sameType && !labelMode && !matrixHints) continue;
+        const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+          chartType: nextType,
+        }).catch(() => null);
+        if (!check || check.error || check.rows.length === 0) continue;
+        if (this.detectBadChartShape(check.rows, nextType)) continue;
+
+        const ct = String(nextType).toLowerCase();
+        const display: DisplayHints | undefined =
+          labelMode && (ct === 'pie' || ct === 'donut')
+            ? { labelMode }
+            : matrixHints && (ct === 'matrix' || ct === 'heatmap')
+              ? matrixHints
+              : undefined;
+        if (!changeSummary) changeSummary = this.describeSpecChange(t.spec!, newSpec, labelMode);
+        modify.push({
+          index: t.index,
+          type: nextType,
+          dynamicSql: compiled.sql,
+          spec: newSpec,
+          ...(display ? { display } : {}),
+        });
+      }
+
+      if (modify.length > 0) {
+        this.logger.log(`[SpecEdit] ${modify.length} chart(s) re-specced for: "${editRequest.slice(0, 50)}"`);
+        return { summary: changeSummary || 'Updated the chart.', add: [], remove_indices: [], modify };
+      }
+      return null; // couldn't model it → defer to the legacy editor
+    } catch (err: any) {
+      this.logger.warn(`[SpecEdit] failed: ${err?.message ?? err}`);
+      return null;
+    }
+  }
+
   private async generateEditPlan(
     activeDashboard: ActiveDashboard,
     editRequest: string,
@@ -16671,6 +17421,18 @@ export class AgentService {
     range?: TimeRange,
     conversationHistory?: string,
   ): Promise<DashboardEditPlan> {
+    // Phase-3 opt-in: if any chart carries a ChartSpec, edit the spec (delta) and
+    // recompile. Default-off; existing edit path untouched until the flag is set.
+    if (process.env.AGENT_SPEC_MODE === '1' && scope) {
+      const specEdit = await this.generateSpecEditPlan(
+        activeDashboard,
+        editRequest,
+        scope,
+        conversationHistory,
+      ).catch(() => null);
+      if (specEdit) return specEdit;
+    }
+
     const unsupportedFeature = this.detectUnsupportedFeature(editRequest);
     if (unsupportedFeature) {
       return {
@@ -16679,6 +17441,20 @@ export class AgentService {
         remove_indices: [],
         modify: [],
         refusal: `${unsupportedFeature.label} is not currently supported, so I left the existing chart unchanged. ${unsupportedFeature.alternativeValue}`,
+      };
+    }
+
+    // General missing-DATA net: refuse clearly (never fabricate columns) when the
+    // follow-up needs data the dataset simply does not contain. This is the cheap
+    // deterministic backstop; the data-aware SQL editor refuses the long tail.
+    const unavailableData = this.detectUnavailableData(editRequest);
+    if (unavailableData) {
+      return {
+        summary: '',
+        add: [],
+        remove_indices: [],
+        modify: [],
+        refusal: unavailableData,
       };
     }
 
@@ -16773,10 +17549,20 @@ export class AgentService {
         });
       if (matrixTargets.length === 0) return plan;
 
+      const avgLabel =
+        matrixDisplayHints.conditionalThresholdMode === 'columnAverage'
+          ? 'above the column average'
+          : matrixDisplayHints.conditionalThresholdMode === 'rowAverage'
+            ? 'above the row average'
+            : matrixDisplayHints.conditionalThresholdMode === 'overallAverage'
+              ? 'above the overall average'
+              : null;
       const summarySuffix =
         matrixDisplayHints.conditionalThreshold != null
           ? `Highlighted matrix cells above ${matrixDisplayHints.conditionalThreshold.toLocaleString()} in green and kept row/column totals visible.`
-          : 'Kept matrix row and column totals visible.';
+          : avgLabel
+            ? `Highlighted matrix cells ${avgLabel} in green.`
+            : 'Kept matrix row and column totals visible.';
       plan.summary = plan.summary
         ? `${plan.summary} ${summarySuffix}`
         : summarySuffix;
@@ -16892,12 +17678,23 @@ export class AgentService {
       })
       .join('\n');
 
-    const editFallback: DashboardEditPlan = {
-      summary: 'Applied requested changes',
+    // HONESTY: when no real change can be produced we must NOT claim success
+    // (that is the "same output" the testers keep flagging). Say so plainly and
+    // leave the chart untouched, prompting the user to rephrase.
+    const honestNoChange: DashboardEditPlan = {
+      summary: '',
       add: [],
       remove_indices: [],
       modify: [],
+      refusal:
+        "I wasn't able to apply that change to the existing chart. Could you rephrase what you'd like — for example the metric, dimension, time range, filter, sort order, top-N, or chart type?",
     };
+    // A plan that actually changes something has at least one of these.
+    const planHasRealChange = (p: DashboardEditPlan): boolean =>
+      (Array.isArray(p.modify) && p.modify.length > 0) ||
+      (Array.isArray(p.add) && p.add.length > 0) ||
+      (Array.isArray(p.remove_indices) && p.remove_indices.length > 0) ||
+      Boolean(p.refusal);
 
     try {
       const controller = new AbortController();
@@ -16931,7 +17728,7 @@ export class AgentService {
       });
       clearTimeout(timeout);
 
-      if (!response.ok) return editFallback;
+      if (!response.ok) return honestNoChange;
 
       const body = (await response.json()) as {
         message?: { content?: string };
@@ -16971,12 +17768,15 @@ export class AgentService {
         (m) => m.index >= 0 && m.index < activeDashboard.widgets.length,
       );
 
+      // Honesty guard: if the vocabulary editor produced nothing actionable,
+      // refuse clearly instead of silently reporting "Applied requested changes".
+      if (!planHasRealChange(parsed)) return honestNoChange;
       return parsed;
     } catch (err: any) {
       this.logger.warn(
         `[Agent:Editor] Edit plan parse failed (${err.message})`,
       );
-      return editFallback;
+      return honestNoChange;
     }
   }
 
@@ -17088,6 +17888,8 @@ export class AgentService {
           nextConfig.dynamicSql = mod.dynamicSql!.trim();
           nextConfig.metric = 'dynamic';
           nextConfig.grouping = 'query';
+          // Phase 3: keep the updated spec next to the SQL it compiled from.
+          if (mod.spec) nextConfig.spec = mod.spec as unknown as Prisma.InputJsonValue;
         }
         if (!hasNewSql && typeof mod.metric === 'string' && mod.metric.trim()) {
           nextConfig.metric = mod.metric.trim();
@@ -18656,8 +19458,49 @@ Output SQL ONLY — no explanation, no markdown.`;
    * 1. `ORDER BY alias` where alias shadows a column name → expand to full expression
    * 2. lag()/lead() window functions → not supported, remove or simplify
    */
+  // A scalar function can't carry a window: `abs(sumIf(...)) OVER ()` is invalid
+  // (ClickHouse: "Aggregate function abs does not exist"). The window belongs on
+  // the AGGREGATE, so rewrite f(agg(...)) OVER (win) → f(agg(...) OVER (win)).
+  // The LLM writes this often for share-of-total; fix it deterministically so it
+  // never errors / needs the slow self-repair round-trip.
+  private fixScalarWindowWrap(sql: string): string {
+    const scalarFns = ['abs', 'round', 'floor', 'ceil', 'toFloat64', 'toFloat32'];
+    let out = sql;
+    for (const fn of scalarFns) {
+      const re = new RegExp(`\\b${fn}\\s*\\(`, 'gi');
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(out)) !== null) {
+        const open = m.index + m[0].length - 1; // index of '('
+        let depth = 1;
+        let i = open + 1;
+        for (; i < out.length && depth > 0; i++) {
+          if (out[i] === '(') depth++;
+          else if (out[i] === ')') depth--;
+        }
+        const close = i - 1; // matching ')' of fn(...)
+        const after = out.slice(close + 1);
+        const over = after.match(/^(\s*OVER\s*\()/i);
+        if (!over) continue;
+        // find the window's matching ')'
+        let d2 = 1;
+        let j = close + 1 + over[0].length;
+        for (; j < out.length && d2 > 0; j++) {
+          if (out[j] === '(') d2++;
+          else if (out[j] === ')') d2--;
+        }
+        const winClose = j - 1;
+        const inner = out.slice(open + 1, close);
+        const overClause = out.slice(close + 1, winClose + 1); // " OVER (...)"
+        const rebuilt = `${fn}(${inner}${overClause})`;
+        out = out.slice(0, m.index) + rebuilt + out.slice(winClose + 1);
+        re.lastIndex = m.index + rebuilt.length;
+      }
+    }
+    return out;
+  }
+
   private repairClickHouseSql(sql: string): string {
-    let fixed = sql;
+    let fixed = this.fixScalarWindowWrap(sql);
 
     // ── 1. Fix alias-shadowing (ClickHouse new analyzer bug) ─────────────────────────────────
     // When COALESCE(NULLIF(department,''),'Other') is aliased AS department, ClickHouse's
@@ -19272,11 +20115,12 @@ Output SQL ONLY — no explanation, no markdown.`;
     const formatUsd = (n: number) =>
       `$${this.fmtK(Math.max(0, Math.round(n)))}`;
 
+    const chartWord = meta.widgetCount === 1 ? 'chart' : 'charts';
     const action =
       meta.intent === 'EDIT_DASHBOARD'
-        ? `Updated your dashboard "${meta.dashboardTitle}" with ${meta.widgetCount} charts.`
+        ? `Updated **${meta.dashboardTitle}**.`
         : meta.dashboardTitle
-          ? `Built your dashboard "${meta.dashboardTitle}" with ${meta.widgetCount} charts.`
+          ? `Built **${meta.dashboardTitle}** — ${meta.widgetCount} ${chartWord}.`
           : `Analyzed your data and prepared a dashboard plan.`;
 
     const metricSentence = (() => {
@@ -19432,9 +20276,13 @@ Output SQL ONLY — no explanation, no markdown.`;
       );
     })();
 
+    // Skip a generic editor summary ("Updated the chart") — the action line
+    // already says we updated it; only append a summary that adds real detail.
+    const editDetail = (meta.editSummary ?? '').replace(/[.\s]+$/, '');
+    const editIsGeneric = /^updated (your |the )?chart$/i.test(editDetail);
     const sentence3 =
-      meta.editSummary && meta.intent === 'EDIT_DASHBOARD'
-        ? `Change applied: ${meta.editSummary}.`
+      editDetail && !editIsGeneric && meta.intent === 'EDIT_DASHBOARD'
+        ? `${editDetail}.`
         : highlightSentence;
 
     // Maximum 3 sentences. Never invent numbers — everything above is derived from tool results.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -18,7 +18,16 @@ import {
   ExternalLink,
   Maximize2,
   X,
+  Download,
+  FileText,
+  Search,
+  ArrowUpDown,
+  LayoutGrid,
+  Rows3,
 } from "lucide-react";
+import { toast } from "sonner";
+import ChartExportMenu from "../_components/ChartExportMenu";
+import { exportDashboardCsv, exportDashboardPdf } from "../_lib/chartExport";
 import {
   AreaChart,
   Area,
@@ -87,6 +96,8 @@ function inferNumericSeriesKeys(rows: ChartData): string[] {
   }
 
   return Array.from(totals.entries())
+    // Drop all-zero/empty series so a flat-zero line/bar never renders as a broken chart.
+    .filter(([, total]) => total > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([k]) => k);
 }
@@ -249,6 +260,7 @@ function ChartRenderer({
   grouping: string;
   display?: {
     conditionalThreshold?: number | null;
+    conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null;
     conditionalColor?: "green" | null;
   } | null;
 }) {
@@ -692,12 +704,8 @@ function ChartRenderer({
       typeof display?.conditionalThreshold === "number"
         ? display.conditionalThreshold
         : null;
-    const cellTheme = (value: number) => {
-      if (
-        conditionalThreshold !== null &&
-        value >= conditionalThreshold &&
-        display?.conditionalColor === "green"
-      ) {
+    const cellTheme = (value: number, highlight: boolean) => {
+      if (highlight && display?.conditionalColor === "green") {
         return { bg: "#16a34a", fg: "#ffffff" };
       }
       const intensity = Math.min(1, Math.abs(value) / maxVal);
@@ -722,6 +730,23 @@ function ChartRenderer({
       rows.reduce((sum, row) => sum + (Number((row as any)[key]) || 0), 0),
     );
     const grandTotal = rowTotals.reduce((sum, value) => sum + value, 0);
+
+    // Dynamic "above average" conditional highlight (column / row / overall mean).
+    const conditionalMode = display?.conditionalThresholdMode ?? null;
+    const colAverages: Record<string, number> = {};
+    colKeys.forEach((key, i) => {
+      colAverages[key] = rows.length ? (colTotals[i] ?? 0) / rows.length : 0;
+    });
+    const overallAverage =
+      rows.length && colKeys.length ? grandTotal / (rows.length * colKeys.length) : 0;
+    const shouldHighlight = (value: number, colKey: string, rowAvg: number) => {
+      if (display?.conditionalColor !== "green") return false;
+      if (conditionalThreshold !== null) return value >= conditionalThreshold;
+      if (conditionalMode === "columnAverage") return value > (colAverages[colKey] ?? 0);
+      if (conditionalMode === "rowAverage") return value > rowAvg;
+      if (conditionalMode === "overallAverage") return value > overallAverage;
+      return false;
+    };
 
     return (
       <div style={{ height: h, width: "100%", overflowX: "auto" }}>
@@ -762,6 +787,10 @@ function ChartRenderer({
           <tbody>
             {rows.map((row, rowIndex) => {
               const rowLabel = String((row as any).name ?? `Row ${rowIndex + 1}`);
+              const rowAvg = colKeys.length
+                ? colKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0) /
+                  colKeys.length
+                : 0;
               return (
                 <tr key={rowLabel}>
                   <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-semibold text-text-muted shadow-sm">
@@ -769,7 +798,7 @@ function ChartRenderer({
                   </th>
                   {colKeys.map((key) => {
                     const value = Number((row as any)[key]) || 0;
-                    const theme = cellTheme(value);
+                    const theme = cellTheme(value, shouldHighlight(value, key, rowAvg));
                     return (
                       <td
                         key={key}
@@ -844,15 +873,21 @@ function ExpandedDashboard({
   chartData,
   loading,
   onZoom,
+  density = "comfortable",
 }: {
   dashboard: WorkspaceDashboardSummary;
   chartData: Record<string, ChartData>;
   loading: boolean;
   onZoom: (next: ZoomChartState) => void;
+  density?: "comfortable" | "compact";
 }) {
+  const gridCols =
+    density === "compact"
+      ? "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+      : "grid-cols-1 md:grid-cols-2";
   if (loading) {
     return (
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className={`mt-4 grid gap-4 ${gridCols}`}>
         {dashboard.charts.map((c) => (
           <motion.div
             key={c.id}
@@ -872,7 +907,7 @@ function ExpandedDashboard({
   }
 
   return (
-    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+    <div className={`mt-4 grid gap-4 ${gridCols}`}>
       {dashboard.charts.map((chart, i) => {
         const data = chartData[chart.id] ?? [];
         const description = (chart.chartConfig as any)?.description as string | undefined;
@@ -949,14 +984,24 @@ function ExpandedDashboard({
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <InsightPill type={chart.type} data={data} />
-                <span className="rounded-lg border border-default bg-bg-elevated/40 p-1 text-text-muted opacity-0 transition-opacity group-hover:opacity-100">
+                {data.length > 0 && (
+                  <ChartExportMenu
+                    canvasId={chart.id}
+                    nameParts={[dashboard.title, chart.title]}
+                    data={data}
+                  />
+                )}
+                <span
+                  title="Expand chart"
+                  className="rounded-lg border border-default bg-bg-elevated/40 p-1 text-text-muted opacity-0 transition-opacity group-hover:opacity-100"
+                >
                   <Maximize2 size={12} />
                 </span>
               </div>
             </div>
-            <div className="pointer-events-none">
+            <div className="pointer-events-none" id={`chart-canvas-${chart.id}`}>
               {data.length === 0 ? (
                 <div className="flex h-[200px] items-center justify-center rounded-xl bg-bg-elevated/30">
                   <p className="text-xs text-text-muted">No data available</p>
@@ -999,6 +1044,27 @@ export function DashboardsPage() {
     Record<string, Record<string, ChartData>>
   >({});
   const [loadingCharts, setLoadingCharts] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"recent" | "name" | "charts">("recent");
+  const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
+
+  const visibleDashboards = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = q
+      ? savedDashboards.filter(
+          (d) =>
+            d.title.toLowerCase().includes(q) ||
+            (d.description ?? "").toLowerCase().includes(q),
+        )
+      : savedDashboards;
+    return [...list].sort((a, b) => {
+      if (sortBy === "name") return a.title.localeCompare(b.title);
+      if (sortBy === "charts") return (b.charts?.length ?? 0) - (a.charts?.length ?? 0);
+      return (
+        new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime()
+      );
+    });
+  }, [savedDashboards, search, sortBy]);
 
   async function loadSavedDashboards() {
     setSavedLoadState("loading");
@@ -1040,12 +1106,14 @@ export function DashboardsPage() {
     try {
       await dashboards.refresh(dashboardId);
       await loadSavedDashboards();
+      toast.success("Dashboard refreshed");
     } catch (caught) {
       const message =
         caught instanceof ApiError
           ? caught.toUserMessage("We couldn't refresh that dashboard right now.")
           : "We couldn't refresh that dashboard right now.";
       setSavedError(message);
+      toast.error(message);
     } finally {
       setRefreshingId(null);
     }
@@ -1122,14 +1190,24 @@ export function DashboardsPage() {
                     </p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setZoomChart(null)}
-                  className="rounded-xl border border-default bg-bg-elevated/40 p-2 text-text-muted transition-colors hover:border-accent-violet/25 hover:text-text-primary"
-                  title="Close"
-                >
-                  <X size={14} />
-                </button>
+                <div className="flex items-center gap-2">
+                  {zoomChart.data.length > 0 && (
+                    <ChartExportMenu
+                      canvasId={`zoom-${zoomChart.chart.id}`}
+                      nameParts={[zoomChart.dashboardTitle, zoomChart.chart.title]}
+                      data={zoomChart.data}
+                      size="md"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setZoomChart(null)}
+                    className="rounded-xl border border-default bg-bg-elevated/40 p-2 text-text-muted transition-colors hover:border-accent-violet/25 hover:text-text-primary"
+                    title="Close"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
               </div>
 
               <div className="p-5">
@@ -1138,7 +1216,10 @@ export function DashboardsPage() {
                     <p className="text-sm text-text-muted">No data available</p>
                   </div>
                 ) : (
-                  <div className="rounded-2xl border border-default bg-bg-elevated/20 p-3">
+                  <div
+                    className="rounded-2xl border border-default bg-bg-elevated/20 p-3"
+                    id={`chart-canvas-zoom-${zoomChart.chart.id}`}
+                  >
                     <ChartRenderer
                       type={zoomChart.chart.type}
                       data={zoomChart.data}
@@ -1231,7 +1312,57 @@ export function DashboardsPage() {
               }
             />
           ) : (
-            savedDashboards.slice(0, 8).map((item, listIdx) => {
+            <>
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <div className="relative min-w-[180px] flex-1">
+                  <Search
+                    size={14}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
+                  />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search dashboards…"
+                    className="w-full rounded-lg border border-default bg-bg-elevated/40 py-2 pl-9 pr-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent-violet/40"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 rounded-lg border border-default bg-bg-elevated/40 px-2.5 py-1.5">
+                  <ArrowUpDown size={13} className="text-text-muted" />
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                    className="cursor-pointer bg-transparent text-xs text-text-secondary outline-none"
+                  >
+                    <option value="recent">Recently updated</option>
+                    <option value="name">Name (A–Z)</option>
+                    <option value="charts">Most charts</option>
+                  </select>
+                </div>
+                <div className="flex items-center rounded-lg border border-default bg-bg-elevated/40 p-0.5">
+                  <button
+                    type="button"
+                    title="Comfortable view"
+                    onClick={() => setDensity("comfortable")}
+                    className={`rounded-md p-1.5 transition-colors ${density === "comfortable" ? "bg-accent-violet/15 text-accent-violet" : "text-text-muted hover:text-text-primary"}`}
+                  >
+                    <LayoutGrid size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    title="Compact view"
+                    onClick={() => setDensity("compact")}
+                    className={`rounded-md p-1.5 transition-colors ${density === "compact" ? "bg-accent-violet/15 text-accent-violet" : "text-text-muted hover:text-text-primary"}`}
+                  >
+                    <Rows3 size={13} />
+                  </button>
+                </div>
+              </div>
+              {visibleDashboards.length === 0 ? (
+                <p className="py-10 text-center text-sm text-text-muted">
+                  No dashboards match “{search}”.
+                </p>
+              ) : (
+                visibleDashboards.map((item, listIdx) => {
               const isExpanded = expandedId === item.id;
               const isLoadingThis = loadingCharts === item.id;
 
@@ -1280,6 +1411,60 @@ export function DashboardsPage() {
                       </div>
 
                       <div className="flex shrink-0 items-center gap-2">
+                        {isExpanded &&
+                          item.charts.some(
+                            (c) =>
+                              ((chartDataCache[item.id] ?? {})[c.id]?.length ?? 0) > 0,
+                          ) && (
+                            <>
+                              <button
+                                type="button"
+                                title="Export all chart data as CSV"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const dd = chartDataCache[item.id] ?? {};
+                                  exportDashboardCsv(
+                                    item.title,
+                                    item.charts.map((c) => ({
+                                      title: c.title,
+                                      rows: dd[c.id] ?? [],
+                                    })),
+                                  );
+                                  toast.success("Dashboard data exported (CSV)");
+                                }}
+                                className="flex items-center gap-1 rounded-lg border border-default px-2 py-1 text-[10px] font-medium text-text-muted transition-colors hover:border-accent-violet/30 hover:text-accent-violet"
+                              >
+                                <Download size={10} />
+                                CSV
+                              </button>
+                              <button
+                                type="button"
+                                title="Export the whole dashboard as a PDF"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const t = toast.loading("Building PDF…");
+                                  try {
+                                    const n = await exportDashboardPdf(
+                                      item.title,
+                                      item.charts.map((c) => ({ id: c.id, title: c.title })),
+                                    );
+                                    toast[n > 0 ? "success" : "error"](
+                                      n > 0
+                                        ? `PDF exported (${n} chart${n === 1 ? "" : "s"})`
+                                        : "Nothing to export",
+                                      { id: t },
+                                    );
+                                  } catch {
+                                    toast.error("PDF export failed", { id: t });
+                                  }
+                                }}
+                                className="flex items-center gap-1 rounded-lg border border-default px-2 py-1 text-[10px] font-medium text-text-muted transition-colors hover:border-accent-violet/30 hover:text-accent-violet"
+                              >
+                                <FileText size={10} />
+                                PDF
+                              </button>
+                            </>
+                          )}
                         <button
                           type="button"
                           title="Continue editing in Astra"
@@ -1337,6 +1522,7 @@ export function DashboardsPage() {
                             chartData={chartDataCache[item.id] ?? {}}
                             loading={isLoadingThis}
                             onZoom={setZoomChart}
+                            density={density}
                           />
                         </div>
                       </motion.div>
@@ -1344,7 +1530,9 @@ export function DashboardsPage() {
                   </AnimatePresence>
                 </motion.div>
               );
-            })
+                })
+              )}
+            </>
           )}
         </div>
       </div>

@@ -74,6 +74,7 @@ interface ChartConfig {
     secondaryLabel?: string | null; // combo second-measure label
     showTotals?: boolean | null; // matrix/heatmap totals are rendered when true/default
     conditionalThreshold?: number | null; // matrix cells at/above this value use conditional color
+    conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null; // dynamic "above average" highlight
     conditionalColor?: "green" | null;
   } | null;
 }
@@ -191,6 +192,10 @@ function inferNumericSeriesKeys(rows: DataRow[]): string[] {
   }
 
   return Array.from(totals.entries())
+    // Drop series that are zero/empty in every row — they add a flat-zero line or
+    // bar (e.g. a date-null vendor, or a split the data doesn't have) and read as
+    // a broken chart. A series with no data shouldn't be plotted.
+    .filter(([, total]) => total > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([k]) => k);
 }
@@ -497,13 +502,17 @@ function ChartInsight({ type, data }: { type: string; data: DataRow[] }) {
   }
 
   if (type === "pie") {
-    const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
-    if (total === 0 || data.length === 0) return null;
-    const maxEntry = data.reduce(
+    // The pie renders only positive slices (share of magnitude). The caption MUST
+    // use the same basis — otherwise mixed-sign data (e.g. a balance sheet with
+    // negative liabilities) collapses the total and yields nonsense like "488%".
+    const positives = data.filter((d) => (Number(d.value) || 0) > 0);
+    const total = positives.reduce((s, d) => s + (Number(d.value) || 0), 0);
+    if (total === 0 || positives.length === 0) return null;
+    const maxEntry = positives.reduce(
       (a, b) => (Number(a.value) >= Number(b.value) ? a : b),
-      data[0]!,
+      positives[0]!,
     );
-    const pct = ((Number(maxEntry.value) / total) * 100).toFixed(0);
+    const pct = Math.min(100, (Number(maxEntry.value) / total) * 100).toFixed(0);
     const name = String(maxEntry.name ?? "").slice(0, 20);
     return (
       <div className="flex min-w-0 items-center gap-1 text-[10px] text-text-muted">
@@ -1366,19 +1375,33 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   }
 
   if (chart.type === "scatter") {
-    // Detect x/y keys from data: prefer explicit x/y, fall back to first two numeric keys
+    // ClickHouse returns counts as strings ("154"), so a typeof===number check
+    // wrongly rejected x/y and the renderer reordered axes by magnitude (swapping
+    // spend↔count) and labelled the axis with the raw key "y". Coerce to numbers,
+    // KEEP the SQL's x→horizontal / y→vertical order, and label the axes from the
+    // chart's real xAxisLabel/yAxisLabel so the plot matches the heading.
+    const num = (v: unknown) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
     const firstRow = data[0] as any;
-    const hasXY = firstRow && typeof firstRow.x === "number" && typeof firstRow.y === "number";
+    const hasXY = firstRow && num(firstRow.x) !== null && num(firstRow.y) !== null;
     const numKeys = inferNumericSeriesKeys(data);
-    const xKey = hasXY ? "x" : (numKeys[1] ?? numKeys[0] ?? "x");
-    const yKey = hasXY ? "y" : (numKeys[0] ?? "y");
+    const xKey = hasXY ? "x" : (numKeys[0] ?? "x");
+    const yKey = hasXY ? "y" : (numKeys[1] ?? numKeys[0] ?? "y");
     const nameKey = firstRow && typeof firstRow.name === "string" ? "name" : undefined;
+    const points = data.map((d: any) => ({
+      ...d,
+      [xKey]: num(d[xKey]) ?? 0,
+      [yKey]: num(d[yKey]) ?? 0,
+    }));
 
     // Rich visualization: every point gets its own colour, its name printed on
     // the chart, and a colour-coded legend below so the user always knows which
     // dot is which. Labels are only drawn on the chart when the point count is
     // small enough to stay legible; otherwise the legend + tooltip carry it.
-    const xLabel = xKey.replaceAll("_", " ");
+    const xLabel = chart.config.xAxisLabel?.trim() || xKey.replaceAll("_", " ");
+    const yLabel = chart.config.yAxisLabel?.trim() || yKey.replaceAll("_", " ");
     const showInlineLabels = !!nameKey && data.length <= 18;
     return (
       <div style={{ height: h, width: "100%" }} className="flex flex-col">
@@ -1389,7 +1412,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             <XAxis
               dataKey={xKey}
               type="number"
-              name={xKey}
+              name={xLabel}
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
@@ -1399,13 +1422,14 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             <YAxis
               dataKey={yKey}
               type="number"
-              name={yKey}
+              name={yLabel}
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v: number) => formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)}
-              width={56}
+              tickFormatter={(v: number) => fmtNumber(Number(v) || 0)}
+              width={64}
               tickMargin={8}
+              label={{ value: yLabel, angle: -90, position: "insideLeft", offset: 4, fontSize: 10, fill: "rgb(var(--color-text-muted))" }}
             />
             <Tooltip
               cursor={{ strokeDasharray: "3 3" }}
@@ -1422,8 +1446,8 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 );
               }}
             />
-            <Scatter data={data as any} fillOpacity={0.9}>
-              {data.map((_, i) => (
+            <Scatter data={points as any} fillOpacity={0.9}>
+              {points.map((_, i) => (
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
               {showInlineLabels && (
@@ -1896,12 +1920,8 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       typeof chart.config.display?.conditionalThreshold === "number"
         ? chart.config.display.conditionalThreshold
         : null;
-    const cellTheme = (value: number) => {
-      if (
-        conditionalThreshold !== null &&
-        value >= conditionalThreshold &&
-        chart.config.display?.conditionalColor === "green"
-      ) {
+    const cellTheme = (value: number, highlight: boolean) => {
+      if (highlight && chart.config.display?.conditionalColor === "green") {
         return { bg: "#16a34a", fg: "#ffffff" };
       }
       const maxVal = Math.max(
@@ -1930,6 +1950,24 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       rows.reduce((sum, row) => sum + (Number((row as any)[key]) || 0), 0),
     );
     const grandTotal = rowTotals.reduce((sum, value) => sum + value, 0);
+
+    // Dynamic "above average" conditional highlight (column / row / overall mean).
+    const conditionalMode = chart.config.display?.conditionalThresholdMode ?? null;
+    const colAverages: Record<string, number> = {};
+    colKeys.forEach((key, i) => {
+      colAverages[key] = rows.length ? (colTotals[i] ?? 0) / rows.length : 0;
+    });
+    const overallAverage = rows.length && colKeys.length
+      ? grandTotal / (rows.length * colKeys.length)
+      : 0;
+    const shouldHighlight = (value: number, colKey: string, rowAvg: number) => {
+      if (chart.config.display?.conditionalColor !== "green") return false;
+      if (conditionalThreshold !== null) return value >= conditionalThreshold;
+      if (conditionalMode === "columnAverage") return value > (colAverages[colKey] ?? 0);
+      if (conditionalMode === "rowAverage") return value > rowAvg;
+      if (conditionalMode === "overallAverage") return value > overallAverage;
+      return false;
+    };
 
     return (
       <div style={{ height: h, width: "100%", overflowX: "auto" }}>
@@ -1970,6 +2008,10 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
           <tbody>
             {rows.map((row, rowIndex) => {
               const rowLabel = String((row as any).name ?? `Row ${rowIndex + 1}`);
+              const rowAvg = colKeys.length
+                ? colKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0) /
+                  colKeys.length
+                : 0;
               return (
                 <tr key={rowLabel}>
                   <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-semibold text-text-muted shadow-sm">
@@ -1977,7 +2019,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   </th>
                   {colKeys.map((key) => {
                     const value = Number((row as any)[key]) || 0;
-                    const theme = cellTheme(value);
+                    const theme = cellTheme(value, shouldHighlight(value, key, rowAvg));
                     return (
                       <td
                         key={key}

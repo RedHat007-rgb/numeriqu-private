@@ -74,9 +74,20 @@ function enforceOutputShape(sql: string) {
   const hasValue = /\bAS\s+value\b/i.test(sql);
   if (hasValue) return;
 
-  const aliases = Array.from(sql.matchAll(/\bAS\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi))
-    .map((m) => m[1]!.toLowerCase())
-    .filter((a) => a !== 'name');
+  // Series aliases may be bare identifiers (AS admin) OR quoted identifiers
+  // (AS "AT&T", AS `Cost of Goods`) — WIDE pivots over vendor/account names need
+  // quoting because those labels contain spaces/symbols. Count all three forms.
+  const aliases = [
+    ...Array.from(sql.matchAll(/\bAS\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi)).map((m) =>
+      m[1]!.toLowerCase(),
+    ),
+    ...Array.from(sql.matchAll(/\bAS\s+"((?:[^"]|"")+)"/gi)).map((m) =>
+      m[1]!.toLowerCase(),
+    ),
+    ...Array.from(sql.matchAll(/\bAS\s+`([^`]+)`/gi)).map((m) =>
+      m[1]!.toLowerCase(),
+    ),
+  ].filter((a) => a !== 'name');
   const distinctSeries = new Set(aliases).size;
   if (distinctSeries < 2)
     throw new Error(

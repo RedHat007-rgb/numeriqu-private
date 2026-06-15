@@ -1052,6 +1052,21 @@ function semanticViewDdls(db: string) {
         ar.ar_outstanding_usd, ap.ap_outstanding_usd, cash.operating_cash_flow_usd, cash.free_cash_flow_usd,
         cash.cash_balance_usd, operations.sla_compliance_pct, operations.csat_pct, operations.utilization_pct
     `,
+    // Derived CFO ratios — single source of truth, built ON the KPI view above.
+    // SUPERSET of the KPI view (all base columns + ratios) so a follow-up that adds
+    // another base measure (revenue, FCF, cash balance…) still finds it here.
+    // (current/quick ratio deliberately omitted: no full current-liabilities data.)
+    `
+      CREATE VIEW ${db}.v_ebpo_cfo_ratios_monthly AS
+      SELECT
+        k.*,
+        round(k.total_cost_usd / nullIf(k.total_revenue_usd, 0) * 100, 2) AS cost_to_income_pct,
+        round(k.free_cash_flow_usd / nullIf(k.total_revenue_usd, 0) * 100, 2) AS fcf_margin_pct,
+        round(k.operating_cash_flow_usd / nullIf(k.total_revenue_usd, 0) * 100, 2) AS operating_cf_to_revenue_pct,
+        round((k.total_revenue_usd - k.total_cost_usd - k.total_payroll_usd) / nullIf(k.total_revenue_usd, 0) * 100, 2) AS ebitda_style_margin_pct,
+        round(k.cash_balance_usd + k.ar_outstanding_usd - k.ap_outstanding_usd, 2) AS working_capital_usd
+      FROM ${db}.v_ebpo_kpi_monthly k
+    `,
   ];
 }
 
@@ -1089,6 +1104,7 @@ async function recreateSemanticViews(client: ReturnType<typeof createClickHouseC
     "v_ebpo_cash_flow_monthly",
     "v_ebpo_fixed_assets_by_center",
     "v_ebpo_salary_by_dept_grade",
+    "v_ebpo_cfo_ratios_monthly",
     "v_ebpo_kpi_monthly",
   ];
   for (const viewName of viewNames) {

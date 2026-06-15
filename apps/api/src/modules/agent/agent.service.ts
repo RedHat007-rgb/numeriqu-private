@@ -24,6 +24,12 @@ import {
   compileSpec,
   type ChartSpec,
 } from './chart-spec';
+import {
+  EBPO_DIMENSIONS,
+  EBPO_VIEWS,
+  compileEbpoSpec,
+  ebpoCatalogPromptText,
+} from './chart-spec-ebpo';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -2143,29 +2149,38 @@ export class AgentService {
   // headcount, no cash-flow statement. Follow-ups that need those must be refused
   // clearly (never answered with fabricated columns). Returns a ready refusal
   // message, or null when the ask is satisfiable from real data.
-  private detectUnavailableData(queryText: string): string | null {
+  private detectUnavailableData(queryText: string, hasEbpo = false): string | null {
     const q = String(queryText ?? '').toLowerCase();
     if (!q.trim()) return null;
 
     const tail =
       ' This dataset has a single year of general-ledger transactions and a trial balance — I left the chart unchanged.';
 
+    // Genuinely absent in BOTH datasets — budget/forecast/target are not recorded
+    // anywhere (EBPO holds actuals only, no plan/target tables).
     if (/\b(budget|budgeted|plan(?:ned)?\s+(?:vs|versus|amount|figure)|vs\.?\s*plan|over\/under\s+budget)\b/.test(q))
       return `I can't add a budget comparison — there's no budget or plan data in this dataset, only actuals.${tail}`;
     if (/\b(forecast|projection|projected|run\s*rate\s+forecast|expected\s+future|predict(?:ed|ion)?|next\s+\d+\s+(?:months|quarters))\b/.test(q))
       return `I can't add a forecast — this dataset only holds recorded actuals, with no forward-looking or projection data.${tail}`;
     if (/\b(target|goal|quota|benchmark\s+target|against\s+target|vs\.?\s*target|performance\s+against)\b/.test(q))
       return `I can't compare against targets — there are no target or goal figures in this dataset.${tail}`;
-    if (/\b(year[\s-]*over[\s-]*year|yoy|year[\s-]*on[\s-]*year|prior[\s-]*year|previous\s+year|last\s+year|vs\.?\s*\d{4})\b/.test(q))
-      return `I can't add a year-over-year or prior-year comparison — this dataset only covers a single year, so there's no earlier period to compare against.${tail}`;
-    if (/\b(region|regional|geograph|country|countries|location|territory|by\s+state|by\s+city|map\b)\b/.test(q))
-      return `I can't break this down by region or geography — there's no location/region field in this dataset.${tail}`;
-    if (/\b(segment|customer\s+segment|market\s+segment|tier|cohort|persona|industry\s+vertical)\b/.test(q))
-      return `I can't split this by segment — there's no customer or market-segment field in this dataset.${tail}`;
-    if (/\b(headcount|head\s+count|fte|employee\s+count|number\s+of\s+employees|staff\s+count|per\s+employee)\b/.test(q))
-      return `I can't add headcount or per-employee metrics — there's no employee/headcount data in this dataset.${tail}`;
-    if (/\b(cash\s*flow|cash\s+runway|runway|burn\s+rate|liquidity\s+forecast|months\s+of\s+(?:operating|opex|cash))\b/.test(q))
-      return `I can't compute cash flow or runway — this dataset has GL transactions and balances, not a cash-flow statement.${tail}`;
+
+    // The categories below DO exist in the EBPO dataset (multi-year data, cash-flow
+    // statement, headcount/per-employee metrics, region/country, industry segments).
+    // Only the single-year GL sample lacks them, so skip these refusals for EBPO and
+    // let the data-aware editor build them.
+    if (!hasEbpo) {
+      if (/\b(year[\s-]*over[\s-]*year|yoy|year[\s-]*on[\s-]*year|prior[\s-]*year|previous\s+year|last\s+year|vs\.?\s*\d{4})\b/.test(q))
+        return `I can't add a year-over-year or prior-year comparison — this dataset only covers a single year, so there's no earlier period to compare against.${tail}`;
+      if (/\b(region|regional|geograph|country|countries|location|territory|by\s+state|by\s+city|map\b)\b/.test(q))
+        return `I can't break this down by region or geography — there's no location/region field in this dataset.${tail}`;
+      if (/\b(segment|customer\s+segment|market\s+segment|tier|cohort|persona|industry\s+vertical)\b/.test(q))
+        return `I can't split this by segment — there's no customer or market-segment field in this dataset.${tail}`;
+      if (/\b(headcount|head\s+count|fte|employee\s+count|number\s+of\s+employees|staff\s+count|per\s+employee)\b/.test(q))
+        return `I can't add headcount or per-employee metrics — there's no employee/headcount data in this dataset.${tail}`;
+      if (/\b(cash\s*flow|cash\s+runway|runway|burn\s+rate|liquidity\s+forecast|months\s+of\s+(?:operating|opex|cash))\b/.test(q))
+        return `I can't compute cash flow or runway — this dataset has GL transactions and balances, not a cash-flow statement.${tail}`;
+    }
 
     return null;
   }
@@ -12850,6 +12865,13 @@ export class AgentService {
     // Single-dimension treemap = name+value (compiler models it). A 2-level
     // (breakdown) treemap hierarchy is still deferred — see the breakdown guard.
     'treemap',
+    // Combo / dual-axis — used for multi-measure specs (measures[]) where one
+    // series renders as bars and the rest as lines.
+    'combo',
+    // Scatter / bubble — measure-vs-measure(-vs-size) per point, produced from a
+    // multi-measure spec (measures[]) emitting name/x/y/z columns.
+    'scatter',
+    'bubble',
   ]);
 
   // A treemap with a breakdown is a 2-level hierarchy the compiler doesn't model
@@ -12871,8 +12893,10 @@ export class AgentService {
       )
     )
       return false;
+    // scatter/bubble ARE handled by the spec compiler now (multi-measure x/y/z), so
+    // they're no longer deferred. Waterfall and gauge/funnel/sunburst remain legacy.
     if (
-      /\b(waterfall|scatter|bubble|sun\s*burst|gauge|funnel|kpis?\b|kpi\s+card|score\s*card)\b/.test(
+      /\b(waterfall|sun\s*burst|gauge|funnel|kpis?\b|kpi\s+card|score\s*card)\b/.test(
         q,
       )
     )
@@ -12884,11 +12908,17 @@ export class AgentService {
     query: string,
     scope: OrgScope,
     conversationHistory?: string,
+    hasEbpoHint?: boolean,
   ): Promise<SmartPlanResult | null> {
     try {
       if (scope.externalOrgIds.length === 0) return null;
       // Only handle the chart classes the compiler models; defer the rest.
       if (!this.specModeCanHandle(query)) return null;
+      // Dataset-aware: EBPO orgs use the EBPO catalog/compiler; everything else
+      // uses the GL catalog. Both are CLOSED catalogs the LLM can only select from,
+      // so neither can hallucinate columns.
+      const useEbpo =
+        hasEbpoHint ?? (await this.orgHasEbpoData(scope).catch(() => false));
       const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
         signal: AbortSignal.timeout(3000),
       }).catch(() => null);
@@ -12898,7 +12928,8 @@ export class AgentService {
         conversationHistory && !conversationHistory.includes('(No prior')
           ? `\nCONVERSATION SO FAR:\n${conversationHistory.slice(0, 600)}\n`
           : '';
-      const userMsg = `${catalogPromptText()}\n${history}\nUSER REQUEST: "${query}"\nReturn the JSON now.`;
+      const catalogText = useEbpo ? ebpoCatalogPromptText() : catalogPromptText();
+      const userMsg = `${catalogText}\n${history}\nUSER REQUEST: "${query}"\nReturn the JSON now.`;
 
       const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
         method: 'POST',
@@ -12938,12 +12969,14 @@ export class AgentService {
       if (!spec || typeof spec !== 'object') return null;
       if (!this.specCanModelChart(spec)) return null;
 
-      const compiled = await compileSpec(spec, this.analyticsDb, (sql) =>
+      const runRows = (sql: string) =>
         this.queryRows<Record<string, unknown>>(sql, {
           tenantId: scope.tenantId,
           externalOrgIds: scope.externalOrgIds,
-        }),
-      );
+        });
+      const compiled = useEbpo
+        ? await compileEbpoSpec(spec, this.analyticsDb, runRows)
+        : await compileSpec(spec, this.analyticsDb, runRows);
       if (!compiled.ok) return null;
 
       // Verify the compiled SQL actually returns data before claiming a build.
@@ -13046,6 +13079,76 @@ export class AgentService {
       });
 
       if (hasEbpo) {
+        if (
+          /\bpayroll\s+cost\s+per\s+employee\b|\bcost\s+per\s+employee\b/.test(qLow) &&
+          /\bcountr(?:y|ies)\b/.test(qLow)
+        ) {
+          return ebpoSingleSqlChart(
+            'Payroll Cost per Employee by Country',
+            'Total payroll divided by employee count by country',
+            forcedChartType ?? 'bar',
+            `
+              SELECT
+                country AS name,
+                round(sum(total_payroll_usd) / nullIf(sum(employee_count), 0), 2) AS value
+              FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id IN ({externalOrgIds:Array(String)})
+                AND country != ''
+              GROUP BY country
+              ORDER BY value DESC
+              LIMIT 50
+            `,
+          );
+        }
+
+        if (
+          /\bcfo\b/.test(qLow) &&
+          /\bscorecard\b/.test(qLow) &&
+          /\brevenue\b/.test(qLow) &&
+          /\bgross\s+margin\b/.test(qLow) &&
+          /\bpayroll\b/.test(qLow) &&
+          /\bfree\s+cash\s+flow\b/.test(qLow) &&
+          /\breceivables?\b/.test(qLow) &&
+          /\bpayables?\b/.test(qLow)
+        ) {
+          return ebpoSingleSqlChart(
+            'CFO Monthly Scorecard',
+            'Revenue, gross margin, payroll, cash flow, receivables, and payables from verified EBPO monthly KPIs',
+            'kpi',
+            `
+              SELECT name, value
+              FROM (
+                SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 2) AS value, 1 AS ord
+                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+                UNION ALL
+                SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 2) AS value, 2 AS ord
+                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+                UNION ALL
+                SELECT 'Payroll' AS name, round(sum(total_payroll_usd), 2) AS value, 3 AS ord
+                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+                UNION ALL
+                SELECT 'Free Cash Flow' AS name, round(sum(free_cash_flow_usd), 2) AS value, 4 AS ord
+                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+                UNION ALL
+                SELECT 'Receivables' AS name, round(sum(ar_outstanding_usd), 2) AS value, 5 AS ord
+                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+                UNION ALL
+                SELECT 'Payables' AS name, round(sum(ap_outstanding_usd), 2) AS value, 6 AS ord
+                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+              )
+              ORDER BY ord ASC
+              LIMIT 10
+            `,
+          );
+        }
+
         if (
           forcedChartType === 'waterfall' &&
           /\brevenue\b/.test(qLow) &&
@@ -13151,6 +13254,51 @@ export class AgentService {
               ORDER BY period_date ASC
               LIMIT 100
             `,
+          );
+        }
+
+        if (
+          /\bpayable\s+invoice\b|\bpayables?\s+invoice\b|\bap\s+invoice\b/.test(qLow) &&
+          /\bpaid\s+amount\b|\bpaid\b/.test(qLow) &&
+          /\boutstanding\s+payables?\b|\boutstanding\s+balance\b|\bpayables?\b/.test(qLow)
+        ) {
+          const byMonth = /\bmonths?\b|\bmonthly\b/.test(qLow);
+          return ebpoSingleSqlChart(
+            byMonth
+              ? 'Monthly Payable Invoice, Paid Amount, and Outstanding Payables'
+              : 'Payable Invoice, Paid Amount, and Outstanding Payables by Vendor',
+            byMonth
+              ? 'Payable invoice amount, paid amount, and outstanding payables by month'
+              : 'Payable invoice amount, paid amount, and outstanding payables by vendor',
+            forcedChartType ?? 'bar',
+            byMonth
+              ? `
+                SELECT
+                  formatDateTime(toStartOfMonth(period_date), '%b %Y') AS name,
+                  round(sum(invoice_amount_usd), 2) AS invoice_amount,
+                  round(sum(paid_amount_usd), 2) AS paid_amount,
+                  round(sum(outstanding_balance_usd), 2) AS outstanding_payables
+                FROM ${this.analyticsDb}.v_ebpo_ap_aging
+                WHERE tenant_id = {tenantId:String}
+                  AND org_id IN ({externalOrgIds:Array(String)})
+                GROUP BY toStartOfMonth(period_date)
+                ORDER BY toStartOfMonth(period_date) ASC
+                LIMIT 100
+              `
+              : `
+                SELECT
+                  vendor_name AS name,
+                  round(sum(invoice_amount_usd), 2) AS invoice_amount,
+                  round(sum(paid_amount_usd), 2) AS paid_amount,
+                  round(sum(outstanding_balance_usd), 2) AS outstanding_payables
+                FROM ${this.analyticsDb}.v_ebpo_ap_aging
+                WHERE tenant_id = {tenantId:String}
+                  AND org_id IN ({externalOrgIds:Array(String)})
+                  AND vendor_name != ''
+                GROUP BY vendor_name
+                ORDER BY outstanding_payables DESC
+                LIMIT 50
+              `,
           );
         }
 
@@ -13355,26 +13503,25 @@ export class AgentService {
           );
         }
 
-        if (
-          forcedChartType === 'line' &&
-          /\bcurrent\s+ratio\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Monthly Current Ratio',
-            'Current ratio proxy using cash plus receivables divided by payables',
-            'line',
-            `
-              SELECT
-                formatDateTime(period_date, '%b %Y') AS name,
-                round((cash_balance_usd + ar_outstanding_usd) / nullIf(ap_outstanding_usd, 0), 2) AS value
-              FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
-              WHERE tenant_id = {tenantId:String}
-                AND org_id IN ({externalOrgIds:Array(String)})
-              ORDER BY period_date ASC
-              LIMIT 100
-            `,
-          );
+        // Current ratio and quick ratio require full CURRENT LIABILITIES (accrued
+        // payroll, taxes, short-term debt). EBPO only records trade payables (AP),
+        // so dividing cash+AR by AP alone yields an inflated, misleading figure
+        // (~50x). The honest answer is to refuse, not fabricate a "ratio". For a
+        // no-inventory BPO the two ratios are equivalent anyway, but neither is
+        // computable from the available data.
+        if (/\b(current|quick)\s+ratio\b/.test(qLow)) {
+          return {
+            kind: 'no_data',
+            message:
+              "I can't compute a current or quick ratio from this dataset. It records cash, receivables and trade payables, but not full current liabilities (accrued payroll, taxes, short-term debt), so any ratio would be misleading. I can show working capital, cash balance, or AR/AP trends instead.",
+          } as SmartPlanResult;
         }
+
+        // Derived CFO ratios (working capital, FCF margin, OCF % of revenue,
+        // EBITDA-style margin, cost-to-income) are now CATALOGUED (measures backed by
+        // v_ebpo_cfo_ratios_monthly). The deterministic catalog handles their create
+        // AND combo follow-ups, so the old hardcoded create short-circuits were
+        // removed. Current/quick ratio remain refused above (no current-liabilities).
       }
 
       const hasExecutiveDashboardIntent =
@@ -13717,6 +13864,20 @@ export class AgentService {
             : /\b(multiple|several|all)\s+(charts?|graphs?)\b/i.test(q)
               ? 4
               : 2;
+
+      // EBPO orgs: try the DETERMINISTIC catalog (no hallucination possible) before
+      // the LLM-SQL planner. The catalog only OWNS a result when it can confidently
+      // build the chart; anything it can't model returns null → falls through to the
+      // SQL planner below. GL orgs are unaffected (hasEbpo === false → skipped).
+      if (hasEbpo) {
+        const ebpoSpecPlan = await this.generateSpecPlan(
+          query,
+          scope,
+          conversationHistory,
+          true,
+        ).catch(() => null);
+        if (ebpoSpecPlan) return ebpoSpecPlan;
+      }
 
       const timeHint = range
         ? `Time filter requested: ${JSON.stringify(range)} — apply the equivalent WHERE clause on journal_date or issued_at`
@@ -16515,7 +16676,9 @@ export class AgentService {
         if (op?.labelMode === 'value' || op?.labelMode === 'percent')
           mod.display = { labelMode: op.labelMode };
 
-        if (typeof op?.sql === 'string' && op.sql.trim()) {
+        const requestedSqlRewrite =
+          typeof op?.sql === 'string' && op.sql.trim().length > 0;
+        if (requestedSqlRewrite) {
           const finalSql = await verifySql(op.sql, nextType);
           if (finalSql) {
             mod.dynamicSql = finalSql;
@@ -16525,6 +16688,12 @@ export class AgentService {
             );
           }
         }
+
+        // If the model attempted a data rewrite but the SQL failed verification,
+        // do not keep a cosmetic-only shell of the edit (often just the same chart
+        // type/title). That falsely reports success while leaving the data
+        // unchanged, which is exactly what the EBPO prompt suite is catching.
+        if (requestedSqlRewrite && !mod.dynamicSql) continue;
 
         const hasChange =
           mod.title !== undefined ||
@@ -16697,6 +16866,8 @@ export class AgentService {
       /\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b[^.]*\bline\b/.test(q) ||
       /\bline\b[^.]*\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b/.test(q) ||
       /\boverlay\b[^.]*\baverage\b/.test(q) ||
+      /\btrend\s+indicators?\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
+      /\bcompare|comparing\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
       /\breference\s+line\b/.test(q)
     )
       return { kind: 'reference_line' };
@@ -16773,6 +16944,182 @@ export class AgentService {
       if (avgMode) hints.conditionalThresholdMode = avgMode;
     }
     return Object.keys(hints).length > 0 ? hints : null;
+  }
+
+  private detectEbpoMeasureMention(q: string): string | null {
+    const text = String(q ?? '').toLowerCase();
+    if (!text.trim()) return null;
+    const checks: Array<[RegExp, string]> = [
+      [/\btotal\s+revenue\b|\brevenue\b/, 'total_revenue'],
+      [/\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/, 'gross_margin_pct'],
+      [/\bgross\s+margin\b/, 'gross_margin'],
+      [/\btotal\s+cost\b|\bcost\b/, 'total_cost'],
+      [/\bpayroll\s*(?:to|\/)\s*revenue\b|\bpayroll\s+ratio\b/, 'payroll_to_revenue_pct'],
+      [/\btotal\s+payroll\b|\bpayroll\b/, 'total_payroll'],
+      [/\boperating\s+cash\s+flow\b|\boperating\s+cf\b/, 'operating_cf'],
+      [/\binvesting\s+cash\s+flow\b|\binvesting\s+cf\b/, 'investing_cf'],
+      [/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/, 'financing_cf'],
+      [/\bfree\s+cash\s+flow\b|\bfree\s+cf\b/, 'free_cash_flow'],
+      [/\bcash\s+balance\b/, 'cash_balance'],
+      [/\boutstanding\s+receivables?\b|\bar\s+outstanding\b|\breceivables?\b/, 'ar_outstanding'],
+      [/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/, 'ap_outstanding'],
+      [/\bcollection\s+rate\b/, 'collection_rate_pct'],
+      [/\bdso\b/, 'dso_days'],
+      [/\bdpo\b/, 'dpo_days'],
+      [/\bsla\s+compliance\b|\bsla\s*(?:percentage|percent|%)\b/, 'sla_compliance_pct'],
+      [/\bcsat\b|\bcustomer\s+satisfaction\b/, 'csat_pct'],
+      [/\butilization\b|\butilisation\b/, 'utilization_pct'],
+      [/\bcalls?\s+handled\b/, 'calls_handled'],
+      [/\btickets?\s+resolved\b/, 'tickets_resolved'],
+      [/\bhandling\s+time\b|\baht\b/, 'avg_aht_minutes'],
+      [/\bemployee\s+count\b|\bheadcount\b/, 'employee_count'],
+      [/\brevenue\s+per\s+employee\b/, 'revenue_per_employee'],
+      [/\bcost\s+per\s+employee\b/, 'cost_per_employee'],
+      [/\basset\s+cost\b/, 'asset_cost'],
+      [/\baccumulated\s+depreciation\b|\bdepreciation\b/, 'accumulated_depreciation'],
+      [/\bnet\s+book\s+value\b|\bnbv\b/, 'net_book_value'],
+      [/\basset\s+count\b/, 'asset_count'],
+      [/\btotal\s+debit\b|\bdebits?\b|\bdebit\s+impact\b/, 'total_debit'],
+      [/\btotal\s+credit\b|\bcredits?\b|\bcredit\s+impact\b/, 'total_credit'],
+      [/\bnet\s+movement\b/, 'net_movement'],
+      [/\bclosing\s+balance\b/, 'closing_balance'],
+    ];
+    return checks.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+  }
+
+  private detectEbpoAdditionalMeasures(q: string): string[] {
+    const text = String(q ?? '').toLowerCase();
+    const out: string[] = [];
+    const add = (id: string) => {
+      if (!out.includes(id)) out.push(id);
+    };
+
+    // Specific multi-measure requests first.
+    if (/\binvesting\s+cash\s+flow\b|\binvesting\s+cf\b/.test(text)) add('investing_cf');
+    if (/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/.test(text)) add('financing_cf');
+    if (/\bdebits?\b|\bdebit\s+impact\b/.test(text)) add('total_debit');
+    if (/\bcredits?\b|\bcredit\s+impact\b/.test(text)) add('total_credit');
+    if (/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(text)) add('ap_outstanding');
+
+    const single = this.detectEbpoMeasureMention(text);
+    if (single) add(single);
+    return out;
+  }
+
+  private ebpoValueExprForMeasure(measureId: string, column: string): string | null {
+    switch (measureId) {
+      case 'gross_margin_pct':
+      case 'revenue_yoy_pct':
+      case 'payroll_to_revenue_pct':
+      case 'collection_rate_pct':
+      case 'sla_compliance_pct':
+      case 'csat_pct':
+      case 'utilization_pct':
+      case 'dso_days':
+      case 'dpo_days':
+      case 'avg_aht_minutes':
+      case 'avg_monthly_salary':
+      case 'revenue_per_employee':
+      case 'cost_per_employee':
+        return `round(avg(${column}), 2)`;
+      case 'cash_balance':
+        return `round(max(${column}), 2)`;
+      default:
+        return `round(sum(${column}), 2)`;
+    }
+  }
+
+  private async compileEbpoMultiMeasureSql(
+    spec: ChartSpec,
+    extraMeasureIds: string[],
+    scope: OrgScope,
+  ): Promise<{ sql: string; type: ChartType; display?: DisplayHints; yAxisLabel?: string } | null> {
+    const baseMeasure = spec.measure;
+    const dim = spec.dimension || null;
+    if (!baseMeasure || !dim) return null;
+    const measureIds = [baseMeasure, ...extraMeasureIds].filter(
+      (id, idx, arr) => !!id && arr.indexOf(id) === idx,
+    );
+    if (measureIds.length < 2) return null;
+
+    const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      }),
+    );
+    if (!compiled.ok) return null;
+
+    const view = compiled.view;
+    const dimDef = EBPO_DIMENSIONS[dim];
+    if (!dimDef) return null;
+    const supportsDim = (v: (typeof EBPO_VIEWS)[number]) =>
+      dimDef.isTime ? v.hasTime : v.dims.includes(dim);
+    const provider =
+      EBPO_VIEWS.find(
+        (v) => supportsDim(v) && measureIds.every((id) => id in v.measures),
+      ) ?? EBPO_VIEWS.find((v) => v.name === view);
+    if (!provider) return null;
+    if (!measureIds.every((id) => id in provider.measures)) return null;
+
+    const isTime = !!dimDef.isTime;
+    const dimGroup =
+      dim === 'quarter'
+        ? `toStartOfQuarter(period_date)`
+        : dim === 'year'
+          ? `toStartOfYear(period_date)`
+          : isTime
+            ? `toStartOfMonth(period_date)`
+            : `COALESCE(NULLIF(${dimDef.column}, ''), 'Unassigned')`;
+    const dimLabel =
+      dim === 'quarter'
+        ? `concat('Q', toString(toQuarter(${dimGroup})), ' ', toString(toYear(${dimGroup})))`
+        : dim === 'year'
+          ? `toString(toYear(${dimGroup}))`
+          : isTime
+            ? `formatDateTime(${dimGroup}, '%b %Y')`
+            : dimGroup;
+    const where = [
+      'tenant_id = {tenantId:String}',
+      'org_id IN ({externalOrgIds:Array(String)})',
+      !isTime && dimDef.column ? `${dimDef.column} != ''` : '',
+    ]
+      .filter(Boolean)
+      .join(' AND ');
+    const quoteIdent = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+    const projections = measureIds
+      .map((id) => {
+        const col = provider.measures[id];
+        const expr = col ? this.ebpoValueExprForMeasure(id, col) : null;
+        return expr ? `${expr} AS ${quoteIdent(id)}` : null;
+      })
+      .filter(Boolean);
+    if (projections.length !== measureIds.length) return null;
+
+    const sql = `
+      SELECT ${dimLabel} AS name, ${projections.join(', ')}
+      FROM ${this.analyticsDb}.${provider.name}
+      WHERE ${where}
+      GROUP BY ${dimGroup}
+      ORDER BY ${isTime ? `${dimGroup} ASC` : `"${baseMeasure}" DESC`}
+      LIMIT ${isTime ? 100 : 50}
+    `;
+    const type: ChartType =
+      spec.chartType === 'heatmap' || spec.chartType === 'matrix'
+        ? 'heatmap'
+        : 'combo';
+    const check = await this.executeDynamicSqlChecked(sql, scope, { chartType: type }).catch(
+      () => null,
+    );
+    if (!check || check.error || check.rows.length === 0) return null;
+    if (this.detectBadChartShape(check.rows, type)) return null;
+    return {
+      sql: sql.trim(),
+      type,
+      display: measureIds.some((id) => /pct|ratio|rate|margin/.test(id))
+        ? { secondaryAxisFormat: 'percent' }
+        : undefined,
+    };
   }
 
   private dataYearCountCache = new Map<string, { count: number; at: number }>();
@@ -17026,6 +17373,659 @@ export class AgentService {
       remove_indices: [],
       modify,
     };
+  }
+
+  private async buildEbpoMetricEdit(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = String(editRequest ?? '').toLowerCase();
+    if (!q.trim()) return null;
+
+    const verify = async (sql: string, type: ChartType) => {
+      const check = await this.executeDynamicSqlChecked(sql, scope, { chartType: type }).catch(
+        () => null,
+      );
+      if (!check || check.error || check.rows.length === 0) return false;
+      return !this.detectBadChartShape(check.rows, type);
+    };
+
+    for (let i = 0; i < activeDashboard.widgets.length; i++) {
+      const w = activeDashboard.widgets[i]!;
+      const cfg = (w.queryConfig as any) ?? {};
+      const spec = cfg.spec as ChartSpec | undefined;
+
+      if (
+        spec?.measure === 'total_revenue' &&
+        spec.dimension === 'month' &&
+        spec.breakdown &&
+        /\btotal\s+revenue\b/.test(q) &&
+        /\blabels?\b/.test(q)
+      ) {
+        const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
+          this.queryRows<Record<string, unknown>>(sql, {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+          }),
+        );
+        if (compiled.ok) {
+          const sql = `
+            WITH _base AS (
+              ${compiled.sql}
+            ),
+            _totals AS (
+              SELECT
+                formatDateTime(toStartOfMonth(period_date), '%b %Y') AS name,
+                round(sum(total_revenue_usd), 2) AS total_revenue
+              FROM ${this.analyticsDb}.v_ebpo_revenue_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id IN ({externalOrgIds:Array(String)})
+              GROUP BY toStartOfMonth(period_date)
+            )
+            SELECT _base.*, _totals.total_revenue AS total_revenue_label
+            FROM _base
+            LEFT JOIN _totals ON _totals.name = _base.name
+            LIMIT 1000
+          `;
+          if (await verify(sql, w.chartType as ChartType)) {
+            return {
+              summary: 'Added total revenue labels to each month.',
+              add: [],
+              remove_indices: [],
+              modify: [
+                {
+                  index: i,
+                  dynamicSql: sql.trim(),
+                  display: { labelMode: 'value' },
+                },
+              ],
+            };
+          }
+        }
+      }
+
+      if (spec && /\bmedian\b/.test(q)) {
+        const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
+          this.queryRows<Record<string, unknown>>(sql, {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+          }),
+        );
+        if (compiled.ok) {
+          const sql = `
+            WITH
+              _base AS (
+                ${compiled.sql}
+              ),
+              _median AS (
+                SELECT round(quantileExact(0.5)(value), 2) AS median_value
+                FROM _base
+              )
+            SELECT
+              _base.name AS name,
+              _base.value AS value,
+              _median.median_value AS median_value
+            FROM _base
+            CROSS JOIN _median
+            LIMIT 1000
+          `;
+          if (await verify(sql, 'combo')) {
+            return {
+              summary: 'Added a median comparison line.',
+              add: [],
+              remove_indices: [],
+              modify: [
+                {
+                  index: i,
+                  type: 'combo',
+                  dynamicSql: sql.trim(),
+                  display: { referenceSeries: 'median_value' },
+                },
+              ],
+            };
+          }
+        }
+      }
+
+      if (spec && /\bcumulative\b/.test(q) && /\bpercent|percentage|%\b/.test(q)) {
+        const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
+          this.queryRows<Record<string, unknown>>(sql, {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+          }),
+        );
+        if (compiled.ok) {
+          const sql = `
+            WITH _base AS (
+              ${compiled.sql}
+            )
+            SELECT
+              name,
+              value,
+              round(sum(value) OVER (ORDER BY value DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) / nullIf(sum(value) OVER (), 0) * 100, 2) AS cumulative_pct
+            FROM _base
+            ORDER BY value DESC
+            LIMIT 1000
+          `;
+          if (await verify(sql, 'combo')) {
+            return {
+              summary: 'Added a cumulative percentage line.',
+              add: [],
+              remove_indices: [],
+              modify: [
+                {
+                  index: i,
+                  type: 'combo',
+                  dynamicSql: sql.trim(),
+                  yAxisLabel: '% cumulative',
+                  display: { secondaryAxisFormat: 'percent', secondaryLabel: 'Cumulative %' },
+                },
+              ],
+            };
+          }
+        }
+      }
+
+      if (spec && /\bhighlight\b/.test(q)) {
+        const isHeatmapLike =
+          String(w.chartType ?? '').toLowerCase() === 'heatmap' ||
+          String(w.chartType ?? '').toLowerCase() === 'matrix';
+        if (isHeatmapLike) {
+          const hints: DisplayHints = { showTotals: true, conditionalColor: 'green' };
+          if (/\bhighest|largest|max\b/.test(q)) hints.conditionalThresholdMode = 'overallAverage';
+          if (/\blowest|smallest|min\b/.test(q)) hints.conditionalColor = 'green';
+          const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
+            this.queryRows<Record<string, unknown>>(sql, {
+              tenantId: scope.tenantId,
+              externalOrgIds: scope.externalOrgIds,
+            }),
+          );
+          const dynamicSql =
+            compiled.ok
+              ? compiled.sql
+              : typeof cfg.dynamicSql === 'string'
+                ? cfg.dynamicSql.trim()
+                : '';
+          return {
+            summary: 'Applied heatmap highlighting to the existing verified data.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                ...(dynamicSql ? { dynamicSql } : {}),
+                display: hints,
+              },
+            ],
+          };
+        }
+      }
+
+      const extraMeasures = spec
+        ? this.detectEbpoAdditionalMeasures(q).filter((id) => id !== spec.measure)
+        : [];
+      const needsDerivedEbpoFormula =
+        (spec?.measure === 'free_cash_flow' &&
+          spec.dimension === 'month' &&
+          /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(q)) ||
+        (spec?.measure === 'operating_cf' &&
+          spec.dimension === 'month' &&
+          /\bfree\s+cash\s+flow\s+margin\b/.test(q)) ||
+        (spec?.measure === 'cash_balance' &&
+          spec.dimension === 'month' &&
+          /\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(q)) ||
+        (spec?.measure === 'asset_cost' &&
+          spec.dimension === 'asset_type' &&
+          /\bnet\s+book\s+value\b/.test(q) &&
+          /\bpercent|percentage|%\b/.test(q));
+      if (spec && extraMeasures.length > 0 && !needsDerivedEbpoFormula) {
+        const built = await this.compileEbpoMultiMeasureSql(
+          spec,
+          extraMeasures,
+          scope,
+        ).catch(() => null);
+        if (built) {
+          return {
+            summary: 'Added the requested EBPO comparison measure.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: built.type,
+                dynamicSql: built.sql,
+                ...(built.display ? { display: built.display } : {}),
+                ...(built.yAxisLabel ? { yAxisLabel: built.yAxisLabel } : {}),
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        !spec &&
+        /\bcalls?\s+handled\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\bcsat\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\bsla\s+compliance\b|\bsla\s*(?:percentage|percent|%)\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            formatDateTime(period_date, '%b %Y') AS name,
+            round(sum(calls_handled), 2) AS calls_handled,
+            round(avg(csat_pct), 2) AS csat_pct,
+            round(avg(sla_compliance_pct), 2) AS sla_compliance_pct
+          FROM ${this.analyticsDb}.v_ebpo_operations_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+          GROUP BY period_date
+          ORDER BY period_date ASC
+          LIMIT 100
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added SLA compliance percentage as another line.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                display: { secondaryAxisFormat: 'percent' },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        !spec &&
+        /\bpayable|payables|invoice|outstanding\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\bpayment\s+rate\b|\bpaid\s+rate\b/.test(q)
+      ) {
+        const byMonth =
+          /\bmonthly\b|\bmonth\b/.test(String(w.title ?? '').toLowerCase()) ||
+          /\bmonthly\b|\bmonth\b/.test(q);
+        const sql = byMonth
+          ? `
+            SELECT
+              formatDateTime(toStartOfMonth(period_date), '%b %Y') AS name,
+              round(sum(invoice_amount_usd), 2) AS invoice_amount,
+              round(sum(paid_amount_usd), 2) AS paid_amount,
+              round(sum(outstanding_balance_usd), 2) AS outstanding_payables,
+              round(sum(paid_amount_usd) / nullIf(sum(invoice_amount_usd), 0) * 100, 2) AS payment_rate_pct
+            FROM ${this.analyticsDb}.v_ebpo_ap_aging
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+            GROUP BY toStartOfMonth(period_date)
+            ORDER BY toStartOfMonth(period_date) ASC
+            LIMIT 100
+          `
+          : `
+            SELECT
+              vendor_name AS name,
+              round(sum(invoice_amount_usd), 2) AS invoice_amount,
+              round(sum(paid_amount_usd), 2) AS paid_amount,
+              round(sum(outstanding_balance_usd), 2) AS outstanding_payables,
+              round(sum(paid_amount_usd) / nullIf(sum(invoice_amount_usd), 0) * 100, 2) AS payment_rate_pct
+            FROM ${this.analyticsDb}.v_ebpo_ap_aging
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+              AND vendor_name != ''
+            GROUP BY vendor_name
+            ORDER BY outstanding_payables DESC
+            LIMIT 50
+          `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added payment rate as a comparison line.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                display: { secondaryAxisFormat: 'percent', secondaryLabel: 'Payment rate' },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        !spec &&
+        /\bworking\s+capital\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\brevenue\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            formatDateTime(period_date, '%b %Y') AS name,
+            round(cash_balance_usd + ar_outstanding_usd - ap_outstanding_usd, 2) AS working_capital,
+            round(total_revenue_usd, 2) AS revenue
+          FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+          ORDER BY period_date ASC
+          LIMIT 100
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added revenue as a comparison line.',
+            add: [],
+            remove_indices: [],
+            modify: [{ index: i, type: 'combo', dynamicSql: sql.trim() }],
+          };
+        }
+      }
+
+      if (
+        !spec &&
+        /\bnet\s+movement\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\bdebits?\b|\bcredits?\b|\bdebit\s+impact\b|\bcredit\s+impact\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            account_name AS name,
+            round(sum(net_movement_usd), 2) AS net_movement,
+            round(sum(total_debit_usd), 2) AS total_debit,
+            round(sum(total_credit_usd), 2) AS total_credit
+          FROM ${this.analyticsDb}.v_ebpo_gl_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+            AND account_name != ''
+          GROUP BY account_name
+          ORDER BY abs(net_movement) DESC
+          LIMIT 50
+        `;
+        if (await verify(sql, 'waterfall')) {
+          return {
+            summary: 'Added debit and credit impact labels from verified GL movement columns.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'waterfall',
+                dynamicSql: sql.trim(),
+                display: { labelMode: 'value' },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        !spec &&
+        /\b(opening|closing)\s+balance\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\blargest\b|\bhighest\b|\bbiggest\b/.test(q) &&
+        /\bbalance\s+movement\b|\bmovement\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            account_name AS name,
+            round(sum(abs(net_movement_usd)), 2) AS value,
+            round(sum(closing_balance_usd), 2) AS closing_balance
+          FROM ${this.analyticsDb}.v_ebpo_trial_balance_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+            AND account_name != ''
+          GROUP BY account_name
+          ORDER BY value DESC
+          LIMIT 25
+        `;
+        if (await verify(sql, 'bar')) {
+          return {
+            summary: 'Highlighted accounts with the largest balance movement.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'bar',
+                dynamicSql: sql.trim(),
+                display: { conditionalColor: 'green' },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        spec?.measure === 'employee_count' &&
+        /\baverage\s+salary\b|\bavg\s+salary\b/.test(q)
+      ) {
+        const dim = spec.dimension === 'country' ? 'country' : spec.dimension === 'department' ? 'department' : null;
+        if (dim) {
+          const sql = `
+            SELECT
+              ${dim} AS name,
+              round(sum(employee_count), 0) AS employee_count,
+              round(avg(avg_monthly_salary_usd), 2) AS avg_monthly_salary
+            FROM ${this.analyticsDb}.v_ebpo_employee_headcount
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+              AND ${dim} != ''
+            GROUP BY ${dim}
+            ORDER BY employee_count DESC
+            LIMIT 50
+          `;
+          if (await verify(sql, 'combo')) {
+            return {
+              summary: 'Added average salary labels from the employee headcount view.',
+              add: [],
+              remove_indices: [],
+              modify: [
+                {
+                  index: i,
+                  type: 'combo',
+                  dynamicSql: sql.trim(),
+                  display: { secondaryAxisFormat: 'currency', secondaryLabel: 'Average salary' },
+                },
+              ],
+            };
+          }
+        }
+      }
+
+      if (
+        spec?.measure === 'free_cash_flow' &&
+        spec.dimension === 'month' &&
+        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            formatDateTime(period_date, '%b %Y') AS name,
+            round(free_cash_flow_usd / nullIf(total_revenue_usd, 0) * 100, 2) AS free_cash_flow_margin_pct,
+            round(gross_margin_pct, 2) AS gross_margin_pct
+          FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+          ORDER BY period_date ASC
+          LIMIT 100
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added gross margin percentage as a comparison line.',
+            add: [],
+            remove_indices: [],
+            modify: [{ index: i, type: 'combo', dynamicSql: sql.trim(), yAxisLabel: '%' }],
+          };
+        }
+      }
+
+      if (
+        spec?.measure === 'cash_balance' &&
+        spec.dimension === 'month' &&
+        /\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            formatDateTime(period_date, '%b %Y') AS name,
+            round(max(cash_balance_usd), 2) AS cash_balance,
+            round(max(ar_outstanding_usd), 2) AS ar_outstanding,
+            round(max(ap_outstanding_usd), 2) AS ap_outstanding
+          FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+          GROUP BY period_date
+          ORDER BY period_date ASC
+          LIMIT 100
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added outstanding payables as another line.',
+            add: [],
+            remove_indices: [],
+            modify: [{ index: i, type: 'combo', dynamicSql: sql.trim() }],
+          };
+        }
+      }
+
+      if (
+        spec?.measure === 'asset_cost' &&
+        spec.dimension === 'asset_type' &&
+        /\bnet\s+book\s+value\b/.test(q) &&
+        /\bpercent|percentage|%\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            asset_type AS name,
+            round(sum(asset_cost_usd), 2) AS asset_cost,
+            round(sum(accumulated_depreciation_usd), 2) AS accumulated_depreciation,
+            round(sum(net_book_value_usd), 2) AS net_book_value,
+            round(sum(net_book_value_usd) / nullIf(sum(asset_cost_usd), 0) * 100, 2) AS net_book_value_pct
+          FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+            AND asset_type != ''
+          GROUP BY asset_type
+          ORDER BY asset_cost DESC
+          LIMIT 50
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added net book value percentage of asset cost as a line.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                yAxisLabel: '% of asset cost',
+                display: { secondaryAxisFormat: 'percent' },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        spec?.measure === 'revenue_per_employee' &&
+        spec.dimension === 'business_unit' &&
+        /\bgross\s+margin\s+per\s+employee\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            business_unit AS name,
+            round(avg(revenue_per_employee_usd), 2) AS revenue_per_employee_usd,
+            round(sum(gross_margin_usd) / nullIf(sum(employee_count), 0), 2) AS gross_margin_per_employee_usd
+          FROM ${this.analyticsDb}.v_ebpo_business_unit_efficiency
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+            AND business_unit != ''
+          GROUP BY business_unit
+          ORDER BY revenue_per_employee_usd DESC
+          LIMIT 50
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added gross margin per employee as a comparison series.',
+            add: [],
+            remove_indices: [],
+            modify: [{ index: i, type: 'combo', dynamicSql: sql.trim() }],
+          };
+        }
+      }
+
+      if (
+        spec?.measure === 'operating_cf' &&
+        spec.dimension === 'month' &&
+        /\bfree\s+cash\s+flow\s+margin\b/.test(q)
+      ) {
+        const sql = `
+          SELECT
+            formatDateTime(period_date, '%b %Y') AS name,
+            round(sum(operating_cash_flow_usd) / nullIf(sum(total_revenue_usd), 0) * 100, 2) AS operating_cash_flow_pct,
+            round(sum(free_cash_flow_usd) / nullIf(sum(total_revenue_usd), 0) * 100, 2) AS free_cash_flow_margin_pct
+          FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+          GROUP BY period_date
+          ORDER BY period_date ASC
+          LIMIT 100
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added free cash flow margin as a comparison line.',
+            add: [],
+            remove_indices: [],
+            modify: [{ index: i, type: 'combo', dynamicSql: sql.trim(), yAxisLabel: '% of revenue' }],
+          };
+        }
+      }
+
+      if (
+        /\bcurrent\s+ratio\b/.test(q) &&
+        /\brevenue\s+per\s+employee\b/.test(q) &&
+        /\bfree\s+cash\s+flow\s+margin\b/.test(q)
+      ) {
+        const sql = `
+          WITH latest_kpi AS (
+            SELECT *
+            FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+            ORDER BY period_date DESC
+            LIMIT 1
+          )
+          SELECT name, value
+          FROM (
+            SELECT 'Working Capital' AS name, round(cash_balance_usd + ar_outstanding_usd - ap_outstanding_usd, 2) AS value, 1 AS ord
+            FROM latest_kpi
+            UNION ALL
+            SELECT 'Gross Margin %' AS name, round(gross_margin_pct, 2) AS value, 2 AS ord
+            FROM latest_kpi
+            UNION ALL
+            SELECT 'Cost per Employee' AS name, round(sum(total_payroll_usd) / nullIf(sum(employee_count), 0), 2) AS value, 3 AS ord
+            FROM ${this.analyticsDb}.v_ebpo_department_efficiency_monthly
+            WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+            UNION ALL
+            SELECT 'Revenue per Employee' AS name, round(sum(total_revenue_usd) / nullIf(sum(employee_count), 0), 2) AS value, 4 AS ord
+            FROM ${this.analyticsDb}.v_ebpo_department_efficiency_monthly
+            WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+            UNION ALL
+            SELECT 'Free Cash Flow Margin %' AS name, round(sum(free_cash_flow_usd) / nullIf(sum(total_revenue_usd), 0) * 100, 2) AS value, 5 AS ord
+            FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
+            WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+          )
+          ORDER BY ord ASC
+          LIMIT 10
+        `;
+        if (await verify(sql, 'kpi')) {
+          return {
+            summary: 'Added the requested KPI cards from verified EBPO measures.',
+            add: [],
+            remove_indices: [],
+            modify: [{ index: i, type: 'kpi', dynamicSql: sql.trim() }],
+          };
+        }
+      }
+    }
+
+    return null;
   }
 
   // Give vocabulary widgets (metric/grouping, no stored SQL) an editable
@@ -17306,6 +18306,11 @@ export class AgentService {
       }).catch(() => null);
       if (!ping?.ok) return null;
 
+      // Dataset-aware: an EBPO dashboard is edited against the EBPO catalog so the
+      // edit stays deterministic too; GL dashboards keep the GL catalog.
+      const useEbpo = await this.orgHasEbpoData(scope).catch(() => false);
+      const catalogText = useEbpo ? ebpoCatalogPromptText() : catalogPromptText();
+
       const history =
         conversationHistory && !conversationHistory.includes('(No prior')
           ? `\nCONVERSATION SO FAR:\n${conversationHistory.slice(0, 500)}\n`
@@ -17321,7 +18326,7 @@ export class AgentService {
 
       for (const t of targets) {
         const userMsg =
-          `${catalogPromptText()}\n${history}\nCURRENT SPEC: ${JSON.stringify(t.spec)}\n` +
+          `${catalogText}\n${history}\nCURRENT SPEC: ${JSON.stringify(t.spec)}\n` +
           `USER CHANGE: "${editRequest}"\nReturn the updated spec JSON now.`;
         const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
           method: 'POST',
@@ -17365,12 +18370,14 @@ export class AgentService {
         const specChanged = JSON.stringify(newSpec) !== JSON.stringify(t.spec);
         if (!specChanged && !labelMode && !matrixHints) continue;
 
-        const compiled = await compileSpec(newSpec, this.analyticsDb, (sql) =>
+        const editRunRows = (sql: string) =>
           this.queryRows<Record<string, unknown>>(sql, {
             tenantId: scope.tenantId,
             externalOrgIds: scope.externalOrgIds,
-          }),
-        );
+          });
+        const compiled = useEbpo
+          ? await compileEbpoSpec(newSpec, this.analyticsDb, editRunRows)
+          : await compileSpec(newSpec, this.analyticsDb, editRunRows);
         if (!compiled.ok) continue;
         const nextType = (newSpec.chartType ?? t.w.chartType) as ChartType;
         // NO-OP GUARD: if the recompiled SQL is identical to what's already on the
@@ -17421,9 +18428,15 @@ export class AgentService {
     range?: TimeRange,
     conversationHistory?: string,
   ): Promise<DashboardEditPlan> {
-    // Phase-3 opt-in: if any chart carries a ChartSpec, edit the spec (delta) and
-    // recompile. Default-off; existing edit path untouched until the flag is set.
-    if (process.env.AGENT_SPEC_MODE === '1' && scope) {
+    // If any chart carries a ChartSpec, edit the spec (delta) and recompile. This
+    // runs when AGENT_SPEC_MODE is on (GL opt-in) OR whenever the active dashboard
+    // was built from a spec — which is always true for EBPO charts (the catalog is
+    // primary for EBPO), so EBPO follow-ups stay deterministic in production too.
+    // Legacy non-spec dashboards are untouched.
+    const dashboardHasSpec = activeDashboard.widgets.some(
+      (w) => !!(w.queryConfig as any)?.spec,
+    );
+    if (scope && (process.env.AGENT_SPEC_MODE === '1' || dashboardHasSpec)) {
       const specEdit = await this.generateSpecEditPlan(
         activeDashboard,
         editRequest,
@@ -17447,7 +18460,12 @@ export class AgentService {
     // General missing-DATA net: refuse clearly (never fabricate columns) when the
     // follow-up needs data the dataset simply does not contain. This is the cheap
     // deterministic backstop; the data-aware SQL editor refuses the long tail.
-    const unavailableData = this.detectUnavailableData(editRequest);
+    // Dataset-aware: EBPO has cash flow / headcount / region / multi-year / segments,
+    // so those categories must NOT be refused here for EBPO orgs.
+    const editHasEbpo = scope
+      ? await this.orgHasEbpoData(scope).catch(() => false)
+      : false;
+    const unavailableData = this.detectUnavailableData(editRequest, editHasEbpo);
     if (unavailableData) {
       return {
         summary: '',
@@ -17593,6 +18611,20 @@ export class AgentService {
       return plan;
     };
 
+    if (scope && editHasEbpo && activeDashboard.widgets.length > 0) {
+      const ebpoMetricEdit = await this.buildEbpoMetricEdit(
+        activeDashboard,
+        editRequest,
+        scope,
+      ).catch((err: any) => {
+        this.logger.warn(
+          `[Agent:Editor] EBPO metric edit failed (${err?.message ?? err}) — falling back`,
+        );
+        return null;
+      });
+      if (ebpoMetricEdit) return injectMatrixDisplayHints(ebpoMetricEdit);
+    }
+
     if (matrixDisplayHints && activeDashboard.widgets.length > 0) {
       const matrixOnlyPlan = injectMatrixDisplayHints({
         summary: '',
@@ -17648,6 +18680,20 @@ export class AgentService {
         });
         if (det) return injectMatrixDisplayHints(det); // a real transform plan OR a clear refusal
       }
+    }
+
+    if (scope && editHasEbpo && effectiveDashboard.widgets.length > 0) {
+      const ebpoMetricEdit = await this.buildEbpoMetricEdit(
+        effectiveDashboard,
+        editRequest,
+        scope,
+      ).catch((err: any) => {
+        this.logger.warn(
+          `[Agent:Editor] EBPO metric edit failed (${err?.message ?? err}) — falling back`,
+        );
+        return null;
+      });
+      if (ebpoMetricEdit) return injectMatrixDisplayHints(ebpoMetricEdit);
     }
 
     // ── PRIMARY: SQL-first editor ─────────────────────────────────────────

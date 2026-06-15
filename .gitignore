@@ -48,3 +48,8 @@ yarn-error.log*
 .claire/*
 
 transformations/
+
+codex-work/
+
+# Claude working notes/logs (local only — not for handoff)
+claude-work/

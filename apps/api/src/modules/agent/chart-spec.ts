@@ -178,6 +178,11 @@ export interface SpecThreshold {
 
 export interface ChartSpec {
   measure: string;
+  // Optional multi-measure series for combo / dual-axis / "compare X and Y" /
+  // "add Z as a comparison line". When set with >1 entry, the EBPO compiler plots
+  // every measure against `dimension` (or as KPI cards when no dimension). The GL
+  // compiler ignores this field. The first entry should match `measure`.
+  measures?: string[] | null;
   dimension: string;
   breakdown?: string | null;
   filters?: SpecFilter[];

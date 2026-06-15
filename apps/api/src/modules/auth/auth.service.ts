@@ -23,6 +23,14 @@ const DEMO_EMAILS = new Set([
 const SAMPLE_ORG_SLUG = 'sample-company-2024';
 const SAMPLE_ORG_NAME = 'Sample Company 2024';
 
+// Additional orgs demo users may switch into, beyond the shared sample org.
+// Demo users get active ADMIN membership in each of these (when the org exists)
+// and are NOT evicted from them on login. Configurable via env (comma-separated).
+const DEMO_EXTRA_ORG_SLUGS = (process.env.DEMO_EXTRA_ORG_SLUGS ?? 'enterprise-bpo')
+  .split(',')
+  .map((slug) => slug.trim())
+  .filter(Boolean);
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -141,12 +149,48 @@ export class AuthService {
       },
     });
 
-    // Demo users should only operate inside the shared sample org.
-    // Mark any other active memberships as left so the UI doesn't route them elsewhere.
+    // Demo users may also belong to a fixed allowlist of extra demo orgs (e.g. the
+    // EBPO dataset). Ensure active ADMIN membership in any that exist so they show up
+    // in the workspace switcher, and collect their ids so we don't evict below.
+    const extraOrgs = DEMO_EXTRA_ORG_SLUGS.length
+      ? await prisma.organization.findMany({
+          where: { slug: { in: DEMO_EXTRA_ORG_SLUGS } },
+          select: { id: true },
+        })
+      : [];
+    for (const org of extraOrgs) {
+      await prisma.organizationMembership.upsert({
+        where: {
+          organizationId_userId: {
+            organizationId: org.id,
+            userId: session.user.id,
+          },
+        },
+        create: {
+          organizationId: org.id,
+          userId: session.user.id,
+          role: 'ADMIN',
+          canViewDashboard: true,
+          canCreateDashboard: true,
+          canShareDashboard: true,
+        },
+        update: {
+          role: 'ADMIN',
+          canViewDashboard: true,
+          canCreateDashboard: true,
+          canShareDashboard: true,
+          leftAt: null,
+        },
+      });
+    }
+
+    // Demo users should only operate inside the allowlisted demo orgs (sample + extras).
+    // Mark any OTHER active memberships as left so the UI doesn't route them elsewhere.
+    const allowedOrgIds = [sampleOrg.id, ...extraOrgs.map((org) => org.id)];
     await prisma.organizationMembership.updateMany({
       where: {
         userId: session.user.id,
-        organizationId: { not: sampleOrg.id },
+        organizationId: { notIn: allowedOrgIds },
         leftAt: null,
       },
       data: { leftAt: new Date() },

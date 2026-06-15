@@ -1,0 +1,602 @@
+[
+ {
+  "id": 1,
+  "section": "Revenue Questions",
+  "main": "Create a column chart showing monthly total revenue.",
+  "followup": "In the same chart, add a line for monthly gross margin to compare revenue and margin trend."
+ },
+ {
+  "id": 2,
+  "section": "Revenue Questions",
+  "main": "Create a line chart showing month-on-month revenue growth percentage.",
+  "followup": "In the same chart, add a median growth line to compare monthly performance."
+ },
+ {
+  "id": 3,
+  "section": "Revenue Questions",
+  "main": "Create a stacked column chart showing monthly revenue by business unit.",
+  "followup": "In the same chart, show percentage contribution of each business unit to monthly revenue."
+ },
+ {
+  "id": 4,
+  "section": "Revenue Questions",
+  "main": "Create a bar chart showing total revenue by client.",
+  "followup": "In the same chart, add gross margin by client to compare revenue quality."
+ },
+ {
+  "id": 5,
+  "section": "Revenue Questions",
+  "main": "Create a donut chart showing revenue share by contract type.",
+  "followup": "In the same chart, add percentage labels for each contract type."
+ },
+ {
+  "id": 6,
+  "section": "Revenue Questions",
+  "main": "Create a clustered bar chart comparing revenue and cost by business unit.",
+  "followup": "In the same chart, add gross margin percentage for each business unit."
+ },
+ {
+  "id": 7,
+  "section": "Revenue Questions",
+  "main": "Create a line chart showing monthly gross margin trend.",
+  "followup": "In the same chart, add total revenue as a comparison line."
+ },
+ {
+  "id": 8,
+  "section": "Revenue Questions",
+  "main": "Create a combo chart with monthly revenue as columns and gross margin percentage as a line.",
+  "followup": "In the same chart, add an average gross margin percentage reference line."
+ },
+ {
+  "id": 9,
+  "section": "Revenue Questions",
+  "main": "Create a heat map showing gross margin percentage by business unit and month.",
+  "followup": "In the same chart, highlight the highest and lowest margin months."
+ },
+ {
+  "id": 10,
+  "section": "Revenue Questions",
+  "main": "Create a waterfall chart showing revenue, cost, and gross margin by month.",
+  "followup": "In the same chart, add gross margin percentage labels for each month."
+ },
+ {
+  "id": 11,
+  "section": "Revenue Questions",
+  "main": "Create a column chart showing total cost by business unit.",
+  "followup": "In the same chart, add revenue to compare cost against revenue."
+ },
+ {
+  "id": 12,
+  "section": "Revenue Questions",
+  "main": "Create a treemap showing revenue contribution by client.",
+  "followup": "In the same chart, color each client by gross margin percentage."
+ },
+ {
+  "id": 13,
+  "section": "Revenue Questions",
+  "main": "Create a scatter plot showing revenue versus gross margin by client.",
+  "followup": "In the same chart, size each bubble by cost."
+ },
+ {
+  "id": 14,
+  "section": "Revenue Questions",
+  "main": "Create a bar chart showing average gross margin percentage by contract type.",
+  "followup": "In the same chart, add total revenue for each contract type."
+ },
+ {
+  "id": 15,
+  "section": "Revenue Questions",
+  "main": "Create a stacked area chart showing monthly revenue by contract type.",
+  "followup": "In the same chart, add a total revenue trend line."
+ },
+ {
+  "id": 16,
+  "section": "Revenue Questions",
+  "main": "Create a ranked bar chart showing top clients by gross margin.",
+  "followup": "In the same chart, add revenue labels for each client."
+ },
+ {
+  "id": 17,
+  "section": "Revenue Questions",
+  "main": "Create a 100% stacked column chart showing monthly revenue mix by business unit.",
+  "followup": "In the same chart, add total revenue labels above each month."
+ },
+ {
+  "id": 18,
+  "section": "Revenue Questions",
+  "main": "Create a line chart showing monthly cost as a percentage of revenue.",
+  "followup": "In the same chart, add a median cost-to-revenue line."
+ },
+ {
+  "id": 19,
+  "section": "Revenue Questions",
+  "main": "Create a heat map showing revenue by client and contract type.",
+  "followup": "In the same chart, apply color intensity based on gross margin percentage."
+ },
+ {
+  "id": 20,
+  "section": "Revenue Questions",
+  "main": "Create a bar chart showing gross margin percentage by client.",
+  "followup": "In the same chart, add an overall gross margin percentage reference line."
+ },
+ {
+  "id": 21,
+  "section": "Financial Statement Questions",
+  "main": "Create a line chart showing monthly cash balance.",
+  "followup": "In the same chart, add free cash flow as a comparison line."
+ },
+ {
+  "id": 22,
+  "section": "Financial Statement Questions",
+  "main": "Create a column chart showing monthly operating cash flow.",
+  "followup": "In the same chart, add investing cash flow and financing cash flow."
+ },
+ {
+  "id": 23,
+  "section": "Financial Statement Questions",
+  "main": "Create a stacked column chart showing operating, investing, and financing cash flow by month.",
+  "followup": "In the same chart, add cash balance as a line."
+ },
+ {
+  "id": 24,
+  "section": "Financial Statement Questions",
+  "main": "Create a column chart showing monthly free cash flow.",
+  "followup": "In the same chart, add a zero reference line to identify negative months."
+ },
+ {
+  "id": 25,
+  "section": "Financial Statement Questions",
+  "main": "Create a waterfall chart showing monthly movement from operating cash flow to free cash flow.",
+  "followup": "In the same chart, add investing cash flow impact as labels."
+ },
+ {
+  "id": 26,
+  "section": "Financial Statement Questions",
+  "main": "Create a line chart showing monthly opening balance and closing balance by account.",
+  "followup": "In the same chart, highlight accounts with the largest balance movement."
+ },
+ {
+  "id": 27,
+  "section": "Financial Statement Questions",
+  "main": "Create a column chart showing debit movement and credit movement by account.",
+  "followup": "In the same chart, add net movement as a line."
+ },
+ {
+  "id": 28,
+  "section": "Financial Statement Questions",
+  "main": "Create a heat map showing closing balance by account and month.",
+  "followup": "In the same chart, highlight the highest and lowest balances."
+ },
+ {
+  "id": 29,
+  "section": "Financial Statement Questions",
+  "main": "Create a bar chart showing total debit amount by account.",
+  "followup": "In the same chart, add total credit amount for comparison."
+ },
+ {
+  "id": 30,
+  "section": "Financial Statement Questions",
+  "main": "Create a waterfall chart showing net movement by account.",
+  "followup": "In the same chart, add debit and credit impact labels."
+ },
+ {
+  "id": 31,
+  "section": "Financial Statement Questions",
+  "main": "Create a bar chart showing outstanding receivables by client.",
+  "followup": "In the same chart, add collected amount to compare collections."
+ },
+ {
+  "id": 32,
+  "section": "Financial Statement Questions",
+  "main": "Create a stacked bar chart showing outstanding receivables by aging bucket.",
+  "followup": "In the same chart, add percentage contribution of each aging bucket."
+ },
+ {
+  "id": 33,
+  "section": "Financial Statement Questions",
+  "main": "Create a column chart showing invoice amount, collected amount, and outstanding receivables by month.",
+  "followup": "In the same chart, add collection rate as a line."
+ },
+ {
+  "id": 34,
+  "section": "Financial Statement Questions",
+  "main": "Create a heat map showing outstanding receivables by client and aging bucket.",
+  "followup": "In the same chart, highlight balances in the oldest aging bucket."
+ },
+ {
+  "id": 35,
+  "section": "Financial Statement Questions",
+  "main": "Create a Pareto chart showing clients ranked by outstanding receivables.",
+  "followup": "In the same chart, add cumulative outstanding percentage line."
+ },
+ {
+  "id": 36,
+  "section": "Financial Statement Questions",
+  "main": "Create a bar chart showing outstanding payables by vendor.",
+  "followup": "In the same chart, add paid amount to compare payment progress."
+ },
+ {
+  "id": 37,
+  "section": "Financial Statement Questions",
+  "main": "Create a stacked bar chart showing outstanding payables by aging bucket.",
+  "followup": "In the same chart, add percentage contribution of each aging bucket."
+ },
+ {
+  "id": 38,
+  "section": "Financial Statement Questions",
+  "main": "Create a column chart showing payable invoice amount, paid amount, and outstanding payables by month.",
+  "followup": "In the same chart, add payment rate as a line."
+ },
+ {
+  "id": 39,
+  "section": "Financial Statement Questions",
+  "main": "Create a heat map showing outstanding payables by vendor and aging bucket.",
+  "followup": "In the same chart, highlight balances in the oldest aging bucket."
+ },
+ {
+  "id": 40,
+  "section": "Financial Statement Questions",
+  "main": "Create a Pareto chart showing vendors ranked by outstanding payables.",
+  "followup": "In the same chart, add cumulative outstanding percentage line."
+ },
+ {
+  "id": 41,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a column chart showing monthly total payroll.",
+  "followup": "In the same chart, split payroll into base salary, overtime, bonus, and benefits."
+ },
+ {
+  "id": 42,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a stacked bar chart showing total payroll by department.",
+  "followup": "In the same chart, add employee count by department."
+ },
+ {
+  "id": 43,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a bar chart showing total payroll by country.",
+  "followup": "In the same chart, add average monthly salary by country."
+ },
+ {
+  "id": 44,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a line chart showing monthly overtime cost.",
+  "followup": "In the same chart, add total payroll to compare overtime impact."
+ },
+ {
+  "id": 45,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a column chart showing total bonus by department.",
+  "followup": "In the same chart, add bonus as a percentage of total payroll."
+ },
+ {
+  "id": 46,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a stacked column chart showing monthly payroll composition.",
+  "followup": "In the same chart, add benefits as a percentage of base salary."
+ },
+ {
+  "id": 47,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a heat map showing payroll by department and country.",
+  "followup": "In the same chart, highlight the highest payroll concentration areas."
+ },
+ {
+  "id": 48,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a bar chart showing average salary by employee grade.",
+  "followup": "In the same chart, add employee count by grade."
+ },
+ {
+  "id": 49,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a box plot showing salary distribution by department.",
+  "followup": "In the same chart, add median salary markers for each department."
+ },
+ {
+  "id": 50,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a column chart showing employee count by department.",
+  "followup": "In the same chart, add total payroll by department."
+ },
+ {
+  "id": 51,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a bar chart showing employee count by country and delivery center.",
+  "followup": "In the same chart, add average salary labels."
+ },
+ {
+  "id": 52,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a Pareto chart showing departments ranked by total payroll.",
+  "followup": "In the same chart, add cumulative payroll percentage line."
+ },
+ {
+  "id": 53,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a column chart showing overtime cost by department.",
+  "followup": "In the same chart, add overtime as a percentage of total payroll."
+ },
+ {
+  "id": 54,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a bar chart showing benefits cost by country.",
+  "followup": "In the same chart, add benefits as a percentage of base salary."
+ },
+ {
+  "id": 55,
+  "section": "Payroll and Employee Cost Questions",
+  "main": "Create a column chart showing payroll cost per employee by country.",
+  "followup": "In the same chart, add an overall average payroll cost per employee line."
+ },
+ {
+  "id": 56,
+  "section": "Operational Performance Questions",
+  "main": "Create a line chart showing monthly calls handled by delivery center.",
+  "followup": "In the same chart, add tickets resolved as another line."
+ },
+ {
+  "id": 57,
+  "section": "Operational Performance Questions",
+  "main": "Create a column chart showing average SLA compliance by delivery center.",
+  "followup": "In the same chart, add CSAT percentage for comparison."
+ },
+ {
+  "id": 58,
+  "section": "Operational Performance Questions",
+  "main": "Create a scatter plot showing average handling time versus CSAT percentage.",
+  "followup": "In the same chart, size each bubble by calls handled."
+ },
+ {
+  "id": 59,
+  "section": "Operational Performance Questions",
+  "main": "Create a heat map showing SLA compliance by delivery center and month.",
+  "followup": "In the same chart, highlight months below the target SLA level."
+ },
+ {
+  "id": 60,
+  "section": "Operational Performance Questions",
+  "main": "Create a line chart showing monthly utilization percentage by delivery center.",
+  "followup": "In the same chart, add SLA compliance percentage."
+ },
+ {
+  "id": 61,
+  "section": "Operational Performance Questions",
+  "main": "Create a bar chart showing total tickets resolved by delivery center.",
+  "followup": "In the same chart, add average handling time as a line."
+ },
+ {
+  "id": 62,
+  "section": "Operational Performance Questions",
+  "main": "Create a combo chart showing calls handled as columns and CSAT percentage as a line.",
+  "followup": "In the same chart, add SLA compliance percentage as another line."
+ },
+ {
+  "id": 63,
+  "section": "Operational Performance Questions",
+  "main": "Create a ranked bar chart showing delivery centers by average CSAT percentage.",
+  "followup": "In the same chart, add calls handled as labels."
+ },
+ {
+  "id": 64,
+  "section": "Operational Performance Questions",
+  "main": "Create a column chart showing monthly average handling time.",
+  "followup": "In the same chart, add a median handling time line."
+ },
+ {
+  "id": 65,
+  "section": "Operational Performance Questions",
+  "main": "Create a scatter plot showing utilization percentage versus SLA compliance percentage.",
+  "followup": "In the same chart, size bubbles by tickets resolved."
+ },
+ {
+  "id": 66,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a bar chart showing net book value by delivery center.",
+  "followup": "In the same chart, add asset cost to compare current value versus original cost."
+ },
+ {
+  "id": 67,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a stacked bar chart showing net book value by asset type and delivery center.",
+  "followup": "In the same chart, add accumulated depreciation labels."
+ },
+ {
+  "id": 68,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a donut chart showing asset cost share by asset type.",
+  "followup": "In the same chart, add net book value share by asset type."
+ },
+ {
+  "id": 69,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a bar chart showing accumulated depreciation by asset type.",
+  "followup": "In the same chart, add depreciation percentage."
+ },
+ {
+  "id": 70,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a treemap showing net book value by delivery center and asset type.",
+  "followup": "In the same chart, color the treemap by depreciation percentage."
+ },
+ {
+  "id": 71,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a scatter plot showing asset cost versus net book value by asset type.",
+  "followup": "In the same chart, size each bubble by accumulated depreciation."
+ },
+ {
+  "id": 72,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a ranked bar chart showing delivery centers by depreciation percentage.",
+  "followup": "In the same chart, add net book value labels."
+ },
+ {
+  "id": 73,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a column chart comparing asset cost, accumulated depreciation, and net book value by asset type.",
+  "followup": "In the same chart, add net book value percentage of asset cost as a line."
+ },
+ {
+  "id": 74,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a heat map showing net book value by asset type and delivery center.",
+  "followup": "In the same chart, highlight the highest value asset category."
+ },
+ {
+  "id": 75,
+  "section": "Asset and Capital Efficiency Questions",
+  "main": "Create a bar chart showing asset intensity by delivery center using net book value per call handled.",
+  "followup": "In the same chart, add CSAT percentage as a line."
+ },
+ {
+  "id": 76,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a line chart showing monthly current ratio.",
+  "followup": "In the same chart, add a reference line at 1.5 to compare liquidity strength."
+ },
+ {
+  "id": 77,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a column chart showing monthly quick ratio.",
+  "followup": "In the same chart, add current ratio as a comparison line."
+ },
+ {
+  "id": 78,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a line chart showing monthly working capital.",
+  "followup": "In the same chart, add revenue as a comparison line."
+ },
+ {
+  "id": 79,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a column chart showing cost per employee by month.",
+  "followup": "In the same chart, add payroll per employee as a comparison line."
+ },
+ {
+  "id": 80,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a bar chart showing cost per employee by department.",
+  "followup": "In the same chart, add revenue per employee by department."
+ },
+ {
+  "id": 81,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a scatter plot showing revenue per employee versus cost per employee by department.",
+  "followup": "In the same chart, size each bubble by employee count."
+ },
+ {
+  "id": 82,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a combo chart showing monthly revenue as columns and payroll as a percentage of revenue as a line.",
+  "followup": "In the same chart, add an average payroll percentage reference line."
+ },
+ {
+  "id": 83,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a line chart showing monthly free cash flow margin.",
+  "followup": "In the same chart, add gross margin percentage as a comparison line."
+ },
+ {
+  "id": 84,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a bar chart showing revenue per employee by business unit.",
+  "followup": "In the same chart, add gross margin per employee by business unit."
+ },
+ {
+  "id": 85,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a column chart showing operating cash flow as a percentage of revenue by month.",
+  "followup": "In the same chart, add free cash flow margin as another line."
+ },
+ {
+  "id": 86,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a line chart showing receivables as a percentage of revenue by month.",
+  "followup": "In the same chart, add payables as a percentage of cost by month."
+ },
+ {
+  "id": 87,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a bar chart showing collection rate by client.",
+  "followup": "In the same chart, add gross margin percentage by client."
+ },
+ {
+  "id": 88,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a scatter plot showing client revenue versus collection rate.",
+  "followup": "In the same chart, size bubbles by outstanding receivables."
+ },
+ {
+  "id": 89,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a scatter plot showing client gross margin percentage versus collection rate.",
+  "followup": "In the same chart, size bubbles by revenue."
+ },
+ {
+  "id": 90,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a line chart showing monthly cash conversion using operating cash flow divided by revenue.",
+  "followup": "In the same chart, add gross margin percentage for comparison."
+ },
+ {
+  "id": 91,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a bar chart showing revenue, payroll, and gross margin by business unit.",
+  "followup": "In the same chart, add payroll as a percentage of revenue."
+ },
+ {
+  "id": 92,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a heat map showing revenue per employee by department and month.",
+  "followup": "In the same chart, highlight departments below the overall average."
+ },
+ {
+  "id": 93,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a column chart showing monthly EBITDA-style margin using revenue minus cost minus payroll.",
+  "followup": "In the same chart, add gross margin percentage as a comparison line."
+ },
+ {
+  "id": 94,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a line chart showing monthly net working capital.",
+  "followup": "In the same chart, add cash balance as a comparison line."
+ },
+ {
+  "id": 95,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a bar chart showing revenue per delivery center.",
+  "followup": "In the same chart, add utilization percentage as a line."
+ },
+ {
+  "id": 96,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a scatter plot showing utilization percentage versus revenue per employee by delivery center.",
+  "followup": "In the same chart, size bubbles by payroll cost."
+ },
+ {
+  "id": 97,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a column chart showing monthly cost-to-income ratio using total cost divided by revenue.",
+  "followup": "In the same chart, add payroll-to-revenue ratio as a second line."
+ },
+ {
+  "id": 98,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a line chart showing monthly cash balance and outstanding receivables.",
+  "followup": "In the same chart, add outstanding payables as another line."
+ },
+ {
+  "id": 99,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a CFO scorecard chart showing revenue, gross margin, payroll, free cash flow, receivables, and payables by month.",
+  "followup": "In the same chart, add KPI cards for current ratio, gross margin percentage, cost per employee, revenue per employee, and free cash flow margin."
+ },
+ {
+  "id": 100,
+  "section": "Mixed CFO Ratio and Cross-Analysis Questions",
+  "main": "Create a dashboard showing monthly liquidity, profitability, employee efficiency, and cash conversion metrics.",
+  "followup": "In the same dashboard, add trend indicators comparing each metric against its monthly average."
+ }
+]

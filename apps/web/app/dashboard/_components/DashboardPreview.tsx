@@ -3,8 +3,12 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import {
+  ChevronDown,
+  History,
   Maximize2,
+  Trash2,
   X,
   TrendingDown,
   DollarSign,
@@ -74,6 +78,8 @@ interface ChartConfig {
     movingAverageSuffix?: string | null; // series ending in this suffix render dashed
     secondaryAxisFormat?: "number" | "currency" | "percent" | null; // combo right-axis format
     secondaryLabel?: string | null; // combo second-measure label
+    valueFormat?: "currency" | "number" | "percent" | null; // primary value unit (EBPO dynamic charts)
+    valueDecimals?: number | null; // decimals for the primary value (e.g. 1 for %)
     showTotals?: boolean | null; // matrix/heatmap totals are rendered when true/default
     conditionalThreshold?: number | null; // matrix cells at/above this value use conditional color
     conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null; // dynamic "above average" highlight
@@ -83,6 +89,9 @@ interface ChartConfig {
 
 interface Chart {
   id: string;
+  // The real DB widget id, when known. Used as the stable target for header
+  // deletion (the synthesized `id` above is only unique per render, not a row).
+  widgetId?: string | null;
   title: string;
   description?: string | null;
   type: string;
@@ -124,6 +133,7 @@ type ChartPeriodMeta = {
 type ChartTurnMode = "create" | "edit";
 
 type ChartTurnWidgetSnapshot = {
+  id?: string | null;
   title?: string;
   chartType?: string;
   queryConfig?: Record<string, unknown>;
@@ -296,6 +306,7 @@ function buildChartVersionHistory(messages: ChatMessage[]): ChartVersionSnapshot
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/^-+|-+$/g, "")}`,
+        widgetId: typeof widget.id === "string" ? widget.id : null,
         title,
         description: chartDescription,
         type: String(widget.chartType ?? "bar").trim(),
@@ -309,8 +320,6 @@ function buildChartVersionHistory(messages: ChatMessage[]): ChartVersionSnapshot
         availableRange: widget.availableRange ?? null,
       });
     }
-
-    if (charts.length === 0) continue;
 
     versions.push({
       versionNumber,
@@ -840,8 +849,24 @@ class ChartErrorBoundary extends Component<
   }
 }
 
-function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
+export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   const h = isExpanded ? 480 : 240;
+
+  // Honor an explicit value-format hint when present. EBPO charts use
+  // metric="dynamic", so formatValue can't infer "percent" from the metric name —
+  // a % measure (gross margin %, depreciation %) would otherwise render as $/thousands.
+  // The EBPO compiler sets display.valueFormat from the measure's catalog format.
+  const _vfmt = chart.config.display?.valueFormat ?? null;
+  const _vdec = chart.config.display?.valueDecimals ?? null;
+  const _metric = chart.config.metric;
+  const _grouping = chart.config.grouping;
+  const fmtVal = (value: number): string => {
+    const n = Number(value) || 0;
+    if (_vfmt === "percent") return `${n.toFixed(_vdec ?? 1)}%`;
+    if (_vfmt === "currency") return fmtCurrency(n);
+    if (_vfmt === "number") return fmtNumber(n);
+    return formatValue(_metric, _grouping, n);
+  };
 
   if (chart.type === "metric") {
     if (chart.config.metric === "venture") {
@@ -869,7 +894,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             {label}
           </p>
           <p className="text-4xl font-black tracking-tight text-text-primary">
-            {formatValue(chart.config.metric, chart.config.grouping, Number.isFinite(numeric) ? numeric : 0)}
+            {fmtVal(Number.isFinite(numeric) ? numeric : 0)}
           </p>
           {secondary && <p className="text-xs text-text-muted">{secondary}</p>}
         </div>
@@ -894,7 +919,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
   const yTick = (v: number) =>
     dispNormalized
       ? pctTick(v)
-      : formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0);
+      : fmtVal(Number(v) || 0);
   // Constant value of the reference column (it's the same on every row).
   const refValue =
     refSeriesKey && data.length > 0 ? Number((data[0] as any)[refSeriesKey]) : null;
@@ -1097,7 +1122,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 	              tickLine={false}
 	              axisLine={false}
 	              tickFormatter={(v: number) =>
-	                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+	                fmtVal(Number(v) || 0)
 	              }
 	              width={56}
 	              tickMargin={8}
@@ -1127,8 +1152,23 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
 		  }
 
   if (chart.type === "combo") {
-    const lineKeys = inferNumericSeriesKeys(data);
-    const lineKey = lineKeys[0] ?? null;
+    // Series in SQL/select order (= measures[] order): the first is the bar, the
+    // rest are lines. EBPO multi-measure combos emit MEASURE-NAMED columns and no
+    // "value" column — so hardcoding dataKey="value" drew an empty bar and only one
+    // line. Derive the keys from the data instead, preserving order.
+    const firstRow = (data[0] ?? {}) as Record<string, unknown>;
+    const orderedKeys = Object.keys(firstRow).filter(
+      (k) => k !== "name" && typeof firstRow[k] === "number",
+    );
+    const seriesKeys = orderedKeys.length > 0 ? orderedKeys : inferNumericSeriesKeys(data);
+    const barKey = seriesKeys.includes("value") ? "value" : (seriesKeys[0] ?? null);
+    const lineSeriesKeys = seriesKeys.filter((k) => k !== barKey);
+    const lineKey = lineSeriesKeys[0] ?? null;
+    const LINE_COLORS = [
+      "rgb(var(--color-accent-cyan))",
+      "rgb(var(--color-accent-violet))",
+      "rgb(var(--color-accent-blue))",
+    ];
     const secFmt = chart.config.display?.secondaryAxisFormat ?? "percent";
     const secTick = (v: number) =>
       secFmt === "currency"
@@ -1162,7 +1202,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               tickLine={false}
               axisLine={false}
               tickFormatter={(v: number) =>
-                formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+                fmtVal(Number(v) || 0)
               }
               width={56}
               tickMargin={8}
@@ -1185,38 +1225,44 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   metric={chart.config.metric}
                   grouping={chart.config.grouping}
                   valueFormatter={(value: number, entry: any) =>
-                    entry?.dataKey === "value"
-                      ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
+                    entry?.dataKey === barKey
+                      ? fmtVal(Number(value) || 0)
                       : secTick(Number(value) || 0)
                   }
                 />
               }
             />
-            <Bar
-              yAxisId="left"
-              dataKey="value"
-              name="value"
-              fill={`url(#grad-bar-${chart.id})`}
-              radius={[6, 6, 0, 0]}
-              maxBarSize={56}
-            />
-            {lineKey && (
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey={lineKey}
-                name={lineKey.replace(/_/g, " ")}
-                stroke="rgb(var(--color-accent-cyan))"
-                strokeWidth={isExpanded ? 2.5 : 2}
-                dot={isExpanded ? { r: 4, fill: "rgb(var(--color-accent-cyan))", strokeWidth: 0 } : false}
-                activeDot={{
-                  r: 5,
-                  fill: "rgb(var(--color-accent-cyan))",
-                  strokeWidth: 2,
-                  stroke: "rgb(var(--color-bg-card))",
-                }}
+            {barKey && (
+              <Bar
+                yAxisId="left"
+                dataKey={barKey}
+                name={barKey === "value" ? "value" : barKey.replace(/_/g, " ")}
+                fill={`url(#grad-bar-${chart.id})`}
+                radius={[6, 6, 0, 0]}
+                maxBarSize={56}
               />
             )}
+            {lineSeriesKeys.map((lk, i) => {
+              const color = LINE_COLORS[i % LINE_COLORS.length];
+              return (
+                <Line
+                  key={lk}
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey={lk}
+                  name={lk.replace(/_/g, " ")}
+                  stroke={color}
+                  strokeWidth={isExpanded ? 2.5 : 2}
+                  dot={isExpanded ? { r: 4, fill: color, strokeWidth: 0 } : false}
+                  activeDot={{
+                    r: 5,
+                    fill: color,
+                    strokeWidth: 2,
+                    stroke: "rgb(var(--color-bg-card))",
+                  }}
+                />
+              );
+            })}
             <Legend
               verticalAlign="bottom"
               height={28}
@@ -1321,7 +1367,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={(v: number) =>
-                    formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+                    fmtVal(Number(v) || 0)
                   }
                   tickMargin={8}
                 />
@@ -1485,7 +1531,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                     position={useHorizontalBars ? "right" : "top"}
                     offset={useHorizontalBars ? 6 : 4}
                     style={{ fill: "rgb(var(--color-text-secondary))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
-                    formatter={(v: unknown) => formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)}
+                    formatter={(v: unknown) => fmtVal(Number(v) || 0)}
                   />
                 )}
 	              </Bar>
@@ -1697,7 +1743,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       const y = cy + r * Math.sin(-midAngle * RADIAN);
       const labelText =
         labelMode === "value"
-          ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
+          ? fmtVal(Number(value) || 0)
           : fmtPercent((Number(percent) || 0) * 100);
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
@@ -1840,7 +1886,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
       const y = cy + r * Math.sin(-midAngle * RADIAN);
       const labelText =
         labelMode === "value"
-          ? formatValue(chart.config.metric, chart.config.grouping, Number(value) || 0)
+          ? fmtVal(Number(value) || 0)
           : fmtPercent((Number(percent) || 0) * 100);
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
@@ -1897,7 +1943,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" horizontal={false} />
             <XAxis type="number" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
               tickLine={false} axisLine={false}
-              tickFormatter={(v: number) => formatValue(chart.config.metric, chart.config.grouping, v)} />
+              tickFormatter={(v: number) => fmtVal(v)} />
             <YAxis type="category" dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
               tickLine={false} axisLine={false} width={120} />
             <Tooltip content={<CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
@@ -1945,7 +1991,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               tickLine={false} axisLine={false} />
             <YAxis yAxisId="left" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
               tickLine={false} axisLine={false} width={56}
-              tickFormatter={(v: number) => formatValue(chart.config.metric, chart.config.grouping, v)} />
+              tickFormatter={(v: number) => fmtVal(v)} />
             <YAxis yAxisId="right" orientation="right" domain={[0, 100]}
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
               tickLine={false} axisLine={false} tickFormatter={(v: number) => `${v}%`} width={36} />
@@ -2102,7 +2148,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
         .join(" ");
     const axisLabel = (axis: string) => prettyAxis(axis || "Name");
     const amount = (value: number) =>
-      formatValue(chart.config.metric, chart.config.grouping, value);
+      fmtVal(value);
     const lerp = (from: number, to: number, t: number) =>
       Math.round(from + (to - from) * Math.max(0, Math.min(1, t)));
     const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
@@ -2265,7 +2311,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
                 <YAxis
                   tick={tickStyle}
                   tickFormatter={(v: number) =>
-                    formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+                    fmtVal(Number(v) || 0)
                   }
                   width={56}
                   tickMargin={8}
@@ -2302,7 +2348,7 @@ function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
               <YAxis
                 tick={tickStyle}
                 tickFormatter={(v: number) =>
-                  formatValue(chart.config.metric, chart.config.grouping, Number(v) || 0)
+                  fmtVal(Number(v) || 0)
                 }
                 width={56}
                 tickMargin={8}
@@ -2654,6 +2700,7 @@ function ChartCard({
   index,
   onExpand,
   onScopeChange,
+  onDelete,
 }: {
   chart: Chart;
   data: DataRow[];
@@ -2663,6 +2710,7 @@ function ChartCard({
   index: number;
   onExpand: () => void;
   onScopeChange: (selection: ChartScopeSelection) => void;
+  onDelete?: () => void;
 }) {
   const isEmpty = data.length === 0;
   const rangeNotice = meta?.rangeNotice ?? chart.rangeNotice ?? null;
@@ -2690,12 +2738,28 @@ function ChartCard({
           </p>
           <AxisCaption chart={chart} />
         </div>
-        {!isEmpty && (
-          <Maximize2
-            size={12}
-            className="mt-0.5 shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100"
-          />
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {onDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              aria-label={`Delete ${chart.title}`}
+              title="Delete chart"
+              className="rounded-md p-1 text-text-muted opacity-0 transition-all hover:bg-feedback-danger/10 hover:text-feedback-danger focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+          {!isEmpty && (
+            <Maximize2
+              size={12}
+              className="mt-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100"
+            />
+          )}
+        </div>
       </div>
 
       <ChartScopeControls
@@ -2747,16 +2811,20 @@ function VersionSection({
   chartData,
   chartDataMeta,
   chartScopes,
+  isHistorical = false,
   onExpandChart,
   onScopeChange,
+  onDeleteChart,
 }: {
   version: ChartVersionSnapshot | null;
   charts: Chart[];
   chartData: Record<string, DataRow[]>;
   chartDataMeta: Record<string, ChartDataMeta>;
   chartScopes: Record<string, ChartScopeSelection>;
+  isHistorical?: boolean;
   onExpandChart: (chartId: string) => void;
   onScopeChange: (chartId: string, selection: ChartScopeSelection) => void;
+  onDeleteChart?: (chart: Chart) => void;
 }) {
   const versionLabel = version ? `Chart v${version.versionNumber}` : "Current dashboard";
   const modeLabel = version
@@ -2766,7 +2834,12 @@ function VersionSection({
     : "latest charts";
 
   return (
-    <div className="rounded-2xl border border-default bg-bg-elevated/20 p-4">
+    <div
+      className={cn(
+        "rounded-2xl border border-default bg-bg-elevated/20 p-4",
+        isHistorical && "border-dashed opacity-75",
+      )}
+    >
       {version ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-accent-cyan/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-cyan">
@@ -2780,11 +2853,25 @@ function VersionSection({
               preserves v{version.previousVersionNumber}
             </span>
           )}
+          {isHistorical && (
+            <span className="rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+              history only
+            </span>
+          )}
         </div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-4">
-        {charts.map((chart, index) => {
+        {charts.length === 0 ? (
+          <div className="rounded-xl border border-default bg-bg-card/60 px-4 py-5">
+            <p className="text-sm font-semibold text-text-primary">
+              No charts yet
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-text-muted">
+              This dashboard doesn&apos;t have any charts. Ask the agent to build one to get started.
+            </p>
+          </div>
+        ) : charts.map((chart, index) => {
           const fullData = chartData[chart.id] ?? [];
           const scopeSelection = chartScopes[chart.id] ?? defaultScopeFromTimeRange(chart.config.timeRange);
           const scopedData = filterRowsByScope(fullData, scopeSelection);
@@ -2799,6 +2886,9 @@ function VersionSection({
               index={index}
               onExpand={() => onExpandChart(chart.id)}
               onScopeChange={(selection) => onScopeChange(chart.id, selection)}
+              onDelete={
+                onDeleteChart && chart.widgetId ? () => onDeleteChart(chart) : undefined
+              }
             />
           );
         })}
@@ -2826,9 +2916,15 @@ export function DashboardPreview({
   const [chartData, setChartData] = useState<Record<string, DataRow[]>>({});
   const [chartDataMeta, setChartDataMeta] = useState<Record<string, ChartDataMeta>>({});
   const [chartScopes, setChartScopes] = useState<Record<string, ChartScopeSelection>>({});
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedChartId, setExpandedChartId] = useState<string | null>(null);
+  // Widget ids optimistically hidden while a header-delete is pending (or until
+  // the server-confirmed refetch lands). Lets the card disappear immediately
+  // while the actual DELETE is deferred behind the undo window.
+  const [hiddenWidgetIds, setHiddenWidgetIds] = useState<Set<string>>(new Set());
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const prevSessionRef = useRef<string | null | undefined>(sessionId);
 
   // Switching chats (or starting a new one) must NOT keep showing the previous
@@ -2841,7 +2937,9 @@ export function DashboardPreview({
     if (Object.keys(chartData).length > 0) setChartData({});
     if (Object.keys(chartDataMeta).length > 0) setChartDataMeta({});
     if (Object.keys(chartScopes).length > 0) setChartScopes({});
+    if (showVersionHistory) setShowVersionHistory(false);
     setExpandedChartId(null);
+    if (hiddenWidgetIds.size > 0) setHiddenWidgetIds(new Set());
   }
 
   useEffect(() => {
@@ -2858,6 +2956,7 @@ export function DashboardPreview({
         if (latest) {
           const charts: Chart[] = (latest.charts ?? []).map((c) => ({
             id: c.id,
+            widgetId: c.id,
             title: c.title,
             description: c.description ?? null,
             type: c.type,
@@ -2926,6 +3025,18 @@ export function DashboardPreview({
           );
           setChartData(dataMap);
           setChartDataMeta(metaMap);
+          // Server state is now authoritative: drop any optimistic hides whose
+          // widget is no longer present (i.e. the delete went through).
+          setHiddenWidgetIds((prev) => {
+            if (prev.size === 0) return prev;
+            const liveWidgetIds = new Set(
+              chartsToLoad
+                .map((chart) => chart.widgetId)
+                .filter((id): id is string => typeof id === "string"),
+            );
+            const next = new Set([...prev].filter((id) => liveWidgetIds.has(id)));
+            return next.size === prev.size ? prev : next;
+          });
           setChartScopes((current) => {
             const validIds = new Set(chartsToLoad.map((chart) => chart.id));
             return Object.fromEntries(
@@ -2951,7 +3062,47 @@ export function DashboardPreview({
     };
 
     void fetchDashboard();
-  }, [agent, loading, triggerSync, sessionId, liveChartTurn]);
+  }, [agent, loading, triggerSync, sessionId, liveChartTurn, refreshNonce]);
+
+  // Header delete: hide the card immediately, then fire the real DELETE only
+  // after the undo window closes. Undo just cancels the pending timer, so no
+  // re-create is ever needed (the deletion never left the client).
+  const handleRequestDelete = (chart: Chart) => {
+    const widgetId = chart.widgetId;
+    if (!sessionId || !widgetId) return;
+
+    setHiddenWidgetIds((prev) => new Set(prev).add(widgetId));
+
+    const unhide = () =>
+      setHiddenWidgetIds((prev) => {
+        if (!prev.has(widgetId)) return prev;
+        const next = new Set(prev);
+        next.delete(widgetId);
+        return next;
+      });
+
+    const timer = setTimeout(async () => {
+      try {
+        await agent.deleteSessionChart(sessionId, widgetId);
+        // Pull the new version from the server; the prune step clears the hide.
+        setRefreshNonce((n) => n + 1);
+      } catch {
+        unhide();
+        toast.error("Couldn't delete the chart — it's back on your dashboard.");
+      }
+    }, 5000);
+
+    toast(`Deleted “${chart.title}”`, {
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          clearTimeout(timer);
+          unhide();
+        },
+      },
+    });
+  };
 
   // ── Loading / Generating state ──────────────────────────────────────────────
   // Show the generating skeleton whenever a generation is in flight — even if a
@@ -3016,9 +3167,9 @@ export function DashboardPreview({
     );
   }
 
-  const visibleVersions =
+  const sortedVersions =
     chartVersions.length > 0
-      ? chartVersions
+      ? chartVersions.slice().sort((a, b) => b.versionNumber - a.versionNumber)
       : [
           {
             versionNumber: 0,
@@ -3029,6 +3180,24 @@ export function DashboardPreview({
             charts: dashboard.charts,
           },
         ];
+  // The "live" view is the newest version that still has charts. If the most
+  // recent edit removed its chart, fall back to the most recent prior version
+  // that still has one instead of dead-ending on an empty dashboard. The empty
+  // state only shows when no version anywhere has a chart (a genuine zero).
+  const newestVersion = sortedVersions[0] ?? null;
+  const liveVersion = sortedVersions.find((version) => version.charts.length > 0) ?? newestVersion;
+  const latestRemovedActive =
+    !!newestVersion && !!liveVersion && newestVersion.versionNumber !== liveVersion.versionNumber;
+  // History excludes the live version and any empty versions, so a removed-chart
+  // edit never renders as an "empty" history card.
+  const historyVersions = sortedVersions.filter(
+    (version) => version !== liveVersion && version.charts.length > 0,
+  );
+  const visibleVersions = [
+    ...(liveVersion ? [liveVersion] : []),
+    ...(showVersionHistory ? historyVersions : []),
+  ];
+  const latestVersionNumber = liveVersion?.versionNumber ?? null;
   const visibleCharts = visibleVersions.flatMap((version) => version.charts);
   const expandedChart = visibleCharts.find((c) => c.id === expandedChartId);
   const expandedFullData = expandedChart ? (chartData[expandedChart.id] ?? []) : [];
@@ -3059,30 +3228,81 @@ export function DashboardPreview({
         </div>
       </motion.div>
 
-      {chartVersions.length > 0 ? (
-        <div className="rounded-2xl border border-default bg-bg-elevated/25 px-4 py-3">
-          <p className="text-xs text-text-muted">
-            Live dashboard keeps every chart version below the previous one, so edits extend the
-            history instead of replacing it.
+      {latestRemovedActive && liveVersion ? (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-2.5 rounded-2xl border border-accent-cyan/25 bg-accent-cyan/5 px-4 py-3"
+        >
+          <History size={14} className="mt-0.5 shrink-0 text-accent-cyan" />
+          <p className="text-xs leading-relaxed text-text-secondary">
+            The latest edit removed its chart. Showing{" "}
+            <span className="font-semibold text-text-primary">v{liveVersion.versionNumber}</span> — the
+            most recent chart still active.
           </p>
+        </motion.div>
+      ) : null}
+
+      {chartVersions.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-default bg-bg-elevated/25 px-4 py-3">
+          <p className="text-xs text-text-muted">
+            Showing the live dashboard only. Previous versions are review-only history.
+          </p>
+          {historyVersions.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowVersionHistory((open) => !open)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-default bg-bg-card/60 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-text-secondary transition-colors hover:border-accent-cyan/40 hover:text-accent-cyan"
+            >
+              <History size={12} />
+              {showVersionHistory ? "Hide history" : `Show history (${historyVersions.length})`}
+              <ChevronDown
+                size={12}
+                className={cn("transition-transform", showVersionHistory && "rotate-180")}
+              />
+            </button>
+          ) : null}
         </div>
       ) : null}
 
       {/* Chart history — each version stacks downward in the live dashboard */}
       <div className="space-y-4 pb-8">
-        {visibleVersions.map((version) => (
-          <VersionSection
-            key={`${version.versionNumber}-${version.dashboardTitle}`}
-            version={version.versionNumber > 0 ? version : null}
-            charts={version.charts}
-            chartData={chartData}
-            chartDataMeta={chartDataMeta}
-            chartScopes={chartScopes}
-            onExpandChart={(chartId) => setExpandedChartId(chartId)}
-            onScopeChange={(chartId, selection) =>
-              setChartScopes((current) => ({ ...current, [chartId]: selection }))
-            }
-          />
+        {visibleVersions.map((version, index) => (
+          <div key={`${version.versionNumber}-${version.dashboardTitle}`} className="space-y-4">
+            {showVersionHistory && index === 1 ? (
+              <div className="flex items-center gap-3 px-1">
+                <div className="h-px flex-1 bg-text-muted/20" />
+                <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-text-muted">
+                  Previous versions
+                </span>
+                <div className="h-px flex-1 bg-text-muted/20" />
+              </div>
+            ) : null}
+            <VersionSection
+              version={version.versionNumber > 0 ? version : null}
+              charts={version.charts.filter(
+                (chart) => !chart.widgetId || !hiddenWidgetIds.has(chart.widgetId),
+              )}
+              chartData={chartData}
+              chartDataMeta={chartDataMeta}
+              chartScopes={chartScopes}
+              isHistorical={latestVersionNumber !== null && version.versionNumber !== latestVersionNumber}
+              onExpandChart={(chartId) => setExpandedChartId(chartId)}
+              onScopeChange={(chartId, selection) =>
+                setChartScopes((current) => ({ ...current, [chartId]: selection }))
+              }
+              // Delete is only offered on the genuine live version — never on a
+              // previous-version fallback (those charts aren't live) or history.
+              onDeleteChart={
+                !!sessionId &&
+                !latestRemovedActive &&
+                latestVersionNumber !== null &&
+                version.versionNumber === latestVersionNumber
+                  ? handleRequestDelete
+                  : undefined
+              }
+            />
+          </div>
         ))}
       </div>
 

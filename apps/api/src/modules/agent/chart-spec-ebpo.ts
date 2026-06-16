@@ -47,6 +47,10 @@ export interface EbpoMeasureDef {
   agg: EbpoAgg;
   kind: EbpoKind;
   decimals?: number; // override the per-format default
+  // Derived ratio = num/den × scale, computed as a RATIO-OF-SUMS to match PowerBI's
+  // DAX DIVIDE(SUM(num), SUM(den)). num/den are other measure ids that ARE columns in
+  // the same view; when set, the compiler computes the ratio instead of one column.
+  derived?: { num: string; den: string; scale?: number };
 }
 
 export interface EbpoDimDef {
@@ -103,6 +107,10 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   total_bonus: M('total_bonus', 'Total Bonus', 'currency', 'sum', 'flow'),
   total_benefits: M('total_benefits', 'Total Benefits', 'currency', 'sum', 'flow'),
   payroll_to_revenue_pct: M('payroll_to_revenue_pct', 'Payroll / Revenue %', 'percent', 'avg', 'ratio', 1),
+  benefits_to_base_pct: {
+    id: 'benefits_to_base_pct', label: 'Benefits % of Base Salary', format: 'percent', agg: 'avg', kind: 'ratio',
+    decimals: 1, derived: { num: 'total_benefits', den: 'total_base_salary', scale: 100 },
+  },
   avg_monthly_salary: M('avg_monthly_salary', 'Avg Monthly Salary', 'currency', 'avg', 'ratio'),
   // Cash flow
   operating_cf: M('operating_cf', 'Operating Cash Flow', 'currency', 'sum', 'flow'),
@@ -118,6 +126,10 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   dpo_days: M('dpo_days', 'DPO (days)', 'number', 'avg', 'ratio', 1),
   invoice_amount: M('invoice_amount', 'Invoiced Amount', 'currency', 'sum', 'flow'),
   collected_amount: M('collected_amount', 'Collected Amount', 'currency', 'sum', 'flow'),
+  payment_rate_pct: {
+    id: 'payment_rate_pct', label: 'Payment Rate %', format: 'percent', agg: 'avg', kind: 'ratio',
+    decimals: 1, derived: { num: 'paid_amount', den: 'invoice_amount', scale: 100 },
+  },
   // Operations (ratios / counts)
   sla_compliance_pct: M('sla_compliance_pct', 'SLA Compliance %', 'percent', 'avg', 'ratio', 1),
   csat_pct: M('csat_pct', 'CSAT %', 'percent', 'avg', 'ratio', 1),
@@ -134,6 +146,15 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   accumulated_depreciation: M('accumulated_depreciation', 'Accumulated Depreciation', 'currency', 'sum', 'flow'),
   net_book_value: M('net_book_value', 'Net Book Value', 'currency', 'sum', 'stock'),
   asset_count: M('asset_count', 'Asset Count', 'number', 'sum', 'count'),
+  // Derived asset ratios (no precomputed column — computed as ratio-of-sums).
+  depreciation_pct: {
+    id: 'depreciation_pct', label: 'Depreciation %', format: 'percent', agg: 'avg', kind: 'ratio',
+    decimals: 1, derived: { num: 'accumulated_depreciation', den: 'asset_cost', scale: 100 },
+  },
+  nbv_to_cost_pct: {
+    id: 'nbv_to_cost_pct', label: 'Net Book Value % of Cost', format: 'percent', agg: 'avg', kind: 'ratio',
+    decimals: 1, derived: { num: 'net_book_value', den: 'asset_cost', scale: 100 },
+  },
   // GL / trial balance
   total_debit: M('total_debit', 'Total Debit', 'currency', 'sum', 'flow'),
   total_credit: M('total_credit', 'Total Credit', 'currency', 'sum', 'flow'),
@@ -270,6 +291,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       ap_outstanding: 'outstanding_balance_usd',
       invoice_amount: 'invoice_amount_usd',
       paid_amount: 'paid_amount_usd',
+      payment_rate_pct: 'payment_rate_pct',
     },
   },
   {
@@ -521,10 +543,36 @@ const dimSql = (dimId: string): { label: string; group: string; isTime: boolean 
 const aggOf = (m: EbpoMeasureDef, col: string) => `${m.agg}(${col})`;
 const aggIfOf = (m: EbpoMeasureDef, col: string, cond: string) =>
   `${m.agg}If(${col}, ${cond})`;
-const valueExpr = (m: EbpoMeasureDef, col: string) =>
-  `round(${aggOf(m, col)}, ${decimalsFor(m)})`;
-const condValueExpr = (m: EbpoMeasureDef, col: string, cond: string) =>
-  `round(${aggIfOf(m, col, cond)}, ${decimalsFor(m)})`;
+// A view "exposes" a measure when it has the measure's column, OR (derived) both the
+// numerator and denominator columns.
+const viewExposesMeasure = (view: EbpoViewDef, mid: string): boolean => {
+  const m = EBPO_MEASURES[mid];
+  if (!m) return false;
+  if (m.derived) return m.derived.num in view.measures && m.derived.den in view.measures;
+  return mid in view.measures;
+};
+// View-aware aggregate: derived measures compute num/den (ratio-of-sums) from the
+// view's columns; everything else uses the measure's own column + agg.
+const aggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef): string => {
+  if (m.derived) {
+    const n = view.measures[m.derived.num]!;
+    const d = view.measures[m.derived.den]!;
+    return `sum(${n}) / nullIf(sum(${d}), 0) * ${m.derived.scale ?? 100}`;
+  }
+  return aggOf(m, view.measures[m.id]!);
+};
+const condAggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef, cond: string): string => {
+  if (m.derived) {
+    const n = view.measures[m.derived.num]!;
+    const d = view.measures[m.derived.den]!;
+    return `sumIf(${n}, ${cond}) / nullIf(sumIf(${d}, ${cond}), 0) * ${m.derived.scale ?? 100}`;
+  }
+  return aggIfOf(m, view.measures[m.id]!, cond);
+};
+const valueExprFor = (m: EbpoMeasureDef, view: EbpoViewDef) =>
+  `round(${aggExprFor(m, view)}, ${decimalsFor(m)})`;
+const condValueExprFor = (m: EbpoMeasureDef, view: EbpoViewDef, cond: string) =>
+  `round(${condAggExprFor(m, view, cond)}, ${decimalsFor(m)})`;
 
 // ─── View resolution ──────────────────────────────────────────────────────────
 const viewSupportsDim = (view: EbpoViewDef, dimId: string | null | undefined): boolean => {
@@ -540,7 +588,7 @@ export const resolveEbpoView = (
   breakdownId: string | null | undefined,
 ): EbpoViewDef | null => {
   for (const v of EBPO_VIEWS) {
-    if (!(measureId in v.measures)) continue;
+    if (!viewExposesMeasure(v, measureId)) continue;
     if (!viewSupportsDim(v, dimId)) continue;
     if (breakdownId && !viewSupportsDim(v, breakdownId)) continue;
     return v;
@@ -555,7 +603,7 @@ export const resolveEbpoViewMulti = (
   dimId: string | null | undefined,
 ): EbpoViewDef | null => {
   for (const v of EBPO_VIEWS) {
-    if (!measureIds.every((m) => m in v.measures)) continue;
+    if (!measureIds.every((m) => viewExposesMeasure(v, m))) continue;
     if (!viewSupportsDim(v, dimId)) continue;
     return v;
   }
@@ -680,7 +728,7 @@ export async function compileEbpoSpec(
       const sql = measures
         .map((mid) => {
           const m = EBPO_MEASURES[mid]!;
-          return `SELECT ${quoteLit(m.label)} AS name, ${valueExpr(m, mview.measures[mid]!)} AS value FROM ${mtbl} WHERE ${where}`;
+          return `SELECT ${quoteLit(m.label)} AS name, ${valueExprFor(m, mview)} AS value FROM ${mtbl} WHERE ${where}`;
         })
         .join('\nUNION ALL\n');
       return { ok: true, sql, measure: EBPO_MEASURES[measures[0]!]!, view: mview.name };
@@ -698,7 +746,7 @@ export async function compileEbpoSpec(
       .map((mid, i) => {
         const m = EBPO_MEASURES[mid]!;
         const alias = isScatter ? (xyz[i] ?? `m${i + 1}`) : quoteIdent(m.label);
-        return `${valueExpr(m, mview.measures[mid]!)} AS ${alias}`;
+        return `${valueExprFor(m, mview)} AS ${alias}`;
       })
       .join(', ');
     const order = isScatter
@@ -721,13 +769,12 @@ export async function compileEbpoSpec(
   const bdId = spec.breakdown || null;
   const view = resolveEbpoView(measures[0]!, dimId, bdId)!;
   const tbl = `${db}.${view.name}`;
-  const col = view.measures[measures[0]!]!;
-  const value = valueExpr(measure, col);
+  const value = valueExprFor(measure, view);
   const isStockNonTime = (groupedByTime: boolean) =>
     measure.kind === 'stock' && view.hasTime && !groupedByTime;
 
   const havingExpr = spec.having
-    ? `${aggOf(measure, col)} ${opSql(spec.having.op)} ${Number(spec.having.value) || 0}`
+    ? `${aggExprFor(measure, view)} ${opSql(spec.having.op)} ${Number(spec.having.value) || 0}`
     : null;
 
   // KPI / single value — no grouping.
@@ -759,7 +806,7 @@ export async function compileEbpoSpec(
     const where = buildWhere(view, [dimId, bdId], spec.filters, db, isStockNonTime(dim.isTime));
     // Discover the concrete breakdown values (top by measure) for the WIDE pivot.
     const colRows = await runRows(
-      `SELECT ${bd.label} AS v, ${aggOf(measure, col)} AS m FROM ${tbl} WHERE ${where} ` +
+      `SELECT ${bd.label} AS v, ${aggExprFor(measure, view)} AS m FROM ${tbl} WHERE ${where} ` +
         `GROUP BY ${bd.group} HAVING m > 0 ORDER BY m DESC LIMIT ${maxBreakdownCols}`,
     );
     const cols = colRows
@@ -767,7 +814,7 @@ export async function compileEbpoSpec(
       .filter((v) => v.length > 0);
     if (cols.length === 0) return { ok: false, refusal: 'No data matches that breakdown.' };
     const series = cols
-      .map((v) => `${condValueExpr(measure, col, `${bd.label} = ${quoteLit(v)}`)} AS ${quoteIdent(v)}`)
+      .map((v) => `${condValueExprFor(measure, view, `${bd.label} = ${quoteLit(v)}`)} AS ${quoteIdent(v)}`)
       .join(', ');
     baseSql =
       `SELECT ${dim.label} AS name, ${series} ` +

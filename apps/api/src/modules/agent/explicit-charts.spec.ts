@@ -202,4 +202,104 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.display?.conditionalThreshold).toBe(10_000);
     expect(plan.modify[0]?.display?.conditionalColor).toBe('green');
   });
+
+  test('resolves explicit chart deletion without invoking the model editor', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const dashboard = {
+      id: 'dash',
+      title: 'Dashboard',
+      widgets: [
+        {
+          id: 'w1',
+          title: 'Monthly Revenue',
+          chartType: 'bar',
+          queryConfig: { metric: 'revenue', grouping: 'month' },
+          displayOrder: 0,
+        },
+        {
+          id: 'w2',
+          title: 'Vendor Spend',
+          chartType: 'treemap',
+          queryConfig: { metric: 'expense', grouping: 'vendor' },
+          displayOrder: 1,
+        },
+      ],
+    };
+
+    const latest = await svc.generateEditPlan(dashboard, 'delete the latest chart');
+    expect(latest.remove_indices).toEqual([1]);
+    expect(latest.summary).toContain('Vendor Spend');
+
+    const byTitle = await svc.generateEditPlan(dashboard, 'remove the revenue chart');
+    expect(byTitle.remove_indices).toEqual([0]);
+    expect(byTitle.summary).toContain('Monthly Revenue');
+
+    const byTitleWithoutChartWord = await svc.generateEditPlan(dashboard, 'delete Monthly Revenue');
+    expect(byTitleWithoutChartWord.remove_indices).toEqual([0]);
+
+    const byVersion = await svc.generateEditPlan(dashboard, 'delete v1');
+    expect(byVersion.remove_indices).toEqual([0]);
+  });
+
+  test('refuses ambiguous chart deletion when multiple charts are active', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Monthly Revenue',
+            chartType: 'bar',
+            queryConfig: { metric: 'revenue', grouping: 'month' },
+            displayOrder: 0,
+          },
+          {
+            id: 'w2',
+            title: 'Vendor Spend',
+            chartType: 'treemap',
+            queryConfig: { metric: 'expense', grouping: 'vendor' },
+            displayOrder: 1,
+          },
+        ],
+      },
+      'delete this chart',
+    );
+
+    expect(plan.refusal).toContain('Which chart should I delete?');
+    expect(plan.refusal).toContain('Monthly Revenue');
+    expect(plan.refusal).toContain('Vendor Spend');
+    expect(plan.remove_indices).toHaveLength(0);
+  });
+
+  test('explains delete requests when the live dashboard has no active charts', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [],
+      },
+      'delete v1',
+    );
+
+    expect(plan.refusal).toContain('There are no active charts to delete');
+    expect(plan.refusal).toContain('history only');
+  });
 });

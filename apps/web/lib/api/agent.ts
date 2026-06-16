@@ -57,6 +57,19 @@ export class AgentApi {
     );
   }
 
+  // Deletes a single chart from a session's live dashboard, identified by its
+  // real widget id. The backend applies the removal as a new chart version, so
+  // history is preserved (consistent with chat-driven edits).
+  deleteSessionChart(sessionId: string, widgetId: string) {
+    return this.request<{
+      dashboardId: string;
+      versionNumber: number;
+      widgetCount: number;
+      summary: string;
+      removedTitle: string;
+    }>(`/agent/sessions/${sessionId}/charts/${widgetId}`, { method: "DELETE" });
+  }
+
   getMetrics(
     metric: string,
     grouping: string,

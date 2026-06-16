@@ -26,11 +26,9 @@ import {
 } from './chart-spec';
 import {
   EBPO_DIMENSIONS,
-  EBPO_MEASURES,
   EBPO_VIEWS,
   compileEbpoSpec,
   ebpoCatalogPromptText,
-  resolveEbpoViewMulti,
 } from './chart-spec-ebpo';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -175,10 +173,6 @@ interface DisplayHints {
   // Combo (dual-axis) second-measure axis formatting + label.
   secondaryAxisFormat?: 'number' | 'currency' | 'percent' | null;
   secondaryLabel?: string | null;
-  // Primary value unit, so the web formats EBPO dynamic charts (metric='dynamic')
-  // correctly — a percent measure must render as % not $ (Q37/Q72 fix).
-  valueFormat?: 'currency' | 'number' | 'percent' | null;
-  valueDecimals?: number | null;
   // Matrix / heatmap formatting hints.
   showTotals?: boolean | null;
   conditionalThreshold?: number | null;
@@ -13312,14 +13306,6 @@ export class AgentService {
                 display_order: 0,
                 _sql: compiled.sql,
                 _spec: spec,
-                // Carry the measure's unit so the web formats values correctly
-                // (percent measures render as % not $).
-                display: {
-                  valueFormat: compiled.measure.format,
-                  ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
-                    ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
-                    : {}),
-                },
               } as any,
             ],
           },
@@ -17179,10 +17165,7 @@ export class AgentService {
       /\bline\b[^.]*\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b/.test(q) ||
       /\boverlay\b[^.]*\baverage\b/.test(q) ||
       /\btrend\s+indicators?\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
-      // NOTE the group: bare "compare" must NOT trigger an average line — that
-      // hijacked every "add <measure> to compare" request into a company-average
-      // reference line instead of adding the named measure as a 2nd series.
-      /\b(?:compare|comparing)\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
+      /\bcompare|comparing\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
       /\breference\s+line\b/.test(q)
     )
       return { kind: 'reference_line' };
@@ -18598,136 +18581,6 @@ export class AgentService {
     return s.charAt(0).toUpperCase() + s.slice(1) + '.';
   }
 
-  // Match catalogued EBPO measures NAMED in an "add a measure" follow-up and return
-  // the updated spec with measures[] (a real combo), or null when the request is not
-  // a measure-add (e.g. a pure transform/label ask) or no single view can plot them.
-  private buildEbpoComboEditSpec(currentSpec: ChartSpec, req: string): ChartSpec | null {
-    // Normalize so "percentage"/"percent"/"pct"/"%" all compare equal, and strip
-    // unit suffixes like "(min)"/"(days)" from measure labels.
-    const norm = (s: string) =>
-      ` ${s
-        .toLowerCase()
-        .replace(/\bpercentage\b|\bpercent\b|\bpct\b/g, '%')
-        .replace(/\((?:min|days|usd)\)/g, '')
-        .replace(/[^a-z0-9%]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()} `;
-    const q = norm(req);
-
-    const additive =
-      /\b(add|also|include|compare|comparison|alongside|another|plus|overlay|versus|vs)\b/.test(q) ||
-      /\bsplit\b.*\binto\b/.test(q) ||
-      /\bas (?:a|another) (?:line|column|bar|series)\b/.test(q) ||
-      /\bsecond (?:line|series|bar|column|axis)\b/.test(q);
-    if (!additive) return null;
-    // Pure presentation/transform asks are handled by the transform builder, not here.
-    if (
-      /\b(?:% contribution|contribution|normali[sz]e|100 %|moving average|growth|reference line|average line|data label|labels|highlight|cumulative)\b/.test(
-        q,
-      )
-    )
-      return null;
-
-    const current = (
-      currentSpec.measures?.length
-        ? currentSpec.measures
-        : currentSpec.measure
-          ? [currentSpec.measure]
-          : []
-    ).filter((m): m is string => !!m);
-    if (current.length === 0) return null;
-
-    // Significant words of a label (≥4 chars, dropping filler) — lets "benefits as a
-    // percentage of base salary" match "Benefits % of Base Salary" even though the
-    // exact label substring isn't present.
-    const sigTokens = (s: string) =>
-      norm(s)
-        .trim()
-        .split(' ')
-        .filter((w) => w.length >= 4 && !['of', 'the', 'per', 'and'].includes(w));
-
-    const matched: string[] = [];
-    for (const [mid, def] of Object.entries(EBPO_MEASURES)) {
-      if (current.includes(mid) || matched.includes(mid)) continue;
-      const idPhrase = norm(mid.replace(/_/g, ' '));
-      const labelCore = norm(def.label);
-      const tokens = sigTokens(def.label);
-      const allTokensPresent =
-        tokens.length >= 2 && tokens.every((t) => q.includes(` ${t} `) || q.includes(`${t} `));
-      if (
-        q.includes(idPhrase) ||
-        (labelCore.trim().length >= 2 && q.includes(labelCore)) ||
-        allTokensPresent
-      ) {
-        matched.push(mid);
-      }
-    }
-    if (matched.length === 0) return null;
-
-    const measures = Array.from(new Set([...current, ...matched]));
-    if (measures.length < 2) return null;
-    // One EBPO view must expose EVERY measure at the current dimension (no joins).
-    if (!resolveEbpoViewMulti(measures, currentSpec.dimension)) return null;
-
-    const keep = new Set(['stacked_bar', 'stacked_area', 'combo']);
-    const chartType = keep.has(String(currentSpec.chartType))
-      ? currentSpec.chartType
-      : ('combo' as ChartSpec['chartType']);
-    return { ...currentSpec, measures, chartType };
-  }
-
-  // Compile EBPO combo spec(s) for "add a measure" follow-ups and return a modify
-  // plan, or null to defer. Fully deterministic — no LLM.
-  private async buildEbpoComboEditPlan(
-    targets: Array<{ w: any; index: number; spec?: ChartSpec }>,
-    editRequest: string,
-    scope: OrgScope,
-  ): Promise<DashboardEditPlan | null> {
-    const modify: DashboardEditPlan['modify'] = [];
-    let summary = '';
-    const runRows = (sql: string) =>
-      this.queryRows<Record<string, unknown>>(sql, {
-        tenantId: scope.tenantId,
-        externalOrgIds: scope.externalOrgIds,
-      });
-    for (const t of targets) {
-      if (!t.spec) continue;
-      const newSpec = this.buildEbpoComboEditSpec(t.spec, editRequest);
-      if (!newSpec) continue;
-      const compiled = await compileEbpoSpec(newSpec, this.analyticsDb, runRows);
-      if (!compiled.ok) continue;
-      const nextType = (newSpec.chartType ?? t.w.chartType) as ChartType;
-      const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
-        chartType: nextType,
-      }).catch(() => null);
-      if (!check || check.error || check.rows.length === 0) continue;
-      if (this.detectBadChartShape(check.rows, nextType)) continue;
-      if (!summary) {
-        const prior = new Set(t.spec.measures?.length ? t.spec.measures : [t.spec.measure]);
-        const added = (newSpec.measures ?? [])
-          .filter((m) => !prior.has(m))
-          .map((m) => EBPO_MEASURES[m!]?.label ?? m)
-          .join(', ');
-        summary = `Added ${added} as a comparison series.`;
-      }
-      // Format hints: left axis = first measure's unit, right axis = second's.
-      const mlist = newSpec.measures ?? [];
-      const firstM = EBPO_MEASURES[mlist[0]!];
-      const secondM = EBPO_MEASURES[mlist[1]!];
-      const display: DisplayHints = {
-        valueFormat: firstM?.format ?? null,
-        ...(typeof firstM?.decimals === 'number' ? { valueDecimals: firstM.decimals } : {}),
-        ...(secondM ? { secondaryAxisFormat: secondM.format, secondaryLabel: secondM.label } : {}),
-      };
-      modify.push({ index: t.index, type: nextType, dynamicSql: compiled.sql, spec: newSpec, display });
-    }
-    if (modify.length === 0) return null;
-    this.logger.log(
-      `[SpecEdit:EBPO-combo] ${modify.length} chart(s) for: "${editRequest.slice(0, 50)}"`,
-    );
-    return { summary: summary || 'Added a comparison series.', add: [], remove_indices: [], modify };
-  }
-
   private async generateSpecEditPlan(
     activeDashboard: ActiveDashboard,
     editRequest: string,
@@ -18739,25 +18592,6 @@ export class AgentService {
         .map((w, index) => ({ w, index, spec: (w.queryConfig as any)?.spec as ChartSpec | undefined }))
         .filter((t) => t.spec && typeof t.spec === 'object');
       if (targets.length === 0) return null;
-
-      // ── EBPO deterministic combo (A1 fix) ────────────────────────────────────
-      // "add <catalogued measure> as a line / to compare" must ADD that measure as
-      // a 2nd series (measures[]). The GL second-axis builder only sees
-      // sample_gl_dump, so for EBPO it degraded to a company-average reference line
-      // (the dominant data-2 follow-up failure). Run BEFORE the transform-defer and
-      // the LLM ping — this path is fully deterministic and needs neither.
-      const ebpoForCombo = await this.orgHasEbpoData(scope).catch(() => false);
-      if (ebpoForCombo) {
-        const comboPlan = await this.buildEbpoComboEditPlan(targets, editRequest, scope);
-        if (comboPlan) return comboPlan;
-      }
-
-      // Cumulative percentage lines are a derived overlay, not a change to the
-      // base catalog measure. Defer so buildEbpoMetricEdit can add the verified
-      // cumulative_pct series instead of the spec editor replacing the chart with
-      // a single normalized value series.
-      if (/\bcumulative\b/.test(editRequest.toLowerCase()) && /\bpercent|percentage|%\b/.test(editRequest.toLowerCase()))
-        return null;
 
       // Recognized analytical transforms (moving average, normalize, growth %,
       // variance, reference line, second axis, YoY/prior-year) are applied/refused
@@ -18858,24 +18692,12 @@ export class AgentService {
         if (this.detectBadChartShape(check.rows, nextType)) continue;
 
         const ct = String(nextType).toLowerCase();
-        const baseDisplay: DisplayHints | undefined =
+        const display: DisplayHints | undefined =
           labelMode && (ct === 'pie' || ct === 'donut')
             ? { labelMode }
             : matrixHints && (ct === 'matrix' || ct === 'heatmap')
               ? matrixHints
               : undefined;
-        // EBPO: carry the (possibly changed) measure's unit so a percent measure
-        // formats as % not $ after an edit like "replace revenue with gross margin %".
-        const editMeasureDecimals = (compiled.measure as { decimals?: number }).decimals;
-        const display: DisplayHints | undefined = useEbpo
-          ? {
-              ...(baseDisplay ?? {}),
-              valueFormat: compiled.measure.format,
-              ...(typeof editMeasureDecimals === 'number'
-                ? { valueDecimals: editMeasureDecimals }
-                : {}),
-            }
-          : baseDisplay;
         if (!changeSummary) changeSummary = this.describeSpecChange(t.spec!, newSpec, labelMode);
         modify.push({
           index: t.index,

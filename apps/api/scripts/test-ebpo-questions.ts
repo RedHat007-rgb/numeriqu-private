@@ -44,6 +44,45 @@ const argN = (flag: string, def: number) => {
   const i = process.argv.indexOf(flag);
   return i === -1 ? def : Number(process.argv[i + 1]);
 };
+const argStr = (flag: string, def: string) => {
+  const i = process.argv.indexOf(flag);
+  return i === -1 ? def : String(process.argv[i + 1]);
+};
+
+// Numeric (value-bearing) columns of a result set, excluding dimension/time keys.
+// A correct "add a 2nd metric" combo returns >=2 numeric series; a follow-up that
+// REPLACES the chart (the dominant data-2 failure) collapses back to 1.
+function numericCols(rows: Array<Record<string, unknown>>): string[] {
+  if (!rows?.length) return [];
+  const skip = new Set([
+    'name', 'month', 'period', 'period_date', 'time', 'x', 'label', 'dim',
+    'series', 'category', 'bucket', 'account', 'client', 'vendor',
+  ]);
+  // A reference/average overlay is NOT a real added measure — excluding it makes the
+  // "company-average line" hijack (A1) register as COMBO_REPLACED instead of a false OK.
+  const isRefCol = (k: string) =>
+    /company[_-]?average|company[_-]?avg|^average$|_average$|reference|benchmark|target|overall_avg/i.test(k);
+  const cols = new Set<string>();
+  for (const r of rows.slice(0, 50)) {
+    for (const [k, v] of Object.entries(r)) {
+      if (skip.has(k) || isRefCol(k)) continue;
+      if (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)))) {
+        cols.add(k);
+      }
+    }
+  }
+  return [...cols];
+}
+
+// Does the follow-up ASK to add a second metric/series (combo), vs a transform
+// like "highlight", "% contribution", "data labels", "reference/average line"?
+function expectsCombo(followup: string): boolean {
+  const q = followup.toLowerCase();
+  const addy = /\b(add|also|include|compare|comparison|another|second|alongside|on top|overlay|as a (line|column|bar))\b/.test(q);
+  const transformOnly =
+    /\b(highlight|percentage contribution|% contribution|data label|labels|value labels|actual value labels|reference line|zero (reference )?line|average line|overall average|median\b.*\bline|median (line|growth)|trend indicators?|kpi cards?|dashboard|color|colour|decimal|slicer|button)\b/.test(q);
+  return addy && !transformOnly;
+}
 
 // Best-effort: what chart type did the prompt ASK for?
 function requestedType(prompt: string): string {
@@ -78,7 +117,7 @@ function valueSanity(spec: any, rows: Array<Record<string, unknown>>): string {
   return bad ? `pct value ${bad.value} out of sane range` : '';
 }
 
-type QRow = { id: number; section: string; main: string; followup: string };
+type QRow = { id: number; section: string; main: string; followup: string; fb_main?: string; fb_follow?: string };
 
 async function main() {
   const { installLlmFetchInterceptor } = await import('../src/common/llm/llm-fetch-interceptor');
@@ -86,9 +125,17 @@ async function main() {
   installLlmFetchInterceptor();
   const svc: any = new AgentService({} as any, ch as any, {} as any);
 
-  const questions: QRow[] = JSON.parse(
-    fs.readFileSync(path.resolve(__dirname, 'ebpo-questions.json'), 'utf8'),
-  );
+  const file = argStr('--file', 'ebpo-questions.json');
+  const raw: any[] = JSON.parse(fs.readFileSync(path.resolve(__dirname, file), 'utf8'));
+  // Normalize both schemas: old (section) and data-2 (person/qno + reviewer feedback).
+  const questions: QRow[] = raw.map((q) => ({
+    id: q.id,
+    section: q.section ?? `${q.person ?? ''} ${q.qno ?? ''}`.trim(),
+    main: q.main,
+    followup: q.followup,
+    fb_main: q.fb_main ?? '',
+    fb_follow: q.fb_follow ?? '',
+  }));
   const from = argN('--from', 1);
   const to = argN('--to', 100);
   const idsArg = process.argv.indexOf('--ids');
@@ -128,6 +175,7 @@ async function main() {
             const data = await runSql(w._sql);
             rows = data.length;
             suspect = valueSanity(w?._spec, data);
+            rec._createCols = numericCols(data);
           } catch (e: any) { err = String(e?.message ?? e).slice(0, 90); }
         }
         rec.create = {
@@ -135,6 +183,7 @@ async function main() {
           source, type: w?.type, widgets: wcount, rows, err, suspect: suspect || undefined,
           typeMatch: rec.reqType === '?' ? null : rec.reqType === String(w?.type),
           spec: w?._spec ?? null,
+          display: (w as any)?.display ?? null,
         };
         // carry the built dashboard into the follow-up
         rec._dash = {
@@ -161,11 +210,25 @@ async function main() {
           } else {
             const source = m.spec ? 'catalog' : 'llm';
             let rows = -1; let err = '';
+            let fcols: string[] = [];
             const sql = m.dynamicSql;
-            if (sql) { try { rows = (await runSql(sql)).length; } catch (e: any) { err = String(e?.message ?? e).slice(0, 90); } }
+            if (sql) {
+              try { const fdata = await runSql(sql); rows = fdata.length; fcols = numericCols(fdata); }
+              catch (e: any) { err = String(e?.message ?? e).slice(0, 90); }
+            }
+            // Combo correctness: if the follow-up asked to ADD a 2nd metric, a real
+            // combo has >=2 numeric series. 1 series = the chart was REPLACED.
+            const comboExpected = expectsCombo(q.followup);
+            const comboOk = !comboExpected || rows < 0 ? null : fcols.length >= 2;
             rec.fu = {
-              status: err ? 'SQL_ERROR' : rows < 0 ? 'UNVERIFIED' : rows === 0 ? 'ZERO_ROWS' : 'OK',
-              source, type: m.type, rows, err, summary: (plan?.summary || '').slice(0, 80),
+              status: err ? 'SQL_ERROR'
+                : rows < 0 ? (comboExpected ? 'UNVERIFIED' : 'OK')
+                : rows === 0 ? 'ZERO_ROWS'
+                : comboOk === false ? 'COMBO_REPLACED'
+                : 'OK',
+              source, type: m.type, rows, err,
+              comboExpected, comboOk, createCols: rec._createCols ?? [], fuCols: fcols,
+              summary: (plan?.summary || '').slice(0, 80),
             };
           }
         }
@@ -177,6 +240,7 @@ async function main() {
     }
 
     delete rec._dash;
+    delete rec._createCols;
     results.push(rec);
     fs.writeFileSync(outPath, results.map((r) => JSON.stringify(r)).join('\n') + '\n');
     const c = rec.create, f = rec.fu;

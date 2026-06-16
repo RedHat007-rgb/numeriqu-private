@@ -1,0 +1,902 @@
+[
+ {
+  "id": 1,
+  "person": "pranjal",
+  "qno": "1.0",
+  "main": "Create a line chart showing monthly opening balance and closing balance by account.",
+  "followup": "In the same chart, highlight accounts with the largest balance movement.",
+  "fb_main": "The chart only plots opening balance (0–60K range); closing balance still isn't shown despite the title.",
+  "fb_follow": "it's plotting raw closing balances (not actual movement/delta), and no account is highlighted as the largest mover; all 9 lines have equal weight."
+ },
+ {
+  "id": 2,
+  "person": "pranjal",
+  "qno": "2.0",
+  "main": "Create a column chart showing debit movement and credit movement by account.",
+  "followup": "In the same chart, add net movement as a line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 3,
+  "person": "pranjal",
+  "qno": "3.0",
+  "main": "Create a heat map showing closing balance by account and month.",
+  "followup": "In the same chart, highlight the highest and lowest balances.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 4,
+  "person": "pranjal",
+  "qno": "4.0",
+  "main": "Create a bar chart showing total debit amount by account.",
+  "followup": "In the same chart, add total credit amount for comparison.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 5,
+  "person": "pranjal",
+  "qno": "5.0",
+  "main": "Create a waterfall chart showing net movement by account.",
+  "followup": "In the same chart, add debit and credit impact labels.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 6,
+  "person": "pranjal",
+  "qno": "6.0",
+  "main": "Create a bar chart showing outstanding receivables by client.",
+  "followup": "In the same chart, add collected amount to compare collections.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 7,
+  "person": "pranjal",
+  "qno": "7.0",
+  "main": "Create a stacked bar chart showing outstanding receivables by aging bucket.",
+  "followup": "In the same chart, add percentage contribution of each aging bucket.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 8,
+  "person": "pranjal",
+  "qno": "8.0",
+  "main": "Create a column chart showing invoice amount, collected amount, and outstanding receivables by month.",
+  "followup": "In the same chart, add collection rate as a line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 9,
+  "person": "pranjal",
+  "qno": "9.0",
+  "main": "Create a heat map showing outstanding receivables by client and aging bucket.",
+  "followup": "In the same chart, highlight balances in the oldest aging bucket.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 10,
+  "person": "pranjal",
+  "qno": "10.0",
+  "main": "Create a Pareto chart showing clients ranked by outstanding receivables.",
+  "followup": "In the same chart, add cumulative outstanding percentage line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 11,
+  "person": "pranjal",
+  "qno": "11.0",
+  "main": "Create a bar chart showing outstanding payables by vendor.",
+  "followup": "In the same chart, add paid amount to compare payment progress.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 12,
+  "person": "pranjal",
+  "qno": "12.0",
+  "main": "Create a stacked bar chart showing outstanding payables by aging bucket.",
+  "followup": "In the same chart, add percentage contribution of each aging bucket.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 13,
+  "person": "pranjal",
+  "qno": "13.0",
+  "main": "Create a column chart showing payable invoice amount, paid amount, and outstanding payables by month.",
+  "followup": "In the same chart, add payment rate as a line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 14,
+  "person": "pranjal",
+  "qno": "14.0",
+  "main": "Create a heat map showing outstanding payables by vendor and aging bucket.",
+  "followup": "In the same chart, highlight balances in the oldest aging bucket.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 15,
+  "person": "pranjal",
+  "qno": "15.0",
+  "main": "Create a Pareto chart showing vendors ranked by outstanding payables.",
+  "followup": "In the same chart, add cumulative outstanding percentage line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 16,
+  "person": "pranjal",
+  "qno": "16.0",
+  "main": "Create a column chart showing monthly total payroll.",
+  "followup": "In the same chart, split payroll into base salary, overtime, bonus, and benefits.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 17,
+  "person": "pranjal",
+  "qno": "17.0",
+  "main": "Create a stacked bar chart showing total payroll by department.",
+  "followup": "In the same chart, add employee count by department.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 18,
+  "person": "pranjal",
+  "qno": "18.0",
+  "main": "Create a bar chart showing total payroll by country.",
+  "followup": "In the same chart, add average monthly salary by country.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 19,
+  "person": "pranjal",
+  "qno": "19.0",
+  "main": "Create a line chart showing monthly overtime cost.",
+  "followup": "In the same chart, add total payroll to compare overtime impact.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 20,
+  "person": "pranjal",
+  "qno": "20.0",
+  "main": "Create a column chart showing total bonus by department.",
+  "followup": "In the same chart, add bonus as a percentage of total payroll.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 21,
+  "person": "pranjal",
+  "qno": "21.0",
+  "main": "Create a stacked column chart showing monthly payroll composition.",
+  "followup": "In the same chart, add benefits as a percentage of base salary.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 22,
+  "person": "pranjal",
+  "qno": "22.0",
+  "main": "Create a heat map showing payroll by department and country.",
+  "followup": "In the same chart, highlight the highest payroll concentration areas.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 23,
+  "person": "pranjal",
+  "qno": "23.0",
+  "main": "Create a bar chart showing average salary by employee grade.",
+  "followup": "In the same chart, add employee count by grade.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 24,
+  "person": "pranjal",
+  "qno": "24.0",
+  "main": "Create a box plot showing salary distribution by department.",
+  "followup": "In the same chart, add median salary markers for each department.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 25,
+  "person": "pranjal",
+  "qno": "25.0",
+  "main": "Create a column chart showing employee count by department.",
+  "followup": "In the same chart, add total payroll by department.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 26,
+  "person": "aakash",
+  "qno": "1.0",
+  "main": "Create a column chart showing monthly total revenue.",
+  "followup": "In the same chart, add a line for monthly gross margin to compare revenue and margin trend.",
+  "fb_main": "unable to read values on x axis;\nshow data lables;\nadd button to select a particular year",
+  "fb_follow": "gross margin is wrong;\nrefer power bi chart;\nadd button to select a particular year"
+ },
+ {
+  "id": 27,
+  "person": "aakash",
+  "qno": "2.0",
+  "main": "Create a line chart showing month-on-month revenue growth percentage.",
+  "followup": "In the same chart, add a median growth line to compare monthly performance.",
+  "fb_main": "should give % revenue growth;\nshow data lables;\nadd button to select a particular year;\nrefer power bi chart",
+  "fb_follow": "wrong median line;\nshow data lables;\nadd button to select a particular year;\nrefer power bi chart"
+ },
+ {
+  "id": 28,
+  "person": "aakash",
+  "qno": "3.0",
+  "main": "Create a stacked column chart showing monthly revenue by business unit.",
+  "followup": "In the same chart, show percentage contribution of each business unit to monthly revenue.",
+  "fb_main": "add button to select a particular year;\nrefer power bi chart",
+  "fb_follow": "unable to read values;\nadd button to select a particular year;\nrefer power bi chart"
+ },
+ {
+  "id": 29,
+  "person": "aakash",
+  "qno": "4.0",
+  "main": "Create a bar chart showing total revenue by client.",
+  "followup": "In the same chart, add gross margin by client to compare revenue quality.",
+  "fb_main": "",
+  "fb_follow": "asked it to add gross margin line;\nit added company's average line;\nrefer power bi chart"
+ },
+ {
+  "id": 30,
+  "person": "aakash",
+  "qno": "5.0",
+  "main": "Create a donut chart showing revenue share by contract type.",
+  "followup": "In the same chart, show actual value labels for each contract type.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 31,
+  "person": "aakash",
+  "qno": "6.0",
+  "main": "Create a clustered bar chart comparing revenue and cost by business unit.",
+  "followup": "In the same chart, add gross margin percentage for each business unit.",
+  "fb_main": "clustered bar chart was expected;\nline chart was generated only \nshowing total revenue;\nsuppose to show revenue vs cost;\nplease refer power bi chart",
+  "fb_follow": "generated the same previous chart;\nrefer power bi chart"
+ },
+ {
+  "id": 32,
+  "person": "aakash",
+  "qno": "7.0",
+  "main": "Create a line chart showing monthly gross margin trend.",
+  "followup": "In the same chart, add total revenue as a comparison line.",
+  "fb_main": "",
+  "fb_follow": "it should show both \ngross profit and revenue \nat the same time;\nrefer power bi chart"
+ },
+ {
+  "id": 33,
+  "person": "aakash",
+  "qno": "8.0",
+  "main": "Create a combo chart with monthly revenue as columns and gross margin percentage as a line.",
+  "followup": "In the same chart, add an average gross margin percentage reference line.",
+  "fb_main": "only revenue was shown in line;\nrefer power bi chart",
+  "fb_follow": "generated the same previous chart;\nrefer power bi chart"
+ },
+ {
+  "id": 34,
+  "person": "aakash",
+  "qno": "9.0",
+  "main": "Create a heat map showing gross margin percentage by business unit and month.",
+  "followup": "In the same chart, highlight the highest and lowest margin months.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 35,
+  "person": "aakash",
+  "qno": "10.0",
+  "main": "Create a waterfall chart showing revenue, cost, and gross margin by month.",
+  "followup": "In the same chart, add gross margin percentage labels for each month.",
+  "fb_main": "add date slicer buttons \nin this chart as well;\nshow data lables",
+  "fb_follow": "generated the same previous chart;\nadd date slicer buttons \nin this chart as well;\nshow data lables"
+ },
+ {
+  "id": 36,
+  "person": "aakash",
+  "qno": "11.0",
+  "main": "Create a column chart showing total cost by business unit.",
+  "followup": "In the same chart, add revenue to compare cost against revenue.",
+  "fb_main": "",
+  "fb_follow": "didnt add revenue for comparision;\nrefr power bi chart"
+ },
+ {
+  "id": 37,
+  "person": "aakash",
+  "qno": "12.0",
+  "main": "Create a treemap showing revenue contribution by client.",
+  "followup": "In the same chart, replace revenue with gross margin percentage.",
+  "fb_main": "",
+  "fb_follow": "value unit should be % not $;\nplease check\n\nGross Margin = %\nGross Profit = $"
+ },
+ {
+  "id": 38,
+  "person": "aakash",
+  "qno": "13.0",
+  "main": "Create a scatter plot showing revenue versus gross margin by client.",
+  "followup": "In the same chart, size each bubble by cost.",
+  "fb_main": "gross margin % was not shown;\ngross profit was shown;\nrefer power bi dashboard",
+  "fb_follow": ""
+ },
+ {
+  "id": 39,
+  "person": "aakash",
+  "qno": "14.0",
+  "main": "Create a bar chart showing average gross margin percentage by contract type.",
+  "followup": "In the same chart, add total revenue for each contract type.",
+  "fb_main": "show 1 decimal points for %age",
+  "fb_follow": "model is not able to add second metrix;\nsame issue for similar questions;\nrefer power bi chart for actual output"
+ },
+ {
+  "id": 40,
+  "person": "aakash",
+  "qno": "15.0",
+  "main": "Create a stacked area chart showing monthly revenue by contract type.",
+  "followup": "In the same chart, add a total revenue trend line.",
+  "fb_main": "show data lables",
+  "fb_follow": "add contract type slicer as well;\nits showing random contract type\nwhen any year is selected"
+ },
+ {
+  "id": 41,
+  "person": "aakash",
+  "qno": "16.0",
+  "main": "Create a ranked bar chart showing top clients by gross margin.",
+  "followup": "In the same chart, add revenue labels for each client.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 42,
+  "person": "aakash",
+  "qno": "17.0",
+  "main": "Create a 100% stacked column chart showing monthly revenue mix by business unit.",
+  "followup": "In the same chart, add total revenue labels above each month.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 43,
+  "person": "aakash",
+  "qno": "18.0",
+  "main": "Create a line chart showing monthly cost as a percentage of revenue.",
+  "followup": "In the same chart, add a median cost-to-revenue line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 44,
+  "person": "aakash",
+  "qno": "19.0",
+  "main": "Create a heat map showing revenue by client and contract type.",
+  "followup": "In the same chart, apply color intensity based on gross margin percentage.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 45,
+  "person": "aakash",
+  "qno": "20.0",
+  "main": "Create a bar chart showing gross margin percentage by client.",
+  "followup": "In the same chart, add an overall gross margin percentage reference line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 46,
+  "person": "aakash",
+  "qno": "21.0",
+  "main": "Create a line chart showing monthly cash balance.",
+  "followup": "In the same chart, add free cash flow as a comparison line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 47,
+  "person": "aakash",
+  "qno": "22.0",
+  "main": "Create a column chart showing monthly operating cash flow.",
+  "followup": "In the same chart, add investing cash flow and financing cash flow.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 48,
+  "person": "aakash",
+  "qno": "23.0",
+  "main": "Create a stacked column chart showing operating, investing, and financing cash flow by month.",
+  "followup": "In the same chart, add cash balance as a line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 49,
+  "person": "aakash",
+  "qno": "24.0",
+  "main": "Create a column chart showing monthly free cash flow.",
+  "followup": "In the same chart, add a zero reference line to identify negative months.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 50,
+  "person": "aakash",
+  "qno": "25.0",
+  "main": "Create a waterfall chart showing monthly movement from operating cash flow to free cash flow.",
+  "followup": "In the same chart, add investing cash flow impact as labels.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 51,
+  "person": "asyraf",
+  "qno": "1.0",
+  "main": "Create a bar chart showing employee count by country and delivery center.",
+  "followup": "In the same chart, add average salary labels.",
+  "fb_main": "",
+  "fb_follow": "it generate line chart instead of bar chart"
+ },
+ {
+  "id": 52,
+  "person": "asyraf",
+  "qno": "2.0",
+  "main": "Create a Pareto chart showing departments ranked by total payroll.",
+  "followup": "In the same chart, add cumulative payroll percentage line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 53,
+  "person": "asyraf",
+  "qno": "3.0",
+  "main": "Create a column chart showing overtime cost by department.",
+  "followup": "In the same chart, add overtime as a percentage of total payroll.",
+  "fb_main": "",
+  "fb_follow": "it remove the column chart and generate only line chart"
+ },
+ {
+  "id": 54,
+  "person": "asyraf",
+  "qno": "4.0",
+  "main": "Create a bar chart showing benefits cost by country.",
+  "followup": "In the same chart, add benefits as a percentage of base salary.",
+  "fb_main": "",
+  "fb_follow": "Instead of adding the new percentage of base salary on top of the original data, it replaced the entire value with percentages"
+ },
+ {
+  "id": 55,
+  "person": "asyraf",
+  "qno": "5.0",
+  "main": "Create a column chart showing payroll cost per employee by country.",
+  "followup": "In the same chart, add an overall average payroll cost per employee line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 56,
+  "person": "asyraf",
+  "qno": "6.0",
+  "main": "Create a line chart showing monthly calls handled by delivery center.",
+  "followup": "In the same chart, add tickets resolved as another line.",
+  "fb_main": "",
+  "fb_follow": "it remove the delivery center breakdown line and aggregating the data into two lines"
+ },
+ {
+  "id": 57,
+  "person": "asyraf",
+  "qno": "7.0",
+  "main": "Create a column chart showing average SLA compliance by delivery center.",
+  "followup": "In the same chart, add CSAT percentage for comparison.",
+  "fb_main": "",
+  "fb_follow": "it failed to add second metric. It completely changed the visual to a line chart"
+ },
+ {
+  "id": 58,
+  "person": "asyraf",
+  "qno": "8.0",
+  "main": "Create a scatter plot showing average handling time versus CSAT percentage.",
+  "followup": "In the same chart, size each bubble by calls handled.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 59,
+  "person": "asyraf",
+  "qno": "9.0",
+  "main": "Create a heat map showing SLA compliance by delivery center and month.",
+  "followup": "In the same chart, highlight months below the target SLA level.",
+  "fb_main": "",
+  "fb_follow": "no target or goal figure in this dataset"
+ },
+ {
+  "id": 60,
+  "person": "asyraf",
+  "qno": "10.0",
+  "main": "Create a line chart showing monthly utilization percentage by delivery center.",
+  "followup": "In the same chart, add SLA compliance percentage.",
+  "fb_main": "",
+  "fb_follow": "it failed to add SLA compliance percentage in existing chart and also it delete the main question data visual"
+ },
+ {
+  "id": 61,
+  "person": "asyraf",
+  "qno": "11.0",
+  "main": "Create a bar chart showing total tickets resolved by delivery center.",
+  "followup": "In the same chart, add average handling time as a line.",
+  "fb_main": "",
+  "fb_follow": "it remove the data from the existing bar chart and only showing the avg handling time as a line"
+ },
+ {
+  "id": 62,
+  "person": "asyraf",
+  "qno": "12.0",
+  "main": "Create a combo chart showing calls handled as columns and CSAT percentage as a line.",
+  "followup": "In the same chart, add SLA compliance percentage as another line.",
+  "fb_main": "",
+  "fb_follow": "it remove the data from the existing bar chart and only showing the SLA compliance percentage as a line"
+ },
+ {
+  "id": 63,
+  "person": "asyraf",
+  "qno": "13.0",
+  "main": "Create a ranked bar chart showing delivery centers by average CSAT percentage.",
+  "followup": "In the same chart, add calls handled as labels.",
+  "fb_main": "",
+  "fb_follow": "it change the visual to a line chart and it remove previous data visual instead of adding calls handled as label"
+ },
+ {
+  "id": 64,
+  "person": "asyraf",
+  "qno": "14.0",
+  "main": "Create a column chart showing monthly average handling time.",
+  "followup": "In the same chart, add a median handling time line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 65,
+  "person": "asyraf",
+  "qno": "15.0",
+  "main": "Create a scatter plot showing utilization percentage versus SLA compliance percentage.",
+  "followup": "In the same chart, size bubbles by tickets resolved.",
+  "fb_main": "",
+  "fb_follow": "the data is not showing ticket resolved"
+ },
+ {
+  "id": 66,
+  "person": "asyraf",
+  "qno": "16.0",
+  "main": "Create a bar chart showing net book value by delivery center.",
+  "followup": "In the same chart, add asset cost to compare current value versus original cost.",
+  "fb_main": "",
+  "fb_follow": "it dont show the asset cost. It generate company average line which is not needed"
+ },
+ {
+  "id": 67,
+  "person": "asyraf",
+  "qno": "17.0",
+  "main": "Create a stacked bar chart showing net book value by asset type and delivery center.",
+  "followup": "In the same chart, add accumulated depreciation labels.",
+  "fb_main": "",
+  "fb_follow": "it remove the data from the existing stacked bar chart and only showing net book value as a line"
+ },
+ {
+  "id": 68,
+  "person": "asyraf",
+  "qno": "18.0",
+  "main": "Create a donut chart showing asset cost share by asset type.",
+  "followup": "In the same chart, add net book value share by asset type.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 69,
+  "person": "asyraf",
+  "qno": "19.0",
+  "main": "Create a bar chart showing accumulated depreciation by asset type.",
+  "followup": "In the same chart, add depreciation percentage.",
+  "fb_main": "",
+  "fb_follow": "it regenerate the same visual as the main question"
+ },
+ {
+  "id": 70,
+  "person": "asyraf",
+  "qno": "20.0",
+  "main": "Create a treemap showing net book value by delivery center and asset type.",
+  "followup": "In the same chart, color the treemap by depreciation percentage.",
+  "fb_main": "",
+  "fb_follow": "it dont output percentage value"
+ },
+ {
+  "id": 71,
+  "person": "asyraf",
+  "qno": "21.0",
+  "main": "Create a scatter plot showing asset cost versus net book value by asset type.",
+  "followup": "In the same chart, size each bubble by accumulated depreciation.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 72,
+  "person": "asyraf",
+  "qno": "22.0",
+  "main": "Create a ranked bar chart showing delivery centers by depreciation percentage.",
+  "followup": "In the same chart, add net book value labels.",
+  "fb_main": "the numbers on the bars say thousands and not in percentage",
+  "fb_follow": ""
+ },
+ {
+  "id": 73,
+  "person": "asyraf",
+  "qno": "23.0",
+  "main": "Create a column chart comparing asset cost, accumulated depreciation, and net book value by asset type.",
+  "followup": "In the same chart, add net book value percentage of asset cost as a line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 74,
+  "person": "asyraf",
+  "qno": "24.0",
+  "main": "Create a heat map showing net book value by asset type and delivery center.",
+  "followup": "In the same chart, highlight the highest value asset category.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 75,
+  "person": "asyraf",
+  "qno": "25.0",
+  "main": "Create a bar chart showing asset intensity by delivery center using net book value per call handled.",
+  "followup": "In the same chart, add CSAT percentage as a line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 76,
+  "person": "velan",
+  "qno": "1.0",
+  "main": "Create a line chart showing monthly cash balance trend.",
+  "followup": "In the same chart, add operating cash flow as a comparison line.",
+  "fb_main": "",
+  "fb_follow": "The second chart is not fully correct because the added comparison line is labeled as value instead of Operating Cash Flow, and the tooltip/Y-axis formatting shows incorrect values instead of proper currency amounts."
+ },
+ {
+  "id": 77,
+  "person": "velan",
+  "qno": "2.0",
+  "main": "Create a column chart showing monthly accounts receivable balance.",
+  "followup": "In the same chart, add monthly revenue as a comparison line.",
+  "fb_main": "",
+  "fb_follow": "check the data percentages so high same as Question 1 and the line should go over the bar as a line and stack column chart"
+ },
+ {
+  "id": 78,
+  "person": "velan",
+  "qno": "3.0",
+  "main": "Create a line chart showing monthly net cash flow trend.",
+  "followup": "In the same chart, add cumulative cash flow as another line.",
+  "fb_main": "",
+  "fb_follow": "Data i repeating for follow up chart check Data"
+ },
+ {
+  "id": 79,
+  "person": "velan",
+  "qno": "4.0",
+  "main": "Create a column chart showing cost per employee by month.",
+  "followup": "c",
+  "fb_main": "Data seems wrong",
+  "fb_follow": "Check value of percentages"
+ },
+ {
+  "id": 80,
+  "person": "velan",
+  "qno": "5.0",
+  "main": "Create a bar chart showing payroll cost by department.",
+  "followup": "In the same chart, add employee count by department.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 81,
+  "person": "velan",
+  "qno": "6.0",
+  "main": "Create a bar chart showing total payroll cost by department.",
+  "followup": "Can you break down each department’s payroll cost",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 82,
+  "person": "velan",
+  "qno": "7.0",
+  "main": "Create a combo chart showing monthly revenue as columns and payroll as a percentage of revenue as a line.",
+  "followup": "In the same chart, add an average payroll percentage reference line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 83,
+  "person": "velan",
+  "qno": "8.0",
+  "main": "Create a line chart showing monthly free cash flow margin.",
+  "followup": "In the same chart, add gross margin percentage as a comparison line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 84,
+  "person": "velan",
+  "qno": "9.0",
+  "main": "Create a bar chart showing gross margin by business unit.",
+  "followup": "In the same chart, add gross margin percentage by business unit.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 85,
+  "person": "velan",
+  "qno": "10.0",
+  "main": "Create a column chart showing operating cash flow as a percentage of revenue by month.",
+  "followup": "In the same chart, add free cash flow margin as another line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 86,
+  "person": "velan",
+  "qno": "11.0",
+  "main": "Create a line chart showing receivables as a percentage of revenue by month.",
+  "followup": "In the same chart, add payables as a percentage of cost by month.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 87,
+  "person": "velan",
+  "qno": "12.0",
+  "main": "Create a bar chart showing collection rate by client.",
+  "followup": "In the same chart, add gross margin percentage by client.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 88,
+  "person": "velan",
+  "qno": "13.0",
+  "main": "Create a scatter plot showing client revenue versus collection rate.",
+  "followup": "In the same chart, size bubbles by outstanding receivables.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 89,
+  "person": "velan",
+  "qno": "14.0",
+  "main": "Create a scatter plot showing client gross margin percentage versus collection rate.",
+  "followup": "In the same chart, size bubbles by revenue.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 90,
+  "person": "velan",
+  "qno": "15.0",
+  "main": "Create a line chart showing monthly cash conversion using operating cash flow divided by revenue.",
+  "followup": "In the same chart, add gross margin percentage for comparison.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 91,
+  "person": "velan",
+  "qno": "16.0",
+  "main": "Create a bar chart showing revenue, payroll, and gross margin by business unit.",
+  "followup": "In the same chart, add payroll as a percentage of revenue.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 92,
+  "person": "velan",
+  "qno": "17.0",
+  "main": "Create a heat map showing payroll cost by department and month.",
+  "followup": "In the same chart, highlight departments above the overall average payroll cost.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 93,
+  "person": "velan",
+  "qno": "18.0",
+  "main": "Create a column chart showing monthly EBITDA-style margin using revenue minus cost minus payroll.",
+  "followup": "In the same chart, add gross margin percentage as a comparison line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 94,
+  "person": "velan",
+  "qno": "19.0",
+  "main": "Create a line chart showing monthly cash balance and operating cash flow.",
+  "followup": "In the same chart, add free cash flow as a comparison line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 95,
+  "person": "velan",
+  "qno": "20.0",
+  "main": "Create a bar chart showing employee count by delivery center.",
+  "followup": "In the same chart, add utilization percentage as a line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 96,
+  "person": "velan",
+  "qno": "21.0",
+  "main": "Create a scatter plot showing utilization percentage versus employee count by delivery center.",
+  "followup": "In the same chart, size bubbles by payroll cost.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 97,
+  "person": "velan",
+  "qno": "22.0",
+  "main": "Create a column chart showing monthly cost-to-income ratio using total cost divided by revenue.",
+  "followup": "In the same chart, add payroll-to-revenue ratio as a second line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 98,
+  "person": "velan",
+  "qno": "23.0",
+  "main": "Create a line chart showing monthly cash balance and outstanding receivables.",
+  "followup": "In the same chart, add outstanding payables as another line.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 99,
+  "person": "velan",
+  "qno": "24.0",
+  "main": "Create a CFO scorecard chart showing revenue, gross margin, payroll, free cash flow, receivables, and payables by month.",
+  "followup": "In the same chart, add KPI cards for current ratio, gross margin percentage, cost per employee, revenue per employee, and free cash flow margin.",
+  "fb_main": "",
+  "fb_follow": ""
+ },
+ {
+  "id": 100,
+  "person": "velan",
+  "qno": "25.0",
+  "main": "Create a dashboard showing monthly liquidity, profitability, employee efficiency, and cash conversion metrics.",
+  "followup": "In the same dashboard, add trend indicators comparing each metric against its monthly average.",
+  "fb_main": "",
+  "fb_follow": ""
+ }
+]

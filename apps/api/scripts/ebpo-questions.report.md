@@ -1,26 +1,32 @@
-# EBPO 100-question test — 2026-06-15T08:37:55.376Z
+# EBPO 100-question test — 2026-06-16T08:02:21.631Z
 
-Ran 12 questions (id 1–100) against EBPO org, production-like (no AGENT_SPEC_MODE).
+Ran 100 questions (id 1–100) against EBPO org, production-like (no AGENT_SPEC_MODE).
 
 ## CREATE outcomes
 ```
 {
-  "OK": 12
+  "OK": 98,
+  "NO_DATA": 1,
+  "SUSPECT_VALUE": 1
 }
 ```
-OK source split: `{"catalog":8,"llm":4}`
+OK source split: `{"catalog":86,"llm":12}`
 
 ## FOLLOW-UP outcomes
 ```
 {
-  "OK": 11,
-  "REFUSED": 1
+  "OK": 97,
+  "SKIPPED_NO_CREATE": 1,
+  "REFUSED": 2
 }
 ```
-OK source split: `{"catalog":5,"llm":6}`
+OK source split: `{"llm":38,"catalog":59}`
 
-## Problems (1)
+## Problems (4)
 
 | # | reqType | CREATE | type/src | FU | note |
 |---|---|---|---|---|---|
-| 96 | scatter | OK | scatter/catalog | REFUSED | I wasn't able to apply that change to the existing chart. Could you rephrase wha |
+| 24 | box_plot | NO_DATA | -/- | SKIPPED_NO_CREATE | Sorry, a box plot of salary distribution by department is not available in this  |
+| 27 | line | SUSPECT_VALUE | line/catalog | OK |  |
+| 59 | heatmap | OK | heatmap/catalog | REFUSED | I can't compare against targets — there are no target or goal figures in this da |
+| 79 | bar | OK | bar/catalog | REFUSED | I can’t determine a valid chart edit from the request "c". If you want a column  |

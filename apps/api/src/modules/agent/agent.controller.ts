@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpException,
@@ -112,6 +113,25 @@ export class AgentController {
       throw new HttpException('Session not found for this dashboard.', HttpStatus.NOT_FOUND);
     }
     return result;
+  }
+
+  @Delete('sessions/:sessionId/charts/:widgetId')
+  async deleteSessionChart(
+    @CurrentUser() user: AuthUser,
+    @Param('sessionId') sessionId: string,
+    @Param('widgetId') widgetId: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext({
+      id: user.id,
+      email: user.email,
+    }, { organizationId });
+    return this.agentService.deleteSessionChart(
+      sessionId,
+      context.organization.id,
+      context.membership.role,
+      widgetId,
+    );
   }
 
   @Get('metrics')

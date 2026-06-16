@@ -282,6 +282,9 @@ export type MetricsResponse = {
   data: Array<Record<string, unknown>>;
   metric?: string;
   grouping?: string;
+  rangeNotice?: string;
+  requestedRangeLabel?: string;
+  availableRange?: { start: string; end: string };
 };
 
 // ── Organisation management ────────────────────────────────────────────────

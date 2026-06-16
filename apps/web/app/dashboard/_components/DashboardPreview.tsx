@@ -1,6 +1,7 @@
 "use client";
 
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Maximize2,
@@ -13,6 +14,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   BarChart3 as BarChart3Icon,
+  CalendarRange,
 } from "lucide-react";
 import {
   LineChart,
@@ -87,6 +89,9 @@ interface Chart {
   config: ChartConfig;
   layoutIndex?: number;
   snapshotData?: DataRow[];
+  rangeNotice?: string | null;
+  requestedRangeLabel?: string | null;
+  availableRange?: { start: string; end: string } | null;
 }
 
 interface Dashboard {
@@ -104,6 +109,17 @@ interface VentureData {
 }
 
 type DataRow = Record<string, number | string>;
+type ChartScopeSelection =
+  | { kind: "all" }
+  | { kind: "year"; year: number }
+  | { kind: "preset"; months: number }
+  | { kind: "custom"; start: string; end: string };
+type ChartPeriodMeta = {
+  years: number[];
+  minMonth: string | null;
+  maxMonth: string | null;
+  hasMonthlyData: boolean;
+};
 
 type ChartTurnMode = "create" | "edit";
 
@@ -115,6 +131,9 @@ type ChartTurnWidgetSnapshot = {
   displayOrder?: number;
   dataSnapshot?: Array<Record<string, unknown>>;
   dataSnapshotTruncated?: boolean;
+  rangeNotice?: string | null;
+  requestedRangeLabel?: string | null;
+  availableRange?: { start: string; end: string } | null;
 };
 
 type ChartTurnMetadata = {
@@ -138,6 +157,12 @@ type ChartVersionSnapshot = {
   dashboardTitle: string;
   summary: string;
   charts: Chart[];
+};
+
+type ChartDataMeta = {
+  rangeNotice?: string | null;
+  requestedRangeLabel?: string | null;
+  availableRange?: { start: string; end: string } | null;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -279,6 +304,9 @@ function buildChartVersionHistory(messages: ChatMessage[]): ChartVersionSnapshot
         snapshotData: Array.isArray(widget.dataSnapshot)
           ? (widget.dataSnapshot as DataRow[])
           : undefined,
+        rangeNotice: widget.rangeNotice ?? null,
+        requestedRangeLabel: widget.requestedRangeLabel ?? null,
+        availableRange: widget.availableRange ?? null,
       });
     }
 
@@ -312,6 +340,168 @@ function mergeChartVersionHistories(
   }
 
   return Array.from(merged.values()).sort((a, b) => a.versionNumber - b.versionNumber);
+}
+
+// ─── Chart Scope Helpers ─────────────────────────────────────────────────────
+
+function monthKey(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function parsePointDate(row: DataRow): Date | null {
+  const candidates = [
+    (row as any).period_date,
+    (row as any).month_start,
+    (row as any).date,
+    (row as any).name,
+    (row as any).month,
+    (row as any).period,
+  ];
+
+  for (const raw of candidates) {
+    const text = String(raw ?? "").trim();
+    if (!text) continue;
+
+    const isoMonth = text.match(/^((?:19|20)\d{2})-(\d{1,2})(?:-\d{1,2})?$/);
+    if (isoMonth) {
+      return new Date(Date.UTC(Number(isoMonth[1]), Number(isoMonth[2]) - 1, 1));
+    }
+
+    const shortMonth = text.match(/^([A-Za-z]{3,9})\s+((?:19|20)\d{2})$/);
+    if (shortMonth) {
+      const month = [
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "may",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "oct",
+        "nov",
+        "dec",
+      ].indexOf(shortMonth[1]!.slice(0, 3).toLowerCase());
+      if (month >= 0) return new Date(Date.UTC(Number(shortMonth[2]), month, 1));
+    }
+
+    const numericMonth = text.match(/^(\d{1,2})\/(\d{2}|\d{4})$/);
+    if (numericMonth) {
+      const month = Number(numericMonth[1]);
+      const rawYear = Number(numericMonth[2]);
+      const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+      if (month >= 1 && month <= 12) return new Date(Date.UTC(year, month - 1, 1));
+    }
+
+    const quarter = text.match(/^Q[1-4]\s+((?:19|20)\d{2})$/i);
+    if (quarter) return new Date(Date.UTC(Number(quarter[1]), 0, 1));
+
+    const yearOnly = text.match(/^((?:19|20)\d{2})$/);
+    if (yearOnly) return new Date(Date.UTC(Number(yearOnly[1]), 0, 1));
+  }
+
+  return null;
+}
+
+function getPeriodMeta(data: DataRow[]): ChartPeriodMeta {
+  const dates = data.map(parsePointDate).filter((d): d is Date => !!d);
+  const years = Array.from(new Set(dates.map((d) => d.getUTCFullYear()))).sort((a, b) => a - b);
+  const months = dates.map(monthKey).sort();
+  const uniqueMonths = Array.from(new Set(months));
+  return {
+    years,
+    minMonth: uniqueMonths[0] ?? null,
+    maxMonth: uniqueMonths[uniqueMonths.length - 1] ?? null,
+    hasMonthlyData: uniqueMonths.length > years.length,
+  };
+}
+
+function filterRowsByScope(data: DataRow[], selection?: ChartScopeSelection): DataRow[] {
+  if (!selection || selection.kind === "all") return data;
+
+  const dated = data
+    .map((row) => ({ row, date: parsePointDate(row) }))
+    .filter((item): item is { row: DataRow; date: Date } => !!item.date);
+  if (dated.length === 0) return data;
+
+  if (selection.kind === "year") {
+    return dated.filter((item) => item.date.getUTCFullYear() === selection.year).map((item) => item.row);
+  }
+
+  if (selection.kind === "preset") {
+    const maxDate = dated.reduce((latest, item) => (item.date > latest ? item.date : latest), dated[0]!.date);
+    const start = new Date(Date.UTC(maxDate.getUTCFullYear(), maxDate.getUTCMonth() - selection.months + 1, 1));
+    return dated.filter((item) => item.date >= start && item.date <= maxDate).map((item) => item.row);
+  }
+
+  const start = selection.start ? new Date(`${selection.start}-01T00:00:00.000Z`) : null;
+  const end = selection.end ? new Date(`${selection.end}-01T00:00:00.000Z`) : null;
+  return dated
+    .filter((item) => (!start || item.date >= start) && (!end || item.date <= end))
+    .map((item) => item.row);
+}
+
+function describeScope(selection: ChartScopeSelection | undefined, data: DataRow[]): string {
+  if (!selection || selection.kind === "all") return `${data.length} points`;
+  if (selection.kind === "year") return `${selection.year} · ${data.length} points`;
+  if (selection.kind === "preset") return `Last ${selection.months} months · ${data.length} points`;
+  if (selection.start && selection.end) return `${selection.start} to ${selection.end} · ${data.length} points`;
+  return `${data.length} points`;
+}
+
+function defaultScopeFromTimeRange(range: TimeRange | null | undefined): ChartScopeSelection | undefined {
+  if (!range || range.kind === "ALL_TIME") return undefined;
+  if (range.kind === "LAST_N_MONTHS") return { kind: "preset", months: range.months };
+  if (range.kind === "BETWEEN_DATES") return { kind: "custom", start: range.start.slice(0, 7), end: range.end.slice(0, 7) };
+  if (range.kind === "SINCE_DATE") return { kind: "custom", start: range.start.slice(0, 7), end: range.start.slice(0, 7) };
+  if (range.kind === "YTD") return { kind: "preset", months: new Date().getUTCMonth() + 1 };
+  return undefined;
+}
+
+function monthKeyToDate(key: string): Date | null {
+  const match = key.match(/^((?:19|20)\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+}
+
+function formatMonthKey(key: string, variant: "short" | "long" = "short"): string {
+  const date = monthKeyToDate(key);
+  if (!date) return key;
+  return new Intl.DateTimeFormat("en-US", {
+    month: variant === "short" ? "short" : "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+function enumerateMonths(minMonth: string | null, maxMonth: string | null): string[] {
+  const start = minMonth ? monthKeyToDate(minMonth) : null;
+  const end = maxMonth ? monthKeyToDate(maxMonth) : null;
+  if (!start || !end || start > end) return [];
+
+  const months: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end && months.length < 240) {
+    months.push(monthKey(cursor));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return months;
+}
+
+function clampMonthRange(
+  start: string,
+  end: string,
+  minMonth: string | null,
+  maxMonth: string | null,
+): { start: string; end: string } {
+  const safeStart = start || minMonth || end || maxMonth || "";
+  const safeEnd = end || maxMonth || safeStart;
+  const ordered = safeStart <= safeEnd ? { start: safeStart, end: safeEnd } : { start: safeEnd, end: safeStart };
+  return {
+    start: minMonth && ordered.start < minMonth ? minMonth : ordered.start,
+    end: maxMonth && ordered.end > maxMonth ? maxMonth : ordered.end,
+  };
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -2190,18 +2380,292 @@ function AxisCaption({ chart }: { chart: Chart }) {
   );
 }
 
+function ChartScopeControls({
+  data,
+  selection,
+  onChange,
+}: {
+  data: DataRow[];
+  selection?: ChartScopeSelection;
+  onChange: (selection: ChartScopeSelection) => void;
+}) {
+  const meta = getPeriodMeta(data);
+  const active = selection ?? { kind: "all" as const };
+  const hasYears = meta.years.length > 1;
+  const canUseRange = meta.hasMonthlyData && !!meta.minMonth && !!meta.maxMonth && data.length > 6;
+  const months = enumerateMonths(meta.minMonth, meta.maxMonth);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [editingBoundary, setEditingBoundary] = useState<"start" | "end">("start");
+  const custom =
+    active.kind === "custom"
+      ? clampMonthRange(active.start, active.end, meta.minMonth, meta.maxMonth)
+      : clampMonthRange(meta.minMonth ?? "", meta.maxMonth ?? "", meta.minMonth, meta.maxMonth);
+  const customYears = Array.from(new Set(months.map((month) => month.slice(0, 4))));
+  const allowedCustomYears =
+    editingBoundary === "end"
+      ? customYears.filter((year) => year >= custom.start.slice(0, 4))
+      : customYears;
+  const activeCustomYear =
+    (editingBoundary === "start" ? custom.start : custom.end).slice(0, 4) ||
+    allowedCustomYears[0] ||
+    "";
+  const visibleCustomMonths = months.filter((month) => month.startsWith(activeCustomYear));
+  const customLabel =
+    active.kind === "custom"
+      ? `${formatMonthKey(custom.start)} - ${formatMonthKey(custom.end)}`
+      : "Custom period";
+
+  if (!hasYears && !canUseRange) return null;
+
+  return (
+    <div
+      className="mb-3 rounded-xl border border-default bg-bg-elevated/35 p-2"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 inline-flex items-center gap-1 rounded-lg bg-bg-card px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-text-muted ring-1 ring-default">
+          <CalendarRange size={10} />
+          Scope
+        </span>
+        <button
+          type="button"
+          onClick={() => onChange({ kind: "all" })}
+          className={cn(
+            "rounded-lg px-2 py-1 text-[10px] font-semibold transition-colors",
+            active.kind === "all"
+              ? "bg-text-primary text-bg-card"
+              : "bg-bg-card text-text-secondary ring-1 ring-default hover:text-text-primary",
+          )}
+        >
+          All
+        </button>
+        {hasYears &&
+          meta.years.map((year) => (
+            <button
+              type="button"
+              key={year}
+              onClick={() => onChange({ kind: "year", year })}
+              className={cn(
+                "rounded-lg px-2 py-1 text-[10px] font-semibold transition-colors",
+                active.kind === "year" && active.year === year
+                  ? "bg-accent-cyan text-bg-card"
+                  : "bg-bg-card text-text-secondary ring-1 ring-default hover:text-text-primary",
+              )}
+            >
+              {year}
+            </button>
+          ))}
+        {canUseRange && (
+          <>
+            <button
+              type="button"
+              onClick={() => onChange({ kind: "preset", months: 6 })}
+              className={cn(
+                "rounded-lg px-2 py-1 text-[10px] font-semibold transition-colors",
+                active.kind === "preset" && active.months === 6
+                  ? "bg-accent-violet text-white"
+                  : "bg-bg-card text-text-secondary ring-1 ring-default hover:text-text-primary",
+              )}
+            >
+              Last 6M
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ kind: "preset", months: 12 })}
+              className={cn(
+                "rounded-lg px-2 py-1 text-[10px] font-semibold transition-colors",
+                active.kind === "preset" && active.months === 12
+                  ? "bg-accent-violet text-white"
+                  : "bg-bg-card text-text-secondary ring-1 ring-default hover:text-text-primary",
+              )}
+            >
+              Last 12M
+            </button>
+            <div>
+              <button
+                type="button"
+                onClick={() => setCustomOpen((open) => !open)}
+                className={cn(
+                  "rounded-lg px-2 py-1 text-[10px] font-semibold transition-colors",
+                  active.kind === "custom"
+                    ? "bg-accent-cyan/12 text-accent-cyan ring-1 ring-accent-cyan/30"
+                    : "bg-bg-card text-text-secondary ring-1 ring-default hover:text-text-primary",
+                )}
+              >
+                {customLabel}
+              </button>
+
+              {customOpen && typeof document !== "undefined" ? createPortal(
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+                  <div
+                    className="w-full max-w-sm rounded-2xl border border-default bg-bg-card p-4 shadow-2xl shadow-black/50"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-text-muted">
+                          Custom period
+                        </p>
+                        <p className="mt-0.5 text-xs font-semibold text-text-secondary">
+                          {editingBoundary === "start"
+                            ? "Choose a start month"
+                            : `Choose an end month after ${formatMonthKey(custom.start)}`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {active.kind === "custom" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onChange({ kind: "all" });
+                              setCustomOpen(false);
+                            }}
+                            className="rounded-md bg-bg-elevated px-2 py-1 text-[10px] font-semibold text-text-muted hover:text-text-primary"
+                          >
+                            Reset
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCustomOpen(false)}
+                          className="rounded-md bg-accent-cyan/10 px-2 py-1 text-[10px] font-semibold text-accent-cyan hover:bg-accent-cyan/15"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-bg-elevated/60 p-1">
+                      {(["start", "end"] as const).map((bound) => (
+                        <button
+                          type="button"
+                          key={bound}
+                          onClick={() => setEditingBoundary(bound)}
+                          className={cn(
+                            "rounded-md px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] transition-colors",
+                            editingBoundary === bound
+                              ? "bg-text-primary text-bg-card"
+                              : "text-text-muted hover:text-text-primary",
+                          )}
+                        >
+                          {bound === "start" ? "From" : "To"}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {allowedCustomYears.map((year) => (
+                        <button
+                          type="button"
+                          key={year}
+                          onClick={() => {
+                            const month = `${year}-${(editingBoundary === "start" ? custom.start : custom.end).slice(5, 7)}`;
+                            const fallback = months.find((item) => item.startsWith(year)) ?? month;
+                            const boundedFallback =
+                              editingBoundary === "end" && fallback < custom.start ? custom.start : fallback;
+                            const next =
+                              editingBoundary === "start"
+                                ? clampMonthRange(fallback, custom.end, meta.minMonth, meta.maxMonth)
+                                : clampMonthRange(custom.start, boundedFallback, meta.minMonth, meta.maxMonth);
+                            onChange({ kind: "custom", ...next });
+                          }}
+                          className={cn(
+                            "rounded-md px-2 py-1 text-[10px] font-semibold transition-colors",
+                            activeCustomYear === year
+                              ? "bg-accent-cyan/12 text-accent-cyan ring-1 ring-accent-cyan/30"
+                              : "bg-bg-elevated text-text-muted hover:text-text-primary",
+                          )}
+                        >
+                          {year}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-1">
+                      {visibleCustomMonths.map((month) => {
+                        const isSelected = editingBoundary === "start" ? custom.start === month : custom.end === month;
+                        const isDisabled = editingBoundary === "end" && month < custom.start;
+                        const monthName = formatMonthKey(month).split(" ")[0];
+                        return (
+                          <button
+                            type="button"
+                            key={month}
+                            disabled={isDisabled}
+                            onClick={() => {
+                              if (isDisabled) return;
+                              const next =
+                                editingBoundary === "start"
+                                  ? clampMonthRange(month, custom.end < month ? month : custom.end, meta.minMonth, meta.maxMonth)
+                                  : clampMonthRange(custom.start, month, meta.minMonth, meta.maxMonth);
+                              onChange({ kind: "custom", ...next });
+                              if (editingBoundary === "start") setEditingBoundary("end");
+                            }}
+                            className={cn(
+                              "rounded-lg px-2 py-2 text-[10px] font-semibold transition-colors",
+                              isDisabled && "cursor-not-allowed opacity-30",
+                              isSelected
+                                ? "bg-accent-cyan text-bg-card"
+                                : "bg-bg-elevated/70 text-text-secondary hover:text-text-primary",
+                            )}
+                          >
+                            {monthName}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between border-t border-default pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onChange({ kind: "all" });
+                          setCustomOpen(false);
+                        }}
+                        className="text-[10px] font-semibold text-text-muted hover:text-text-primary"
+                      >
+                        Clear filter
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCustomOpen(false)}
+                        className="text-[10px] font-semibold text-accent-cyan hover:text-text-primary"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  </div>
+                </div>,
+                document.body,
+              ) : null}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ChartCard({
   chart,
   data,
+  fullData,
+  meta,
+  scopeSelection,
   index,
   onExpand,
+  onScopeChange,
 }: {
   chart: Chart;
   data: DataRow[];
+  fullData: DataRow[];
+  meta?: ChartDataMeta;
+  scopeSelection?: ChartScopeSelection;
   index: number;
   onExpand: () => void;
+  onScopeChange: (selection: ChartScopeSelection) => void;
 }) {
   const isEmpty = data.length === 0;
+  const rangeNotice = meta?.rangeNotice ?? chart.rangeNotice ?? null;
 
   return (
     <motion.div
@@ -2234,12 +2698,24 @@ function ChartCard({
         )}
       </div>
 
+      <ChartScopeControls
+        data={fullData}
+        selection={scopeSelection}
+        onChange={onScopeChange}
+      />
+
+      {rangeNotice && (
+        <div className="mb-3 rounded-xl border border-accent-cyan/25 bg-accent-cyan/8 px-3 py-2 text-[11px] font-semibold leading-relaxed text-accent-cyan">
+          {rangeNotice}
+        </div>
+      )}
+
       {/* Chart */}
       <div className="min-h-0 flex-1 pointer-events-none">
         {isEmpty ? (
           <div className="flex h-full min-h-[160px] items-center justify-center rounded-xl bg-bg-elevated/30">
             <p className="text-xs text-text-muted text-center px-4">
-              {getEmptyMessage(chart)}
+              {rangeNotice ?? getEmptyMessage(chart)}
             </p>
           </div>
         ) : (
@@ -2251,6 +2727,9 @@ function ChartCard({
       <div className="mt-3 flex min-w-0 items-center gap-2">
         <span className="shrink-0 rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted ring-1 ring-default">
           {prettyChartType(chart.type)}
+        </span>
+        <span className="shrink-0 rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted ring-1 ring-default">
+          {describeScope(scopeSelection, data)}
         </span>
         {!isEmpty && (
           <div className="min-w-0 flex-1 overflow-hidden">
@@ -2266,12 +2745,18 @@ function VersionSection({
   version,
   charts,
   chartData,
+  chartDataMeta,
+  chartScopes,
   onExpandChart,
+  onScopeChange,
 }: {
   version: ChartVersionSnapshot | null;
   charts: Chart[];
   chartData: Record<string, DataRow[]>;
+  chartDataMeta: Record<string, ChartDataMeta>;
+  chartScopes: Record<string, ChartScopeSelection>;
   onExpandChart: (chartId: string) => void;
+  onScopeChange: (chartId: string, selection: ChartScopeSelection) => void;
 }) {
   const versionLabel = version ? `Chart v${version.versionNumber}` : "Current dashboard";
   const modeLabel = version
@@ -2299,15 +2784,24 @@ function VersionSection({
       ) : null}
 
       <div className="grid grid-cols-1 gap-4">
-        {charts.map((chart, index) => (
-          <ChartCard
-            key={chart.id}
-            chart={chart}
-            data={chartData[chart.id] ?? []}
-            index={index}
-            onExpand={() => onExpandChart(chart.id)}
-          />
-        ))}
+        {charts.map((chart, index) => {
+          const fullData = chartData[chart.id] ?? [];
+          const scopeSelection = chartScopes[chart.id] ?? defaultScopeFromTimeRange(chart.config.timeRange);
+          const scopedData = filterRowsByScope(fullData, scopeSelection);
+          return (
+            <ChartCard
+              key={chart.id}
+              chart={chart}
+              data={scopedData}
+              fullData={fullData}
+              meta={chartDataMeta[chart.id]}
+              scopeSelection={scopeSelection}
+              index={index}
+              onExpand={() => onExpandChart(chart.id)}
+              onScopeChange={(selection) => onScopeChange(chart.id, selection)}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -2330,6 +2824,8 @@ export function DashboardPreview({
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [chartVersions, setChartVersions] = useState<ChartVersionSnapshot[]>([]);
   const [chartData, setChartData] = useState<Record<string, DataRow[]>>({});
+  const [chartDataMeta, setChartDataMeta] = useState<Record<string, ChartDataMeta>>({});
+  const [chartScopes, setChartScopes] = useState<Record<string, ChartScopeSelection>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedChartId, setExpandedChartId] = useState<string | null>(null);
@@ -2343,6 +2839,8 @@ export function DashboardPreview({
     if (dashboard !== null) setDashboard(null);
     if (chartVersions.length > 0) setChartVersions([]);
     if (Object.keys(chartData).length > 0) setChartData({});
+    if (Object.keys(chartDataMeta).length > 0) setChartDataMeta({});
+    if (Object.keys(chartScopes).length > 0) setChartScopes({});
     setExpandedChartId(null);
   }
 
@@ -2383,9 +2881,17 @@ export function DashboardPreview({
           setChartVersions(history);
 
           const dataMap: Record<string, DataRow[]> = {};
+          const metaMap: Record<string, ChartDataMeta> = {};
           for (const chart of chartsToLoad) {
             if (Array.isArray(chart.snapshotData) && chart.snapshotData.length > 0) {
               dataMap[chart.id] = chart.snapshotData;
+            }
+            if (chart.rangeNotice || chart.requestedRangeLabel || chart.availableRange) {
+              metaMap[chart.id] = {
+                rangeNotice: chart.rangeNotice,
+                requestedRangeLabel: chart.requestedRangeLabel,
+                availableRange: chart.availableRange,
+              };
             }
           }
           await Promise.all(
@@ -2406,16 +2912,32 @@ export function DashboardPreview({
                   chart.config.metric === "dynamic" ? chart.id : null,
                 );
                 dataMap[chart.id] = (res.data ?? []) as DataRow[];
+                if (res.rangeNotice || res.requestedRangeLabel || res.availableRange) {
+                  metaMap[chart.id] = {
+                    rangeNotice: res.rangeNotice ?? null,
+                    requestedRangeLabel: res.requestedRangeLabel ?? null,
+                    availableRange: res.availableRange ?? null,
+                  };
+                }
               } catch {
                 dataMap[chart.id] = [];
               }
               }),
           );
           setChartData(dataMap);
+          setChartDataMeta(metaMap);
+          setChartScopes((current) => {
+            const validIds = new Set(chartsToLoad.map((chart) => chart.id));
+            return Object.fromEntries(
+              Object.entries(current).filter(([chartId]) => validIds.has(chartId)),
+            );
+          });
         } else {
           setDashboard(null);
           setChartVersions([]);
           setChartData({});
+          setChartDataMeta({});
+          setChartScopes({});
         }
       } catch (caught) {
         const message =
@@ -2509,7 +3031,11 @@ export function DashboardPreview({
         ];
   const visibleCharts = visibleVersions.flatMap((version) => version.charts);
   const expandedChart = visibleCharts.find((c) => c.id === expandedChartId);
-  const expandedData = expandedChart ? (chartData[expandedChart.id] ?? []) : [];
+  const expandedFullData = expandedChart ? (chartData[expandedChart.id] ?? []) : [];
+  const expandedScope = expandedChart
+    ? (chartScopes[expandedChart.id] ?? defaultScopeFromTimeRange(expandedChart.config.timeRange))
+    : undefined;
+  const expandedData = filterRowsByScope(expandedFullData, expandedScope);
 
   return (
     <div className="space-y-4">
@@ -2550,7 +3076,12 @@ export function DashboardPreview({
             version={version.versionNumber > 0 ? version : null}
             charts={version.charts}
             chartData={chartData}
+            chartDataMeta={chartDataMeta}
+            chartScopes={chartScopes}
             onExpandChart={(chartId) => setExpandedChartId(chartId)}
+            onScopeChange={(chartId, selection) =>
+              setChartScopes((current) => ({ ...current, [chartId]: selection }))
+            }
           />
         ))}
       </div>
@@ -2612,6 +3143,16 @@ export function DashboardPreview({
                     ) : null}
                   </p>
                 ) : null}
+                <div className="mt-4">
+                  <ChartScopeControls
+                    data={expandedFullData}
+                    selection={expandedScope}
+                    onChange={(selection) =>
+                      expandedChart &&
+                      setChartScopes((current) => ({ ...current, [expandedChart.id]: selection }))
+                    }
+                  />
+                </div>
               </div>
 
               <div className="min-h-0 w-full flex-1 rounded-2xl border border-default bg-bg-elevated/30 p-6">

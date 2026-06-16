@@ -242,6 +242,9 @@ type ChartTurnWidgetSnapshot = {
   displayOrder: number;
   dataSnapshot?: Array<Record<string, unknown>>;
   dataSnapshotTruncated?: boolean;
+  rangeNotice?: string | null;
+  requestedRangeLabel?: string | null;
+  availableRange?: { start: string; end: string } | null;
 };
 
 type ChartTurnMetadata = {
@@ -2674,6 +2677,187 @@ export class AgentService {
 
   // ─── Metric Data ──────────────────────────────────────────────────────────
 
+  private metricMonthKey(date: Date): string {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  }
+
+  private parseMetricRowDate(row: Record<string, unknown>): Date | null {
+    const candidates = [
+      row.period_date,
+      row.month_start,
+      row.date,
+      row.name,
+      row.month,
+      row.period,
+    ];
+
+    for (const raw of candidates) {
+      const text = String(raw ?? '').trim();
+      if (!text) continue;
+
+      const iso = text.match(/^((?:19|20)\d{2})-(\d{1,2})(?:-\d{1,2})?/);
+      if (iso) return new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, 1));
+
+      const monthYear = text.match(/^([A-Za-z]{3,9})\s+((?:19|20)\d{2})$/);
+      if (monthYear) {
+        const month = [
+          'jan',
+          'feb',
+          'mar',
+          'apr',
+          'may',
+          'jun',
+          'jul',
+          'aug',
+          'sep',
+          'oct',
+          'nov',
+          'dec',
+        ].indexOf((monthYear[1] ?? '').slice(0, 3).toLowerCase());
+        if (month >= 0) return new Date(Date.UTC(Number(monthYear[2]), month, 1));
+      }
+
+      const short = text.match(/^(\d{1,2})\/(\d{2}|\d{4})$/);
+      if (short) {
+        const month = Number(short[1]);
+        const rawYear = Number(short[2]);
+        const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+        if (month >= 1 && month <= 12) return new Date(Date.UTC(year, month - 1, 1));
+      }
+
+      const quarter = text.match(/^Q[1-4]\s+((?:19|20)\d{2})$/i);
+      if (quarter) return new Date(Date.UTC(Number(quarter[1]), 0, 1));
+
+      const year = text.match(/^((?:19|20)\d{2})$/);
+      if (year) return new Date(Date.UTC(Number(year[1]), 0, 1));
+    }
+
+    return null;
+  }
+
+  private formatMonthKeyForNotice(key: string): string {
+    const [y, m] = key.split('-').map(Number);
+    if (!y || !m) return key;
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(new Date(Date.UTC(y, m - 1, 1)));
+  }
+
+  private labelTimeRange(range?: TimeRange): string {
+    if (!range || range.kind === 'ALL_TIME') return 'all time';
+    if (range.kind === 'LAST_N_MONTHS') return `last ${range.months} months`;
+    if (range.kind === 'LAST_N_DAYS') return `last ${range.days} days`;
+    if (range.kind === 'LAST_N_WEEKS') return `last ${range.weeks} weeks`;
+    if (range.kind === 'LAST_N_QUARTERS') return `last ${range.quarters} quarters`;
+    if (range.kind === 'LAST_N_YEARS') return `last ${range.years} years`;
+    if (range.kind === 'BETWEEN_DATES') return `${range.start} to ${range.end}`;
+    if (range.kind === 'SINCE_DATE') return `since ${range.start}`;
+    return range.kind.toLowerCase();
+  }
+
+  private requestedMonthBounds(range?: TimeRange): { start: string; end: string } | null {
+    if (!range || range.kind === 'ALL_TIME') return null;
+    const now = new Date();
+    const currentMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const key = (date: Date) => this.metricMonthKey(date);
+    if (range.kind === 'MTD') return { start: key(currentMonth), end: key(currentMonth) };
+    if (range.kind === 'QTD') {
+      const quarterMonth = Math.floor(now.getUTCMonth() / 3) * 3;
+      return {
+        start: key(new Date(Date.UTC(now.getUTCFullYear(), quarterMonth, 1))),
+        end: key(currentMonth),
+      };
+    }
+    if (range.kind === 'YTD') {
+      return {
+        start: key(new Date(Date.UTC(now.getUTCFullYear(), 0, 1))),
+        end: key(currentMonth),
+      };
+    }
+    if (range.kind === 'LAST_N_MONTHS') {
+      return {
+        start: key(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - Math.max(1, range.months) + 1, 1))),
+        end: key(currentMonth),
+      };
+    }
+    if (range.kind === 'LAST_N_QUARTERS') {
+      const months = Math.max(1, range.quarters) * 3;
+      return {
+        start: key(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - months + 1, 1))),
+        end: key(currentMonth),
+      };
+    }
+    if (range.kind === 'LAST_N_YEARS') {
+      return {
+        start: key(new Date(Date.UTC(now.getUTCFullYear() - Math.max(1, range.years) + 1, 0, 1))),
+        end: key(currentMonth),
+      };
+    }
+    if (range.kind === 'LAST_N_WEEKS' || range.kind === 'LAST_N_DAYS') {
+      const days = range.kind === 'LAST_N_WEEKS' ? Math.max(1, range.weeks) * 7 : Math.max(1, range.days);
+      const start = new Date(now);
+      start.setUTCDate(start.getUTCDate() - days + 1);
+      return {
+        start: key(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))),
+        end: key(currentMonth),
+      };
+    }
+    if (range.kind === 'SINCE_DATE') return { start: range.start.slice(0, 7), end: key(currentMonth) };
+    if (range.kind === 'BETWEEN_DATES') return { start: range.start.slice(0, 7), end: range.end.slice(0, 7) };
+    return null;
+  }
+
+  private applyRequestedRangeToRows(
+    rows: Record<string, unknown>[],
+    range?: TimeRange,
+  ): {
+    data: Record<string, unknown>[];
+    rangeNotice?: string;
+    requestedRangeLabel?: string;
+    availableRange?: { start: string; end: string };
+  } {
+    const dated = rows
+      .map((row) => ({ row, date: this.parseMetricRowDate(row) }))
+      .filter((item): item is { row: Record<string, unknown>; date: Date } => !!item.date);
+    if (dated.length === 0) return { data: rows };
+
+    const months = dated.map((item) => this.metricMonthKey(item.date)).sort();
+    const availableRange = { start: months[0]!, end: months[months.length - 1]! };
+    const bounds = this.requestedMonthBounds(range);
+    if (!bounds) return { data: rows, availableRange };
+
+    const data = dated
+      .filter((item) => {
+        const month = this.metricMonthKey(item.date);
+        return month >= bounds.start && month <= bounds.end;
+      })
+      .map((item) => item.row);
+    const requestedRangeLabel = this.labelTimeRange(range);
+    const availableLabel = `${this.formatMonthKeyForNotice(availableRange.start)} to ${this.formatMonthKeyForNotice(availableRange.end)}`;
+
+    if (data.length === 0) {
+      return {
+        data,
+        requestedRangeLabel,
+        availableRange,
+        rangeNotice: `No data is available for ${requestedRangeLabel}. Available data runs from ${availableLabel}.`,
+      };
+    }
+
+    if (availableRange.end < bounds.end) {
+      return {
+        data,
+        requestedRangeLabel,
+        availableRange,
+        rangeNotice: `Showing available data through ${this.formatMonthKeyForNotice(availableRange.end)}. Available data runs from ${availableLabel}.`,
+      };
+    }
+
+    return { data, requestedRangeLabel, availableRange };
+  }
+
   async metricData(
     organizationId: string,
     role: MembershipRole,
@@ -2712,7 +2896,7 @@ export class AgentService {
           const data = await this.executeDynamicSql(sql, scope, {
             chartType: chartType ?? undefined,
           });
-          return { data };
+          return this.applyRequestedRangeToRows(data, range);
         }
       } catch (err: any) {
         this.logger.warn(
@@ -10654,6 +10838,9 @@ export class AgentService {
               Record<string, unknown>
             >,
             dataSnapshotTruncated: data.length > MAX_SNAPSHOT_ROWS,
+            rangeNotice: result.rangeNotice ?? null,
+            requestedRangeLabel: result.requestedRangeLabel ?? null,
+            availableRange: result.availableRange ?? null,
           };
         } catch (err: any) {
           this.logger.warn(

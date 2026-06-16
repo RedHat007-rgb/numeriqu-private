@@ -38,6 +38,16 @@ describe('query-spec', () => {
     expect(r).toEqual({ kind: 'LAST_N_MONTHS', months: 6 });
   });
 
+  test('parses a concrete year as that calendar year', () => {
+    const r = parseTimeRange('show revenue trend for 2024');
+    expect(r).toEqual({ kind: 'BETWEEN_DATES', start: '2024-01-01', end: '2024-12-31' });
+  });
+
+  test('keeps explicit year comparisons multi-year', () => {
+    const r = parseTimeRange('compare revenue 2023 vs 2024 by year');
+    expect(r).toBeNull();
+  });
+
   test('parses between month and now', () => {
     const r = parseTimeRange('from Dec 2024 to now');
     expect(r?.kind).toBe('BETWEEN_DATES');

@@ -172,6 +172,24 @@ export function parseTimeRange(raw: string): TimeRange | null {
   if (/\b(qtd)\b/.test(q)) return { kind: 'QTD' };
   if (/\b(ytd)\b/.test(q)) return { kind: 'YTD' };
 
+  // Explicit calendar year: "2024 revenue", "for 2024", "in FY 2025".
+  // Do this before LAST_N_YEARS so a concrete year scopes to that year, while
+  // comparative wording ("2023 vs 2024", "by year", "YoY") remains multi-year.
+  const concreteYear = q.match(/\b(?:fy\s*)?((?:19|20)\d{2})\b/);
+  if (
+    concreteYear?.[1] &&
+    !/\b(vs\.?|versus|compare|comparison|year[\s-]*over[\s-]*year|yoy|by\s+year|per\s+year|each\s+year|annual\s+trend)\b/.test(q)
+  ) {
+    const year = Number(concreteYear[1]);
+    if (Number.isFinite(year)) {
+      return {
+        kind: 'BETWEEN_DATES',
+        start: `${year}-01-01`,
+        end: `${year}-12-31`,
+      };
+    }
+  }
+
   const lastNDays = q.match(/\b(last|past)\s+(\d+)\s+days?\b/);
   if (lastNDays) {
     const days = parseNumber(lastNDays[2] ?? '');

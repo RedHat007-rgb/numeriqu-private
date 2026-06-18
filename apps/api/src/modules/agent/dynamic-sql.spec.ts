@@ -163,4 +163,87 @@ describe('dynamic-sql', () => {
     expect(rewritten).not.toMatch(/\bnow\s*\(\s*\)\b/i);
     expect(rewritten).not.toMatch(/\btoday\s*\(\s*\)\b/i);
   });
+
+  // ─── Security: tenant-scope bypass + external source functions ───────────────
+  test('rejects a block-comment scope bypass (proven cross-tenant leak)', () => {
+    // The scope predicate is hidden in a comment: it satisfies a naive text check
+    // but ClickHouse ignores the comment and runs WHERE 1=1 → all tenants.
+    expect(() =>
+      validateDynamicSql(
+        `SELECT account_name AS name, sum(toFloat64(debit)) AS value
+         FROM analytics.sample_gl_dump
+         WHERE 1=1 /* AND tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) */
+         GROUP BY account_name LIMIT 50`,
+        { analyticsDb: 'analytics', chartType: 'bar' },
+      ),
+    ).toThrow(/must not contain comments/i);
+  });
+
+  test('rejects a line-comment (--) scope bypass', () => {
+    expect(() =>
+      validateDynamicSql(
+        `SELECT a AS name, 1 AS value FROM analytics.sample_gl_dump
+         WHERE 1=1 -- tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+         LIMIT 50`,
+        { analyticsDb: 'analytics', chartType: 'bar' },
+      ),
+    ).toThrow(/must not contain comments/i);
+  });
+
+  test('rejects external table/source functions (url/remote/s3/file)', () => {
+    for (const fn of [
+      `url('http://attacker/', 'CSV', 's String')`,
+      `remote('1.2.3.4', 'db.t')`,
+      `s3('http://x/y', 'CSV', 'c String')`,
+      `file('/etc/passwd', 'CSV', 'c String')`,
+    ]) {
+      expect(() =>
+        validateDynamicSql(
+          `SELECT name, value FROM ${fn}
+           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+           LIMIT 1`,
+          { analyticsDb: 'analytics', chartType: 'bar' },
+        ),
+      ).toThrow(/table\/source functions/i);
+    }
+  });
+
+  test('rejects an unscoped subquery to an analytics table (cross-tenant leak)', () => {
+    // Outer query is scoped, but the subquery reads analytics.sample_gl_dump with NO
+    // scope predicate → it would expose every tenant's rows.
+    expect(() =>
+      validateDynamicSql(
+        `SELECT account_name AS name, sum(toFloat64(debit)) AS value
+         FROM analytics.sample_gl_dump
+         WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+           AND debit > (SELECT avg(toFloat64(debit)) FROM analytics.sample_gl_dump)
+         GROUP BY account_name LIMIT 50`,
+        { analyticsDb: 'analytics', chartType: 'bar' },
+      ),
+    ).toThrow(/scope every analytics table reference/i);
+  });
+
+  test('accepts a subquery when BOTH references are scoped', () => {
+    const sql = validateDynamicSql(
+      `SELECT account_name AS name, sum(toFloat64(debit)) AS value
+       FROM analytics.sample_gl_dump
+       WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+         AND debit > (SELECT avg(toFloat64(debit)) FROM analytics.sample_gl_dump
+                      WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
+       GROUP BY account_name LIMIT 50`,
+      { analyticsDb: 'analytics', chartType: 'bar' },
+    );
+    expect(sql).toMatch(/account_name AS name/i);
+  });
+
+  test('a column merely named "url" is not blocked (no false positive)', () => {
+    const sql = validateDynamicSql(
+      `SELECT url AS name, count() AS value
+       FROM analytics.sample_gl_dump
+       WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+       GROUP BY url LIMIT 50`,
+      { analyticsDb: 'analytics', chartType: 'bar' },
+    );
+    expect(sql).toMatch(/url AS name/i);
+  });
 });

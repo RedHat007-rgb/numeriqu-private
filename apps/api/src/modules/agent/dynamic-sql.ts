@@ -61,6 +61,33 @@ function enforceScopedPredicates(sql: string) {
     throw new Error('Dynamic SQL missing org_id scope predicate');
 }
 
+// Defense-in-depth for the subquery/JOIN scope gap: the predicate check above only
+// confirms a scope predicate EXISTS somewhere, not that every table reference is
+// scoped. A subquery like `... x IN (SELECT y FROM analytics.t)` with no filter would
+// leak other tenants. Require one org_id scope predicate per db-qualified analytics
+// table reference. The agent generates single-table SQL in practice, so legitimate
+// queries are unaffected; the robust boundary remains ClickHouse row policies
+// (see SECURITY_SQL_HARDENING.md).
+function enforceEveryTableScoped(sql: string, analyticsDb: string) {
+  const db = String(analyticsDb || 'analytics')
+    .trim()
+    .replace(/[^a-zA-Z0-9_]/g, '');
+  const tableRefs = Array.from(
+    sql.matchAll(new RegExp(`\\b(?:FROM|JOIN)\\s+${db}\\.[a-zA-Z0-9_]+`, 'gi')),
+  ).length;
+  const orgPreds = Array.from(
+    sql.matchAll(
+      /\borg_id\s+IN\s*\(\s*\{externalOrgIds\s*:\s*Array\s*\(\s*String\s*\)\s*\}\s*\)/gi,
+    ),
+  ).length;
+  if (tableRefs > 0 && orgPreds < tableRefs)
+    throw new Error(
+      `Dynamic SQL must scope every analytics table reference — found ${tableRefs} ` +
+        `table reference(s) but only ${orgPreds} org_id scope predicate(s) ` +
+        '(possible cross-tenant subquery/join)',
+    );
+}
+
 function enforceOutputShape(sql: string) {
   // We need at least a stable dimension label and a metric for charting.
   const hasName = /\bAS\s+name\b/i.test(sql);
@@ -102,6 +129,13 @@ export function validateDynamicSql(
   const normalized = normalizeSql(rawSql);
   if (!normalized) throw new Error('Dynamic SQL is empty');
 
+  // Reject SQL comments outright. A commented-out scope predicate satisfies the
+  // text-based checks below while ClickHouse ignores the comment at execution — a
+  // PROVEN cross-tenant bypass: `WHERE 1=1 /* AND tenant_id = {tenantId:String} */`
+  // passes validation yet runs unfiltered. Generated chart SQL never needs comments.
+  if (/\/\*|\*\/|--/.test(normalized))
+    throw new Error('Dynamic SQL must not contain comments');
+
   if (hasMultipleStatements(normalized))
     throw new Error('Dynamic SQL must be a single SELECT statement');
 
@@ -125,6 +159,18 @@ export function validateDynamicSql(
   )
     throw new Error('Dynamic SQL must not access system tables');
 
+  // Block table/source functions that read external hosts or other data sources
+  // (SSRF / cross-source exfiltration, e.g. url(), remote(), s3(), file()). The
+  // `\s*\(` requires a function CALL, so a column merely named "url" is unaffected.
+  // Defense-in-depth: the analytics DB user also lacks these grants today, but the
+  // validator must not depend on grant configuration alone.
+  if (
+    /\b(url|remote|remoteSecure|cluster|clusterAllReplicas|s3|s3Cluster|gcs|file|hdfs|hudi|iceberg|deltaLake|mysql|postgresql|mongodb|jdbc|odbc|sqlite|redis|azureBlobStorage|executable|input)\s*\(/i.test(
+      normalized,
+    )
+  )
+    throw new Error('Dynamic SQL must not use table/source functions');
+
   if (!/\bLIMIT\s+\d+\b/i.test(normalized))
     throw new Error('Dynamic SQL must include LIMIT clause');
 
@@ -135,6 +181,7 @@ export function validateDynamicSql(
 
   enforceSameDatabase(normalized, options.analyticsDb);
   enforceScopedPredicates(normalized);
+  enforceEveryTableScoped(normalized, options.analyticsDb);
 
   const mustHaveNameValue =
     typeof options.requireNameValue === 'boolean'

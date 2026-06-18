@@ -32,549 +32,63 @@ import {
   ebpoCatalogPromptText,
   resolveEbpoViewMulti,
 } from './chart-spec-ebpo';
+import {
+  PLANNER_SYSTEM,
+  PLANNER_SCHEMA,
+  EDITOR_SYSTEM,
+  SPEC_PLANNER_SYSTEM,
+  SPEC_EDITOR_SYSTEM,
+  SMART_SQL_EDITOR_SYSTEM,
+  EDITOR_SCHEMA,
+  ANALYTICS_SCHEMA_CONTEXT,
+  DYNAMIC_SQL_SYSTEM,
+  SMART_SQL_PLANNER_SYSTEM,
+} from './agent-prompts';
+import { VALID_WIDGETS } from './agent-widget-catalog';
+import type {
+  OrgScope,
+  MembershipRole,
+  PivotAxis,
+  ChartType,
+  ToolResult,
+  AgentPlan,
+  SmartPlanResult,
+  DashboardEditPlan,
+  DeleteChartTarget,
+  DisplayHints,
+  SecondMeasure,
+  FollowUpTransform,
+  UnsupportedFeature,
+  ActiveDashboard,
+  ChartTurnMode,
+  ChartTurnWidgetSnapshot,
+  ChartTurnMetadata,
+  QueryIntent,
+  ClarificationPrompt,
+  ExplicitChartConstraints,
+  ClientResolution,
+  EntityResolution,
+} from './agent.types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface OrgScope {
-  tenantId: string;
-  connectionIds: string[];
-  externalOrgIds: string[];
-}
-
-type MembershipRole = 'ADMIN' | 'USER';
-
-type PivotAxis = 'month' | 'department' | 'class' | 'vendor' | 'account';
-
-type ChartType =
-  | 'line'
-  | 'bar'
-  | 'pie'
-  | 'donut'
-  | 'metric'
-  | 'kpi'
-  | 'table'
-  | 'area'
-  | 'combo'
-  | 'treemap'
-  | 'scatter'
-  | 'stacked_bar'
-  | 'waterfall'
-  | 'histogram'
-  | 'horizontal_bar'
-  | 'pareto'
-  | 'gauge'
-  | 'bubble'
-  | 'heatmap'
-  | 'matrix';
-
-interface ToolResult {
-  tool: string;
-  data: unknown;
-  rowCount: number;
-}
-
-interface AgentPlan {
-  tools_to_execute: string[];
-  should_generate_dashboard: boolean;
-  dashboard: {
-    title: string;
-    description: string;
-    widgets: Array<{
-      title: string;
-      description: string;
-      type: ChartType;
-      metric: string;
-      grouping: string;
-      breakdown?: 'client';
-      topN?: number;
-      // Axis titles surfaced to the chart (what X and Y actually represent).
-      xAxisLabel?: string;
-      yAxisLabel?: string;
-      // Presentation-only hints for the frontend (ignored by /agent/metrics).
-      display?: {
-        donut?: boolean;
-        highlightMaxMin?: boolean;
-        labelMode?: 'percent' | 'value';
-      };
-      display_order: number;
-    }>;
-  };
-  analysis_focus: string;
-}
-
-// Structured outcome of the SQL-first planner: build a dashboard, ask the user
-// a focused question, or honestly report that the data is not available.
-type SmartPlanResult =
-  | { kind: 'build'; plan: AgentPlan }
-  | { kind: 'clarify'; clarification: ClarificationPrompt }
-  | { kind: 'no_data'; message: string };
-
-interface DashboardEditPlan {
-  summary: string;
-  add: Array<{
-    title: string;
-    description: string;
-    type: ChartType;
-    metric: string;
-    grouping: string;
-    breakdown?: 'client';
-    topN?: number;
-    xAxisLabel?: string;
-    yAxisLabel?: string;
-    // SQL-first editor: full live ClickHouse SQL for a brand-new chart.
-    // When present, the widget is stored as a dynamic-SQL widget (metric='dynamic').
-    dynamicSql?: string;
-    display?: DisplayHints | null;
-  }>;
-  remove_indices: number[];
-  modify: Array<{
-    index: number;
-    title?: string;
-    type?: ChartType;
-    description?: string;
-    metric?: string;
-    grouping?: string;
-    breakdown?: 'client';
-    topN?: number;
-    xAxisLabel?: string;
-    yAxisLabel?: string;
-    // SQL-first editor: rewritten live ClickHouse SQL for an existing chart.
-    // When present, the widget's stored dynamicSql is replaced so the DATA changes,
-    // not just the presentation.
-    dynamicSql?: string;
-    // Phase 3: the new ChartSpec when the edit was a spec delta (persisted so the
-    // next follow-up edits this updated spec).
-    spec?: ChartSpec;
-    display?: DisplayHints | null;
-  }>;
-  // Layer D: when a follow-up cannot be satisfied from the data (e.g. YoY with a
-  // single year of data, budget variance with no budget), the editor refuses
-  // clearly instead of silently keeping the previous chart.
-  refusal?: string;
-}
-
-type DeleteChartTarget =
-  | { kind: 'none' }
-  | { kind: 'resolved'; indices: number[]; summary: string }
-  | { kind: 'ambiguous'; refusal: string };
-
-// Render-intent hints persisted into a widget's queryConfig.display so the
-// frontend can express a follow-up transform correctly (e.g. a normalized chart
-// renders a % axis; a "reference/average line" renders as a flat ReferenceLine;
-// moving-average series render dashed and paired to their parent series).
-interface DisplayHints {
-  donut?: boolean | null;
-  highlightMaxMin?: boolean | null;
-  labelMode?: 'percent' | 'value' | null;
-  // Values are 0–100 percentages (normalize-to-100%): format axis/labels as %.
-  normalized?: boolean | null;
-  // Name of the numeric column to draw as a flat reference line rather than a series.
-  referenceSeries?: string | null;
-  // Suffix marking moving-average columns (e.g. '_MA3') so they render dashed.
-  movingAverageSuffix?: string | null;
-  // Combo (dual-axis) second-measure axis formatting + label.
-  secondaryAxisFormat?: 'number' | 'currency' | 'percent' | null;
-  secondaryLabel?: string | null;
-  // Primary value unit, so the web formats EBPO dynamic charts (metric='dynamic')
-  // correctly — a percent measure must render as % not $ (Q37/Q72 fix).
-  valueFormat?: 'currency' | 'number' | 'percent' | null;
-  valueDecimals?: number | null;
-  // Matrix / heatmap formatting hints.
-  showTotals?: boolean | null;
-  conditionalThreshold?: number | null;
-  // Dynamic threshold: highlight cells above the column/row/overall average
-  // instead of a fixed number (e.g. "highlight cells above department average").
-  conditionalThresholdMode?:
-    | 'columnAverage'
-    | 'rowAverage'
-    | 'overallAverage'
-    | null;
-  conditionalColor?: 'green' | null;
-}
-
-// A second measure to plot on a combo chart's secondary axis. `expr` is the
-// ClickHouse aggregate over sample_gl_dump; an empty expr (invoices) means the
-// measure is unavailable in this dataset and the ask must be refused.
-interface SecondMeasure {
-  measure: 'spend' | 'count' | 'avg_txn' | 'credits' | 'invoices';
-  alias: string;
-  label: string;
-  format: 'number' | 'currency' | 'percent';
-  expr: string;
-}
-
-type FollowUpTransform =
-  | {
-      kind:
-        | 'yoy'
-        | 'prior_year'
-        | 'normalize'
-        | 'reference_line'
-        | 'variance'
-        | 'growth_pct';
-    }
-  | { kind: 'moving_average'; window: number }
-  | { kind: 'second_axis'; second: SecondMeasure };
-
-type UnsupportedFeature =
-  | {
-      reason: 'CHART_TYPE_UNSUPPORTED';
-      label: string;
-      alternativeLabel: string;
-      alternativeValue: string;
-    }
-  | {
-      reason: 'INTERACTIVE_FEATURE_UNSUPPORTED';
-      label: string;
-      alternativeLabel: string;
-      alternativeValue: string;
-    };
-
-interface ActiveDashboard {
-  id: string;
-  title: string;
-  widgets: Array<{
-    id: string;
-    title: string;
-    chartType: string;
-    queryConfig: unknown;
-    displayOrder: number;
-  }>;
-}
-
-type ChartTurnMode = 'create' | 'edit';
-
-type ChartTurnWidgetSnapshot = {
-  id?: string;
-  title: string;
-  chartType: string;
-  queryConfig: Record<string, unknown>;
-  chartConfig: Record<string, unknown>;
-  displayOrder: number;
-  dataSnapshot?: Array<Record<string, unknown>>;
-  dataSnapshotTruncated?: boolean;
-  rangeNotice?: string | null;
-  requestedRangeLabel?: string | null;
-  availableRange?: { start: string; end: string } | null;
-};
-
-type ChartTurnMetadata = {
-  kind: 'chart_turn';
-  mode: ChartTurnMode;
-  versionNumber: number;
-  previousVersionNumber: number | null;
-  sessionId: string;
-  dashboardId: string | null;
-  dashboardTitle: string;
-  widgetCount: number;
-  prompt: string;
-  summary: string;
-  widgetSnapshots: ChartTurnWidgetSnapshot[];
-  intent: QueryIntent;
-};
-
-type QueryIntent = 'CREATE_DASHBOARD' | 'EDIT_DASHBOARD';
-
-interface ClarificationPrompt {
-  question: string;
-  options: Array<{ label: string; value: string }>;
-  reason: string;
-}
-
-type ExplicitChartConstraints = {
-  exactCount?: number;
-  requiredTypes?: ChartType[];
-};
-
-type ClientResolution =
-  | { status: 'none' }
-  | {
-      status: 'resolved';
-      mention: string;
-      clientName: string;
-      clientNameLower: string;
-      score: number;
-    }
-  | {
-      status: 'ambiguous';
-      mention: string;
-      candidates: Array<{ clientName: string; score: number }>;
-    };
-
-type EntityResolution =
-  | { status: 'none' }
-  | {
-      status: 'resolved';
-      mention: string;
-      orgId: string;
-      orgName: string;
-      orgNameLower: string;
-      score: number;
-    }
-  | {
-      status: 'ambiguous';
-      mention: string;
-      candidates: Array<{ orgId: string; orgName: string; score: number }>;
-    };
+// --- domain types extracted to ./agent.types.ts ---
 
 const SAFE_QUERY = { max_memory_usage: '536870912', max_execution_time: 20 };
+
+// Single ceiling for all heavy LLM chat completions (planner / editor / smart-SQL).
+// Health-check pings to /api/tags keep their own short (2.5–5s) timeouts. This
+// constant replaces the prior ad-hoc 300_000 (5 min) and 120_000 ceilings so a
+// single hung completion can no longer stall a request for minutes. Note: this is
+// a CEILING, not a latency target — real latency wins come from caching/parallelism.
+const LLM_CHAT_TIMEOUT_MS = 120 * 1000;
 
 // ─── Valid widget configurations ─────────────────────────────────────────────
 // These are the ONLY supported metric+grouping pairs the agent can use.
 
 // ─── Complete chart vocabulary — every (type, metric, grouping) pair the
 // system can serve. Ollama picks freely from this list; the frontend renders any.
-const VALID_WIDGETS = [
-  // ── Time-series trends (line charts)
-  { type: 'line', metric: 'revenue', grouping: 'month' },
-  // Bar variant for when the user explicitly asks for bars over time
-  { type: 'bar', metric: 'revenue', grouping: 'month' },
-  { type: 'line', metric: 'outstanding', grouping: 'month' },
-  { type: 'line', metric: 'paid', grouping: 'month' },
-  { type: 'line', metric: 'invoice_count', grouping: 'month' },
-  { type: 'bar', metric: 'invoice_count', grouping: 'month' },
-  { type: 'line', metric: 'overdue', grouping: 'month' },
-  { type: 'line', metric: 'collection_rate', grouping: 'month' },
-  { type: 'line', metric: 'mom_growth', grouping: 'month' },
-  { type: 'line', metric: 'revenue', grouping: 'quarter' },
-  { type: 'line', metric: 'avg_invoice', grouping: 'month' },
-  { type: 'bar', metric: 'avg_invoice', grouping: 'month' },
-  // ── Comparison bars — entity / period
-  { type: 'bar', metric: 'revenue', grouping: 'org' },
-  { type: 'bar', metric: 'revenue', grouping: 'quarter' },
-  { type: 'bar', metric: 'invoices', grouping: 'org' },
-  { type: 'bar', metric: 'outstanding', grouping: 'org' },
-  { type: 'bar', metric: 'overdue', grouping: 'org' },
-  // ── Client-level bars (sourced from dim_clients gold table)
-  { type: 'bar', metric: 'revenue', grouping: 'client' },
-  { type: 'bar', metric: 'total_invoiced', grouping: 'client' },
-  { type: 'bar', metric: 'outstanding', grouping: 'client' },
-  { type: 'bar', metric: 'overdue', grouping: 'client' },
-  { type: 'bar', metric: 'invoices', grouping: 'client' },
-  { type: 'bar', metric: 'avg_invoice', grouping: 'client' },
-  { type: 'bar', metric: 'paid', grouping: 'client' },
-  { type: 'bar', metric: 'collection_rate', grouping: 'client' },
-  { type: 'bar', metric: 'overdue_rate', grouping: 'client' },
-  // ── Proportional pies
-  { type: 'pie', metric: 'revenue', grouping: 'client' },
-  { type: 'pie', metric: 'revenue', grouping: 'provider' },
-  // ── Revenue by GL account / category (from journal lines)
-  { type: 'bar', metric: 'revenue', grouping: 'account' },
-  { type: 'horizontal_bar', metric: 'revenue', grouping: 'account' },
-  { type: 'pie', metric: 'revenue', grouping: 'account' },
-  { type: 'donut', metric: 'revenue', grouping: 'account' },
-  { type: 'bar', metric: 'revenue', grouping: 'category' },
-  { type: 'horizontal_bar', metric: 'revenue', grouping: 'category' },
-  { type: 'pie', metric: 'revenue', grouping: 'category' },
-  { type: 'treemap', metric: 'revenue', grouping: 'account' },
-  { type: 'treemap', metric: 'revenue', grouping: 'category' },
-  { type: 'bar', metric: 'pl_comparison', grouping: 'summary' },
-  { type: 'pie', metric: 'invoices', grouping: 'status' },
-  { type: 'pie', metric: 'outstanding', grouping: 'client' },
-  // ── Metric tiles
-  { type: 'kpi', metric: 'summary', grouping: 'overview' },
-  { type: 'gauge', metric: 'financial_health', grouping: 'summary' },
-  { type: 'metric', metric: 'venture', grouping: 'summary' },
-  { type: 'metric', metric: 'top5_revenue_share', grouping: 'summary' },
-  { type: 'metric', metric: 'collected_vs_outstanding', grouping: 'summary' },
-  // ── Tables
-  { type: 'table', metric: 'invoices', grouping: 'list' },
-  { type: 'table', metric: 'overdue', grouping: 'aging' },
-  { type: 'table', metric: 'payment_days', grouping: 'list' },
-  // ── Payment efficiency distributions
-  { type: 'bar', metric: 'payment_days', grouping: 'bucket' },
-  { type: 'line', metric: 'dso', grouping: 'month' },
-
-  // ── P&L / Income Statement (sourced from fact_accounting_journal_lines)
-  { type: 'line', metric: 'net_income', grouping: 'month' },
-  { type: 'bar', metric: 'net_income', grouping: 'month' },
-  { type: 'bar', metric: 'net_income', grouping: 'quarter' },
-  { type: 'line', metric: 'expense', grouping: 'month' },
-  { type: 'bar', metric: 'expense', grouping: 'month' },
-  { type: 'bar', metric: 'expense', grouping: 'quarter' },
-  { type: 'line', metric: 'gross_profit', grouping: 'month' },
-  { type: 'line', metric: 'gross_margin_pct', grouping: 'month' },
-  { type: 'line', metric: 'net_margin_pct', grouping: 'month' },
-  { type: 'line', metric: 'ebitda', grouping: 'month' },
-  { type: 'line', metric: 'revenue_vs_expense', grouping: 'month' },
-  { type: 'bar', metric: 'revenue_vs_expense', grouping: 'month' },
-
-  // ── Expense breakdowns by GL account
-  { type: 'bar', metric: 'expense', grouping: 'account' },
-  { type: 'pie', metric: 'expense', grouping: 'account' },
-  // Expense breakdowns by user-defined cost category (e.g., Admin / Marketing / Sales)
-  { type: 'bar', metric: 'expense', grouping: 'category' },
-  { type: 'pie', metric: 'expense', grouping: 'category' },
-  { type: 'bar', metric: 'opex', grouping: 'account' },
-  { type: 'bar', metric: 'cogs', grouping: 'account' },
-  // Admin-only expense cuts (requires map_account_cost_categories mapping)
-  { type: 'line', metric: 'admin_expense', grouping: 'month' },
-  { type: 'bar', metric: 'admin_expense', grouping: 'month' },
-  { type: 'bar', metric: 'admin_expense', grouping: 'account' },
-  { type: 'table', metric: 'admin_expense', grouping: 'list' },
-
-  // ── CFO / controller-style extras
-  { type: 'area', metric: 'revenue_cumulative', grouping: 'month' },
-  { type: 'line', metric: 'revenue_cumulative', grouping: 'month' },
-  { type: 'bar', metric: 'debits_credits', grouping: 'month' },
-  { type: 'stacked_bar', metric: 'debits_credits', grouping: 'month' },
-  { type: 'bar', metric: 'net_position', grouping: 'month' },
-  { type: 'waterfall', metric: 'net_position', grouping: 'month' },
-  { type: 'line', metric: 'running_balance', grouping: 'month' },
-  { type: 'bar', metric: 'invoice_amount', grouping: 'bucket' },
-  { type: 'table', metric: 'top_invoices', grouping: 'list' },
-  { type: 'pie', metric: 'invoice_value', grouping: 'invoice_type' },
-  { type: 'pie', metric: 'transaction_value', grouping: 'journal_type' },
-  { type: 'pie', metric: 'transaction_value', grouping: 'currency' },
-  { type: 'treemap', metric: 'expense', grouping: 'account' },
-  { type: 'scatter', metric: 'invoice_amount', grouping: 'time' },
-
-  // ── P&L tables and metric tiles
-  { type: 'table', metric: 'pl', grouping: 'summary' },
-  { type: 'table', metric: 'expense', grouping: 'list' },
-  { type: 'table', metric: 'gl_transactions', grouping: 'list' },
-  { type: 'metric', metric: 'pl_summary', grouping: 'summary' },
-  { type: 'metric', metric: 'expense_summary', grouping: 'summary' },
-
-  // ── Department dimension (QB DepartmentRef / Xero TrackingCategory 1)
-  { type: 'bar', metric: 'expense', grouping: 'department' },
-  { type: 'pie', metric: 'expense', grouping: 'department' },
-  { type: 'donut', metric: 'expense', grouping: 'department' },
-  { type: 'treemap', metric: 'expense', grouping: 'department' },
-  { type: 'horizontal_bar', metric: 'expense', grouping: 'department' },
-  { type: 'stacked_bar', metric: 'expense', grouping: 'department' },
-  { type: 'line', metric: 'expense', grouping: 'department' },
-  { type: 'bar', metric: 'net_income', grouping: 'department' },
-  { type: 'line', metric: 'net_income', grouping: 'department' },
-  { type: 'bar', metric: 'revenue', grouping: 'department' },
-  { type: 'pie', metric: 'revenue', grouping: 'department' },
-
-  // ── Class dimension (QB ClassRef / Xero TrackingCategory 2)
-  { type: 'bar', metric: 'expense', grouping: 'class' },
-  { type: 'pie', metric: 'expense', grouping: 'class' },
-  { type: 'donut', metric: 'expense', grouping: 'class' },
-  { type: 'treemap', metric: 'expense', grouping: 'class' },
-  { type: 'horizontal_bar', metric: 'expense', grouping: 'class' },
-  { type: 'stacked_bar', metric: 'expense', grouping: 'class' },
-
-  // ── Vendor dimension (QB VendorRef / Xero contact on bills)
-  { type: 'bar', metric: 'expense', grouping: 'vendor' },
-  { type: 'horizontal_bar', metric: 'expense', grouping: 'vendor' },
-  { type: 'pie', metric: 'expense', grouping: 'vendor' },
-  { type: 'donut', metric: 'expense', grouping: 'vendor' },
-  { type: 'treemap', metric: 'expense', grouping: 'vendor' },
-  { type: 'pareto', metric: 'expense', grouping: 'vendor' },
-  { type: 'table', metric: 'expense', grouping: 'vendor' },
-  { type: 'bar', metric: 'vendor_count', grouping: 'vendor' },
-  { type: 'horizontal_bar', metric: 'vendor_count', grouping: 'vendor' },
-  { type: 'line', metric: 'vendor_count', grouping: 'month_vendor' },
-  { type: 'heatmap', metric: 'vendor_count', grouping: 'month_vendor' },
-  { type: 'matrix', metric: 'vendor_count', grouping: 'month_vendor' },
-  { type: 'stacked_bar', metric: 'vendor_count', grouping: 'month_vendor' },
-  { type: 'scatter', metric: 'expense', grouping: 'vendor' },
-  { type: 'bubble', metric: 'expense', grouping: 'vendor' },
-  { type: 'line', metric: 'expense', grouping: 'vendor' },
-
-  // ── Debit / Credit by account type (balance-sheet analysis)
-  { type: 'bar', metric: 'debits_credits', grouping: 'account_type' },
-  { type: 'stacked_bar', metric: 'debits_credits', grouping: 'account_type' },
-  { type: 'pie', metric: 'debits_credits', grouping: 'account_type' },
-
-  // ── Multi-series monthly expense with department breakdown
-  { type: 'stacked_bar', metric: 'expense', grouping: 'month_department' },
-  { type: 'line', metric: 'expense', grouping: 'month_department' },
-  { type: 'area', metric: 'expense', grouping: 'month_department' },
-  { type: 'heatmap', metric: 'expense', grouping: 'month_department' },
-  { type: 'line', metric: 'expense', grouping: 'month_account' },
-  { type: 'line', metric: 'expense', grouping: 'month_class' },
-  { type: 'line', metric: 'expense', grouping: 'month_vendor' },
-  { type: 'heatmap', metric: 'expense', grouping: 'month_account' },
-  { type: 'heatmap', metric: 'expense', grouping: 'account_month' },
-  { type: 'heatmap', metric: 'expense', grouping: 'account_department' },
-  { type: 'heatmap', metric: 'expense', grouping: 'account_vendor' },
-  { type: 'heatmap', metric: 'expense', grouping: 'department_account' },
-  { type: 'heatmap', metric: 'expense', grouping: 'department_class' },
-  { type: 'heatmap', metric: 'expense', grouping: 'class_department' },
-  { type: 'matrix', metric: 'expense', grouping: 'department_vendor' },
-  { type: 'matrix', metric: 'expense', grouping: 'account_vendor' },
-  { type: 'heatmap', metric: 'expense', grouping: 'vendor_department' },
-  { type: 'heatmap', metric: 'expense', grouping: 'vendor_month' },
-  { type: 'matrix', metric: 'expense', grouping: 'vendor_account' },
-  { type: 'matrix', metric: 'expense', grouping: 'month_vendor' },
-  { type: 'matrix', metric: 'expense', grouping: 'vendor_month' },
-  // ── Vendor spend trend (multi-series line per vendor over months)
-  { type: 'stacked_bar', metric: 'expense', grouping: 'month_vendor' },
-  { type: 'area', metric: 'expense', grouping: 'month_vendor' },
-
-  // ── Vendor transactions (scatter / bubble for risk / concentration)
-  { type: 'scatter', metric: 'vendor_transactions', grouping: 'vendor' },
-  { type: 'bubble', metric: 'vendor_transactions', grouping: 'vendor' },
-
-  // ── GL transactions by vendor (table)
-  { type: 'table', metric: 'gl_transactions', grouping: 'vendor' },
-
-  // ── Monthly by class (multi-series)
-  { type: 'stacked_bar', metric: 'expense', grouping: 'month_class' },
-  { type: 'line', metric: 'expense', grouping: 'month_class' },
-  { type: 'area', metric: 'expense', grouping: 'month_class' },
-
-  // ── Dept × Class cross breakdown
-  { type: 'stacked_bar', metric: 'expense', grouping: 'dept_class' },
-  { type: 'bar', metric: 'expense', grouping: 'dept_class' },
-
-  // ── Department stats scatter
-  { type: 'scatter', metric: 'expense', grouping: 'dept_stats' },
-
-  // ── Revenue vs Expense by department
-  { type: 'stacked_bar', metric: 'revenue_vs_expense', grouping: 'department' },
-  { type: 'bar', metric: 'revenue_vs_expense', grouping: 'department' },
-
-  // ── P&L waterfall
-  { type: 'waterfall', metric: 'pl', grouping: 'summary' },
-
-  // ── Monthly financial KPI lines
-  { type: 'line', metric: 'gross_profit', grouping: 'month' },
-  { type: 'line', metric: 'net_margin', grouping: 'month' },
-  { type: 'line', metric: 'expense_ratio', grouping: 'month' },
-  { type: 'line', metric: 'net_position', grouping: 'month' },
-
-  // ── Balance sheet: assets / liabilities / equity / balance_sheet summary
-  { type: 'donut', metric: 'assets', grouping: 'account_type' },
-  { type: 'pie', metric: 'assets', grouping: 'account_type' },
-  { type: 'bar', metric: 'assets', grouping: 'breakdown' },
-  { type: 'horizontal_bar', metric: 'assets', grouping: 'breakdown' },
-  { type: 'donut', metric: 'assets', grouping: 'breakdown' },
-  { type: 'donut', metric: 'liabilities', grouping: 'account_type' },
-  { type: 'pie', metric: 'liabilities', grouping: 'account_type' },
-  { type: 'bar', metric: 'liabilities', grouping: 'breakdown' },
-  { type: 'horizontal_bar', metric: 'liabilities', grouping: 'breakdown' },
-  { type: 'donut', metric: 'liabilities', grouping: 'breakdown' },
-  { type: 'bar', metric: 'equity', grouping: 'breakdown' },
-  { type: 'donut', metric: 'equity', grouping: 'breakdown' },
-  { type: 'bar', metric: 'balance_sheet', grouping: 'summary' },
-  { type: 'donut', metric: 'balance_sheet', grouping: 'summary' },
-  { type: 'table', metric: 'trial_balance', grouping: 'summary' },
-  { type: 'table', metric: 'trial_balance', grouping: 'list' },
-  { type: 'table', metric: 'gl_dump', grouping: 'detail' },
-  { type: 'bar', metric: 'income', grouping: 'breakdown' },
-  { type: 'donut', metric: 'income', grouping: 'breakdown' },
-  { type: 'bar', metric: 'account_type', grouping: 'breakdown' },
-  { type: 'donut', metric: 'account_type', grouping: 'breakdown' },
-
-  // ── Account type treemap / top debits / top credits / scatter
-  { type: 'treemap', metric: 'accounts', grouping: 'account_type' },
-  { type: 'treemap', metric: 'assets', grouping: 'account_type' },
-  { type: 'treemap', metric: 'liabilities', grouping: 'account_type' },
-  { type: 'treemap', metric: 'equity', grouping: 'breakdown' },
-  { type: 'bar', metric: 'debits', grouping: 'account_type' },
-  { type: 'bar', metric: 'credits', grouping: 'account_type' },
-  { type: 'bar', metric: 'pl_comparison', grouping: 'summary' },
-  { type: 'scatter', metric: 'debits_credits', grouping: 'account' },
-
-  // ── Monthly debits vs credits stacked
-  { type: 'stacked_bar', metric: 'debits_credits', grouping: 'month' },
-  { type: 'donut', metric: 'debits_credits', grouping: 'account_type' },
-] as const;
+// --- VALID_WIDGETS extracted to ./agent-widget-catalog.ts ---
 
 // ─── Planning Prompt — minimal for fast Ollama inference ─────────────────────
 // Small context + small output = fast response, no timeouts.
@@ -583,1244 +97,7 @@ const VALID_WIDGETS = [
 // It receives live data context + full chart vocabulary and decides freely.
 // NO hardcoded chart selection happens before this prompt runs.
 
-const PLANNER_SYSTEM = `You are a world-class CFO analytics copilot. Given a user query and LIVE DATA from their accounting system, design the minimum set of accurate charts needed to answer the user's request. Output JSON only. No explanation.
-
-CHART TYPE MAPPING — map user language to EXACT type. This rule is ABSOLUTE — never substitute:
-  "line chart" → line          "bar chart" / "column chart" → bar           "area chart" → area
-  "combo chart" / "combination chart" → combo
-  "waterfall chart" → waterfall  "stacked bar" / "stacked column" → stacked_bar
-  "pie chart" → pie              "donut chart" / "doughnut" / "ring chart" → donut
-  "treemap" → treemap            "scatter plot" / "scatter chart" → scatter
-  "histogram" → histogram        "horizontal bar" / "ranked horizontal bar" / "ranked bar" → horizontal_bar
-  "pareto chart" → pareto        "gauge chart" / "speedometer" → gauge
-  "bubble chart" → bubble        "heatmap" / "heat map" → heatmap   "matrix" → matrix
-  "KPI cards" / "KPI tiles" / "metric cards" → kpi    "metric" / "tile" → metric
-  "table" / "list" → table       "clustered bar" / "clustered column" → bar
-  "multi-line" → line (use breakdown param)   "box plot" → horizontal_bar
-
-AVAILABLE CHART VOCABULARY — use ONLY these exact type/metric/grouping values:
-
-LINE:
-  line/revenue/month              line/outstanding/month          line/paid/month
-  line/invoice_count/month        line/overdue/month              line/collection_rate/month
-  line/mom_growth/month           line/revenue/quarter            line/avg_invoice/month
-  line/dso/month                  line/net_income/month           line/expense/month
-  line/gross_profit/month         line/gross_margin_pct/month     line/net_margin_pct/month
-  line/ebitda/month               line/revenue_vs_expense/month   line/revenue_cumulative/month
-  line/running_balance/month      line/expense/month_account      line/expense/month_class
-  line/expense/month_vendor
-
-BAR:
-  bar/revenue/month               bar/revenue/org                 bar/revenue/quarter
-  bar/revenue/client              bar/total_invoiced/client       bar/outstanding/client
-  bar/overdue/client              bar/invoices/client             bar/avg_invoice/client
-  bar/avg_invoice/month           bar/paid/client                 bar/collection_rate/client
-  bar/expense/month               bar/expense/account             bar/net_income/month
-  bar/net_income/quarter          bar/revenue_vs_expense/month    bar/debits_credits/month
-  bar/net_position/month          bar/invoice_count/month         bar/top_invoices/value
-  bar/expense_by_type/source      bar/pl_accounts/account         bar/bs_accounts/account
-  bar/accounts_by_type/classification  bar/pl_comparison/summary
-
-HORIZONTAL_BAR (horizontal ranked bars):
-  horizontal_bar/revenue/client   horizontal_bar/top_invoices/value
-  horizontal_bar/expense/account  horizontal_bar/overdue/client
-
-STACKED_BAR:
-  stacked_bar/debits_credits/month    stacked_bar/expense_by_type/month
-  stacked_bar/revenue_vs_expense/month
-
-AREA:
-  area/revenue/month              area/revenue_cumulative/month   area/outstanding/month
-
-WATERFALL:
-  waterfall/net_position/month
-
-PIE:
-  pie/revenue/client              pie/invoices/status             pie/expense/account
-  pie/invoice_value/invoice_type  pie/transaction_value/source_type
-  pie/transaction_value/currency  pie/accounts/classification     pie/accounts/active_status
-
-DONUT (ring display, same data sources as pie):
-  donut/revenue/client            donut/invoice_value/invoice_type
-  donut/expense/account           donut/transaction_value/source_type
-  donut/transaction_value/currency  donut/accounts/classification
-
-TREEMAP:
-  treemap/expense/account         treemap/revenue/client
-  treemap/expense/department      treemap/expense/class           treemap/expense/vendor
-  treemap/expense/department_class treemap/expense/department_vendor treemap/expense/vendor_department
-  treemap/revenue/account         treemap/revenue/category         treemap/assets/account_type
-  treemap/liabilities/account_type treemap/equity/breakdown
-
-SCATTER:
-  scatter/invoice_amount/time     scatter/expense/vendor          scatter/vendor_transactions/vendor
-
-HISTOGRAM:
-  histogram/invoice_amount/bucket   histogram/payment_days/bucket
-
-PARETO:
-  pareto/revenue/client           pareto/expense/account          pareto/expense/vendor
-
-BUBBLE:
-  bubble/clients/revenue_invoices_avg   bubble/expense/vendor     bubble/vendor_transactions/vendor
-
-HEATMAP:
-  heatmap/revenue_expense/month  heatmap/expense/month_department
-  heatmap/expense/month_account   heatmap/expense/account_month    heatmap/expense/account_department
-  heatmap/expense/department_account  heatmap/expense/department_class  heatmap/expense/class_department
-  heatmap/expense/department_vendor   heatmap/expense/vendor_department heatmap/expense/vendor_month
-  heatmap/expense/month_vendor
-
-MATRIX:
-  matrix/expense/department_vendor matrix/expense/vendor_department
-  matrix/expense/month_account    matrix/expense/account_month    matrix/expense/account_department
-  matrix/expense/department_account matrix/expense/department_class matrix/expense/class_department
-  matrix/expense/vendor_account   matrix/expense/account_vendor   matrix/expense/month_vendor
-
-GAUGE:
-  gauge/financial_health/summary
-
-KPI:
-  kpi/summary/overview
-
-METRIC:
-  metric/venture/summary          metric/pl_summary/summary       metric/expense_summary/summary
-
-TABLE:
-  table/invoices/list             table/overdue/aging             table/top_invoices/list
-  table/payment_days/list         table/pl/summary                table/expense/list
-  table/gl_transactions/list      table/expense/vendor
-
-DEPARTMENT dimension (use when user asks "by department", "by division", "Admin/Sales/Operations split"):
-  bar/expense/department          pie/expense/department          donut/expense/department
-  treemap/expense/department      horizontal_bar/expense/department
-  stacked_bar/expense/department  line/expense/department
-  bar/net_income/department       bar/revenue/department          pie/revenue/department
-  bar/revenue/account             pie/revenue/account             horizontal_bar/revenue/account
-  bar/revenue/category            pie/revenue/category            horizontal_bar/revenue/category
-
-CLASS dimension (use when user asks "by class", "General/Marketing/Product split"):
-  bar/expense/class               pie/expense/class               donut/expense/class
-  treemap/expense/class           horizontal_bar/expense/class    stacked_bar/expense/class
-
-VENDOR dimension (use when user asks "by vendor", "vendor spend", "supplier analysis"):
-  bar/expense/vendor              horizontal_bar/expense/vendor   pie/expense/vendor
-  donut/expense/vendor            treemap/expense/vendor          pareto/expense/vendor
-  table/expense/vendor            scatter/expense/vendor          bubble/expense/vendor
-  line/expense/vendor
-
-DEBIT/CREDIT by account type:
-  bar/debits_credits/account_type   stacked_bar/debits_credits/account_type
-  pie/debits_credits/account_type
-
-MONTHLY expense with department multi-series:
-  stacked_bar/expense/month_department   line/expense/month_department
-
-TOOLS:
-  revenue_trend, entity_comparison, invoice_breakdown, venture_metrics,
-  financial_summary, client_breakdown, client_financial_profile
-
-RULES:
-1. Read LIVE DATA CONTEXT — base choices on actual numbers.
-2. ABSOLUTE: If user names a chart type, output THAT EXACT type. "waterfall chart" → waterfall. "donut chart" → donut. "histogram" → histogram. "bubble chart" → bubble. "gauge" → gauge. NEVER substitute.
-3. If no chart type specified, pick best type for the data (trend→line, comparison→bar, proportion→pie, distribution→histogram).
-4. NEVER repeat same metric+grouping. Max 8 widgets per dashboard.
-5. Title each chart specifically — not generic.
-6. For cumulative/running total → area/revenue_cumulative/month or line/revenue_cumulative/month.
-7. For distribution → histogram/invoice_amount/bucket.
-8. For ranked horizontal bars → horizontal_bar type.
-9. For donut charts → donut type (never pie when user says donut).
-10. For executive/CFO dashboard → kpi/summary/overview + line/revenue_vs_expense/month + line/net_income/month + bar/expense/account + bar/revenue/client + table/pl/summary.
-11. For KPI cards → kpi/summary/overview.
-12. For gauge → gauge/financial_health/summary.
-13. For bubble → bubble/clients/revenue_invoices_avg.
-14. For Pareto → pareto/revenue/client or pareto/expense/account.
-15. For "split by invoice type" → pie/invoice_value/invoice_type or donut/invoice_value/invoice_type.
-16. For "by journal type" / "by source type" → pie/transaction_value/source_type or donut/transaction_value/source_type.
-17. For stacked expenses by month → stacked_bar/expense_by_type/month.
-18. For "by account type" / "P&L vs Balance Sheet" → bar/accounts_by_type/classification or pie/accounts/classification.
-19. For "by department" / "Admin/Sales/Operations" single snapshot (no time axis) → use grouping "department" (e.g. bar/expense/department, pie/expense/department).
-20. For "by class" / "General/Marketing/Product" → use grouping "class" (e.g. bar/expense/class, donut/expense/class).
-21. For "by vendor" / "vendor spend" / "supplier" / "top vendors" → use grouping "vendor" (e.g. horizontal_bar/expense/vendor, pareto/expense/vendor, table/expense/vendor).
-22. For "debit vs credit by account type" → bar/debits_credits/account_type or stacked_bar/debits_credits/account_type.
-23. CRITICAL — For ANY request that mentions BOTH departments AND months/trend/over time/multi-line → ALWAYS use line/expense/month_department or stacked_bar/expense/month_department. This includes: "monthly spend per department", "trend for Admin/Sales/Operations", "multi-line by department", "department breakdown over time", "how each dept spends per month".
-24. For vendor scatter/bubble (spend vs transactions) → scatter/expense/vendor or bubble/vendor_transactions/vendor.
-25. For clustered column comparing departments → stacked_bar/expense/department with breakdown.
-26. CRITICAL — For "income sources", "revenue by account", "revenue breakdown", "revenue by category", "income category", "where does revenue come from", "revenue split" → ALWAYS use metric="revenue", grouping="account" (e.g. horizontal_bar/revenue/account, bar/revenue/account, pie/revenue/account). NEVER use dynamic SQL for revenue breakdown.
-27. ANY question not in vocabulary → output type="bar", metric="dynamic", grouping="sql" — the backend will auto-generate ClickHouse SQL.
-28. CRITICAL — NEVER generate multiple widgets for the same chart broken out by year. A single chart request ("annual operating spend", "total expenses by department") = EXACTLY ONE widget covering ALL available data. Only split by year when the user explicitly says "compare years", "year over year", "by year", or "2023 vs 2024". "Annual" means the full dataset period, NOT one widget per calendar year.
-
-OUTPUT FORMAT (JSON only):
-{"candidates":[{"title":"...","tools":["tool1"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Trend"}]}]}
-
-EXAMPLES:
-Q: "Create a line chart showing total revenue by month for the last 12 months" → {"candidates":[{"title":"Monthly Revenue — Last 12 Months","tools":["revenue_trend"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Total Revenue by Month"}]}]}
-Q: "Create a horizontal bar chart showing income sources by revenue category" → {"candidates":[{"title":"Income Sources by Revenue Category","tools":["revenue_trend"],"widgets":[{"type":"horizontal_bar","metric":"revenue","grouping":"account","title":"Revenue Breakdown by Account"}]}]}
-Q: "Show revenue breakdown by category" → {"candidates":[{"title":"Revenue by Category","tools":["revenue_trend"],"widgets":[{"type":"bar","metric":"revenue","grouping":"account","title":"Revenue by Account Category"}]}]}
-Q: "Create a multi-line chart showing monthly spend trends for Admin, Operations, and Sales departments" → {"candidates":[{"title":"Monthly Spend by Department","tools":["expense_trend"],"widgets":[{"type":"line","metric":"expense","grouping":"month_department","title":"Monthly Spend — Admin vs Operations vs Sales"}]}]}
-Q: "Show expense trend by department over time" → {"candidates":[{"title":"Dept Expense Trend","tools":["expense_trend"],"widgets":[{"type":"stacked_bar","metric":"expense","grouping":"month_department","title":"Monthly Expenses by Department"}]}]}
-Q: "Create an area chart showing cumulative revenue growth across the year" → {"candidates":[{"title":"Cumulative Revenue Growth","tools":["revenue_trend"],"widgets":[{"type":"area","metric":"revenue_cumulative","grouping":"month","title":"Cumulative Revenue Growth Across the Year"}]}]}
-Q: "Create a waterfall chart showing net monthly financial position using total credits minus total debits" → {"candidates":[{"title":"Net Monthly Financial Position","tools":["financial_summary"],"widgets":[{"type":"waterfall","metric":"net_position","grouping":"month","title":"Net Monthly Position — Credits Minus Debits"}]}]}
-Q: "Create a stacked bar chart showing debit and credit amounts by month" → {"candidates":[{"title":"Monthly Debits vs Credits","tools":["financial_summary"],"widgets":[{"type":"stacked_bar","metric":"debits_credits","grouping":"month","title":"Monthly Debits and Credits (Stacked)"}]}]}
-Q: "Create a donut chart showing the split of total transaction value by invoice type" → {"candidates":[{"title":"Invoice Type Distribution","tools":["financial_summary"],"widgets":[{"type":"donut","metric":"invoice_value","grouping":"invoice_type","title":"Transaction Value Split by Invoice Type"}]}]}
-Q: "Create a pie chart showing total transaction value by journal type such as AP, AR, EX" → {"candidates":[{"title":"Transaction Value by Source Type","tools":["financial_summary"],"widgets":[{"type":"pie","metric":"transaction_value","grouping":"source_type","title":"Transaction Value by Journal Type"}]}]}
-Q: "Create a histogram showing the distribution of invoice amounts" → {"candidates":[{"title":"Invoice Amount Distribution","tools":["financial_summary"],"widgets":[{"type":"histogram","metric":"invoice_amount","grouping":"bucket","title":"Invoice Amount Distribution"}]}]}
-Q: "Create a ranked horizontal bar chart showing the top 10 highest-value invoices" → {"candidates":[{"title":"Top 10 Highest-Value Invoices","tools":["financial_summary"],"widgets":[{"type":"horizontal_bar","metric":"top_invoices","grouping":"value","title":"Top 10 Invoices by Value"}]}]}
-Q: "Create a treemap showing expense contribution by account name" → {"candidates":[{"title":"Expense Treemap by Account","tools":["financial_summary"],"widgets":[{"type":"treemap","metric":"expense","grouping":"account","title":"Expense Contribution by Account"}]}]}
-Q: "Create a Pareto chart showing revenue concentration among top clients" → {"candidates":[{"title":"Revenue Pareto — Client Concentration","tools":["client_financial_profile"],"widgets":[{"type":"pareto","metric":"revenue","grouping":"client","title":"Revenue Concentration (80/20 Pareto)"}]}]}
-Q: "Create a bubble chart showing clients by total revenue, number of invoices, and average invoice value" → {"candidates":[{"title":"Client Revenue Bubble Analysis","tools":["client_financial_profile"],"widgets":[{"type":"bubble","metric":"clients","grouping":"revenue_invoices_avg","title":"Clients — Revenue vs Invoice Count vs Avg Value"}]}]}
-Q: "Create KPI cards showing total revenue, total expenses, net profit, avg invoice value, number of invoices, and ending balance" → {"candidates":[{"title":"Executive KPI Dashboard","tools":["financial_summary"],"widgets":[{"type":"kpi","metric":"summary","grouping":"overview","title":"Key Financial Performance Indicators"}]}]}
-Q: "Create a gauge chart showing current financial health" → {"candidates":[{"title":"Financial Health Gauge","tools":["financial_summary"],"widgets":[{"type":"gauge","metric":"financial_health","grouping":"summary","title":"Overall Financial Health Score"}]}]}
-Q: "Create a heatmap showing monthly revenue and expenses side by side" → {"candidates":[{"title":"Revenue vs Expenses Heatmap","tools":["financial_summary","revenue_trend"],"widgets":[{"type":"heatmap","metric":"revenue_expense","grouping":"month","title":"Monthly Revenue vs Expenses Heatmap"}]}]}
-Q: "Create a heatmap showing department spending across different months" → {"candidates":[{"title":"Department Spend Heatmap","tools":["expense_trend"],"widgets":[{"type":"heatmap","metric":"expense","grouping":"month_department","title":"Department Spend by Month"}]}]}
-Q: "Create a matrix showing Department by Vendor with Spend inside" → {"candidates":[{"title":"Department by Vendor Matrix","tools":["expense_trend"],"widgets":[{"type":"matrix","metric":"expense","grouping":"department_vendor","title":"Department by Vendor Spend Matrix"}]}]}
-Q: "Create a bar chart showing total expenses by account name" → {"candidates":[{"title":"Expense Breakdown by Account","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"expense","grouping":"account","title":"Total Expenses by Account Name"}]}]}
-Q: "Create a stacked column chart showing monthly expenses broken down by account category" → {"candidates":[{"title":"Monthly Expenses by Category","tools":["financial_summary"],"widgets":[{"type":"stacked_bar","metric":"expense_by_type","grouping":"month","title":"Monthly Expenses by Source Category"}]}]}
-Q: "Create a bar chart showing total transaction amount by account type" → {"candidates":[{"title":"Transactions by Account Type","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"accounts_by_type","grouping":"classification","title":"Total by Account Classification"}]}]}
-Q: "Create a bar chart showing total amount for Profit & Loss accounts" → {"candidates":[{"title":"P&L Accounts Breakdown","tools":["financial_summary"],"widgets":[{"type":"bar","metric":"pl_accounts","grouping":"account","title":"P&L Accounts by Total Amount"}]}]}
-Q: "Create an executive summary dashboard" → {"candidates":[{"title":"Executive CFO Dashboard","tools":["financial_summary","revenue_trend","client_financial_profile"],"widgets":[{"type":"kpi","metric":"summary","grouping":"overview","title":"Executive KPIs"},{"type":"line","metric":"revenue_vs_expense","grouping":"month","title":"Revenue vs Expenses Trend"},{"type":"line","metric":"net_income","grouping":"month","title":"Net Income Trend"},{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Revenue"},{"type":"bar","metric":"expense","grouping":"account","title":"Top Expense Accounts"},{"type":"table","metric":"pl","grouping":"summary","title":"P&L Statement"}]}]}
-Q: "Show me my revenue dashboard" → {"candidates":[{"title":"Revenue Dashboard","tools":["revenue_trend","financial_summary","client_financial_profile"],"widgets":[{"type":"line","metric":"revenue","grouping":"month","title":"Monthly Revenue Trend"},{"type":"bar","metric":"revenue","grouping":"client","title":"Top Clients by Revenue"},{"type":"metric","metric":"pl_summary","grouping":"summary","title":"Revenue KPIs"}]}]}
-Q: "Compare top two clients revenue for last six months" → {"candidates":[{"title":"Top 2 Clients — Revenue by Month","tools":["client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":2,"title":"Top 2 Clients — Revenue by Month"}]}]}
-Q: "Show top 3 clients revenue by month for last year" → {"candidates":[{"title":"Top 3 Clients — Monthly Revenue","tools":["client_breakdown"],"widgets":[{"type":"bar","metric":"revenue","grouping":"month","breakdown":"client","topN":3,"title":"Top 3 Clients — Revenue by Month"}]}]}
-Q: "Create a pie chart showing the contribution of each department to annual operating spend" → {"candidates":[{"title":"Department Share of Annual Operating Spend","tools":["expense_trend"],"widgets":[{"type":"pie","metric":"expense","grouping":"department","title":"Department Share of Annual Operating Spend"}]}]}
-Q: "Show department breakdown of total expenses" → {"candidates":[{"title":"Expenses by Department","tools":["expense_trend"],"widgets":[{"type":"bar","metric":"expense","grouping":"department","title":"Total Expenses by Department"}]}]}`;
-
-const PLANNER_SCHEMA = {
-  type: 'object',
-  properties: {
-    candidates: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 3,
-      items: {
-        type: 'object',
-        properties: {
-          title: { type: 'string' },
-          tools: { type: 'array', items: { type: 'string' } },
-          widgets: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 8,
-            items: {
-              type: 'object',
-              properties: {
-                type: {
-                  type: 'string',
-                  enum: [
-                    'line',
-                    'bar',
-                    'pie',
-                    'donut',
-                    'metric',
-                    'kpi',
-                    'table',
-                    'area',
-                    'combo',
-                    'treemap',
-                    'scatter',
-                    'stacked_bar',
-                    'waterfall',
-                    'histogram',
-                    'horizontal_bar',
-                    'pareto',
-                    'gauge',
-                    'bubble',
-                    'heatmap',
-                    'matrix',
-                  ],
-                },
-                metric: { type: 'string' },
-                grouping: { type: 'string' },
-                title: { type: 'string' },
-                breakdown: { type: 'string' },
-                topN: { type: 'number' },
-              },
-              required: ['type', 'metric', 'grouping', 'title'],
-            },
-          },
-        },
-        required: ['title', 'widgets'],
-      },
-    },
-  },
-  required: ['candidates'],
-} as const;
-
-// ─── Dashboard Editor Prompt ──────────────────────────────────────────────────
-
-const EDITOR_SYSTEM = `You are a precise financial dashboard editor. Apply the minimal change to satisfy the user's request.
-
-AVAILABLE WIDGET TYPES (use ONLY these exact pairs):
-LINE: revenue/month | outstanding/month | paid/month | invoice_count/month | overdue/month | collection_rate/month | mom_growth/month | revenue/quarter | avg_invoice/month | dso/month
-      net_income/month | expense/month | gross_profit/month | gross_margin_pct/month | net_margin_pct/month | ebitda/month | revenue_vs_expense/month
-      revenue_cumulative/month | running_balance/month
-BAR:  revenue/month | net_income/month | net_income/quarter | expense/month | expense/quarter | expense/account | opex/account | cogs/account
-BAR:  revenue/org | revenue/quarter | invoices/org | outstanding/org | overdue/org
-      revenue/client | total_invoiced/client | outstanding/client | overdue/client | invoices/client | avg_invoice/client | paid/client
-      collection_rate/client | overdue_rate/client | payment_days/bucket
-      revenue_vs_expense/month | debits_credits/month | net_position/month | invoice_amount/bucket
-STACKED_BAR: debits_credits/month
-WATERFALL: net_position/month
-PIE:  invoices/status | revenue/provider | revenue/client | outstanding/client | expense/account
-      invoice_value/invoice_type | transaction_value/journal_type | transaction_value/currency
-TREEMAP: expense/account | expense/department | expense/class | expense/vendor | revenue/client
-METRIC: venture/summary | top5_revenue_share/summary | collected_vs_outstanding/summary | pl_summary/summary | expense_summary/summary
-TABLE: invoices/list | overdue/aging | payment_days/list | pl/summary | expense/list | gl_transactions/list
-      top_invoices/list | expense/vendor
-SCATTER: invoice_amount/time | expense/vendor | vendor_transactions/vendor
-BUBBLE: expense/vendor | vendor_transactions/vendor
-DEPARTMENT: expense/department | net_income/department | revenue/department
-CLASS: expense/class
-VENDOR: expense/vendor
-DEBIT_CREDIT: debits_credits/account_type
-
-If the user asks to switch the chart type, preserve the existing metric/grouping and only change the widget type.
-Do not "solve" a type switch by adding a new pie chart or by keeping the old type.
-If the user asks to change an axis, percentages/values, or the meaning of the chart, you may also change metric/grouping and axis labels so the updated widget matches the request.
-Prefer the smallest change that satisfies the request.
-If the user asks to show whole values instead of percentages on a pie or donut chart, set display.labelMode to "value".
-
-OUTPUT: Respond with ONLY valid JSON. Zero explanation. Zero markdown.
-
-{
-  "summary": "One sentence describing what changed (e.g., 'Added quarterly revenue bar chart')",
-  "add": [
-    { "title": "Widget title (max 45 chars)", "description": "One sentence insight", "type": "bar", "metric": "revenue", "grouping": "quarter" }
-  ],
-  "remove_indices": [],
-  "modify": [
-    { "index": 0, "title": "New title", "type": "line" }
-  ]
-}
-
-Rules:
-- "add": new widgets to insert. Use exact metric+grouping from the available list above.
-- "remove_indices": 0-based indices of widgets to delete from the current list.
-- "modify": change type, title, or description of an existing widget at that 0-based index.
-- Total widgets after edit MUST be between 1 and 8.
-- If the request is ambiguous, add the most relevant widget without removing anything.
-- If asked to change a chart type, use "modify" with the correct "type" value.`;
-
-// SQL-first dashboard editor. Unlike EDITOR_SYSTEM (which is limited to a fixed
-// vocabulary of metric/grouping pairs), this prompt edits charts by REWRITING the
-// underlying live ClickHouse SQL, so it can satisfy ANY modification — change the
-// axis/dimension, switch percentages to absolute values, change top-N, add filters,
-// change the metric, switch chart types, add or remove charts. The chart's data is
-// driven entirely by its SQL, so a request that changes WHAT is shown must rewrite
-// the SQL — changing only the chart type does not change the data.
-// Phase-2 spec-first planner. The model does NOT write SQL — it chooses a chart
-// from the catalog as a small ChartSpec. compileSpec turns it into safe SQL.
-const SPEC_PLANNER_SYSTEM = `You translate a user's analytics request into a ChartSpec chosen ONLY from the catalog provided in the user message. You NEVER write SQL and NEVER invent measures, dimensions, or columns.
-
-Output ONLY valid JSON, no markdown, in ONE of these two shapes:
-1) A chart:
-{ "title": "Short human title", "spec": { "measure": "<measure id>", "dimension": "<dimension id>", "breakdown": "<dimension id or null>", "filters": [{ "dimension": "<id>", "op": "in", "values": ["A","B"] }], "sort": "value_desc|value_asc|name_asc|time_asc", "topN": 10, "chartType": "<chart type>", "transforms": [{ "kind": "normalize|growth_pct|reference_line" } or { "kind": "moving_average", "window": 3 }] } }
-2) A refusal (when the request needs data or a feature NOT in the catalog):
-{ "refusal": "One sentence naming exactly what is missing." }
-
-RULES:
-- "measure" and "dimension" are REQUIRED and MUST be ids from the MEASURES / DIMENSIONS lists. "breakdown" is optional (a second dimension to split into series; use for matrix/heatmap/grouped/stacked charts).
-- Use a time dimension (month/quarter) for trends; rank entities (vendor/account/department/class) with sort + topN.
-- Only include "filters"/"transforms" when the user asks for them. Omit fields you don't need (don't send null spam).
-- If the request needs anything in the NOT AVAILABLE list (budget, forecast, target, region, segment, headcount, cash flow, prior year), return a refusal — do NOT substitute.
-- Pick the chartType the user asked for; otherwise choose a sensible default (trend→line, ranking→bar, share→pie/donut, two dimensions→heatmap/matrix).
-
-EXAMPLES:
-"monthly spend by department as a heatmap" → { "title": "Monthly Spend by Department", "spec": { "measure": "spend", "dimension": "month", "breakdown": "department", "chartType": "heatmap" } }
-"top 10 vendors by spend" → { "title": "Top 10 Vendors by Spend", "spec": { "measure": "spend", "dimension": "vendor", "sort": "value_desc", "topN": 10, "chartType": "bar" } }
-"how does spend compare to budget" → { "refusal": "There's no budget or plan data in this dataset, only actuals." }`;
-
-// Phase-3 spec-first editor. A follow-up is a DELTA on the chart's current spec.
-const SPEC_EDITOR_SYSTEM = `You edit an existing chart by returning its UPDATED ChartSpec. You are given the chart's CURRENT spec (JSON) and the catalog. Apply the user's change to the spec and return the WHOLE new spec — keep every field the user did not ask to change.
-
-You NEVER write SQL. You only choose from the catalog. Output ONLY valid JSON, ONE of:
-1) { "spec": { ...the full updated ChartSpec... } }
-2) { "refusal": "One sentence naming what's missing." }  (when the change needs data/feature not in the catalog)
-
-COMMON DELTAS:
-- "make it quarterly / monthly" → change "dimension" between month and quarter.
-- "top N" / "show more" → set "topN".
-- "break it down by X" / "split by X" → set "breakdown" to dimension X.
-- "use <measure> instead" → change "measure".
-- "as a <type>" → change "chartType".
-- "normalize to 100%" / "growth %" / "moving average" / "average line" → add to "transforms".
-- "filter to A and B" / "exclude X" → set "filters".
-- "sort by …" → set "sort".
-Return a refusal for budget/forecast/target/region/segment/headcount/cash-flow/prior-year, and for unsupported visual features (drill-down on click, animation, sunburst, log axis).`;
-
-const SMART_SQL_EDITOR_SYSTEM = `You are a world-class CFO analytics AI editing an EXISTING dashboard. Each chart already has live ClickHouse SQL and a chart type. The user wants to change one or more charts. Apply the SMALLEST change that fully satisfies the request.
-
-CRITICAL: the chart's data comes ENTIRELY from its SQL. If the request changes WHAT the chart shows — the axis, the dimension/grouping, the metric, percentages vs absolute values, a filter, the sort order, the top-N count, or the time range — you MUST rewrite that chart's SQL. Switching only the chart type does NOT change the data.
-
-You can, per chart: update it (rewrite its SQL and/or change its type/title/axis labels/label mode), keep it unchanged, or remove it. You can also add a brand-new chart with its own SQL.
-
-CLICKHOUSE SQL RULES (identical to how the charts were built):
-- Every query MUST keep the scope predicate exactly: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) and MUST end with a LIMIT.
-- Output shape: the x-axis / category column MUST be aliased AS name. A single-series chart returns ONE numeric column AS value. A multi-series (WIDE) chart returns >=2 numeric columns, one per series (use sumIf(...) pivots). NEVER emit a stray free-text column beside name.
-- Date columns are PER-TABLE — never mix: sample_gl_dump uses 'date'; v_fact_accounting_journal_lines_latest uses 'journal_date'; invoices use 'issued_at'. sample_trial_balance has NO date column.
-- GROUP BY the expression (e.g. toStartOfMonth(date)), never the alias name.
-- Window functions are lagInFrame() / leadInFrame() only (never lag/lead). There is NO '%Q' token — build quarter labels with toQuarter()/toYear().
-- PERCENTAGE -> VALUES: if the current SQL outputs a ratio/percentage (e.g. x / sum(x) OVER () * 100) and the user wants whole values/amounts/numbers, rewrite it to output the absolute sum AS value and drop the ratio. VALUES -> PERCENTAGE: divide by the windowed total and multiply by 100.
-- CHANGE THE AXIS / DIMENSION: change the column aliased AS name and the GROUP BY to the requested dimension.
-- TOP N: change the LIMIT; keep ORDER BY <value> DESC.
-- pie / donut / treemap: SQL must return name + a single POSITIVE value (use abs()). scatter/bubble: return name + x + y. line / bar / area: name (x) + value (y), or WIDE multi-series.
-
-Use ONLY tables and columns shown in the LIVE SCHEMA provided in the user message. Keep each chart's analytical intent unless the user asks to change it.
-
-⛔ NEVER INVENT DATA — REFUSE INSTEAD. The dataset is exactly what the LIVE SCHEMA shows (general-ledger transactions + a trial balance, a single fiscal year). If the request needs a column, measure, dimension, or period that is NOT in the LIVE SCHEMA — e.g. budget / plan / forecast / target, year-over-year or prior-year (only one year exists), region / geography, customer or market segment, headcount / FTE, cash-flow / runway, or any other field you do not actually see — you MUST NOT fabricate a column name or guess a table. Instead return a "refusal" (see below) that names exactly what is missing in plain language. A query that references a column not in the schema is a FAILURE, never an option.
-
-⛔ UNSUPPORTED VISUAL / INTERACTIVE FEATURES. These cannot be produced and MUST be refused (or replaced by the closest supported STATIC alternative, stated honestly in the summary): click/drill-down/expand-on-click, dropdowns/slicers/filter controls, animation/play-axis, log-scale axes, conditional cell formatting beyond matrix totals, sparklines inside cells, and chart types not in the supported set (sunburst, tree-ring, bullet, gauge beyond a single KPI, 3D/rotating). Supported types: bar, horizontal_bar, line, area, pie, donut, scatter, bubble, treemap, heatmap, matrix, kpi, combo, waterfall, stacked_bar, stacked_area.
-
-✅ SEPARATE THE VISUAL WRAPPER FROM THE DATA ASK. Many requests bundle an unsupported visual gesture with a perfectly doable DATA change — DO THE DATA, skip only the gesture (and say so). Examples you MUST satisfy, not refuse:
-- "explode/highlight the largest slice and show its top N subcategories" → rewrite the SQL to drill INTO the single largest category and return its top N sub-items (e.g. the biggest asset type broken into its top N accounts). The 'explode' animation isn't applied, but the requested data IS.
-- "show the min/max range" or "high-low range" → add min() and max() series columns (doable). Only a statistical confidence interval (needs variance/std assumptions) is unsupported.
-- "reorder so the largest is on top/bottom" → change ORDER BY.
-A request is only refused when the DATA itself can't be produced from the LIVE SCHEMA.
-
-When you refuse, set ONLY the top-level "refusal" string (no widgets/add) and STOP — be specific about what's missing and, when useful, suggest a supported alternative the user could ask for. Do NOT half-apply.
-
-OUTPUT: respond with ONLY valid JSON — zero markdown, zero prose:
-{
-  "summary": "one short sentence describing what changed",
-  "refusal": "(OPTIONAL) set this INSTEAD of widgets/add when the request needs data or a feature that does not exist — name exactly what is missing",
-  "widgets": [
-    { "index": 0, "action": "update", "sql": "SELECT ... AS name, ... AS value FROM analytics.sample_gl_dump WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) GROUP BY ... ORDER BY value DESC LIMIT 50", "type": "bar", "title": "New title", "xAxisLabel": "Month", "yAxisLabel": "Amount (USD)" },
-    { "index": 1, "action": "keep" },
-    { "index": 2, "action": "remove" }
-  ],
-  "add": [
-    { "title": "New chart", "description": "One sentence insight", "type": "line", "sql": "SELECT ... AS name, ... AS value FROM ... LIMIT 50", "xAxisLabel": "...", "yAxisLabel": "..." }
-  ]
-}
-
-Rules:
-- Include "sql" ONLY when the chart's data must change. For a pure type/title/label change, set action "update" with just "type"/"title"/"xAxisLabel"/"yAxisLabel"/"labelMode" and no "sql".
-- "labelMode" is "value" or "percent" (only meaningful for pie/donut).
-- Reference charts by their exact 0-based "index" as listed. Charts you do not mention are left unchanged (you may omit them or use action "keep").
-- After all edits the dashboard MUST have between 1 and 8 charts.`;
-
-const EDITOR_SCHEMA = {
-  type: 'object',
-  properties: {
-    summary: { type: 'string' },
-    add: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          title: { type: 'string' },
-          description: { type: 'string' },
-          type: {
-            type: 'string',
-            enum: [
-              'line',
-              'bar',
-              'pie',
-              'donut',
-              'metric',
-              'kpi',
-              'table',
-              'area',
-              'combo',
-              'treemap',
-              'scatter',
-              'stacked_bar',
-              'waterfall',
-              'histogram',
-              'horizontal_bar',
-              'pareto',
-              'gauge',
-              'bubble',
-              'heatmap',
-              'matrix',
-            ],
-          },
-          metric: { type: 'string' },
-          grouping: { type: 'string' },
-          breakdown: { type: 'string' },
-          topN: { type: 'number' },
-          xAxisLabel: { type: 'string' },
-          yAxisLabel: { type: 'string' },
-          display: {
-            type: ['object', 'null'],
-            properties: {
-              donut: { type: ['boolean', 'null'] },
-              highlightMaxMin: { type: ['boolean', 'null'] },
-              labelMode: { type: ['string', 'null'], enum: ['percent', 'value', null] },
-            },
-          },
-        },
-        required: ['title', 'description', 'type', 'metric', 'grouping'],
-      },
-    },
-    remove_indices: { type: 'array', items: { type: 'integer' } },
-    modify: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          index: { type: 'integer' },
-          title: { type: 'string' },
-          type: {
-            type: 'string',
-            enum: [
-              'line',
-              'bar',
-              'pie',
-              'donut',
-              'metric',
-              'kpi',
-              'table',
-              'area',
-              'combo',
-              'treemap',
-              'scatter',
-              'stacked_bar',
-              'waterfall',
-              'histogram',
-              'horizontal_bar',
-              'pareto',
-              'gauge',
-              'bubble',
-              'heatmap',
-              'matrix',
-            ],
-          },
-          description: { type: 'string' },
-          metric: { type: 'string' },
-          grouping: { type: 'string' },
-          breakdown: { type: 'string' },
-          topN: { type: 'number' },
-          xAxisLabel: { type: 'string' },
-          yAxisLabel: { type: 'string' },
-          display: {
-            type: ['object', 'null'],
-            properties: {
-              donut: { type: ['boolean', 'null'] },
-              highlightMaxMin: { type: ['boolean', 'null'] },
-              labelMode: { type: ['string', 'null'], enum: ['percent', 'value', null] },
-            },
-          },
-        },
-        required: ['index'],
-      },
-    },
-  },
-  required: ['summary', 'add', 'remove_indices', 'modify'],
-} as const;
-
-// ─── Synthesis Prompt ─────────────────────────────────────────────────────────
-
-const SYNTHESIZER_SYSTEM = `You are NumeriQ. Respond with 2-3 SHORT sentences only.
-
-Tell the user:
-1. What dashboard was built and how many charts
-2. What the charts show (one phrase each)
-
-Example: "Built your **Overdue AR Analysis** dashboard with 2 charts — an overdue trend line showing monthly AR build-up, and an invoice status pie breaking down your collection efficiency. Your data is live."
-
-RULES:
-- Maximum 3 sentences. No headers. No bullet points. No financial analysis.
-- Never invent numbers. Never give advice.
-- If dashboard was edited: mention what changed instead.`;
-
-// ─── Analytics Schema Context (for dynamic SQL generation) ───────────────────
-
-const ANALYTICS_SCHEMA_CONTEXT = `
-ClickHouse Analytics Database Schema — available tables for querying:
-
-TABLE: v_fact_accounting_invoices_latest
-  Columns: connection_id, tenant_id, org_id, provider, invoice_id, invoice_number,
-    invoice_type, contact_name, contact_id, status, issued_at, due_at, paid_at,
-    total_amount, amount_due, amount_paid, currency, updated_at
-  Filters always required: org_id IN ({externalOrgIds:Array(String)})
-  Notes: status values are 'paid','open','overdue','voided','draft'
-         invoice_type = 'ACCREC' for sales invoices on Xero
-         total_amount is in local currency; positive = revenue
-
-TABLE: v_dim_clients_latest
-  Columns: connection_id, tenant_id, org_id, provider, client_id, client_name,
-    total_invoiced, total_paid, outstanding, overdue, invoice_count,
-    avg_invoice_amount, last_invoice_date, updated_at
-  Filters always required: org_id IN ({externalOrgIds:Array(String)})
-
-EBPO SAMPLE COMPANY SEMANTIC VIEWS
-  Use these when the user asks about the EBPO sample dataset, payroll, employees, AR/AP aging,
-  cash flow, DSO/DPO, SLA, CSAT, utilization, delivery centers, fixed assets, business units,
-  contract types, or executive KPI metrics from the new sample company workbook.
-
-TABLE: v_ebpo_kpi_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    total_revenue_usd, total_cost_usd, gross_margin_usd, gross_margin_pct,
-    total_payroll_usd, payroll_to_revenue_pct, ar_outstanding_usd, ap_outstanding_usd,
-    operating_cash_flow_usd, free_cash_flow_usd, cash_balance_usd,
-    sla_compliance_pct, csat_pct, utilization_pct, dso_days, dpo_days
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_revenue_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    total_revenue_usd, total_cost_usd, gross_margin_usd, gross_margin_pct, revenue_yoy_pct
-  revenue_yoy_pct is the pre-computed year-over-year revenue growth % (null for the first 12
-    months). For "revenue YoY growth %" charts, select revenue_yoy_pct directly — do NOT
-    hand-roll the window function.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_revenue_by_client
-  Columns: tenant_id, org_id, client_name, industry, total_revenue_usd, total_cost_usd,
-    gross_margin_usd, gross_margin_pct
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_revenue_by_client_contract
-  Columns: tenant_id, org_id, client_name, industry, contract_type, business_unit,
-    total_revenue_usd, total_cost_usd, gross_margin_usd, gross_margin_pct
-  Use for revenue by client broken down / stacked by contract_type (the only view with BOTH
-    client_name and contract_type). For a stacked chart: client_name AS name + one
-    sumIf(total_revenue_usd, contract_type='...') column per contract type.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_revenue_by_business_unit
-  Columns: tenant_id, org_id, business_unit, contract_type, total_revenue_usd,
-    total_cost_usd, gross_margin_usd, gross_margin_pct
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_revenue_by_business_unit_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    business_unit, contract_type, total_revenue_usd, total_cost_usd,
-    gross_margin_usd, gross_margin_pct
-  Use for monthly revenue / cost / gross-margin split by business_unit or contract_type.
-  For stacked monthly business-unit charts: period_date AS name + sumIf(total_revenue_usd, business_unit='...') pivots.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_revenue_by_client_contract_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    client_name, industry, contract_type, business_unit, total_revenue_usd,
-    total_cost_usd, gross_margin_usd, gross_margin_pct
-  Use for monthly revenue split by contract_type/client/business_unit.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_payroll_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    department, country, employee_count, total_base_salary_usd, total_overtime_usd,
-    total_bonus_usd, total_benefits_usd, total_payroll_usd
-  Use sum(total_overtime_usd) for overtime cost. Use sum(total_payroll_usd) / nullIf(sum(employee_count), 0)
-    for payroll cost per employee in grouped charts.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_employee_headcount
-  Columns: tenant_id, org_id, department, country, delivery_center, grade,
-    employee_count, avg_monthly_salary_usd, total_monthly_salary_usd
-  Use for employee-count charts by department, country, delivery_center, or grade.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_salary_by_dept_grade
-  Columns: tenant_id, org_id, department, grade, employee_count,
-    avg_monthly_salary_usd, total_monthly_salary_usd
-  Grades: Associate, Senior Associate, Manager, Director. Use for avg-salary heatmap/matrix
-    by department x grade: department AS name + one sumIf/avgIf(...) per grade, or a
-    name/grade/value long shape. avg_monthly_salary_usd is the per-employee average.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_gl_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    account_number, account_name, department, business_unit, country,
-    total_debit_usd, total_credit_usd, net_movement_usd
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_trial_balance_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    account_number, account_name, opening_balance_usd, debit_movement_usd,
-    credit_movement_usd, closing_balance_usd, net_movement_usd
-  Use for opening/closing balance by account and closing balance by account/month heatmaps.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_ar_aging
-  Columns: tenant_id, org_id, period_date, client_name, industry, aging_bucket,
-    invoice_amount_usd, collected_amount_usd, outstanding_balance_usd,
-    outstanding_usd, collection_rate_pct, collection_rate_percentage
-  For client revenue vs collection rate or client margin vs collection rate, use
-    v_ebpo_client_revenue_collection instead of selecting revenue/margin columns from AR.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_ap_aging
-  Columns: tenant_id, org_id, period_date, vendor_name, aging_bucket,
-    invoice_amount_usd, paid_amount_usd, outstanding_balance_usd, outstanding_usd
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_operations_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    delivery_center, region, country, market_type, calls_handled, tickets_resolved,
-    avg_aht_minutes, average_handling_time_minutes, sla_compliance_pct,
-    sla_compliance_percentage, csat_pct, csat_percentage, utilization_pct,
-    utilization_percentage
-  Use avg(avg_aht_minutes) for average handling time. Use sum(calls_handled) and avg(csat_pct)
-    together for calls-handled + CSAT combo charts.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_cash_flow_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    operating_cash_flow_usd, investing_cash_flow_usd, financing_cash_flow_usd,
-    free_cash_flow_usd, cash_balance_usd
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_fixed_assets_by_center
-  Columns: tenant_id, org_id, delivery_center, asset_type, asset_count,
-    asset_cost_usd, accumulated_depreciation_usd, net_book_value_usd,
-    net_book_value, depreciation_pct
-  Use for asset type and delivery center breakdowns, including stacked bars, treemaps, heatmaps,
-    depreciation percentage ranking, and asset cost vs net book value scatter.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_client_revenue_collection
-  Columns: tenant_id, org_id, client_name, industry, total_revenue_usd, total_cost_usd,
-    gross_margin_usd, gross_margin_pct, invoice_amount_usd, collected_amount_usd,
-    outstanding_balance_usd, outstanding_usd, collection_rate_pct
-  Use for scatter/bar charts comparing client revenue or client margin with collection rate.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_department_efficiency_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    department, employee_count, total_payroll_usd, total_revenue_usd,
-    total_cost_usd, gross_margin_usd, revenue_per_employee_usd,
-    cost_per_employee_usd
-  Use for employee count, revenue/cost per employee by department, and revenue-per-employee heatmaps by department/month.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_business_unit_efficiency
-  Columns: tenant_id, org_id, business_unit, total_revenue_usd, total_cost_usd,
-    gross_margin_usd, employee_count, revenue_per_employee_usd
-  Use for revenue per employee by business unit.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_ebpo_delivery_center_efficiency_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    delivery_center, region, country, calls_handled, utilization_pct,
-    employee_count, allocated_revenue_usd, revenue_per_employee_usd
-  Use for revenue per delivery center and utilization vs revenue-per-employee by delivery center.
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE: v_fact_accounting_journal_lines_latest
-  Columns: connection_id, tenant_id, org_id, provider, journal_id, line_id,
-    journal_number, journal_date, account_id, account_code, account_name,
-    line_amount, description, source_type,
-    department, class_name, vendor_name, vendor_id,
-    debit_amount, credit_amount, updated_at
-  Filters always required: org_id IN ({externalOrgIds:Array(String)})
-  Notes: line_amount is signed: positive = debit = EXPENSE, negative = credit = REVENUE.
-         ALWAYS use line_amount sign to classify: revenue WHERE line_amount < 0, expenses WHERE line_amount > 0.
-         NEVER use debit_amount or credit_amount columns — they may be zero; derive from line_amount sign instead.
-         account_name contains GL account labels like 'Sales Revenue', 'Rent Expense', 'COGS', etc.
-         journal_date is DateTime — use toStartOfMonth(journal_date) for monthly grouping
-         department: QuickBooks DepartmentRef or Xero TrackingCategory (e.g. 'Admin', 'Sales', 'Operations')
-         class_name: QuickBooks ClassRef or Xero second TrackingCategory (e.g. 'General', 'Marketing', 'Product')
-         vendor_name: vendor/supplier name from QB Bills, Purchases, and JournalEntry entity fields
-         vendor_id: vendor ID from QuickBooks VendorRef
-
-TABLE: v_map_account_cost_categories_latest
-  Columns: tenant_id, org_id, provider, account_code, pnl_group, opex_category, cost_nature,
-    is_admin_cost, notes, updated_at
-  Filters always required: org_id IN ({externalOrgIds:Array(String)})
-  Notes: This is a user-maintained mapping table to label expenses (e.g. Admin vs Marketing).
-
-TABLE: v_fact_accounting_journal_lines_enriched_latest
-  Columns: all columns from v_fact_accounting_journal_lines_latest plus:
-    pnl_group, opex_category, cost_nature, is_admin_cost
-  Filters always required: org_id IN ({externalOrgIds:Array(String)})
-  Notes: Prefer this view for expense analysis — includes department, class_name, vendor_name,
-         debit_amount, credit_amount, plus user-defined opex_category/pnl_group classifications.
-         Use for: expense by department, expense by class, vendor spend, debit/credit by account type.
-
-TABLE: v_unmapped_cost_category_accounts
-  Columns: tenant_id, org_id, provider, account_code, account_name, total_spend
-  Filters always required: org_id IN ({externalOrgIds:Array(String)})
-  Notes: Use this to find accounts that still need categorisation.
-
-IMPORTANT ClickHouse rules:
-- Always filter: org_id IN ({externalOrgIds:Array(String)})
-- CRITICAL: GROUP BY toStartOfMonth(col) — NEVER group by an alias. ORDER BY toStartOfMonth(col)
-- Month label: SELECT formatDateTime(toStartOfMonth(col), '%b %Y') AS name ... GROUP BY toStartOfMonth(col)
-- No CTEs (WITH clause) — use subqueries or flat SQL
-- For the output column "name", always put the label/dimension
-- For the output column "value", always put the primary numeric measure
-- Additional numeric columns are fine (they render as multi-series)
-- Add ORDER BY on the time or dimension column
-- Always add LIMIT (max 500 rows)
-- For EBPO monthly charts, use period_date for time grouping and month labels.
-- NEVER access system tables or tables not listed above
-- NEVER use INSERT, UPDATE, DELETE, DROP, CREATE, ALTER
-- Output column aliases must be simple snake_case (no spaces)
-`;
-
-const DYNAMIC_SQL_SYSTEM = `You are a ClickHouse SQL expert generating safe, read-only analytical queries for a financial dashboard.
-
-SCHEMA:
-${ANALYTICS_SCHEMA_CONTEXT}
-
-TASK: Given a financial question and a chart title, write ONE ClickHouse SELECT statement.
-
-RULES:
-1. Output ONLY the raw SQL — no explanation, no markdown, no code fences
-2. Always include BOTH scope filters:
-   - tenant_id = {tenantId:String}
-   - org_id IN ({externalOrgIds:Array(String)})
-3. Always include LIMIT (use 100 for aggregates, 500 for lists)
-4. The query MUST return at least a "name" column (dimension label) and a "value" column (primary metric)
-5. Additional numeric columns are allowed for multi-series charts
-6. Sort by time ascending for trends, by value descending for rankings
-7. Use simple aggregations: sum(), count(), avg(), max(), min()
-8. For monthly trends: GROUP BY toStartOfMonth(col) ORDER BY toStartOfMonth(col) — NEVER group by alias
-9. For rankings: GROUP BY dimension ORDER BY value DESC
-10. WITH (CTE) and window functions are allowed (ClickHouse uses lagInFrame()/leadInFrame(), not lag()/lead()); avoid ARRAY JOIN unless essential
-11. Keep queries simple and fast — max 2 JOINs
-12. NEVER reference columns debit_amount or credit_amount — they may be zero. Instead compute:
-    debits  = sumIf(toFloat64(line_amount),  line_amount > 0)
-    credits = sumIf(-toFloat64(line_amount), line_amount < 0)
-13. NEVER filter AND department != '' or AND vendor_name != '' unless you also have a fallback — those columns may be empty. When grouping by department or vendor, always use COALESCE(NULLIF(col,''),'Other') and omit the NOT NULL filter.
-14. For "balance by account type" or "total balance by account classification": group by a multiIf() over account_name patterns to produce categories (Revenue, Cost of Sales, Payroll, Operating Expenses, Cash & Bank, AR/AP, Equity), compute sum(line_amount) as value.`;
-
-// ─── Smart SQL Planner — primary agentic path ────────────────────────────────
-// The LLM writes real ClickHouse SQL for every chart instead of picking from a
-// preset vocabulary. Live dimension values from ClickHouse are injected at
-// runtime so the model sees ACTUAL data, not an abstract schema.
-const SMART_SQL_PLANNER_SYSTEM = `You are a world-class CFO analytics AI with live read access to a ClickHouse financial database. For every user request you write exact, runnable ClickHouse SQL and pick the best chart type.
-
-DATABASE SCHEMA — use EXACT view names and column names:
-
-TABLE analytics.sample_trial_balance  ← USE THIS for P&L totals, balance sheet, account type queries
-  org_id (String)  account_number (String)  account_name (String)  account_type (String)
-  debit (Decimal18,4)  credit (Decimal18,4)  net_balance (Decimal18,4)
-  account_type VALUES: 'Bank' | 'Accounts Receivable' | 'Other Current Asset' | 'Fixed Asset' | 'Other Asset'
-                       'Accounts Payable' | 'Other Current Liability' | 'Long Term Liability'
-                       'Equity' | 'Income' | 'Cost of Goods Sold' | 'Expense'
-  ALWAYS filter: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-  KEY FORMULAS (match Excel DAX exactly):
-    Revenue   = round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0)
-    COGS      = round(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold'), 0)
-    OpEx      = round(sumIf(toFloat64(net_balance), account_type = 'Expense'), 0)
-    GrossProfit = Revenue - COGS
-    NetIncome   = GrossProfit - OpEx
-    TotalAssets = round(sumIf(toFloat64(net_balance), account_type IN ('Bank','Accounts Receivable','Other Current Asset','Fixed Asset','Other Asset')), 0)
-    TotalLiab   = round(abs(sumIf(toFloat64(net_balance), account_type IN ('Accounts Payable','Other Current Liability','Long Term Liability'))), 0)
-    TotalEquity = round(abs(sumIf(toFloat64(net_balance), account_type = 'Equity')), 0)
-
-TABLE analytics.sample_gl_dump  ← USE THIS for vendor, department, class, journal-type, row-level GL queries
-  org_id (String)  date (Date)  transaction_id (String)  journal_type (String — AP|AS|EX|PR|TR)
-  account_number (String)  account_name (String)  account_type (String)
-  vendor_customer (String)  description (String)
-  debit (Decimal18,4)  credit (Decimal18,4)  running_balance (Decimal18,4)
-  department (String — 'Admin'|'Operations'|'Sales' ONLY — NO Finance)
-  class (String — 'General'|'Marketing'|'Product')
-  ALWAYS filter: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-  account_type VALUES same as trial_balance above
-  VENDOR SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND vendor_customer != '' AND toFloat64(debit) > 0  ← ALL debits, NO filter (Power BI Total Vendor Spend = 1,307,246)
-  DEPT SPEND:   sum(toFloat64(debit)) WHERE org_id IN (...) AND department != '' AND toFloat64(debit) > 0 GROUP BY department  ← ALL debits (Power BI "Spend by Dept": Admin=374,580 Ops=716,470 Sales=216,196)
-  ⚠️ ANTI-PATTERN — NEVER DO THIS: WHERE account_type = 'Expense' AND department != '' — this gives WRONG values (Operations becomes ~$8K instead of $716K because COGS is excluded). Operations has most spend in COGS journal entries. ALWAYS use ALL debits with NO account_type filter.
-  CLASS SPEND:  sum(toFloat64(debit)) WHERE org_id IN (...) AND class != '' AND toFloat64(debit) > 0 GROUP BY class  ← ALL debits
-  MONTHLY DEPT: GROUP BY toStartOfMonth(date), department — use ALL debits (Power BI "Monthly spend by Department" = Total Debits)
-  NOTE: GL dump has NO Income entries. For revenue, use sample_trial_balance credit column (account_type='Income')
-
-TABLE analytics.v_fact_accounting_journal_lines_latest  ← for time-series, trend queries
-  journal_date (Nullable DateTime)  account_name (String)  account_code (String)
-  line_amount (Decimal18,4)  — SIGN CONVENTION: positive = debit/expense, negative = credit/revenue
-  source_type (String)  department (String)  class_name (String)  vendor_name (String)
-  description (String)  org_id (String)  provider (String)
-
-TABLE analytics.v_fact_accounting_invoices_latest
-  issued_at (DateTime)  due_at (DateTime)  paid_at (Nullable DateTime)
-  total_amount (Float64)  amount_due (Float64)  amount_paid (Float64)
-  status (String)  invoice_type (String — 'ACCREC'=revenue receivable, 'ACCPAY'=expense payable)
-  contact_name (Nullable String)  contact_id (Nullable String)
-  invoice_number (String)  org_id (String)  org_name (String)  provider (String)
-  *** NOTE: column is contact_name NOT client_name ***
-
-TABLE analytics.v_dim_clients_latest
-  client_id (String)  client_name (String)  org_id (String)  provider (String)
-  total_invoiced (Float64)  total_revenue (Float64)  total_outstanding (Float64)  total_overdue (Float64)
-  invoice_count (UInt32)  paid_count (UInt32)  outstanding_count (UInt32)  overdue_count (UInt32)
-  avg_invoice_amount (Float64)  first_invoice_date (Date)  last_invoice_date (Date)
-  *** NOTE: column is total_revenue NOT total_paid ***
-
-EBPO SAMPLE COMPANY SEMANTIC VIEWS  ← USE THESE for the new EBPO workbook dataset
-  These are curated chart views over raw workbook star tables. They preserve workbook data and expose
-  clean measures for Astra charts. ALWAYS filter: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
-TABLE analytics.v_ebpo_kpi_monthly
-  period_date (Date)  year UInt16  quarter UInt8  month UInt8  month_name String
-  total_revenue_usd Float64  total_cost_usd Float64  gross_margin_usd Float64  gross_margin_pct Float64
-  total_payroll_usd Float64  payroll_to_revenue_pct Float64
-  ar_outstanding_usd Float64  ap_outstanding_usd Float64
-  operating_cash_flow_usd Float64  free_cash_flow_usd Float64  cash_balance_usd Float64
-  sla_compliance_pct Float64  csat_pct Float64  utilization_pct Float64  dso_days Float64  dpo_days Float64
-  Use for executive dashboards, KPI cards, revenue/cost/margin trends, DSO/DPO, payroll/revenue %, and cash charts.
-
-TABLE analytics.v_ebpo_revenue_monthly
-  period_date (Date)  year UInt16  quarter UInt8  month UInt8  month_name String
-  total_revenue_usd Float64  total_cost_usd Float64  gross_margin_usd Float64  gross_margin_pct Float64
-  Use for monthly revenue, cost, gross margin, and margin % charts.
-
-TABLE analytics.v_ebpo_revenue_by_client
-  client_name String  industry String  total_revenue_usd Float64  total_cost_usd Float64
-  gross_margin_usd Float64  gross_margin_pct Float64
-  Use for top clients, client profitability, and industry revenue charts.
-
-TABLE analytics.v_ebpo_revenue_by_business_unit
-  business_unit String  contract_type String  total_revenue_usd Float64  total_cost_usd Float64
-  gross_margin_usd Float64  gross_margin_pct Float64
-  Use for business unit and contract type revenue/margin charts.
-
-TABLE analytics.v_ebpo_payroll_monthly
-  period_date (Date)  department String  country String  employee_count UInt64
-  total_base_salary_usd Float64  total_overtime_usd Float64  total_bonus_usd Float64
-  total_benefits_usd Float64  total_payroll_usd Float64
-  Use for payroll by department/country/month, salary mix, overtime, bonus, benefits, and headcount-style charts.
-
-TABLE analytics.v_ebpo_gl_monthly
-  period_date (Date)  account_number String  account_name String  department String
-  business_unit String  country String  total_debit_usd Float64  total_credit_usd Float64  net_movement_usd Float64
-  Use for GL account movement, department spend, country spend, and account-level debit/credit charts.
-
-TABLE analytics.v_ebpo_ar_aging
-  period_date (Date)  client_name String  industry String  aging_bucket String
-  invoice_amount_usd Float64  collected_amount_usd Float64  outstanding_balance_usd Float64  collection_rate_pct Float64
-  Use for AR aging, collection rate, client outstanding balances, and DSO-adjacent views.
-
-TABLE analytics.v_ebpo_ap_aging
-  period_date (Date)  vendor_name String  aging_bucket String
-  invoice_amount_usd Float64  paid_amount_usd Float64  outstanding_balance_usd Float64
-  Use for AP aging, vendor outstanding balances, and DPO-adjacent views.
-
-TABLE analytics.v_ebpo_operations_monthly
-  period_date (Date)  delivery_center String  region String  country String  market_type String
-  calls_handled Float64  tickets_resolved Float64  avg_aht_minutes Float64
-  sla_compliance_pct Float64  csat_pct Float64  utilization_pct Float64
-  Use for SLA, CSAT, utilization, delivery-center volume, AHT, calls, and ticket operations charts.
-
-TABLE analytics.v_ebpo_cash_flow_monthly
-  period_date (Date)  operating_cash_flow_usd Float64  investing_cash_flow_usd Float64
-  financing_cash_flow_usd Float64  free_cash_flow_usd Float64  cash_balance_usd Float64
-  Use for operating/investing/financing/free cash flow and cash balance trends.
-
-TABLE analytics.v_ebpo_fixed_assets_by_center
-  delivery_center String  asset_type String  asset_count UInt64  asset_cost_usd Float64
-  accumulated_depreciation_usd Float64  net_book_value_usd Float64
-  Use for fixed asset mix, NBV, asset cost, depreciation, delivery-center asset charts.
-
-TABLE SELECTION GUIDE (tenant_id + org_id scope required on ALL tables):
-  EBPO workbook requests / payroll / operations / cash flow / AR/AP / DSO / DPO / assets / delivery centers → use analytics.v_ebpo_* semantic views
-  P&L totals / balance sheet / account type breakdown → analytics.sample_trial_balance (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
-  Vendor spend / department spend / class spend / GL detail → analytics.sample_gl_dump (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
-  Monthly trends / time-series → analytics.v_fact_accounting_journal_lines_latest (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
-  Invoice analysis / client revenue → analytics.v_fact_accounting_invoices_latest (WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))
-
-⚠️ COLUMNS ARE PER-TABLE — DO NOT MIX. Using a column that belongs to another table = 0-row error:
-  • sample_gl_dump        → date column is 'date' (NOT journal_date). Amounts: debit / credit. Vendor: vendor_customer.
-  • v_ebpo_* views        → time column is 'period_date' (NOT journal_date). Amount columns end in _usd or _pct.
-  • v_fact_accounting_journal_lines_latest → date column is 'journal_date'. Amount: line_amount. Vendor: vendor_name. Has source_type.
-  • v_fact_accounting_invoices_latest      → dates are issued_at / due_at / paid_at. Amounts: total_amount / amount_due / amount_paid. Party: contact_name.
-  • sample_trial_balance  → NO date column at all (it is a balance snapshot). Use net_balance / debit / credit by account_type.
-  For VENDOR SPEND BY MONTH (time-series): use v_fact_accounting_journal_lines_latest (journal_date + vendor_name +
-  source_type IN ('OPEX','COGS')). For vendor spend with NO time dimension: sample_gl_dump (date + vendor_customer + debit).
-
-NON-NEGOTIABLE SQL RULES:
-1. EVERY query MUST include: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-2. EVERY query MUST include LIMIT (100 for aggregates, 500 for row-level lists)
-3. Standard output columns: "name" = label/dimension, "value" = primary numeric metric
-4. CRITICAL — ClickHouse GROUP BY + ORDER BY: ALWAYS use the RAW EXPRESSION, NEVER the alias.
-   CORRECT:   GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date) ASC
-   WRONG:     GROUP BY name  ← alias in GROUP BY causes error
-   CORRECT:   GROUP BY COALESCE(NULLIF(department,''),'Other') ORDER BY COALESCE(NULLIF(department,''),'Other') ASC
-   WRONG:     ORDER BY department ASC  ← alias shadows raw column, ClickHouse resolves raw column which is not in GROUP BY
-5. For month labels: SELECT formatDateTime(toStartOfMonth(journal_date), '%b %Y') AS name — GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date)
-6. For expenses (debit): WHERE line_amount > 0 — use sumIf(toFloat64(line_amount), line_amount > 0)
-7. For revenue from journals: sumIf(-toFloat64(line_amount), line_amount < 0) as value
-8. CTEs (WITH ... AS (...)) ARE ALLOWED and encouraged for growth %, running totals, and multi-step math. The query may start with WITH as long as it resolves to a SELECT. Subqueries are also fine.
-9. NEVER reference debit_amount or credit_amount columns directly — use line_amount sign
-10. For grouping by department/vendor: COALESCE(NULLIF(department,''),'Other') — and ORDER BY the SAME expression
-11. Keep queries fast — max 2 JOINs, prefer aggregates over row scans
-12. CRITICAL — For "compare X vs Y" or "top N clients/vendors" side-by-side comparison charts:
-    Use sumIf() to pivot each entity into its OWN column. One row per time period, one column per entity.
-    Set chart config grouping = "month" for time-series comparisons.
-    CORRECT multi-series bar (2 clients per month):
-      SQL: SELECT formatDateTime(toStartOfMonth(issued_at), '%b %Y') AS name,
-             round(sumIf(total_amount, contact_name = 'Apex Ventures Ltd'), 2) AS apex_ventures_ltd,
-             round(sumIf(total_amount, contact_name = 'BlueOak Distributors'), 2) AS blueoak_distributors
-      FROM analytics.v_fact_accounting_invoices_latest
-      WHERE org_id IN ({externalOrgIds:Array(String)}) AND invoice_type = 'ACCREC'
-      GROUP BY toStartOfMonth(issued_at) ORDER BY toStartOfMonth(issued_at) ASC LIMIT 24
-      Config: { "type": "bar", "metric": "revenue", "grouping": "month" }
-    WRONG (collapses everything into one bar per month):
-      SELECT name, sum(total_amount) AS value ... GROUP BY month  ← single bar, not a comparison
-    Column names must be valid SQL identifiers (replace spaces with underscores, lowercase).
-    Each column name = entity identifier with spaces replaced by underscores, fully lowercase.
-13. WINDOW FUNCTIONS ARE SUPPORTED — ClickHouse names them lagInFrame()/leadInFrame() (NOT lag()/lead()).
-    Use them for period-over-period math. CRITICAL OUTPUT SHAPE: a multi-series line/bar chart must be
-    WIDE — one "name" column plus ONE NUMERIC COLUMN PER SERIES (NOT a long format with a text category
-    column). For MONTH-OVER-MONTH GROWTH % BY DEPARTMENT (a multi-line chart): aggregate each department
-    into its OWN monthly spend column in a CTE, then compute growth per column with lagInFrame OVER
-    (ORDER BY month). Use the ACTUAL departments from LIVE DATA (here Admin/Operations/Sales):
-      WITH m AS (
-        SELECT toStartOfMonth(journal_date) AS mo,
-               round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Admin'), 2) AS admin_spend,
-               round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Operations'), 2) AS ops_spend,
-               round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Sales'), 2) AS sales_spend
-        FROM analytics.v_fact_accounting_journal_lines_latest
-        WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-          AND journal_date >= addMonths(now(), -12)
-        GROUP BY toStartOfMonth(journal_date)
-      )
-      SELECT formatDateTime(mo, '%b %Y') AS name,
-             round((admin_spend - lagInFrame(admin_spend) OVER (ORDER BY mo)) / nullIf(lagInFrame(admin_spend) OVER (ORDER BY mo), 0) * 100, 1) AS admin,
-             round((ops_spend   - lagInFrame(ops_spend)   OVER (ORDER BY mo)) / nullIf(lagInFrame(ops_spend)   OVER (ORDER BY mo), 0) * 100, 1) AS operations,
-             round((sales_spend - lagInFrame(sales_spend) OVER (ORDER BY mo)) / nullIf(lagInFrame(sales_spend) OVER (ORDER BY mo), 0) * 100, 1) AS sales
-      FROM m ORDER BY mo ASC LIMIT 200
-    nullIf(...,0) avoids divide-by-zero; the first month is NULL growth (expected). For a SINGLE-series
-    growth line, output just "name" + "value" (one growth column). yAxisLabel = "MoM Growth (%)".
-14. For ORDER BY on a coalesced dimension: ALWAYS write the full COALESCE expression, e.g. ORDER BY COALESCE(NULLIF(vendor_name,''),'Other') ASC
-15. CRITICAL — NO aggregate functions in WHERE: NEVER write WHERE col >= max(col) or WHERE col >= min(col). For time filtering use: WHERE journal_date >= addMonths(now(), -6) or WHERE issued_at >= addDays(now(), -90). Use now() for relative dates.
-16. For client queries: use v_dim_clients_latest with client_name column. For invoice-level queries: use v_fact_accounting_invoices_latest with contact_name (NOT client_name).
-17. For vendor "last N months" queries: WHERE journal_date >= addMonths(now(), -N) — not subqueries with MAX.
-18. CRITICAL — NO ALIAS SHADOWING: NEVER alias a COALESCE(NULLIF(col,...)) expression with the same name as the underlying column. ClickHouse's analyzer resolves the alias in GROUP BY creating NOT_AN_AGGREGATE.
-    WRONG: SELECT COALESCE(NULLIF(department,''),'Other') AS department ... GROUP BY COALESCE(NULLIF(department,''),'Other')
-    CORRECT: SELECT COALESCE(NULLIF(department,''),'Other') AS dept ... GROUP BY COALESCE(NULLIF(department,''),'Other')
-    Rule: department → alias AS dept | vendor_name → alias AS vendor | class_name → alias AS class_label
-19. CRITICAL — For department/vendor breakdown over time (stacked/grouped bars): use sumIf() pivot.
-    Known departments: READ LIVE DATA CONTEXT above for actual department names. NEVER hardcode departments not listed in LIVE DATA. NEVER add 'Finance' or any other department unless it appears in the LIVE DATA departments list.
-    CORRECT stacked bar by department (replace Admin/Operations/Sales with ACTUAL departments from LIVE DATA):
-      SELECT formatDateTime(toStartOfMonth(journal_date), '%b %Y') AS name,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Admin'), 0) AS admin,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Operations'), 0) AS operations,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other') = 'Sales'), 0) AS sales
-      FROM analytics.v_fact_accounting_journal_lines_latest
-      WHERE org_id IN ({externalOrgIds:Array(String)}) AND journal_date >= addMonths(now(), -12)
-      GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date) ASC LIMIT 24
-19b. CRITICAL — "TOP <A> BY <B>" / "<A> BY <B>": <A> is the PRIMARY dimension that goes on the X-axis
-    (the AS name column) and is what you rank. <B> is a SECONDARY breakdown shown as colored series —
-    NEVER the reverse. DO NOT put <B> in the name column. Example — "top expense accounts by department":
-    the X-axis MUST be the ACCOUNT NAME (Salaries & Wages, Rent Expense, …), with one sumIf() column per
-    department as the colored series:
-      SELECT account_name AS name,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Admin'), 0) AS admin,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Operations'), 0) AS operations,
-             round(sumIf(toFloat64(line_amount), line_amount > 0 AND COALESCE(NULLIF(department,''),'Other')='Sales'), 0) AS sales
-      FROM analytics.v_fact_accounting_journal_lines_latest
-      WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-        AND source_type IN ('OPEX','COGS') AND account_name != ''
-      GROUP BY account_name
-      ORDER BY (admin + operations + sales) DESC LIMIT 15
-    Result: one bar per account, segmented by department — exactly "accounts by department".
-    NEVER output an extra free-standing text column (like account_name) next to name — only "name" plus
-    NUMERIC series columns. The label the user reads on each bar is the "name" value, so name = the entity
-    being listed, with NO duplicate labels.
-20. TIME SCOPING — "annual operating spend" / "for the year" = last 12 months: WHERE journal_date >= addMonths(now(), -12). "This year" = WHERE toYear(journal_date) = toYear(now()). Never return all-time data when user says "annual" or "for the year".
-20b. QUARTERLY GROUPING — ClickHouse formatDateTime() has NO quarter token. NEVER write '%Q'. For a
-    quarter label use: concat('Q', toString(toQuarter(journal_date)), ' ', toString(toYear(journal_date))) AS name
-    and GROUP BY toStartOfQuarter(journal_date) ORDER BY toStartOfQuarter(journal_date) ASC.
-21. SOURCE TYPES — the source_type column cleanly separates entry types. ALWAYS use it:
-    • source_type = 'REV'  → Revenue/income accounts (Product Sales, Service Revenue, etc.) — line_amount is NEGATIVE (credit)
-    • source_type = 'OPEX' → Operating expenses — line_amount is POSITIVE (debit)
-    • source_type = 'COGS' → Cost of goods sold — line_amount is POSITIVE (debit)
-    • source_type = 'GL'   → Balance sheet / adjusting entries (Accounts Payable, Accrued Payroll, Inventory) — EXCLUDE from P&L queries
-    REVENUE: Use WHERE source_type = 'REV' for revenue. Value = abs(sum(line_amount)) or sumIf(-toFloat64(line_amount), line_amount < 0).
-    NEVER use bare line_amount < 0 for revenue — it picks up AP and Accrued Payroll (which are GL type, not REV).
-    OPERATING EXPENSES: Use WHERE source_type IN ('OPEX') or IN ('OPEX','COGS') for total cost.
-    VENDOR SPEND: Use source_type IN ('OPEX','COGS') to show real vendor operating costs (exclude GL inventory purchases).
-22. FINAL OUTPUT COLUMNS must always be: "name" (the label/dimension) and "value" (the metric). For single-dimension charts: wrap in subquery if needed. Example: SELECT dept AS name, spend AS value FROM (SELECT COALESCE(NULLIF(department,''),'Other') AS dept, round(sumIf(toFloat64(line_amount), line_amount > 0), 0) AS spend FROM ... GROUP BY COALESCE(...)) LIMIT 100. For scatter: columns x, y, z (optional size), name (label). For multi-series pivot: one "name" column + one column per series entity.
-23. SCATTER CHARTS: output columns must be x (numeric X axis), y (numeric Y axis), name (label).
-    Example — expense vs revenue by department:
-      SELECT COALESCE(NULLIF(department,''),'Other') AS name,
-             round(sumIf(toFloat64(line_amount), source_type IN ('OPEX','COGS') AND line_amount > 0), 0) AS x,
-             round(abs(sumIf(toFloat64(line_amount), source_type = 'REV')), 0) AS y
-      FROM analytics.v_fact_accounting_journal_lines_latest
-      WHERE org_id IN ({externalOrgIds:Array(String)})
-      GROUP BY COALESCE(NULLIF(department,''),'Other')
-      HAVING x > 0 OR y > 0 LIMIT 20
-24. USER TYPOS: understand user intent even with spelling errors — "grpah" = chart, "monthy" = monthly, "departemnt" = department, "expnese" = expense. Always infer the intended meaning.
-
-26. ANALYTICAL INTENT — answer the QUESTION, do not just dump breakdowns. When the request is analytical
-    (e.g. "cost optimization", "inefficient spending", "where can we save", "what's driving X",
-    "anomalies", "risks", "opportunities", "concentration"), the charts must surface the ANSWER, not a
-    generic ranking. Think like a CFO and pick views that expose the insight:
-    • "cost optimization / inefficient spend" → (a) Expense Pareto: cumulative % of spend by account
-      (where the 80% sits), (b) Fastest-growing expense accounts: this-period vs prior-period spend per
-      account with the delta/% change (rising costs = inefficiency), (c) Spend concentration by vendor
-      (over-reliance / negotiation leverage), (d) Discretionary vs essential or spend as % of revenue
-      trend. AVOID a plain "top expense accounts" bar as the headline — it does not show inefficiency.
-    • "what's driving the change" → period-over-period contribution (waterfall or signed bar of deltas).
-    • "anomalies / outliers" → category vs its own historical average, flag the gap.
-    • "concentration / dependence" → Pareto or share-of-total (treemap/donut) with the top contributors.
-    A descriptive chart that does not answer the analytical ask is a FAILURE — choose the revealing view.
-    If the data cannot support the analysis (e.g. only one period exists, so no growth/delta is possible),
-    say so via "clarify" or "no_data" rather than substituting a generic breakdown.
-
-27. ENTITY SEMANTICS — DO NOT mismatch a metric to an entity that cannot have it (this returns 0 rows):
-    • VENDORS / SUPPLIERS are EXPENSE payees. They have SPEND, never revenue. "vendor revenue",
-      "top vendors by revenue", "compare revenue of vendors" → interpret as vendor SPEND. Source:
-      vendor_name with source_type IN ('OPEX','COGS') in v_fact_accounting_journal_lines_latest, or
-      vendor_customer debit in sample_gl_dump. NEVER query REV/Income for a vendor — it is always empty.
-    • CLIENTS / CUSTOMERS / CONTACTS are REVENUE sources. Use v_dim_clients_latest.total_revenue or
-      invoices invoice_type='ACCREC'. They do not have "spend".
-    • DEPARTMENTS / CLASSES carry SPEND (expense), not revenue.
-    • To compare "top N vendors over time": first rank vendors by total spend, then build a multi-series
-      line/stacked_bar with one sumIf(spend, vendor_name = '<that vendor>') column per top vendor, grouped
-      by month. The series MUST be the actual top-N vendor names from LIVE DATA.
-    If the user clearly asks for an impossible pairing (e.g. vendor revenue) and you are not confident the
-    spend reinterpretation is what they want, return "clarify" ("Vendors are who you pay — compare their
-    SPEND instead?"). Otherwise build the sensible spend version. NEVER emit a chart that returns 0 rows.
-
-CHART TYPE REFERENCE (pick the type that genuinely fits the question — never the "closest" one):
-  TIME / TREND:        line (trend over time)  area (cumulative/volume over time)  stacked_bar (composition over time)
-  RANKING / COMPARE:   bar (compare categories)  horizontal_bar (long labels / many items)  pareto (80/20 contribution)
-  COMPOSITION:         pie / donut (share of a whole, <=8 slices)  treemap (nested share, many items)  waterfall (build-up: revenue→costs→net)
-  RELATIONSHIP:        scatter (X vs Y)  bubble (X vs Y vs size)  heatmap (two-dimension intensity)
-  DISTRIBUTION:        histogram (frequency of a numeric range)
-  SINGLE VALUE:        metric / kpi (one headline number)  gauge (value vs a 0-100 range)
-  DETAIL:              table (row-level lists or multi-column matrices)
-  Comparisons of 2+ entities/periods over time → stacked_bar or line (multi-series). Side-by-side single period → bar (multi-series).
-  HEATMAP OUTPUT SHAPE (when the user asks for a heatmap): output WIDE. Either (a) a grid — name = one
-  axis (e.g. month), one NUMERIC column per the other axis category (e.g. one per department: AS admin,
-  AS operations, AS sales) — or (b) a simple intensity strip — name = the entity, value = the metric.
-  Example "heatmap of departments with highest spending" → name = department, value = total spend
-  (one row per department); the hottest cell is the biggest spender. Use the sumIf()-per-category pivot
-  for the grid form. Do NOT fall back to a bar when a heatmap is explicitly requested.
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║ DECISION — before writing any SQL, classify the request into ONE verdict:     ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-• "build"   → You are confident WHICH metric, WHICH dimension, and (for comparisons) WHICH exact
-              entities/periods to use, AND the data to answer it exists in the schema above. Emit charts.
-• "clarify" → The request is ambiguous OR underspecified in a way that changes the answer: e.g. an
-              entity name you cannot match to LIVE DATA, "top" without a measure, "compare" without two
-              clear subjects, a metric that could mean several things. DO NOT GUESS. Ask ONE focused
-              question with 2-4 concrete options drawn from LIVE DATA. A wrong-but-plausible chart is a
-              FAILURE — clarifying is always better than guessing.
-• "no_data" → The request is clear but the data genuinely does NOT exist in the schema/LIVE DATA
-              (e.g. headcount, payroll-by-employee, NPS, website traffic, a vendor/client/account that
-              does not appear in LIVE DATA). Be honest. NEVER substitute a different chart. Say what is
-              missing and, if useful, what you COULD show instead.
-
-COMPARISON ENGINE — "compare X vs Y" works for ANY dimension, not just clients:
-• Resolve every named subject to an EXACT value present in LIVE DATA (vendors, departments, accounts,
-  classes, clients, journal/source types). If a name is not an exact or obvious match → verdict "clarify"
-  and list the closest real candidates as options. Never run sumIf(col = 'TypoName') — it returns 0.
-• Entities (2+ vendors/departments/accounts/clients): one row per time bucket, one sumIf() column per
-  entity (see RULE 12). Use stacked_bar or line.
-• Periods (Q1 vs Q2, 2023 vs 2024, this month vs last): one row per category (dept/account/etc.),
-  one sumIf(..., <period condition>) column per period. Use bar (grouped).
-• Metrics (revenue vs expense, billed vs collected): one row per time bucket, one column per metric.
-• If the user says "compare" but names only one subject (or none), verdict "clarify" and ask which two.
-
-AXIS LABELS — REQUIRED on every chart (except metric/kpi/gauge/pie/donut/treemap):
-  xAxisLabel = what the "name"/X column represents, with unit if any (e.g. "Month", "Department", "Vendor").
-  yAxisLabel = what the "value"/Y column measures, WITH its unit (e.g. "Revenue (USD)", "Spend (USD)",
-               "Invoice Count", "Collection Rate (%)"). Be specific and accurate to the SQL you wrote.
-
-TITLE ACCURACY — the title MUST describe exactly what the SQL computes (metric + dimension + scope +
-  comparison subjects). "Admin vs Operations Monthly Spend (Last 12 Months)" — not "Spend Chart".
-
-OUTPUT FORMAT — JSON only, no explanation, no markdown. Always include "verdict".
-
-When verdict = "build":
-{
-  "verdict": "build",
-  "title": "Dashboard or chart title (specific, names the metric + dimension)",
-  "charts": [
-    {
-      "title": "Chart title (specific — use real account/department/vendor names from LIVE DATA)",
-      "description": "One-sentence insight this chart reveals",
-      "type": "bar",
-      "xAxisLabel": "Month",
-      "yAxisLabel": "Operating Spend (USD)",
-      "sql": "SELECT formatDateTime(toStartOfMonth(journal_date), '%b %Y') AS name, round(sumIf(toFloat64(line_amount), line_amount > 0), 2) AS value FROM analytics.v_fact_accounting_journal_lines_latest WHERE org_id IN ({externalOrgIds:Array(String)}) AND journal_date IS NOT NULL GROUP BY toStartOfMonth(journal_date) ORDER BY toStartOfMonth(journal_date) ASC LIMIT 100"
-    }
-  ]
-}
-
-When verdict = "clarify":
-{
-  "verdict": "clarify",
-  "clarification": {
-    "question": "One focused question (<=140 chars).",
-    "options": [
-      { "label": "Short button text", "value": "A plain-English restatement of the request, as the user would phrase it." }
-    ]
-  }
-}
-CLARIFY RULES — "question", "label", and "value" are ALL natural language shown to a human.
-  NEVER put SQL, column names, table names, or {placeholders} in any clarify field. The "value" is a
-  rephrased user request (e.g. "Compare Admin vs Operations spend by month") — NOT a query.
-
-When verdict = "no_data":
-{
-  "verdict": "no_data",
-  "message": "Plain, honest sentence: what was asked, why it is not available, and (optional) what IS available instead."
-}
-
-25. SAMPLE TABLE RULES — org_id filter required on both sample tables:
-    analytics.sample_trial_balance and analytics.sample_gl_dump BOTH have org_id. ALWAYS add WHERE org_id IN ({externalOrgIds:Array(String)}).
-    For P&L / balance sheet: ALWAYS use analytics.sample_trial_balance with org_id filter
-    For vendor/dept/class/GL detail: ALWAYS use analytics.sample_gl_dump with org_id filter
-    For monthly trends / time-series: use analytics.v_fact_accounting_journal_lines_latest (also with org_id filter)
-    DEPARTMENT VALUES (sample_gl_dump): 'Admin', 'Operations', 'Sales' — ONLY these three. NEVER 'Finance'.
-    CLASS VALUES (sample_gl_dump): 'General', 'Marketing', 'Product'
-    JOURNAL_TYPE VALUES (sample_gl_dump): 'AP', 'AS', 'EX', 'PR', 'TR'
-
-INTELLIGENCE RULES:
-- Read LIVE DATA below — use actual account names, departments, vendors in titles and WHERE clauses
-- Title charts with specific names: "Monthly Rent vs Marketing Spend" not "Expense Chart"
-- For P&L totals → use analytics.sample_trial_balance WHERE org_id IN ({externalOrgIds:Array(String)}) with account_type filters (see KEY FORMULAS above)
-- For vendor spend → SELECT vendor_customer, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND vendor_customer != '' GROUP BY vendor_customer
-- For department spend → SELECT department, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND department != '' GROUP BY department
-- For class spend → SELECT class, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND class != '' GROUP BY class
-- For "by department": departments are EXACTLY 'Admin', 'Operations', 'Sales' — no Finance, no Other
-- CRITICAL: "department spend" / "operating spend by dept" / "spend contribution by dept" = sum(debit) from sample_gl_dump with NO account_type filter. Operations=$716,470 is the LARGEST dept. If your dept totals don't match Admin~$374K, Ops~$716K, Sales~$216K, your SQL is WRONG — you likely added an account_type filter that excludes COGS.
-- For "by vendor": use vendor_customer from analytics.sample_gl_dump NOT vendor_name from journal lines
-- For "by account": GROUP BY account_name ORDER BY value DESC LIMIT 20
-- For revenue+expense comparison: multi-series with two value columns
-- Max 6 charts per dashboard — pick what genuinely answers the question
-- ZERO hallucination: only columns listed above, only views listed above
-- FINAL column names MUST be "name" and "value" (not "dept", "vendor", "cls", etc.) for single-dimension charts
-- ZERO Finance: NEVER add a Finance department — it does not exist in the data
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║ SINGLE CHART PRINCIPLE — ABSOLUTELY MANDATORY                                ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-When the user asks for "a line chart", "a bar chart", "a scatter plot", "a donut chart",
-etc. — output EXACTLY 1 chart. NEVER produce multiple charts breaking down by dimension.
-Multi-dimensional data belongs INSIDE a single chart using the sumIf() pivot pattern
-(one column per dimension entity, one row per time bucket). Do NOT output one chart per
-department, one chart per vendor, etc.
-
-CORRECT: "Create a line chart showing monthly spend trends for Admin, Operations, Sales"
-→ 1 chart, SQL uses sumIf pivot: one row per month, columns: name, admin, operations, sales.
-
-WRONG: 3 separate charts (one for Admin, one for Operations, one for Sales).
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║ NO_DATA CASES — always return "no_data" for these, NEVER generate a chart    ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-Return verdict="no_data" (NEVER substitute a bar chart) for:
-• headcount / employee count / FTE / number of employees / per employee ONLY when the listed schema has no employee/headcount/efficiency view
-• geographic / regional / by city / by country / by location / by office ONLY when the listed schema has no geography/country/delivery_center columns
-• budget vs actual / plan vs actual / variance analysis (unless user explicitly said "actuals only")
-• NPS / satisfaction / customer sentiment
-• website traffic / digital metrics
-• box plot / decomposition tree / violin plot (these chart types are not supported)
-• any metric not present in the schema above (e.g. SKU count, conversion rate)
-Message template: "Sorry, [what was asked] is not available in this financial dataset. I can show you [what IS available] instead."
-
-SCATTER: use COUNT() for transaction count (never sum(id)). Output: name, x (spend), y (count).
-  Example: SELECT dept AS name, round(sum(debit),0) AS x, count() AS y FROM sample_gl_dump WHERE ... GROUP BY dept LIMIT 20
-HEATMAP: ALWAYS return type="heatmap". NEVER substitute bar. SQL: name=entity, value=intensity.
-MATRIX: ALWAYS return type="matrix". Use a wide pivot with row labels in name and spend columns by the cross dimension.
-TREEMAP: values MUST be positive. Use abs() or sumIf(>0).
-WATERFALL: P&L order with signed values. Revenue(+), COGS(-), GrossProfit(+), OpEx(-), NetIncome(+). Use sample_trial_balance UNION ALL queries.
-KPI CARD: return type="kpi" for "KPI card/dashboard/tile". SQL: name=metric label, value=amount.
-MONTHLY DEPT PIVOT (MANDATORY for month+department charts): One row per month, one sumIf column per dept.
-  SQL pattern: SELECT formatDateTime(toStartOfMonth(date),'%b %Y') AS name, round(sumIf(debit,dept='Admin'),0) AS admin, round(sumIf(debit,dept='Operations'),0) AS operations, round(sumIf(debit,dept='Sales'),0) AS sales FROM sample_gl_dump WHERE ... GROUP BY toStartOfMonth(date) ORDER BY toStartOfMonth(date) LIMIT 24
-CLASS SQL: column is 'class' (not class_name) in sample_gl_dump. SELECT COALESCE(NULLIF(class,''),'Other') AS name, round(sum(debit),0) AS value FROM sample_gl_dump WHERE ... AND class!='' GROUP BY COALESCE(NULLIF(class,''),'Other') LIMIT 10
-ASSET/LIABILITY: use abs() for positive values. sample_trial_balance account_type IN ('Fixed Asset','Accounts Receivable',...) HAVING value > 0.
-INCOME SOURCES: SELECT account_name AS name, round(abs(sum(net_balance)),0) AS value FROM sample_trial_balance WHERE account_type='Income' GROUP BY account_name HAVING value>0 ORDER BY value DESC LIMIT 20
-DEPT INCOME vs EXPENSE: dept-level revenue does NOT exist. Clarify or show dept expenses only.
-SCATTER DEPT: SELECT COALESCE(NULLIF(department,''),'Other') AS name, round(sum(debit),0) AS x, count() AS y FROM sample_gl_dump WHERE ... AND dept!='' GROUP BY ... LIMIT 20`;
+// --- LLM prompt + schema constants extracted to ./agent-prompts.ts ---
 
 // ─── AgentService ─────────────────────────────────────────────────────────────
 
@@ -1833,10 +110,15 @@ export class AgentService {
   private readonly analyticsDb: string;
   private analyticsSchemaEnsured = false;
   private analyticsSchemaEnsurePromise: Promise<void> | null = null;
+  private readonly smartPlanCache = new Map<
+    string,
+    { result: SmartPlanResult; at: number }
+  >();
   private readonly asOfCache = new Map<
     string,
     { asOfIso: string | null; expiresAt: number }
   >();
+  private readonly SMART_PLAN_CACHE_TTL_MS = 10 * 60 * 1000;
 
   constructor(
     @Inject(PRISMA_TOKEN) private readonly prisma: PrismaClient,
@@ -2869,6 +1151,18 @@ export class AgentService {
     return { data, requestedRangeLabel, availableRange };
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // LEGACY DETERMINISTIC PLANNER (metricData + generatePlan + selectWidgetsForQuery)
+  // ────────────────────────────────────────────────────────────────────────────
+  // This block is the pre-catalog, hardcoded (metric × grouping) SQL builder. It is
+  // NO LONGER the primary path — the spec/catalog planner (generateSpecPlan +
+  // chart-spec*.ts) serves ~100% of normal traffic (validated: 0 rescues / 52 Qs).
+  // It is intentionally KEPT because it is load-bearing in two ways (see
+  // AGENT_ARCHITECTURE.md → "Legacy planner"): (1) LLM-offline graceful degradation,
+  // and (2) the per-edit tool plan. Do NOT delete without reworking those paths and
+  // deciding the offline-resilience product question. Gated/observable via
+  // AGENT_LEGACY_FALLBACK + the `served=legacy` log.
+  // ════════════════════════════════════════════════════════════════════════════
   async metricData(
     organizationId: string,
     role: MembershipRole,
@@ -9933,26 +8227,32 @@ export class AgentService {
       let editPlan: DashboardEditPlan | null = null;
 
       if (intent === 'EDIT_DASHBOARD' && activeDashboard) {
-        const [resolvedPlan, resolvedEdit] = await Promise.all([
-          this.generatePlan(
-            queryText,
-            conversationHistory,
-            activeDashboard,
-            dataContext,
-            scope,
-            spec.timeRange,
-          ),
-          this.generateEditPlan(
-            activeDashboard,
-            queryText,
-            scope,
-            spec.timeRange,
-            conversationHistory,
-          ),
-        ]);
-        plan = resolvedPlan;
-        plan.should_generate_dashboard = false; // We're editing, not creating
-        editPlan = resolvedEdit;
+        // The edit itself comes from generateEditPlan. The legacy generatePlan used to
+        // run here too, only to supply tools_to_execute (data for the brief); we now
+        // derive those tools from the existing dashboard's widgets — the same helper the
+        // modern create path uses — so the edit path no longer depends on the legacy
+        // planner. (We're editing, not creating, so should_generate_dashboard=false.)
+        editPlan = await this.generateEditPlan(
+          activeDashboard,
+          queryText,
+          scope,
+          spec.timeRange,
+          conversationHistory,
+        );
+        const editTools = this.deriveToolsFromWidgets(
+          activeDashboard.widgets.map((w) => ({
+            type: (w.chartType || 'bar') as ChartType,
+            metric: String((w.queryConfig as any)?.metric ?? 'dynamic'),
+            grouping: String((w.queryConfig as any)?.grouping ?? 'dynamic'),
+          })),
+          queryText,
+        );
+        plan = {
+          tools_to_execute: editTools,
+          should_generate_dashboard: false,
+          dashboard: { title: '', description: '', widgets: [] },
+          analysis_focus: queryText,
+        };
       } else {
         // ── PRIMARY: SQL-first structured planner ───────────────────────────
         // Returns build / clarify / no_data — never a guessed chart. Only when
@@ -10022,77 +8322,93 @@ export class AgentService {
         // vocabulary planner produces a non-empty dashboard for this query, use
         // it instead of surfacing the incorrect "no data" message.
         if (smartResult?.kind === 'no_data') {
-          const vocabFallback = await this.generatePlan(
-            queryText,
-            conversationHistory,
-            activeDashboard,
-            dataContext,
-            scope,
-            spec.timeRange,
-          ).catch(() => null);
-          const vocabHasCharts =
-            (vocabFallback?.dashboard?.widgets?.length ?? 0) > 0;
-          if (vocabHasCharts && vocabFallback) {
-            // Vocabulary planner has an answer — use it, log smart plan's no_data.
-            this.logger.log(
-              `[Agent] Smart plan no_data overridden by vocab planner for: "${queryText.slice(0, 60)}"`,
-            );
-            await logEvent('NO_DATA_OVERRIDE', {
-              smartMsg: smartResult.message.slice(0, 100),
-            });
-            plan = vocabFallback;
-          } else {
-            await logEvent('NO_DATA', {
-              message: smartResult.message.slice(0, 200),
-            });
-
-            await this.prisma.agentChatMessage.create({
-              data: {
-                sessionId: currentSession.id,
-                organizationId,
-                role: 'assistant',
-                content: smartResult.message,
-              },
-            });
-            await this.prisma.agentDashboardRequest.update({
-              where: { id: request.id },
-              data: { status: 'SUCCEEDED', completedAt: new Date() },
-            });
-            await this.prisma.agentRun.update({
-              where: { id: run.id },
-              data: {
-                status: 'SUCCEEDED',
-                completedAt: new Date(),
-                latencyMs: Date.now() - runStartedAt,
-              },
-            });
-
-            for (const part of this.chunkText(smartResult.message, 24)) {
-              yield this.chunk('token', { content: part });
-            }
-            yield this.chunk('done', {
-              metrics: {
-                sessionId: currentSession.id,
-                intent,
-                noData: true,
-              },
-            });
-            return;
+          // The spec/catalog path could not model this and the data genuinely is not
+          // available → surface it honestly, build nothing. (The legacy vocab/metricData
+          // rescue was validated redundant — 0 rescues across 52 representative questions,
+          // incl. the documented legacy-only cases — and has been removed.)
+          await logEvent('NO_DATA', {
+            message: smartResult.message.slice(0, 200),
+          });
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+              content: smartResult.message,
+            },
+          });
+          await this.prisma.agentDashboardRequest.update({
+            where: { id: request.id },
+            data: { status: 'SUCCEEDED', completedAt: new Date() },
+          });
+          await this.prisma.agentRun.update({
+            where: { id: run.id },
+            data: {
+              status: 'SUCCEEDED',
+              completedAt: new Date(),
+              latencyMs: Date.now() - runStartedAt,
+            },
+          });
+          for (const part of this.chunkText(smartResult.message, 24)) {
+            yield this.chunk('token', { content: part });
           }
+          yield this.chunk('done', {
+            metrics: {
+              sessionId: currentSession.id,
+              intent,
+              noData: true,
+            },
+          });
+          return;
         }
 
         if (smartResult?.kind === 'build') {
           plan = smartResult.plan;
         } else {
-          // Planner offline/failed — fall back to the vocabulary planner.
-          plan = await this.generatePlan(
-            queryText,
-            conversationHistory,
-            activeDashboard,
-            dataContext,
-            scope,
-            spec.timeRange,
+          // Planner unavailable (LLM offline, or it failed to return a usable plan).
+          // Product decision (AGENT_ARCHITECTURE.md → offline mode): surface an honest
+          // "temporarily unavailable" rather than the legacy deterministic planner,
+          // whose output is GL-only and can be subtly wrong — worse than an honest
+          // retry for a finance tool. Previously-seen questions are already served
+          // correctly by the plan cache (which runs BEFORE the LLM ping), so this only
+          // affects genuinely-new questions during an outage.
+          const offlineMsg =
+            'Analysis is temporarily unavailable — the AI service could not be reached. Your data is unaffected; please try again in a moment.';
+          this.logger.warn(
+            `[planner] served=offline-error query=${JSON.stringify(queryText.slice(0, 80))}`,
           );
+          await logEvent('LLM_UNAVAILABLE', { query: queryText.slice(0, 100) });
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+              content: offlineMsg,
+            },
+          });
+          await this.prisma.agentDashboardRequest.update({
+            where: { id: request.id },
+            data: { status: 'FAILED', completedAt: new Date() },
+          });
+          await this.prisma.agentRun.update({
+            where: { id: run.id },
+            data: {
+              status: 'FAILED',
+              completedAt: new Date(),
+              latencyMs: Date.now() - runStartedAt,
+            },
+          });
+          for (const part of this.chunkText(offlineMsg, 24)) {
+            yield this.chunk('token', { content: part });
+          }
+          yield this.chunk('done', {
+            metrics: {
+              sessionId: currentSession.id,
+              intent,
+              unavailable: true,
+            },
+          });
+          return;
         }
       }
 
@@ -10480,19 +8796,9 @@ export class AgentService {
         message: 'Composing your financial intelligence brief...',
       });
 
-      const synthesisMessages = this.buildSynthesisMessages(
-        queryText,
-        toolResults,
-        plan,
-        dashboardId,
-        dashboardTitle,
-        intent,
-        editPlan,
-        actualWidgetCount,
-      );
-
-      void synthesisMessages; // reserved for future "LLM rewrite" mode; deterministic output avoids hallucination.
-
+      // Brief is composed deterministically (no LLM hop → no hallucination). The
+      // SYNTHESIZER_SYSTEM prompt remains in agent-prompts.ts for a future opt-in
+      // "LLM rewrite" mode; the dead message-builder wiring was removed.
       const fullResponse = this.composeDeterministicBrief(
         spec,
         toolResults,
@@ -13145,15 +11451,15 @@ export class AgentService {
   // when the planner itself is unavailable (Ollama offline) so callers can fall
   // back. A confident "build", an honest "no_data", and a focused "clarify" are
   // all valid first-class results — never a guessed chart.
-  // ─── Phase 2: spec-first planner (behind AGENT_SPEC_MODE flag) ──────────────
+  // ─── Phase 2: spec-first planner ────────────────────────────────────────────
   // Instead of free-writing SQL, the LLM emits a small ChartSpec chosen ONLY from
   // the catalog; compileSpec turns it into deterministic, scoped SQL. The model
   // cannot reference a column that doesn't exist, and a request needing
   // unavailable data is refused by catalog lookup. Returns a SmartPlanResult so it
   // slots into the existing create path; null = unavailable → caller falls back.
   // Chart classes the spec compiler faithfully models (measure × dimension ×
-  // optional breakdown). Anything else — multi-widget dashboards, waterfall, KPI
-  // cards, scatter/bubble (need x/y), treemap hierarchies, sunburst — must defer
+  // optional breakdown). Anything else — multi-widget dashboards, waterfall,
+  // treemap hierarchies, sunburst — must defer
   // to the proven legacy planner rather than risk a confident wrong chart.
   private static readonly SPEC_SUPPORTED_TYPES: ReadonlySet<string> = new Set([
     'bar',
@@ -13176,6 +11482,9 @@ export class AgentService {
     // multi-measure spec (measures[]) emitting name/x/y/z columns.
     'scatter',
     'bubble',
+    // Single-widget scorecards: multi-measure specs with no dimension compile to
+    // name/value KPI rows. Multi-widget dashboards still defer to the legacy path.
+    'kpi',
   ]);
 
   // A treemap with a breakdown is a 2-level hierarchy the compiler doesn't model
@@ -13184,6 +11493,7 @@ export class AgentService {
     const ct = String(spec.chartType ?? '').toLowerCase();
     if (!AgentService.SPEC_SUPPORTED_TYPES.has(ct)) return false;
     if (ct === 'treemap' && spec.breakdown) return false;
+    if (ct === 'kpi' && spec.dimension) return false;
     return true;
   }
 
@@ -13191,21 +11501,501 @@ export class AgentService {
   // or a chart type the spec compiler doesn't model.
   private specModeCanHandle(query: string): boolean {
     const q = String(query ?? '').toLowerCase();
+    const wantsSingleScorecard = /\b(scorecard|kpis?|kpi\s+cards?)\b/.test(q);
     if (
-      /\b(dashboard|executive|cfo|scorecard|c-?suite|board\s+deck|multiple\s+charts|several\s+charts|set\s+of\s+charts|a\s+few\s+charts)\b/.test(
+      /\b(dashboard|executive|c-?suite|board\s+deck|multiple\s+charts|several\s+charts|set\s+of\s+charts|a\s+few\s+charts)\b/.test(
         q,
-      )
+      ) &&
+      !wantsSingleScorecard
     )
       return false;
     // scatter/bubble ARE handled by the spec compiler now (multi-measure x/y/z), so
     // they're no longer deferred. Waterfall and gauge/funnel/sunburst remain legacy.
     if (
-      /\b(waterfall|sun\s*burst|gauge|funnel|kpis?\b|kpi\s+card|score\s*card)\b/.test(
+      /\b(waterfall|sun\s*burst|gauge|funnel)\b/.test(
         q,
       )
     )
       return false;
     return true;
+  }
+
+  private async buildEbpoScorecardPlan(
+    query: string,
+    scope: OrgScope,
+  ): Promise<SmartPlanResult | null> {
+    const scorecardMeasures = this.detectEbpoScorecardMeasures(query);
+    if (scorecardMeasures.length === 0) return null;
+    const spec: ChartSpec = {
+      measure: scorecardMeasures[0],
+      measures: scorecardMeasures,
+      dimension: '',
+      chartType: 'kpi',
+    };
+    if (!this.specCanModelChart(spec)) return null;
+    const runRows = (sql: string) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
+    const compiled = await compileEbpoSpec(spec, this.analyticsDb, runRows);
+    if (!compiled.ok) return null;
+    const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+      chartType: 'kpi',
+    }).catch(() => null);
+    if (!check || check.error || check.rows.length === 0) return null;
+
+    const title = /\bscorecard\b/i.test(query) ? 'EBPO Scorecard' : 'EBPO KPI Cards';
+    this.logger.log(
+      `[SpecPlan:EBPO-scorecard] built "${title}" from measures ${scorecardMeasures.join(',')}`,
+    );
+    return {
+      kind: 'build',
+      plan: {
+        tools_to_execute: [],
+        should_generate_dashboard: true,
+        dashboard: {
+          title,
+          description: '',
+          widgets: [
+            {
+              title,
+              description: '',
+              type: 'kpi',
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              display_order: 0,
+              _sql: compiled.sql,
+              _spec: spec,
+              display: {
+                valueFormat: compiled.measure.format,
+                ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
+                  ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
+                  : {}),
+              },
+            } as any,
+          ],
+        },
+        analysis_focus: query,
+      },
+    };
+  }
+
+  // Deterministic EBPO create path for the specific CFO/capacity questions the
+  // workbook asks over and over. This is intentionally catalog-backed: every
+  // branch resolves to a real catalog measure or a transparent derived formula
+  // built from existing views, so it can run without the model and still match
+  // Power BI.
+  private async buildEbpoSemanticPlan(
+    query: string,
+    scope: OrgScope,
+  ): Promise<SmartPlanResult | null> {
+    type SmartPlanWidget = AgentPlan['dashboard']['widgets'][number];
+    const qLow = query.toLowerCase();
+    const forcedChartType = this.parseExplicitChartConstraints(query)?.requiredTypes?.[0] as
+      | ChartType
+      | undefined;
+    const runRows = (sql: string) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
+    const build = async (
+      spec: ChartSpec,
+      title: string,
+      description: string,
+    ): Promise<SmartPlanResult | null> => {
+      const compiled = await compileEbpoSpec(spec, this.analyticsDb, runRows);
+      if (!compiled.ok) return null;
+      const chartType = (spec.chartType ?? 'bar') as ChartType;
+      const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+        chartType,
+      }).catch(() => null);
+      if (!check || check.error || check.rows.length === 0) return null;
+      if (this.detectBadChartShape(check.rows, chartType)) return null;
+      return {
+        kind: 'build',
+        plan: {
+          tools_to_execute: [],
+          should_generate_dashboard: true,
+          dashboard: {
+            title,
+            description,
+            widgets: [
+              {
+                title: title.slice(0, 80),
+                description,
+                type: chartType,
+                metric: 'dynamic',
+                grouping: 'dynamic',
+                display_order: 0,
+                _sql: compiled.sql,
+                _spec: spec,
+                display: {
+                  valueFormat: compiled.measure.format,
+                  ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
+                    ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
+                    : {}),
+                },
+              } as any,
+            ],
+          },
+          analysis_focus: query,
+        },
+      };
+    };
+
+    if (
+      /\b(dashboard|overview|summary|scorecard|kpi)\b/.test(qLow) &&
+      /\b(liquidity|profitability|efficiency|cash\s+conversion|cash\s+position|employee\s+efficiency)\b/.test(
+        qLow,
+      )
+    ) {
+      const widgets: SmartPlanWidget[] = [];
+      const buildWidget = async (
+        spec: ChartSpec,
+        title: string,
+        description: string,
+      ) => {
+        const built = await build(spec, title, description);
+        if (!built || built.kind !== 'build') return null;
+        return built.plan.dashboard.widgets[0] ?? null;
+      };
+      if (/\bliquidity\b|\bcash\s+position\b/.test(qLow)) {
+        const liquidity = await buildWidget(
+          {
+            measure: 'cash_balance',
+            measures: ['cash_balance', 'working_capital', 'ar_outstanding', 'ap_outstanding'],
+            dimension: '',
+            chartType: 'kpi',
+          },
+          'Liquidity Snapshot',
+          'Cash balance, working capital, receivables, and payables',
+        );
+        if (liquidity) widgets.push(liquidity);
+      }
+      if (/\bprofitability\b/.test(qLow)) {
+        const profitability = await buildWidget(
+          {
+            measure: 'gross_margin_pct',
+            measures: [
+              'gross_margin_pct',
+              'ebitda_style_margin_pct',
+              'free_cash_flow',
+              'total_revenue',
+              'total_cost',
+            ],
+            dimension: '',
+            chartType: 'kpi',
+          },
+          'Profitability Snapshot',
+          'Gross margin, EBITDA-style margin, revenue, and cost',
+        );
+        if (profitability) widgets.push(profitability);
+      }
+      if (/\befficiency\b|\bemployee\s+efficiency\b/.test(qLow)) {
+        const efficiency = await buildWidget(
+          {
+            measure: 'revenue_per_employee',
+            measures: ['revenue_per_employee', 'cost_per_employee'],
+            dimension: '',
+            chartType: 'kpi',
+          },
+          'Employee Efficiency Snapshot',
+          'Revenue per employee and cost per employee',
+        );
+        if (efficiency) widgets.push(efficiency);
+      }
+      if (/\bcash\s+conversion\b/.test(qLow)) {
+        const cashConversion = await buildWidget(
+          {
+            measure: 'operating_cf_to_revenue_pct',
+            measures: ['operating_cf_to_revenue_pct', 'payroll_to_revenue_pct'],
+            dimension: '',
+            chartType: 'kpi',
+          },
+          'Cash Conversion Snapshot',
+          'Operating cash flow and payroll as a percentage of revenue',
+        );
+        if (cashConversion) widgets.push(cashConversion);
+      }
+      if (widgets.length >= 2) {
+        return {
+          kind: 'build',
+          plan: {
+            tools_to_execute: [],
+            should_generate_dashboard: true,
+            dashboard: {
+              title: 'EBPO Executive Dashboard',
+              description: 'Liquidity, profitability, efficiency, and cash conversion from verified EBPO measures',
+              widgets,
+            },
+            analysis_focus: query,
+          },
+        };
+      }
+    }
+
+    const explicitTypes = this.parseExplicitChartConstraints(query)?.requiredTypes ?? [];
+    const chartType =
+      (explicitTypes[0] as ChartType | undefined) ??
+      (/\b(heat\s*map|heatmap|matrix|treemap)\b/.test(qLow)
+        ? (/matrix/.test(qLow) ? 'matrix' : /\btreemap\b/.test(qLow) ? 'treemap' : 'heatmap')
+        : /\bscatter\b/.test(qLow)
+          ? 'scatter'
+          : /\bbubble\b/.test(qLow)
+            ? 'bubble'
+            : /\bcombo\b/.test(qLow)
+              ? 'combo'
+              : /\bwaterfall\b/.test(qLow)
+                ? 'waterfall'
+                : /\bline\b/.test(qLow)
+                  ? 'line'
+                  : /\bbar\b|\bcolumn\b/.test(qLow)
+                    ? 'bar'
+                  : null);
+    if (/\bbox\s+plot\b/.test(qLow)) {
+      return {
+        kind: 'no_data',
+        message:
+          'I cannot build a box plot from the current EBPO chart vocabulary. The underlying salary data can be shown as bars, heatmaps, or matrices instead.',
+      } as SmartPlanResult;
+    }
+    const measureIds = this.detectEbpoMeasureMentions(query);
+    const uniqueMeasures = [...new Set(measureIds)];
+    const detectDims = (): { dimension: string; breakdown?: string | null } | null => {
+      const dimChecks: Array<[string, RegExp]> = [
+        ['delivery_center', /\bdelivery\s+center\b/],
+        ['business_unit', /\bbusiness\s+unit\b/],
+        ['department', /\bdepartment\b|\bdept\b/],
+        ['country', /\bcountry\b/],
+        ['region', /\bregion\b/],
+        ['client', /\bclient\b|\bcustomer\b/],
+        ['vendor', /\bvendor\b|\bsupplier\b/],
+        ['asset_type', /\basset\s+type\b/],
+        ['grade', /\bgrade\b/],
+        ['contract_type', /\bcontract\s+type\b/],
+        ['aging_bucket', /\baging\s+bucket\b|\bbucket\b/],
+        ['account', /\baccount\b|\bgl\b/],
+      ];
+      const temporal =
+        /\bmonth\b|\bmonthly\b|\bover\s+time\b|\btrend\b|\bthis\s+year\b|\bytd\b/.test(qLow);
+      const hits = dimChecks
+        .map(([d, rx]) => ({ d, idx: qLow.search(rx) }))
+        .filter((x) => x.idx >= 0)
+        .sort((a, b) => a.idx - b.idx)
+        .map((x) => x.d);
+      if (chartType === 'heatmap' || chartType === 'matrix') {
+        if (temporal && hits.length > 0) {
+          const other = hits.find((d) => d !== 'month') ?? hits[0]!;
+          return { dimension: 'month', breakdown: other };
+        }
+        if (hits.length >= 2) return { dimension: hits[0]!, breakdown: hits[1]! };
+      }
+      if (temporal) return { dimension: 'month' };
+      if (hits.length > 0) return { dimension: hits[0]! };
+      return null;
+    };
+    const axes = detectDims();
+    if (chartType && uniqueMeasures.length > 0 && axes) {
+      const spec: ChartSpec = {
+        measure: uniqueMeasures[0]!,
+        dimension: axes.dimension,
+        chartType,
+        ...(uniqueMeasures.length > 1 ? { measures: uniqueMeasures } : {}),
+        ...(axes.breakdown ? { breakdown: axes.breakdown } : {}),
+      };
+      const built = await build(
+        spec,
+        `${(uniqueMeasures[0] ?? 'EBPO').replace(/_/g, ' ')} by ${axes.dimension.replace(/_/g, ' ')}`,
+        query.slice(0, 160),
+      );
+      if (built) return built;
+    }
+
+    if (
+      /\bcash\s+conversion\b|\boperating\s+cash\s+flow\s+divided\s+by\s+revenue\b|\bocf\b.*\brevenue\b/.test(
+        qLow,
+      )
+    ) {
+      const built = await build(
+        {
+          measure: 'operating_cf_to_revenue_pct',
+          dimension: 'month',
+          chartType: forcedChartType ?? 'line',
+        },
+        'Monthly Cash Conversion',
+        'Operating cash flow divided by revenue by month',
+      );
+      if (built) return built;
+    }
+
+    if (
+      /\brevenue\s+per\s+employee\b/.test(qLow) &&
+      /\bdepartment\b/.test(qLow) &&
+      /\bmonth\b/.test(qLow)
+    ) {
+      const built = await build(
+        {
+          measure: 'revenue_per_employee',
+          dimension: 'month',
+          breakdown: 'department',
+          chartType: 'heatmap',
+        },
+        'Revenue per Employee by Department and Month',
+        'Department revenue per employee over time',
+      );
+      if (built) return built;
+    }
+
+    if (
+      /\bebitda[\s-]*style\s+margin\b|\brevenue\s+minus\s+cost\s+minus\s+payroll\b/.test(
+        qLow,
+      )
+    ) {
+      const built = await build(
+        {
+          measure: 'ebitda_style_margin_pct',
+          dimension: 'month',
+          chartType: forcedChartType ?? 'bar',
+        },
+        'Monthly EBITDA-style Margin',
+        'EBITDA-style margin from revenue minus cost minus payroll',
+      );
+      if (built) return built;
+    }
+
+    if (/\bnet\s+working\s+capital\b|\bworking\s+capital\b/.test(qLow)) {
+      const built = await build(
+        {
+          measure: 'working_capital',
+          dimension: 'month',
+          chartType: forcedChartType ?? 'line',
+        },
+        'Monthly Working Capital',
+        'Working capital by month',
+      );
+      if (built) return built;
+    }
+
+    if (/\brevenue\s+per\s+delivery\s+center\b/.test(qLow)) {
+      const built = await build(
+        {
+          measure: 'allocated_revenue',
+          dimension: 'delivery_center',
+          chartType: forcedChartType ?? 'bar',
+        },
+        'Revenue by Delivery Center',
+        'Allocated revenue by delivery center',
+      );
+      if (built) return built;
+    }
+
+    if (/\bcost[\s-]*to[\s-]*income\b|\btotal\s+cost\s+divided\s+by\s+revenue\b/.test(qLow)) {
+      const built = await build(
+        {
+          measure: 'cost_to_income_pct',
+          dimension: 'month',
+          chartType: forcedChartType ?? 'bar',
+        },
+        'Monthly Cost-to-Income Ratio',
+        'Cost-to-income ratio by month',
+      );
+      if (built) return built;
+    }
+
+    if (
+      /\bcash\s+balance\b/.test(qLow) &&
+      /\boutstanding\s+receivables?\b/.test(qLow) &&
+      /\bmonth\b/.test(qLow)
+    ) {
+      const measures = ['cash_balance', 'ar_outstanding'];
+      if (/\boutstanding\s+payables?\b/.test(qLow)) measures.push('ap_outstanding');
+      const built = await build(
+        {
+          measure: measures[0]!,
+          measures,
+          dimension: 'month',
+          chartType: 'line',
+        },
+        'Monthly Cash Balance and Receivables',
+        'Cash balance with outstanding receivables by month',
+      );
+      if (built) return built;
+    }
+
+    if (/\bpayroll\s+cost\s+per\s+employee\b|\bcost\s+per\s+employee\b/.test(qLow)) {
+      const dim =
+        /\bcountry\b/.test(qLow) ? 'country' : /\bdepartment\b/.test(qLow) ? 'department' : null;
+      if (dim) {
+        const built = await build(
+          {
+            measure: 'cost_per_employee',
+            dimension: dim,
+            chartType: forcedChartType ?? 'bar',
+          },
+          'Cost per Employee',
+          `Cost per employee by ${dim}`,
+        );
+        if (built) return built;
+      }
+    }
+
+    return null;
+  }
+
+  // Plan cache: normalized question → the catalog spec it produced. Lets repeat
+  // questions skip the LLM entirely (latency + cost), and — critically — lets the
+  // agent still answer PREVIOUSLY-SEEN questions correctly when the LLM is offline,
+  // by replaying the cached spec through the deterministic compiler (no hallucination,
+  // works for GL and EBPO). A hit still re-runs ClickHouse, so the data is always
+  // fresh; only the LLM step is skipped. Keyed by org-type (GL/EBPO use different
+  // catalogs). See AGENT_ARCHITECTURE.md → "offline mode".
+  private readonly specPlanCache = new Map<
+    string,
+    { spec: ChartSpec; title: string; useEbpo: boolean; at: number }
+  >();
+  private readonly SPEC_CACHE_TTL_MS = 30 * 60 * 1000;
+
+  private specCacheKey(query: string, useEbpo: boolean): string {
+    return `${useEbpo ? 'ebpo' : 'gl'}:${query.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+  }
+
+  private smartPlanCacheKey(
+    query: string,
+    scope: OrgScope,
+    range?: TimeRange,
+    conversationHistory?: string,
+  ): string {
+    const orgs = (scope.externalOrgIds ?? []).slice().sort().join(',');
+    const history = conversationHistory
+      ? conversationHistory.trim().slice(0, 400).replace(/\s+/g, ' ')
+      : '';
+    const rangeKey = range ? JSON.stringify(range) : '';
+    return [
+      scope.tenantId,
+      orgs,
+      query.trim().toLowerCase().replace(/\s+/g, ' '),
+      rangeKey,
+      history,
+    ].join('::');
+  }
+
+  private getCachedSmartPlan(cacheKey: string): SmartPlanResult | null {
+    const cached = this.smartPlanCache.get(cacheKey);
+    if (!cached) return null;
+    if (Date.now() - cached.at > this.SMART_PLAN_CACHE_TTL_MS) {
+      this.smartPlanCache.delete(cacheKey);
+      return null;
+    }
+    return structuredClone(cached.result);
+  }
+
+  private setCachedSmartPlan(cacheKey: string, result: SmartPlanResult): void {
+    this.smartPlanCache.set(cacheKey, {
+      result: structuredClone(result),
+      at: Date.now(),
+    });
   }
 
   private async generateSpecPlan(
@@ -13223,6 +12013,28 @@ export class AgentService {
       // so neither can hallucinate columns.
       const useEbpo =
         hasEbpoHint ?? (await this.orgHasEbpoData(scope).catch(() => false));
+
+      // Plan-cache fast path: replay a previously-built spec for this exact question.
+      // Placed BEFORE the LLM ping so it also serves when the LLM is unreachable.
+      const cacheKey = this.specCacheKey(query, useEbpo);
+      const cachedSpec = this.specPlanCache.get(cacheKey);
+      if (cachedSpec && Date.now() - cachedSpec.at < this.SPEC_CACHE_TTL_MS) {
+        const replay = await this.specToPlan(
+          cachedSpec.spec,
+          cachedSpec.title,
+          cachedSpec.useEbpo,
+          scope,
+          query,
+        );
+        if (replay) {
+          this.logger.log(
+            `[planner] served=spec-cache source=catalog query=${JSON.stringify(query.slice(0, 80))}`,
+          );
+          return replay;
+        }
+        this.specPlanCache.delete(cacheKey); // stale: no longer compiles / no data
+      }
+
       const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
         signal: AbortSignal.timeout(3000),
       }).catch(() => null);
@@ -13255,10 +12067,21 @@ export class AgentService {
       let parsed: any;
       try {
         parsed = JSON.parse(raw);
-      } catch {
-        const m = raw.match(/\{[\s\S]*\}/);
-        if (!m) return null;
-        parsed = JSON.parse(m[0]);
+      } catch (parseErr: any) {
+        const repaired = await this.repairPlannerJsonViaLLM(
+          SPEC_PLANNER_SYSTEM,
+          userMsg,
+          raw,
+          parseErr?.message ?? 'Invalid JSON from planner',
+        );
+        if (!repaired) return null;
+        try {
+          parsed = JSON.parse(repaired);
+        } catch {
+          const m = repaired.match(/\{[\s\S]*\}/);
+          if (!m) return null;
+          parsed = JSON.parse(m[0]);
+        }
       }
 
       // ADDITIVE, NOT REPLACING: spec mode only OWNS a result when it can
@@ -13273,61 +12096,129 @@ export class AgentService {
       if (!spec || typeof spec !== 'object') return null;
       if (!this.specCanModelChart(spec)) return null;
 
-      const runRows = (sql: string) =>
-        this.queryRows<Record<string, unknown>>(sql, {
-          tenantId: scope.tenantId,
-          externalOrgIds: scope.externalOrgIds,
-        });
-      const compiled = useEbpo
-        ? await compileEbpoSpec(spec, this.analyticsDb, runRows)
-        : await compileSpec(spec, this.analyticsDb, runRows);
-      if (!compiled.ok) return null;
-
-      // Verify the compiled SQL actually returns data before claiming a build.
-      const chartType = (spec.chartType ?? 'bar') as ChartType;
-      const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
-        chartType,
-      }).catch(() => null);
-      if (!check || check.error || check.rows.length === 0) return null;
-
-      const title = String(parsed?.title ?? compiled.measure.label).slice(0, 80);
-      this.logger.log(
-        `[SpecPlan] built "${title}" from spec ${JSON.stringify(spec).slice(0, 120)}`,
-      );
-      return {
-        kind: 'build',
-        plan: {
-          tools_to_execute: [],
-          should_generate_dashboard: true,
-          dashboard: {
-            title,
-            description: '',
-            widgets: [
-              {
-                title,
-                description: '',
-                type: chartType,
-                metric: 'dynamic',
-                grouping: 'dynamic',
-                display_order: 0,
-                _sql: compiled.sql,
-                _spec: spec,
-                // Carry the measure's unit so the web formats values correctly
-                // (percent measures render as % not $).
-                display: {
-                  valueFormat: compiled.measure.format,
-                  ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
-                    ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
-                    : {}),
-                },
-              } as any,
-            ],
-          },
-          analysis_focus: query,
-        },
-      };
+      const title = typeof parsed?.title === 'string' ? parsed.title : '';
+      const builtPlan = await this.specToPlan(spec, title, useEbpo, scope, query);
+      if (!builtPlan) return null;
+      // Cache only specs that actually built with data, so the offline/replay path
+      // never serves a spec that can't produce a chart.
+      this.specPlanCache.set(cacheKey, { spec, title, useEbpo, at: Date.now() });
+      if (builtPlan.kind === 'build') {
+        this.logger.log(
+          `[SpecPlan] built "${builtPlan.plan.dashboard.title}" from spec ${JSON.stringify(spec).slice(0, 120)}`,
+        );
+      }
+      return builtPlan;
     } catch (err: any) {
       this.logger.warn(`[SpecPlan] failed: ${err?.message ?? err}`);
+      return null;
+    }
+  }
+
+  // Deterministic tail of the spec planner: compile a catalog spec to SQL, verify it
+  // returns data, and shape the build plan. Shared by the live LLM path and the
+  // plan-cache / offline-replay path so both produce identical, correct output.
+  private async specToPlan(
+    spec: ChartSpec,
+    title: string,
+    useEbpo: boolean,
+    scope: OrgScope,
+    query: string,
+  ): Promise<SmartPlanResult | null> {
+    const runRows = (sql: string) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
+    const compiled = useEbpo
+      ? await compileEbpoSpec(spec, this.analyticsDb, runRows)
+      : await compileSpec(spec, this.analyticsDb, runRows);
+    if (!compiled.ok) return null;
+
+    // Verify the compiled SQL actually returns data before claiming a build.
+    const chartType = (spec.chartType ?? 'bar') as ChartType;
+    const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+      chartType,
+    }).catch(() => null);
+    if (!check || check.error || check.rows.length === 0) return null;
+
+    const finalTitle = (title || compiled.measure.label).slice(0, 80);
+    return {
+      kind: 'build',
+      plan: {
+        tools_to_execute: [],
+        should_generate_dashboard: true,
+        dashboard: {
+          title: finalTitle,
+          description: '',
+          widgets: [
+            {
+              title: finalTitle,
+              description: '',
+              type: chartType,
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              display_order: 0,
+              _sql: compiled.sql,
+              _spec: spec,
+              // Carry the measure's unit so the web formats values correctly
+              // (percent measures render as % not $).
+              display: {
+                valueFormat: compiled.measure.format,
+                ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
+                  ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
+                  : {}),
+              },
+            } as any,
+          ],
+        },
+        analysis_focus: query,
+      },
+    };
+  }
+
+  private async repairPlannerJsonViaLLM(
+    systemPrompt: string,
+    userPrompt: string,
+    rawOutput: string,
+    errorMessage: string,
+  ): Promise<string | null> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.OLLAMA_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content:
+                `${systemPrompt}\n\nYou are repairing malformed JSON from a planner. ` +
+                'Return only valid JSON and preserve the original intent. Do not add prose.',
+            },
+            {
+              role: 'user',
+              content:
+                `ORIGINAL PROMPT:\n${userPrompt}\n\n` +
+                `INVALID OUTPUT:\n${rawOutput}\n\n` +
+                `ERROR:\n${errorMessage}\n\n` +
+                'Return the corrected JSON only.',
+            },
+          ],
+          stream: false,
+          options: { temperature: 0.05, num_predict: 1200, num_ctx: 8192 },
+        }),
+      }).catch(() => null);
+      clearTimeout(timer);
+      if (!resp?.ok) return null;
+      const body = (await resp.json()) as { message?: { content?: string } };
+      const repaired = (body.message?.content ?? '')
+        .replace(/```json|```/g, '')
+        .trim();
+      return repaired || null;
+    } catch {
       return null;
     }
   }
@@ -13338,818 +12229,35 @@ export class AgentService {
     range?: TimeRange,
     conversationHistory?: string,
   ): Promise<SmartPlanResult | null> {
-    // Phase-2 opt-in: try the spec-first planner before the SQL-writing planner.
-    // Default-off so existing behavior is untouched until you flip the flag.
-    if (process.env.AGENT_SPEC_MODE === '1') {
-      const specPlan = await this.generateSpecPlan(
-        query,
-        scope,
-        conversationHistory,
-      ).catch(() => null);
-      if (specPlan) return specPlan;
+    const cacheKey = this.smartPlanCacheKey(
+      query,
+      scope,
+      range,
+      conversationHistory,
+    );
+    const cachedPlan = this.getCachedSmartPlan(cacheKey);
+    if (cachedPlan) {
+      this.logger.log(
+        `[planner] served=smart-cache source=memory query=${JSON.stringify(query.slice(0, 80))}`,
+      );
+      return cachedPlan;
+    }
+
+    // Spec-first is now the default: the model produces a closed ChartSpec, the
+    // deterministic compiler turns it into SQL, and the cache absorbs exact repeats.
+    const specPlan = await this.generateSpecPlan(
+      query,
+      scope,
+      conversationHistory,
+    ).catch(() => null);
+    if (specPlan) {
+      this.logger.log(
+        `[planner] served=spec source=catalog query=${JSON.stringify(query.slice(0, 80))}`,
+      );
+      this.setCachedSmartPlan(cacheKey, specPlan);
+      return specPlan;
     }
     try {
-      // The deterministic short-circuits below read the GL sample tables
-      // (sample_gl_dump / sample_trial_balance). For an EBPO org those tables are
-      // empty, so we MUST skip them and let the LLM write SQL against the v_ebpo_*
-      // views (driven by introspectEbpoSchema). Probe once up front.
-      const hasEbpo = await this.orgHasEbpoData(scope);
-
-      // Short-circuit for known patterns where the vocab handler gives exact results
-      // and LLM SQL generation is unreliable or produces wrong values.
-      const forcedChartType =
-        this.parseExplicitChartConstraints(query)?.requiredTypes?.[0];
-      const qLow = query.toLowerCase();
-
-      const ebpoSingleSqlChart = (
-        title: string,
-        description: string,
-        type: ChartType,
-        sql: string,
-      ): SmartPlanResult => ({
-        kind: 'build',
-        plan: {
-          tools_to_execute: [],
-          should_generate_dashboard: true,
-          dashboard: {
-            title,
-            description,
-            widgets: [
-              {
-                title: title.slice(0, 80),
-                description,
-                type,
-                metric: 'dynamic',
-                grouping: 'dynamic',
-                display_order: 0,
-                _sql: sql.trim(),
-              } as any,
-            ],
-          },
-          analysis_focus: query,
-        },
-      });
-
-      if (hasEbpo) {
-        if (
-          /\bpayroll\s+cost\s+per\s+employee\b|\bcost\s+per\s+employee\b/.test(qLow) &&
-          /\bcountr(?:y|ies)\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Payroll Cost per Employee by Country',
-            'Total payroll divided by employee count by country',
-            forcedChartType ?? 'bar',
-            `
-              SELECT
-                country AS name,
-                round(sum(total_payroll_usd) / nullIf(sum(employee_count), 0), 2) AS value
-              FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
-              WHERE tenant_id = {tenantId:String}
-                AND org_id IN ({externalOrgIds:Array(String)})
-                AND country != ''
-              GROUP BY country
-              ORDER BY value DESC
-              LIMIT 50
-            `,
-          );
-        }
-
-        if (
-          /\bcfo\b/.test(qLow) &&
-          /\bscorecard\b/.test(qLow) &&
-          /\brevenue\b/.test(qLow) &&
-          /\bgross\s+margin\b/.test(qLow) &&
-          /\bpayroll\b/.test(qLow) &&
-          /\bfree\s+cash\s+flow\b/.test(qLow) &&
-          /\breceivables?\b/.test(qLow) &&
-          /\bpayables?\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'CFO Monthly Scorecard',
-            'Revenue, gross margin, payroll, cash flow, receivables, and payables from verified EBPO monthly KPIs',
-            'kpi',
-            `
-              SELECT name, value
-              FROM (
-                SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 2) AS value, 1 AS ord
-                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
-                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                UNION ALL
-                SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 2) AS value, 2 AS ord
-                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
-                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                UNION ALL
-                SELECT 'Payroll' AS name, round(sum(total_payroll_usd), 2) AS value, 3 AS ord
-                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
-                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                UNION ALL
-                SELECT 'Free Cash Flow' AS name, round(sum(free_cash_flow_usd), 2) AS value, 4 AS ord
-                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
-                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                UNION ALL
-                SELECT 'Receivables' AS name, round(sum(ar_outstanding_usd), 2) AS value, 5 AS ord
-                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
-                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                UNION ALL
-                SELECT 'Payables' AS name, round(sum(ap_outstanding_usd), 2) AS value, 6 AS ord
-                FROM ${this.analyticsDb}.v_ebpo_kpi_monthly
-                WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-              )
-              ORDER BY ord ASC
-              LIMIT 10
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'waterfall' &&
-          /\brevenue\b/.test(qLow) &&
-          /\bcost\b/.test(qLow) &&
-          /\bgross\s+margin\b/.test(qLow) &&
-          /\bmonths?\b|\bmonthly\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Monthly Revenue, Cost, and Gross Margin Waterfall',
-            'Monthly revenue less cost with gross margin from live revenue data',
-            'waterfall',
-            `
-              WITH monthly AS (
-                SELECT
-                  period_date,
-                  total_revenue_usd,
-                  total_cost_usd,
-                  gross_margin_usd
-                FROM ${this.analyticsDb}.v_ebpo_revenue_monthly
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-              )
-              SELECT name, value
-              FROM (
-                SELECT
-                  period_date,
-                  1 AS display_order,
-                  concat(formatDateTime(period_date, '%b %Y'), ' Revenue') AS name,
-                  round(total_revenue_usd, 2) AS value
-                FROM monthly
-                UNION ALL
-                SELECT
-                  period_date,
-                  2 AS display_order,
-                  concat(formatDateTime(period_date, '%b %Y'), ' Cost') AS name,
-                  round(-total_cost_usd, 2) AS value
-                FROM monthly
-                UNION ALL
-                SELECT
-                  period_date,
-                  3 AS display_order,
-                  concat(formatDateTime(period_date, '%b %Y'), ' Gross Margin') AS name,
-                  round(gross_margin_usd, 2) AS value
-                FROM monthly
-              )
-              ORDER BY period_date ASC, display_order ASC
-              LIMIT 144
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'pareto' &&
-          /\bclients?\b/.test(qLow) &&
-          /\boutstanding\s+receivables?\b|\breceivables?\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Clients Ranked by Outstanding Receivables',
-            'Pareto view of outstanding receivables by client',
-            'pareto',
-            `
-              SELECT
-                name,
-                value,
-                round(
-                  sum(value) OVER (ORDER BY value DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-                  / nullIf(sum(value) OVER (), 0) * 100,
-                  2
-                ) AS cumulative_pct
-              FROM (
-                SELECT
-                  client_name AS name,
-                  round(sum(outstanding_balance_usd), 2) AS value
-                FROM ${this.analyticsDb}.v_ebpo_ar_aging
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-                GROUP BY client_name
-              )
-              ORDER BY value DESC
-              LIMIT 100
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'combo' &&
-          /\bcalls?\s+handled\b/.test(qLow) &&
-          /\bcsat\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Monthly Calls Handled vs CSAT Percentage',
-            'Calls handled as columns with CSAT percentage as a line',
-            'combo',
-            `
-              SELECT
-                formatDateTime(period_date, '%b %Y') AS name,
-                round(sum(calls_handled), 2) AS value,
-                round(avg(csat_pct), 2) AS csat_pct
-              FROM ${this.analyticsDb}.v_ebpo_operations_monthly
-              WHERE tenant_id = {tenantId:String}
-                AND org_id IN ({externalOrgIds:Array(String)})
-              GROUP BY period_date
-              ORDER BY period_date ASC
-              LIMIT 100
-            `,
-          );
-        }
-
-        if (
-          /\bpayable\s+invoice\b|\bpayables?\s+invoice\b|\bap\s+invoice\b/.test(qLow) &&
-          /\bpaid\s+amount\b|\bpaid\b/.test(qLow) &&
-          /\boutstanding\s+payables?\b|\boutstanding\s+balance\b|\bpayables?\b/.test(qLow)
-        ) {
-          const byMonth = /\bmonths?\b|\bmonthly\b/.test(qLow);
-          return ebpoSingleSqlChart(
-            byMonth
-              ? 'Monthly Payable Invoice, Paid Amount, and Outstanding Payables'
-              : 'Payable Invoice, Paid Amount, and Outstanding Payables by Vendor',
-            byMonth
-              ? 'Payable invoice amount, paid amount, and outstanding payables by month'
-              : 'Payable invoice amount, paid amount, and outstanding payables by vendor',
-            forcedChartType ?? 'bar',
-            byMonth
-              ? `
-                SELECT
-                  formatDateTime(toStartOfMonth(period_date), '%b %Y') AS name,
-                  round(sum(invoice_amount_usd), 2) AS invoice_amount,
-                  round(sum(paid_amount_usd), 2) AS paid_amount,
-                  round(sum(outstanding_balance_usd), 2) AS outstanding_payables
-                FROM ${this.analyticsDb}.v_ebpo_ap_aging
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-                GROUP BY toStartOfMonth(period_date)
-                ORDER BY toStartOfMonth(period_date) ASC
-                LIMIT 100
-              `
-              : `
-                SELECT
-                  vendor_name AS name,
-                  round(sum(invoice_amount_usd), 2) AS invoice_amount,
-                  round(sum(paid_amount_usd), 2) AS paid_amount,
-                  round(sum(outstanding_balance_usd), 2) AS outstanding_payables
-                FROM ${this.analyticsDb}.v_ebpo_ap_aging
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-                  AND vendor_name != ''
-                GROUP BY vendor_name
-                ORDER BY outstanding_payables DESC
-                LIMIT 50
-              `,
-          );
-        }
-
-        if (
-          forcedChartType === 'scatter' &&
-          /\baverage\s+handling\s+time\b|\baht\b/.test(qLow) &&
-          /\bcsat\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Average Handling Time vs CSAT Percentage',
-            'Delivery center average handling time compared with CSAT percentage',
-            'scatter',
-            `
-              SELECT
-                delivery_center AS name,
-                round(avg(avg_aht_minutes), 2) AS x,
-                round(avg(csat_pct), 2) AS y
-              FROM ${this.analyticsDb}.v_ebpo_operations_monthly
-              WHERE tenant_id = {tenantId:String}
-                AND org_id IN ({externalOrgIds:Array(String)})
-              GROUP BY delivery_center
-              ORDER BY x ASC
-              LIMIT 100
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'scatter' &&
-          /\butilization\b/.test(qLow) &&
-          /\bsla\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Utilization vs SLA Compliance Percentage',
-            'Delivery center utilization percentage compared with SLA compliance percentage',
-            'scatter',
-            `
-              SELECT
-                delivery_center AS name,
-                round(avg(utilization_pct), 2) AS x,
-                round(avg(sla_compliance_pct), 2) AS y
-              FROM ${this.analyticsDb}.v_ebpo_operations_monthly
-              WHERE tenant_id = {tenantId:String}
-                AND org_id IN ({externalOrgIds:Array(String)})
-              GROUP BY delivery_center
-              ORDER BY x DESC
-              LIMIT 100
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'scatter' &&
-          /\butilization\b/.test(qLow) &&
-          /\brevenue\s+per\s+employee\b/.test(qLow) &&
-          /\bdelivery\s+centers?\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Utilization vs Revenue per Employee by Delivery Center',
-            'Delivery center utilization percentage compared with revenue per employee',
-            'scatter',
-            `
-              SELECT
-                delivery_center AS name,
-                round(avg(utilization_pct), 2) AS x,
-                round(avg(revenue_per_employee_usd), 2) AS y
-              FROM ${this.analyticsDb}.v_ebpo_delivery_center_efficiency_monthly
-              WHERE tenant_id = {tenantId:String}
-                AND org_id IN ({externalOrgIds:Array(String)})
-              GROUP BY delivery_center
-              ORDER BY y DESC
-              LIMIT 100
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'stacked_bar' &&
-          /\bnet\s+book\s+value\b/.test(qLow) &&
-          /\basset\s+types?\b/.test(qLow) &&
-          /\bdelivery\s+centers?\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Net Book Value by Asset Type and Delivery Center',
-            'Stacked net book value by asset type across delivery centers',
-            'stacked_bar',
-            `
-              SELECT
-                delivery_center AS name,
-                asset_type AS series,
-                round(sum(net_book_value_usd), 2) AS value
-              FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center
-              WHERE tenant_id = {tenantId:String}
-                AND org_id IN ({externalOrgIds:Array(String)})
-              GROUP BY delivery_center, asset_type
-              ORDER BY name ASC, value DESC
-              LIMIT 500
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'bar' &&
-          /\basset\s+intensity\b/.test(qLow) &&
-          /\bnet\s+book\s+value\b/.test(qLow) &&
-          /\bcalls?\s+handled\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Asset Intensity by Delivery Center',
-            'Net book value per call handled by delivery center',
-            'bar',
-            `
-              SELECT
-                assets.delivery_center AS name,
-                round(sum(assets.net_book_value_usd) / nullIf(any(operations.calls_handled), 0), 2) AS value
-              FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center assets
-              LEFT JOIN (
-                SELECT
-                  delivery_center,
-                  tenant_id,
-                  org_id,
-                  sum(calls_handled) AS calls_handled
-                FROM ${this.analyticsDb}.v_ebpo_operations_monthly
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-                GROUP BY tenant_id, org_id, delivery_center
-              ) operations
-                ON operations.tenant_id = assets.tenant_id
-                AND operations.org_id = assets.org_id
-                AND operations.delivery_center = assets.delivery_center
-              WHERE assets.tenant_id = {tenantId:String}
-                AND assets.org_id IN ({externalOrgIds:Array(String)})
-              GROUP BY assets.delivery_center
-              ORDER BY value DESC
-              LIMIT 100
-            `,
-          );
-        }
-
-        if (
-          forcedChartType === 'bar' &&
-          /\brevenue\b/.test(qLow) &&
-          /\bpayroll\b/.test(qLow) &&
-          /\bgross\s+margin\b/.test(qLow) &&
-          /\bbusiness\s+units?\b/.test(qLow)
-        ) {
-          return ebpoSingleSqlChart(
-            'Revenue, Payroll, and Gross Margin by Business Unit',
-            'Business-unit revenue and gross margin with payroll allocated by revenue share',
-            'bar',
-            `
-              SELECT
-                business_unit_rollup.business_unit AS name,
-                round(business_unit_rollup.total_revenue_usd, 2) AS revenue,
-                round(
-                  any(payroll_rollup.total_payroll_usd)
-                  * business_unit_rollup.total_revenue_usd
-                  / nullIf(any(revenue_rollup.total_revenue_usd), 0),
-                  2
-                ) AS payroll,
-                round(business_unit_rollup.gross_margin_usd, 2) AS gross_margin
-              FROM (
-                SELECT
-                  tenant_id,
-                  org_id,
-                  business_unit,
-                  sum(total_revenue_usd) AS total_revenue_usd,
-                  sum(gross_margin_usd) AS gross_margin_usd
-                FROM ${this.analyticsDb}.v_ebpo_revenue_by_business_unit
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-                GROUP BY tenant_id, org_id, business_unit
-              ) business_unit_rollup
-              LEFT JOIN (
-                SELECT
-                  tenant_id,
-                  org_id,
-                  sum(total_payroll_usd) AS total_payroll_usd
-                FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-                GROUP BY tenant_id, org_id
-              ) payroll_rollup
-                ON payroll_rollup.tenant_id = business_unit_rollup.tenant_id
-                AND payroll_rollup.org_id = business_unit_rollup.org_id
-              LEFT JOIN (
-                SELECT
-                  tenant_id,
-                  org_id,
-                  sum(total_revenue_usd) AS total_revenue_usd
-                FROM ${this.analyticsDb}.v_ebpo_revenue_by_business_unit
-                WHERE tenant_id = {tenantId:String}
-                  AND org_id IN ({externalOrgIds:Array(String)})
-                GROUP BY tenant_id, org_id
-              ) revenue_rollup
-                ON revenue_rollup.tenant_id = business_unit_rollup.tenant_id
-                AND revenue_rollup.org_id = business_unit_rollup.org_id
-              GROUP BY business_unit_rollup.business_unit, business_unit_rollup.total_revenue_usd, business_unit_rollup.gross_margin_usd
-              ORDER BY revenue DESC
-              LIMIT 100
-            `,
-          );
-        }
-
-        // Current ratio and quick ratio require full CURRENT LIABILITIES (accrued
-        // payroll, taxes, short-term debt). EBPO only records trade payables (AP),
-        // so dividing cash+AR by AP alone yields an inflated, misleading figure
-        // (~50x). The honest answer is to refuse, not fabricate a "ratio". For a
-        // no-inventory BPO the two ratios are equivalent anyway, but neither is
-        // computable from the available data.
-        if (/\b(current|quick)\s+ratio\b/.test(qLow)) {
-          return {
-            kind: 'no_data',
-            message:
-              "I can't compute a current or quick ratio from this dataset. It records cash, receivables and trade payables, but not full current liabilities (accrued payroll, taxes, short-term debt), so any ratio would be misleading. I can show working capital, cash balance, or AR/AP trends instead.",
-          } as SmartPlanResult;
-        }
-
-        // Derived CFO ratios (working capital, FCF margin, OCF % of revenue,
-        // EBITDA-style margin, cost-to-income) are now CATALOGUED (measures backed by
-        // v_ebpo_cfo_ratios_monthly). The deterministic catalog handles their create
-        // AND combo follow-ups, so the old hardcoded create short-circuits were
-        // removed. Current/quick ratio remain refused above (no current-liabilities).
-      }
-
-      const hasExecutiveDashboardIntent =
-        /\b(dashboard|report|overview|summary|scorecard|board\s+pack|pack|suite)\b/.test(qLow) &&
-        /\b(cfo|executive|financial\s+position|operating\s+performance|profitability|liquidity|cash\s+position|financial\s+health|balance\s+sheet|p&l|income\s+statement|net\s+income)\b/.test(qLow);
-      if (hasExecutiveDashboardIntent && !hasEbpo) {
-        return {
-          kind: 'build',
-          plan: {
-            tools_to_execute: [
-              'financial_summary',
-              'revenue_trend',
-              'invoice_breakdown',
-            ],
-            should_generate_dashboard: true,
-            dashboard: {
-              title: 'Executive CFO Dashboard',
-              description:
-                'Financial position and operating performance from the synced accounting data',
-              widgets: [
-                {
-                  title: 'Executive KPIs',
-                  description:
-                    'Revenue, expenses, net profit, invoice count, and AR health',
-                  type: 'kpi',
-                  metric: 'summary',
-                  grouping: 'overview',
-                  display_order: 0,
-                },
-                {
-                  title: 'Balance Sheet Position',
-                  description:
-                    'Assets, liabilities, and equity from the trial balance',
-                  type: 'bar',
-                  metric: 'balance_sheet',
-                  grouping: 'summary',
-                  display_order: 1,
-                },
-                {
-                  title: 'P&L Waterfall — Revenue to Net Income',
-                  description:
-                    'Revenue → COGS → gross profit → operating expenses → net income',
-                  type: 'waterfall',
-                  metric: 'pl',
-                  grouping: 'summary',
-                  display_order: 2,
-                },
-                {
-                  title: 'Net Income Trend',
-                  description:
-                    'Monthly net income from revenue less COGS and operating expenses',
-                  type: 'line',
-                  metric: 'net_income',
-                  grouping: 'month',
-                  display_order: 3,
-                },
-                {
-                  title: 'Top Expense Accounts',
-                  description: 'Largest expense accounts ranked by spend',
-                  type: 'bar',
-                  metric: 'expense',
-                  grouping: 'account',
-                  display_order: 4,
-                },
-                {
-                  title: 'Revenue by Account',
-                  description: 'Income source breakdown by GL account',
-                  type: 'bar',
-                  metric: 'revenue',
-                  grouping: 'account',
-                  display_order: 5,
-                },
-              ] as any,
-            },
-            analysis_focus: query,
-          },
-        };
-      }
-
-      // Monthly dept breakdown (stacked/line/area + dept + time): use the vocab
-      // handler which reads sample_gl_dump with the correct pivot/values.
-      // IMPORTANT: only short-circuit on a GENUINE cross-department pivot — i.e.
-      // the user said "department"/"dept", or named ≥2 distinct departments.
-      // A lone "sales"/"admin"/"operations" is ambiguous (e.g. "sales by month"
-      // usually means sales REVENUE, not the Sales department), so defer those to
-      // the generic SQL planner instead of forcing a department chart.
-      const DEPT_NAMES = ['admin', 'operations', 'sales'];
-      const distinctDeptMentions = DEPT_NAMES.filter((d) =>
-        new RegExp(`\\b${d}\\b`).test(qLow),
-      ).length;
-      const hasExplicitDept = /\bdepartments?\b|\bdept\b/.test(qLow);
-      const isMonthlyDept =
-        (hasExplicitDept || distinctDeptMentions >= 2) &&
-        /\b(month|monthly|trend|over\s+time|across\s+the\s+year|last\s+\d+\s+month)\b/.test(
-          qLow,
-        ) &&
-        /\b(stacked|line|area|multi.?line|multi-series)\b/.test(qLow);
-      if (isMonthlyDept && !hasEbpo) {
-        const deptChartType: ChartType = /\bstacked\b/.test(qLow)
-          ? 'stacked_bar'
-          : /\barea\b/.test(qLow)
-            ? 'area'
-            : 'line';
-        // B3: "transaction count / volume / number of transactions" means COUNT
-        // of GL entries — NOT summed spend. (Power BI calls this "GL Entry Count".)
-        const wantsTxnCount =
-          /\btransaction\s+(?:count|counts|volume)\b|\bnumber\s+of\s+transactions\b|#\s*of\s*transactions|\btxn\s+count\b|\bentry\s+count\b/.test(
-            qLow,
-          ) && !/\bspend|amount|dollars?|\$|value\b/.test(qLow);
-        if (wantsTxnCount) {
-          return {
-            kind: 'build',
-            plan: {
-              tools_to_execute: [],
-              should_generate_dashboard: true,
-              dashboard: {
-                title: 'Monthly Transaction Count by Department',
-                description: 'Monthly GL transaction count by department',
-                widgets: [
-                  {
-                    title:
-                      'Monthly Transaction Count — Admin, Operations, Sales',
-                    description:
-                      'Count of GL transactions per month by department',
-                    type: deptChartType,
-                    metric: 'dynamic',
-                    grouping: 'dynamic',
-                    display_order: 0,
-                    _sql: `SELECT formatDateTime(toStartOfMonth(date), '%b %Y') AS name,
-                        countIf(COALESCE(NULLIF(department,''),'Other') = 'Admin')      AS Admin,
-                        countIf(COALESCE(NULLIF(department,''),'Other') = 'Operations') AS Operations,
-                        countIf(COALESCE(NULLIF(department,''),'Other') = 'Sales')      AS Sales
-                      FROM ${this.analyticsDb}.sample_gl_dump
-                      WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                      GROUP BY toStartOfMonth(date)
-                      ORDER BY toStartOfMonth(date) ASC
-                      LIMIT 24`,
-                  } as any,
-                ],
-              },
-              analysis_focus: query,
-            },
-          };
-        }
-        const dashboardTitle = 'Monthly Department Spend Trend';
-        return {
-          kind: 'build',
-          plan: {
-            tools_to_execute: [],
-            should_generate_dashboard: true,
-            dashboard: {
-              title: dashboardTitle,
-              description: 'Monthly department spend from sample GL data',
-              widgets: [
-                {
-                  title:
-                    'Monthly Spend by Department — Admin, Operations, Sales',
-                  description: 'Monthly expense breakdown by department',
-                  type: deptChartType,
-                  // SQL-backed (wide pivot) so follow-up transforms (normalize,
-                  // moving average, etc.) can rewrite it — vocab widgets can't be edited.
-                  metric: 'dynamic',
-                  grouping: 'dynamic',
-                  display_order: 0,
-                  _sql: `SELECT formatDateTime(toStartOfMonth(date), '%b %Y') AS name,
-                      round(sumIf(toFloat64(debit), COALESCE(NULLIF(department,''),'Other') = 'Admin'), 0)      AS Admin,
-                      round(sumIf(toFloat64(debit), COALESCE(NULLIF(department,''),'Other') = 'Operations'), 0) AS Operations,
-                      round(sumIf(toFloat64(debit), COALESCE(NULLIF(department,''),'Other') = 'Sales'), 0)      AS Sales
-                    FROM ${this.analyticsDb}.sample_gl_dump
-                    WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                    GROUP BY toStartOfMonth(date)
-                    ORDER BY toStartOfMonth(date) ASC
-                    LIMIT 24`,
-                } as any,
-              ] as any,
-            },
-            analysis_focus: query,
-          },
-        };
-      }
-
-      if (forcedChartType === 'waterfall' && !hasEbpo) {
-        const dashboardTitle = 'P&L Waterfall';
-        return {
-          kind: 'build',
-          plan: {
-            tools_to_execute: [],
-            should_generate_dashboard: true,
-            dashboard: {
-              title: dashboardTitle,
-              description: 'P&L waterfall from live data',
-              widgets: [
-                {
-                  title: 'P&L Waterfall — Revenue to Net Income',
-                  description:
-                    'Revenue → COGS → Gross Profit → Operating Expenses → Net Income',
-                  type: 'waterfall',
-                  metric: 'pl',
-                  grouping: 'summary',
-                  display_order: 0,
-                },
-              ] as any,
-            },
-            analysis_focus: query,
-          },
-        };
-      }
-
-      const pivotType: ChartType | null =
-        /\bheat\s*map\b|\bheatmap\b/.test(qLow)
-          ? 'heatmap'
-          : /\bmatrix\b/.test(qLow)
-            ? 'matrix'
-            : /\btreemap\b/.test(qLow)
-              ? 'treemap'
-            : /\bline\s+chart\b/.test(qLow)
-              ? 'line'
-              : null;
-
-      const axisPatterns: Array<{ axis: PivotAxis; patterns: RegExp[] }> = [
-        {
-          axis: 'month',
-          patterns: [/\bmonth(?:s)?\b/, /\bmonthly\b/, /\bover\s+time\b/, /\btrend\b/],
-        },
-        {
-          axis: 'department',
-          patterns: [/\bdepartment(?:s)?\b/, /\bdept\b/, /\badmin\b/, /\boperations\b/, /\bsales\b/],
-        },
-        { axis: 'class', patterns: [/\bclass(?:es)?\b/, /\bgeneral\b/, /\bmarketing\b/, /\bproduct\b/] },
-        { axis: 'vendor', patterns: [/\bvendor(?:s)?\b/, /\bsupplier(?:s)?\b/] },
-        { axis: 'account', patterns: [/\baccount(?:s)?\b/, /\bgl\b/, /\bexpense\s+account\b/] },
-      ];
-      const axisFromText = (text: string): PivotAxis | null => {
-        const lower = text.toLowerCase();
-        if (/\bmonth(?:s)?\b|\bmonthly\b|\bover\s+time\b|\btrend\b/.test(lower)) return 'month';
-        if (/\bdepartment(?:s)?\b|\bdept\b|\badmin\b|\boperations\b|\bsales\b/.test(lower))
-          return 'department';
-        if (/\bclass(?:es)?\b|\bgeneral\b|\bmarketing\b|\bproduct\b/.test(lower)) return 'class';
-        if (/\bvendor(?:s)?\b|\bsupplier(?:s)?\b/.test(lower)) return 'vendor';
-        if (/\baccount(?:s)?\b|\bgl\b|\bexpense\s+account\b/.test(lower)) return 'account';
-        return null;
-      };
-      const explicitRowAxis = (() => {
-        const m =
-          qLow.match(/\brows?\s+(?:are|as)\s+([^,.;]+?)(?:,|\bcolumns?\b|\band\b|$)/i) ??
-          qLow.match(/\b([a-z\s/&-]+?)\s+as\s+rows?\b/i);
-        return m ? axisFromText(m[1] ?? '') : null;
-      })();
-      const explicitColAxis = (() => {
-        const m =
-          qLow.match(/\bcolumns?\s+(?:are|as)\s+([^,.;]+?)(?:,|\band\b|$)/i) ??
-          qLow.match(/\b([a-z\s/&-]+?)\s+as\s+columns?\b/i);
-        return m ? axisFromText(m[1] ?? '') : null;
-      })();
-      const axesByOccurrence = axisPatterns
-        .map(({ axis, patterns }) => ({
-          axis,
-          index: Math.min(
-            ...patterns.map((r) => {
-              const idx = qLow.search(r);
-              return idx >= 0 ? idx : Number.POSITIVE_INFINITY;
-            }),
-          ),
-        }))
-        .filter((x) => Number.isFinite(x.index))
-        .sort((a, b) => a.index - b.index)
-        .map((x) => x.axis);
-      const pickPivotAxes = (): { rowAxis: PivotAxis; colAxis: PivotAxis } | null => {
-        if (explicitRowAxis && explicitColAxis) return { rowAxis: explicitRowAxis, colAxis: explicitColAxis };
-        if ((pivotType === 'line' || pivotType === 'heatmap' || pivotType === 'matrix' || pivotType === 'treemap') && axesByOccurrence.includes('month')) {
-          const other = axesByOccurrence.find((a) => a !== 'month');
-          if (other) return { rowAxis: 'month', colAxis: other };
-        }
-        if (axesByOccurrence.length >= 2) {
-          return { rowAxis: axesByOccurrence[0]!, colAxis: axesByOccurrence[1]! };
-        }
-        return null;
-      };
-      const pivotAxes = pivotType ? pickPivotAxes() : null;
-      if (pivotType && pivotAxes && !hasEbpo) {
-        const dashboardTitle = this.buildPivotDashboardTitle(
-          pivotType,
-          pivotAxes.rowAxis,
-          pivotAxes.colAxis,
-        );
-        return {
-          kind: 'build',
-          plan: {
-            tools_to_execute: [],
-            should_generate_dashboard: true,
-            dashboard: {
-              title: dashboardTitle,
-              description: 'Deterministic pivot chart',
-              widgets: [
-                {
-                  title:
-                    pivotType === 'line'
-                      ? `Monthly ${pivotAxes.colAxis.replace(/_/g, ' ')} Spend Trend`
-                      : pivotType === 'treemap'
-                        ? `${pivotAxes.rowAxis.replace(/_/g, ' ')} / ${pivotAxes.colAxis.replace(/_/g, ' ')} Spend`
-                      : pivotType === 'matrix'
-                        ? `${pivotAxes.rowAxis.replace(/_/g, ' ')} by ${pivotAxes.colAxis.replace(/_/g, ' ')} Matrix`
-                        : `${pivotAxes.rowAxis.replace(/_/g, ' ')} by ${pivotAxes.colAxis.replace(/_/g, ' ')} Heatmap`,
-                  description: query.slice(0, 160),
-                  type: pivotType,
-                  metric: 'expense',
-                  grouping: `${pivotAxes.rowAxis}_${pivotAxes.colAxis}`,
-                  display_order: 0,
-                } as any,
-              ],
-            },
-            analysis_focus: query,
-          },
-        };
-      }
-
       // Verify Ollama is reachable before doing the expensive introspection
       const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
         signal: AbortSignal.timeout(3000),
@@ -14177,20 +12285,6 @@ export class AgentService {
               ? 4
               : 2;
 
-      // EBPO orgs: try the DETERMINISTIC catalog (no hallucination possible) before
-      // the LLM-SQL planner. The catalog only OWNS a result when it can confidently
-      // build the chart; anything it can't model returns null → falls through to the
-      // SQL planner below. GL orgs are unaffected (hasEbpo === false → skipped).
-      if (hasEbpo) {
-        const ebpoSpecPlan = await this.generateSpecPlan(
-          query,
-          scope,
-          conversationHistory,
-          true,
-        ).catch(() => null);
-        if (ebpoSpecPlan) return ebpoSpecPlan;
-      }
-
       const timeHint = range
         ? `Time filter requested: ${JSON.stringify(range)} — apply the equivalent WHERE clause on journal_date or issued_at`
         : '';
@@ -14211,7 +12305,7 @@ export class AgentService {
         .join('\n');
 
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 120_000);
+      const timer = setTimeout(() => controller.abort(), LLM_CHAT_TIMEOUT_MS);
 
       const response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
         method: 'POST',
@@ -14245,11 +12339,21 @@ export class AgentService {
       let parsed: any;
       try {
         parsed = JSON.parse(raw);
-      } catch {
-        // Try to extract JSON from response if LLM added surrounding text
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) return null;
-        parsed = JSON.parse(jsonMatch[0]);
+      } catch (parseErr: any) {
+        const repaired = await this.repairPlannerJsonViaLLM(
+          SMART_SQL_PLANNER_SYSTEM,
+          userMsg,
+          raw,
+          parseErr?.message ?? 'Invalid JSON from planner',
+        );
+        if (!repaired) return null;
+        try {
+          parsed = JSON.parse(repaired);
+        } catch {
+          const jsonMatch = repaired.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) return null;
+          parsed = JSON.parse(jsonMatch[0]);
+        }
       }
 
       const verdict = String(parsed?.verdict ?? '')
@@ -14291,31 +12395,57 @@ export class AgentService {
           )
           .slice(0, 4);
         // Only surface the clarification if the question and options are clean.
-        if (options.length >= 1 && !looksLikeSql(question)) {
-          this.logger.log(`[SmartPlan] CLARIFY for: "${query.slice(0, 80)}"`);
-          return {
-            kind: 'clarify',
-            clarification: {
-              reason: 'PLANNER_NEEDS_INPUT',
-              question,
-              options,
-            },
-          };
-        }
+      if (options.length >= 1 && !looksLikeSql(question)) {
+        this.logger.log(`[SmartPlan] CLARIFY for: "${query.slice(0, 80)}"`);
+        const result: SmartPlanResult = {
+          kind: 'clarify',
+          clarification: {
+            reason: 'PLANNER_NEEDS_INPUT',
+            question,
+            options,
+          },
+        };
+        this.setCachedSmartPlan(cacheKey, result);
+        return result;
+      }
         // Malformed/SQL-tainted clarify — fall through to build/none.
       }
 
       // ── NO DATA ───────────────────────────────────────────────────────────
       if (verdict === 'no_data' && parsed?.message) {
         const message = String(parsed.message).slice(0, 600).trim();
-        if (!looksLikeSql(message)) {
-          this.logger.log(`[SmartPlan] NO_DATA for: "${query.slice(0, 80)}"`);
-          return { kind: 'no_data', message };
-        }
+      if (!looksLikeSql(message)) {
+        this.logger.log(`[SmartPlan] NO_DATA for: "${query.slice(0, 80)}"`);
+        const result: SmartPlanResult = { kind: 'no_data', message };
+        this.setCachedSmartPlan(cacheKey, result);
+        return result;
+      }
         // SQL-tainted message — fall through rather than show SQL to the user.
       }
 
       // ── BUILD ─────────────────────────────────────────────────────────────
+      if (
+        verdict === 'build' &&
+        (!parsed?.charts ||
+          !Array.isArray(parsed.charts) ||
+          parsed.charts.length === 0)
+      ) {
+        const repaired = await this.repairPlannerJsonViaLLM(
+          SMART_SQL_PLANNER_SYSTEM,
+          userMsg,
+          raw,
+          'Planner returned build without a usable charts array',
+        );
+        if (repaired) {
+          try {
+            parsed = JSON.parse(repaired);
+          } catch {
+            const jsonMatch = repaired.match(/\{[\s\S]*\}/);
+            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+          }
+        }
+      }
+
       if (
         !parsed?.charts ||
         !Array.isArray(parsed.charts) ||
@@ -14512,6 +12642,16 @@ export class AgentService {
         } as any);
       }
 
+      // Percent-unit charts (gross margin %, growth %, SLA %…) must carry
+      // display.valueFormat='percent'. The frontend only reads that for metric="dynamic"
+      // and otherwise defaults to dollars — the root cause of "% shown as $".
+      for (const w of widgets as any[]) {
+        const vf = this.inferPercentFormat(w.yAxisLabel, w.title);
+        if (vf && !w.display?.valueFormat) {
+          w.display = { ...(w.display ?? {}), valueFormat: vf };
+        }
+      }
+
       if (widgets.length === 0) return null;
 
       // ── VERIFY DATA BEFORE CLAIMING SUCCESS ───────────────────────────────
@@ -14616,7 +12756,7 @@ export class AgentService {
         this.logger.log(
           `[SmartPlan] BUILD produced only empty charts → NO_DATA for: "${query.slice(0, 80)}"`,
         );
-        return {
+        const result: SmartPlanResult = {
           kind: 'no_data',
           message:
             `Sorry, I wasn't able to generate this chart — the data needed to answer "${String(parsed.title ?? query).slice(0, 60)}" ` +
@@ -14625,6 +12765,8 @@ export class AgentService {
             `or when the time window is outside the available range. ` +
             `Please try rephrasing your question or ask for a different chart — I'm happy to help with expenses, vendor spend, department breakdowns, revenue, or P&L analysis.`,
         };
+        this.setCachedSmartPlan(cacheKey, result);
+        return result;
       }
 
       // Re-number display order after dropping empties.
@@ -14634,7 +12776,7 @@ export class AgentService {
         `[SmartPlan] BUILD — ${finalWidgets.length}/${widgets.length} SQL-backed charts returned data for: "${query.slice(0, 80)}"`,
       );
 
-      return {
+      const result: SmartPlanResult = {
         kind: 'build',
         plan: {
           tools_to_execute: [],
@@ -14647,6 +12789,8 @@ export class AgentService {
           analysis_focus: query,
         },
       };
+      this.setCachedSmartPlan(cacheKey, result);
+      return result;
     } catch (err: any) {
       this.logger.warn(`[SmartPlan] Failed: ${err?.message ?? err}`);
       return null;
@@ -15314,986 +13458,23 @@ export class AgentService {
   // Ollama sees live data context + full chart vocabulary and decides freely.
   // selectWidgetsForQuery is only called if Ollama completely fails.
 
-  private async generatePlan(
-    query: string,
-    conversationHistory: string,
-    activeDashboard: ActiveDashboard | null,
-    dataContext: string,
-    scope?: OrgScope,
-    range?: TimeRange,
-  ): Promise<AgentPlan> {
-    // NOTE: preRouteQuery() regex routing was intentionally removed from this
-    // path — it produced "closest-match" charts that did not reflect the real
-    // request. All real planning goes through the SQL-first structured planner
-    // (generateSmartPlan) in query(); this method is now the fallback used only
-    // for EDIT intents and when the planner is unavailable.
-    const spec = parseQuerySpec(query);
-    const constraints = this.parseExplicitChartConstraints(query);
-    const compareClients = this.extractCompareClients(query);
-    const wantsCompareClients =
-      /\bcompare\b/i.test(query) &&
-      /\b(client|clients|customer|customers|contact|contacts)\b/i.test(query) &&
-      !spec.wantsTopClients &&
-      !!compareClients &&
-      compareClients.length >= 2;
-    const mentionsRevenue =
-      /\b(revenue|sales|invoiced|billed|collected|paid)\b/i.test(query);
-
-    const inferImplicitMaxWidgets = (): number | null => {
-      if (constraints?.exactCount && Number.isFinite(constraints.exactCount))
-        return constraints.exactCount;
-
-      const q = query.trim();
-      const lower = q.toLowerCase();
-
-      // If the user is clearly asking for a dashboard/pack, allow multiple charts.
-      if (/\b(dashboard|report|board pack|pack|suite|deep dive)\b/i.test(lower))
-        return 4;
-
-      // If the prompt contains multiple enumerated questions, allow more charts.
-      const lines = q
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-      const numbered = lines.filter((l) => /^\d+[\).\]]\s+/.test(l));
-      if (numbered.length >= 2)
-        return Math.min(8, Math.max(2, numbered.length));
-
-      // If they explicitly mention "charts" plural without specifying a number.
-      if (/\bcharts\b|\bgraphs\b|\bwidgets\b/i.test(lower)) return 3;
-
-      // Default: for a single natural-language question, prefer 1 chart.
-      return 1;
-    };
-
-    const applyConstraints = (
-      widgets: AgentPlan['dashboard']['widgets'],
-    ): AgentPlan['dashboard']['widgets'] => {
-      if (!constraints) return widgets;
-      let out = widgets.slice();
-
-      if (constraints.requiredTypes && constraints.requiredTypes.length > 0) {
-        const req = constraints.requiredTypes[0]!;
-        if (out[0] && out[0].type !== req) {
-          const canConvert = VALID_WIDGETS.some(
-            (v) =>
-              v.type === req &&
-              v.metric === out[0]!.metric &&
-              v.grouping === out[0]!.grouping,
-          );
-          if (canConvert) out[0] = { ...out[0]!, type: req };
-        }
-        out = out.filter((w) => constraints.requiredTypes!.includes(w.type));
-      }
-
-      if (
-        typeof constraints.exactCount === 'number' &&
-        Number.isFinite(constraints.exactCount)
-      ) {
-        out = out.slice(
-          0,
-          Math.max(1, Math.min(8, Math.floor(constraints.exactCount))),
-        );
-      }
-
-      return out.map((w, i) => ({ ...w, display_order: i }));
-    };
-
-    const applyImplicitMax = (
-      widgets: AgentPlan['dashboard']['widgets'],
-    ): AgentPlan['dashboard']['widgets'] => {
-      const max = inferImplicitMaxWidgets();
-      if (!max || !Number.isFinite(max)) return widgets;
-      return widgets
-        .slice(0, Math.max(1, Math.min(8, Math.floor(max))))
-        .map((w, i) => ({
-          ...w,
-          display_order: i,
-        }));
-    };
-
-    const resolvePieDonutLabelMode = (
-      text: string,
-    ): 'percent' | 'value' | null => {
-      const wantsValueLabels =
-        /\b(whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?|remove\s+percent(?:age|ages)?|show\s+values?|raw\s+values?)\b/i.test(
-          text,
-        ) ||
-        /\bneed\s+values?\b/i.test(text) ||
-        /\babsolute\s+values?\b/i.test(text) ||
-        /\bnumbers?\s+instead\s+of\s+percent(?:age|ages)?\b/i.test(text) ||
-        /\bwithout\s+percent(?:age|ages)?\b/i.test(text) ||
-        /\bno\s+percent(?:age|ages)?\b/i.test(text) ||
-        /\bpercentage\s+to\s+values?\b/i.test(text) ||
-        /\bpercent(?:age|ages)?\s+to\s+values?\b/i.test(text);
-      const wantsPercentLabels =
-        /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(text) ||
-        /\bshow\s+percent(?:age|ages)?\b/i.test(text) ||
-        /\bpercent(?:age|ages)?\s+labels?\b/i.test(text) ||
-        /\bpercent(?:age|ages)?\s+values?\b/i.test(text) ||
-        /\bshow\s+percent(?:age|ages)?\s+in\s+the\s+chart\b/i.test(text);
-
-      if (wantsValueLabels) return 'value';
-      if (wantsPercentLabels) return 'percent';
-      return null;
-    };
-
-    const applyPieDonutLabelMode = (
-      widgets: AgentPlan['dashboard']['widgets'],
-      text: string,
-    ): AgentPlan['dashboard']['widgets'] => {
-      const labelMode = resolvePieDonutLabelMode(text);
-      if (!labelMode) return widgets;
-
-      return widgets.map((widget) => {
-        if (widget.type !== 'pie' && widget.type !== 'donut') return widget;
-        const existingDisplay =
-          widget.display && typeof widget.display === 'object' && !Array.isArray(widget.display)
-            ? (widget.display as Record<string, unknown>)
-            : {};
-        return {
-          ...widget,
-          display: {
-            ...existingDisplay,
-            labelMode,
-          },
-        };
-      });
-    };
-
-    // Emergency fallback — only used if Ollama crashes/times out
-    const fallback: AgentPlan = {
-      tools_to_execute: this.selectToolsForQuery(query),
-      should_generate_dashboard: true,
-      dashboard: {
-        title: this.deriveQueryTitle(query),
-        description: 'AI-generated financial intelligence dashboard',
-        widgets: applyImplicitMax(
-          applyPieDonutLabelMode(
-            applyConstraints(this.selectWidgetsForQuery(query, activeDashboard)),
-            query,
-          ),
-        ),
-      },
-      analysis_focus: query,
-    };
-
-    // If the model backend is offline, do not pretend with canned dashboards.
-    // Return a "no-dashboard" plan so the user sees the real problem immediately.
-    try {
-      const res = await fetch(`${this.OLLAMA_URL}/api/tags`, {
-        signal: AbortSignal.timeout(2500),
-      });
-      if (!res.ok) {
-        return {
-          tools_to_execute: this.selectToolsForQuery(query),
-          should_generate_dashboard: false,
-          dashboard: {
-            title: this.deriveQueryTitle(query),
-            description: `LLM backend offline (${this.OLLAMA_URL}). Start Ollama or configure OLLAMA_URL/OLLAMA_MODEL.`,
-            widgets: [],
-          },
-          analysis_focus: query,
-        };
-      }
-    } catch {
-      return {
-        tools_to_execute: this.selectToolsForQuery(query),
-        should_generate_dashboard: false,
-        dashboard: {
-          title: this.deriveQueryTitle(query),
-          description: `LLM backend offline (${this.OLLAMA_URL}). Start Ollama or configure OLLAMA_URL/OLLAMA_MODEL.`,
-          widgets: [],
-        },
-        analysis_focus: query,
-      };
-    }
-
-    const contextBlock = activeDashboard
-      ? `${dataContext}\n\nCURRENT DASHBOARD: "${activeDashboard.title}" — pick DIFFERENT and MORE RELEVANT charts.`
-      : dataContext;
-
-    const historyBlock =
-      conversationHistory &&
-      !conversationHistory.includes('(No prior conversation')
-        ? `\n\nRECENT CONVERSATION (for context):\n${conversationHistory}`
-        : '';
-
-    const userMsg = `${contextBlock}${historyBlock}\n\nUSER QUERY: "${query}"`;
-
-    // ── Smart SQL planner — queries real ClickHouse data ──────────────────────
-    // For create intents this already ran in query(); here it primarily serves
-    // the EDIT path. Only a confident "build" is used — clarify/no_data are
-    // handled upstream in query(), so here we just fall back to the vocabulary
-    // planner when the structured planner does not return buildable charts.
-    if (scope && scope.externalOrgIds.length > 0) {
-      const smartResult = await this.generateSmartPlan(
-        query,
-        scope,
-        range,
-        conversationHistory,
-      );
-      if (smartResult?.kind === 'build') {
-        this.logger.log(
-          `[plan] smart-SQL path succeeded — ${smartResult.plan.dashboard.widgets.length} SQL-backed charts`,
-        );
-        return smartResult.plan;
-      }
-      this.logger.warn(
-        '[plan] smart-SQL path produced no buildable charts — falling back to vocabulary planner',
-      );
-    }
-
-    // ── FALLBACK: Vocabulary-based planner (Ollama picks preset metric+grouping)
-    try {
-      const controller = new AbortController();
-      // 5 minute ceiling — user explicitly said "if it takes time, fine"
-      const timer = setTimeout(() => controller.abort(), 300_000);
-
-      const response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: this.OLLAMA_MODEL,
-          messages: [
-            { role: 'system', content: PLANNER_SYSTEM },
-            { role: 'user', content: userMsg },
-          ],
-          stream: false,
-          format: PLANNER_SCHEMA,
-          options: {
-            num_ctx: 8192, // llama3 native max — full context window
-            num_predict: -1, // unlimited — let model finish naturally, no truncation
-            temperature: 0.2, // near-deterministic, best JSON quality
-            top_p: 0.8,
-            top_k: 20,
-            repeat_penalty: 1.05,
-            stop: ['<|start_header_id|>', '<|end_header_id|>', '<|eot_id|>'],
-          },
-        }),
-      });
-      clearTimeout(timer);
-
-      if (!response.ok) throw new Error(`Ollama HTTP ${response.status}`);
-
-      const body = (await response.json()) as {
-        message?: { content?: string };
-      };
-      const raw = (body.message?.content ?? '')
-        .replace(/```json|```/g, '')
-        .trim();
-      const parsed = JSON.parse(raw) as any;
-
-      const candidates: Array<{
-        title?: string;
-        tools?: string[];
-        widgets?: Array<{
-          type: string;
-          metric: string;
-          grouping: string;
-          title?: string;
-        }>;
-      }> = Array.isArray(parsed?.candidates)
-        ? parsed.candidates
-        : [
-            {
-              title: parsed?.title,
-              tools: parsed?.tools,
-              widgets: parsed?.widgets,
-            },
-          ];
-
-      const buildCandidate = (cand: (typeof candidates)[number]) => {
-        type PlannedWidget = AgentPlan['dashboard']['widgets'][number] & {
-          _dynamicIntent?: string;
-        };
-        // Separate known widgets from unknown ones (unknown become dynamic SQL candidates)
-        const knownWidgets = (cand.widgets ?? []).filter((w) =>
-          VALID_WIDGETS.some(
-            (v) =>
-              v.type === w.type &&
-              v.metric === w.metric &&
-              v.grouping === w.grouping,
-          ),
-        );
-        const unknownWidgets = (cand.widgets ?? []).filter(
-          (w) =>
-            !VALID_WIDGETS.some(
-              (v) =>
-                v.type === w.type &&
-                v.metric === w.metric &&
-                v.grouping === w.grouping,
-            ),
-        );
-        // Tag unknown widgets as dynamic — they get SQL generated in Phase 3
-        const dynamicWidgets: PlannedWidget[] = unknownWidgets.map(
-          (w: any, i) => ({
-            title: w.title ?? `${w.metric} Chart`,
-            description: w.description ?? '',
-            type: ([
-              'line',
-              'bar',
-              'pie',
-              'table',
-              'metric',
-              'area',
-              'combo',
-              'treemap',
-              'scatter',
-              'stacked_bar',
-              'waterfall',
-            ].includes(w.type)
-              ? w.type
-              : 'bar') as any,
-            metric: 'dynamic',
-            grouping: 'query',
-            display_order: knownWidgets.length + i,
-            _dynamicIntent: `${w.title ?? w.metric}: ${w.metric}/${w.grouping} chart for query "${query}"`,
-          }),
-        );
-
-        const validWidgets = knownWidgets
-          .filter(
-            (w, i, arr) =>
-              // Enforce uniqueness: never repeat exact metric+grouping(+breakdown) within a single dashboard.
-              arr.findIndex(
-                (x: any) =>
-                  x.metric === w.metric &&
-                  x.grouping === w.grouping &&
-                  String((x as any).breakdown ?? '') ===
-                    String((w as any).breakdown ?? ''),
-              ) === i,
-          )
-          .slice(0, 6) // cap known widgets to leave room for up to 2 dynamic
-          .map((w: any, i) => {
-            const breakdown =
-              typeof w.breakdown === 'string' ? String(w.breakdown) : undefined;
-            const topN = Number.isFinite(Number(w.topN))
-              ? Number(w.topN)
-              : undefined;
-
-            // Metrics that support breakdown='client' (multi-series per-client pivot)
-            const clientBreakdownSupportedMetrics = new Set([
-              'revenue',
-              'outstanding',
-              'overdue',
-              'paid',
-              'dso',
-            ]);
-            const normalizedBreakdown: 'client' | undefined =
-              breakdown === 'client' &&
-              clientBreakdownSupportedMetrics.has(w.metric) &&
-              w.grouping === 'month'
-                ? 'client'
-                : undefined;
-
-            const normalizedTopN = (() => {
-              if (!normalizedBreakdown) return undefined;
-              const requested = Number.isFinite(topN as number)
-                ? (topN as number)
-                : typeof spec.topN === 'number'
-                  ? spec.topN
-                  : 2;
-              return Math.max(1, Math.min(5, Math.floor(requested)));
-            })();
-
-            const out: PlannedWidget = {
-              title: w.title ?? `${w.metric} ${w.type}`,
-              description: '',
-              type: w.type as 'line' | 'bar' | 'pie' | 'metric' | 'table',
-              metric: w.metric,
-              grouping: w.grouping,
-              display_order: i,
-            };
-            if (normalizedBreakdown) out.breakdown = normalizedBreakdown;
-            if (
-              typeof normalizedTopN === 'number' &&
-              Number.isFinite(normalizedTopN)
-            )
-              out.topN = normalizedTopN;
-            return out;
-          });
-
-        // Merge dynamic widgets (capped at 2 to avoid dashboard bloat)
-        const allWidgets = [
-          ...validWidgets,
-          ...dynamicWidgets.slice(0, Math.max(0, 8 - validWidgets.length)),
-        ].map((w, i) => ({ ...w, display_order: i }));
-
-        // If the model fails to select any valid widgets, fall back deterministically.
-        // This is a safety net only — we do NOT auto-add extra charts beyond what was requested.
-        if (allWidgets.length === 0) {
-          const filler = applyConstraints(
-            this.selectWidgetsForQuery(query, activeDashboard),
-          )
-            .slice(0, 2)
-            .filter((w) =>
-              VALID_WIDGETS.some(
-                (v) =>
-                  v.type === w.type &&
-                  v.metric === w.metric &&
-                  v.grouping === w.grouping,
-              ),
-            )
-            .map((w, i) => ({ ...w, display_order: i }));
-          allWidgets.push(...filler);
-        }
-
-        const validTools = (cand.tools ?? []).filter((t) =>
-          [
-            'revenue_trend',
-            'entity_comparison',
-            'invoice_breakdown',
-            'venture_metrics',
-            'financial_summary',
-            'client_breakdown',
-            'client_financial_profile',
-          ].includes(t),
-        );
-
-        const inferredTools =
-          validTools.length > 0
-            ? validTools
-            : this.deriveToolsFromWidgets(allWidgets, query);
-
-        return {
-          title:
-            cand.title?.trim() && cand.title.length > 5
-              ? cand.title.trim()
-              : fallback.dashboard.title,
-          widgets: allWidgets,
-          tools: inferredTools,
-        };
-      };
-
-      const scored = candidates
-        .map(buildCandidate)
-        .filter((c) => c.widgets.length >= 1)
-        .map((c) => ({
-          ...c,
-          score: this.scorePlannedDashboard(query, c.widgets),
-        }))
-        .sort((a, b) => b.score - a.score);
-
-      const best = scored[0];
-      if (best) {
-        const constrainedWidgets = (() => {
-          if (!constraints) return applyImplicitMax(best.widgets);
-
-          let out = best.widgets.slice();
-
-          if (
-            constraints.requiredTypes &&
-            constraints.requiredTypes.length > 0
-          ) {
-            const picked: typeof out = [];
-            for (const t of constraints.requiredTypes) {
-              const idx = out.findIndex((w) => w.type === t);
-              if (idx >= 0) picked.push(out.splice(idx, 1)[0]!);
-            }
-            // If user explicitly listed chart types, prefer returning ONLY those.
-            if (picked.length > 0) {
-              out = picked;
-            } else if (out.length > 0 && constraints.requiredTypes.length > 0) {
-              // No widget of the required type found — try converting the first
-              // widget's type when the metric/grouping combo is valid (e.g.
-              // user asks for "waterfall chart" but Ollama picked table/pl/summary:
-              // convert to waterfall/pl/summary which is in VALID_WIDGETS).
-              const req = constraints.requiredTypes[0]!;
-              const first = out[0]!;
-              const canConvert = VALID_WIDGETS.some(
-                (v) =>
-                  v.type === req &&
-                  v.metric === first.metric &&
-                  v.grouping === first.grouping,
-              );
-              if (canConvert) {
-                out = [{ ...first, type: req }, ...out.slice(1)];
-              }
-            }
-          }
-
-          if (
-            typeof constraints.exactCount === 'number' &&
-            Number.isFinite(constraints.exactCount)
-          ) {
-            out = out.slice(
-              0,
-              Math.max(1, Math.min(8, Math.floor(constraints.exactCount))),
-            );
-          }
-
-          const withImplicit = applyImplicitMax(out).map((w, i) => ({
-            ...w,
-            display_order: i,
-          }));
-
-          // If user explicitly asked to compare two specific clients and mentioned revenue,
-          // ensure we include a client-broken-down monthly view (otherwise the dashboard is useless).
-          if (wantsCompareClients && mentionsRevenue) {
-            const hasClientPivot = withImplicit.some(
-              (w: any) =>
-                w.metric === 'revenue' &&
-                w.grouping === 'month' &&
-                w.breakdown === 'client',
-            );
-            if (!hasClientPivot) {
-              return applyImplicitMax([
-                {
-                  title: 'Monthly Revenue — Client Comparison',
-                  description: 'Monthly revenue for the selected clients',
-                  type:
-                    constraints?.requiredTypes?.[0] === 'line' ? 'line' : 'bar',
-                  metric: 'revenue',
-                  grouping: 'month',
-                  breakdown: 'client',
-                  topN: undefined,
-                  display_order: 0,
-                } as any,
-              ]).map((w, i) => ({ ...w, display_order: i }));
-            }
-          }
-
-          return withImplicit;
-        })();
-
-        const constrainedWidgetsWithLabelMode = applyPieDonutLabelMode(
-          constrainedWidgets,
-          query,
-        );
-
-        const validationErrors = this.validateWidgetsAgainstSpec(
-          spec,
-          constrainedWidgetsWithLabelMode,
-        );
-        if (validationErrors.length > 0) {
-          const repair = (
-            errs: string[],
-            widgets: AgentPlan['dashboard']['widgets'],
-          ): AgentPlan['dashboard']['widgets'] => {
-            const out = widgets.slice();
-            const wantsType = constraints?.requiredTypes?.[0];
-
-            const mk = (
-              title: string,
-              description: string,
-              type: ChartType,
-              metric: string,
-              grouping: string,
-              extra?: Record<string, any>,
-            ) => ({
-              title,
-              description,
-              type,
-              metric,
-              grouping,
-              display_order: 0,
-              ...(extra ?? {}),
-            });
-
-            const replaceAll = (next: any[]) =>
-              applyImplicitMax(next).map((w, i) => ({
-                ...w,
-                display_order: i,
-              }));
-
-            // If user explicitly asked for a waterfall but vocab planner couldn't
-            // match it, override everything and return the P&L waterfall.
-            if (String(wantsType ?? '') === 'waterfall') {
-              return replaceAll([
-                mk(
-                  'P&L Waterfall — Revenue to Net Income',
-                  'Revenue → COGS → Gross Profit → Operating Expenses → Net Income',
-                  'waterfall',
-                  'pl',
-                  'summary',
-                ),
-              ]);
-            }
-
-            // If no widget of the required explicit type was found, try to find the best
-            // matching vocab widget of that type using the fallback selectWidgets logic.
-            if (
-              wantsType &&
-              !out.some((w) => w.type === wantsType) &&
-              [
-                'scatter',
-                'bubble',
-                'heatmap',
-                'matrix',
-                'histogram',
-                'pareto',
-                'gauge',
-                'treemap',
-              ].includes(wantsType)
-            ) {
-              const fallbackWidgets = this.selectWidgetsForQuery(
-                query,
-                activeDashboard,
-              );
-              if (fallbackWidgets && fallbackWidgets.length > 0) {
-                const forced = fallbackWidgets.map((w) => ({
-                  ...w,
-                  type: wantsType,
-                }));
-                const valid = forced.filter((w) =>
-                  VALID_WIDGETS.some(
-                    (v) =>
-                      v.type === wantsType &&
-                      v.metric === w.metric &&
-                      v.grouping === w.grouping,
-                  ),
-                );
-                if (valid.length > 0) return replaceAll(valid as any);
-              }
-            }
-
-            // Payment-speed intent repairs
-            if (errs.includes('PAYMENT_DAYS_TREND_REQUIRES_DSO')) {
-              return replaceAll([
-                mk(
-                  'DSO Trend',
-                  'Average days-to-pay by month (issued date)',
-                  wantsType === 'bar' ? 'bar' : 'line',
-                  'dso',
-                  'month',
-                ),
-              ]);
-            }
-            if (errs.includes('PAYMENT_DAYS_LIST_REQUIRES_TABLE')) {
-              return replaceAll([
-                mk(
-                  'Invoice Payment Days (Issued → Paid)',
-                  'Days between invoice issue and final payment',
-                  'table',
-                  'payment_days',
-                  'list',
-                ),
-              ]);
-            }
-            if (errs.includes('PAYMENT_DAYS_DISTRIBUTION_REQUIRES_BUCKETS')) {
-              return replaceAll([
-                mk(
-                  'Payment Speed Distribution',
-                  'Histogram of days-to-pay buckets',
-                  'bar',
-                  'payment_days',
-                  'bucket',
-                ),
-              ]);
-            }
-
-            // Top-clients repairs (avoid useless lifetime ranking when trend requested)
-            if (
-              errs.includes('TOP_CLIENTS_TREND_REQUIRES_TIME_SERIES') ||
-              errs.includes('TOP_CLIENTS_REQUIRES_CLIENT_BREAKDOWN')
-            ) {
-              const n =
-                typeof spec.topN === 'number'
-                  ? Math.max(1, Math.min(5, spec.topN))
-                  : 2;
-              const alreadyHasIt = out.some(
-                (w: any) =>
-                  w.metric === 'revenue' &&
-                  w.grouping === 'month' &&
-                  String((w as any).breakdown ?? '') === 'client',
-              );
-              if (alreadyHasIt) return replaceAll(out);
-              // Replace the whole plan — the LLM missed the breakdown requirement.
-              // Appending would be silently dropped by applyImplicitMax (which caps
-              // single-question dashboards at 1 widget). Replace instead.
-              return replaceAll([
-                mk(
-                  `Top ${n} Clients — Revenue by Month`,
-                  'Month-wise revenue for your top clients (grouped bars)',
-                  wantsType === 'line' ? 'line' : 'bar',
-                  'revenue',
-                  'month',
-                  { breakdown: 'client', topN: n },
-                ),
-              ]);
-            }
-
-            // Generic trend repairs
-            if (errs.includes('TREND_REQUIRES_TIME_SERIES')) {
-              return replaceAll([
-                mk(
-                  'Revenue Trend',
-                  'Monthly revenue trend',
-                  wantsType === 'bar' ? 'bar' : 'line',
-                  'revenue',
-                  'month',
-                ),
-              ]);
-            }
-
-            if (errs.includes('QUARTERLY_REQUIRES_QUARTER_GROUPING')) {
-              return replaceAll([
-                mk(
-                  'Quarterly Revenue Cadence',
-                  'Quarter-by-quarter revenue trend',
-                  'bar',
-                  'revenue',
-                  'quarter',
-                ),
-              ]);
-            }
-
-            if (errs.includes('AUDIT_REQUIRES_TABLE')) {
-              return replaceAll([
-                mk(
-                  'Recent Invoices Ledger',
-                  'Latest invoices for audit and drill-down',
-                  'table',
-                  'invoices',
-                  'list',
-                ),
-              ]);
-            }
-
-            if (errs.includes('VENTURE_REQUIRES_METRIC')) {
-              return replaceAll([
-                mk(
-                  'Venture Health Metrics',
-                  'Burn, runway, cash-on-hand, efficiency',
-                  'metric',
-                  'venture',
-                  'summary',
-                ),
-              ]);
-            }
-            if (errs.includes('VENTURE_WIDGET_NOT_RELEVANT')) {
-              return replaceAll(out.filter((w: any) => w.metric !== 'venture'));
-            }
-
-            // AR risk repairs
-            if (errs.includes('AR_RISK_REQUIRES_OVERDUE')) {
-              return replaceAll([
-                mk(
-                  'Overdue AR Trend',
-                  'Monthly overdue build-up — collection risk signal',
-                  wantsType === 'bar' ? 'bar' : 'line',
-                  'overdue',
-                  'month',
-                ),
-              ]);
-            }
-
-            // P&L repairs
-            if (errs.includes('PNL_REQUIRES_PNL_WIDGET')) {
-              // Preserve waterfall type when user explicitly asked for it.
-              if (String(wantsType ?? '') === 'waterfall') {
-                return replaceAll([
-                  mk(
-                    'P&L Waterfall — Revenue to Net Income',
-                    'Revenue → COGS → Gross Profit → OpEx → Net Income',
-                    'waterfall',
-                    'pl',
-                    'summary',
-                  ),
-                ]);
-              }
-              return replaceAll([
-                mk(
-                  'P&L Statement',
-                  'Full income statement by account',
-                  'table',
-                  'pl',
-                  'summary',
-                ),
-                mk(
-                  'P&L KPI Summary',
-                  'Revenue, Expenses, Gross Profit, Net Income, Margins',
-                  'metric',
-                  'pl_summary',
-                  'summary',
-                ),
-                mk(
-                  'Net Income Trend',
-                  'Monthly net income (revenue minus expenses)',
-                  wantsType === 'bar' ? 'bar' : 'line',
-                  'net_income',
-                  'month',
-                ),
-              ]);
-            }
-
-            // Expense repairs
-            if (errs.includes('EXPENSE_REQUIRES_EXPENSE_WIDGET')) {
-              if (String(wantsType ?? '') === 'waterfall') {
-                return replaceAll([
-                  mk(
-                    'Expense Waterfall by Category',
-                    'How expense categories build up total operating cost',
-                    'waterfall',
-                    'pl',
-                    'summary',
-                  ),
-                ]);
-              }
-              return replaceAll([
-                mk(
-                  'Top Expenses by Account',
-                  'GL expense breakdown ranked by spend',
-                  wantsType === 'pie' ? 'pie' : 'bar',
-                  'expense',
-                  'account',
-                ),
-                mk(
-                  'Expense Trend',
-                  'Monthly total expense trend',
-                  'line',
-                  'expense',
-                  'month',
-                ),
-                mk(
-                  'Expense KPI Summary',
-                  'Total Expenses, COGS, OPEX, largest account',
-                  'metric',
-                  'expense_summary',
-                  'summary',
-                ),
-              ]);
-            }
-
-            // Margin repairs
-            if (errs.includes('MARGIN_REQUIRES_MARGIN_WIDGET')) {
-              // Waterfall requests about "profitability" should show the P&L waterfall
-              // (gross_margin_pct returns 0 rows from demo data).
-              if (String(wantsType ?? '') === 'waterfall') {
-                return replaceAll([
-                  mk(
-                    'P&L Waterfall — Revenue to Net Income',
-                    'Revenue → COGS → Gross Profit → OpEx → Net Income',
-                    'waterfall',
-                    'pl',
-                    'summary',
-                  ),
-                ]);
-              }
-              return replaceAll([
-                mk(
-                  'Gross Margin % Trend',
-                  'Monthly gross margin percentage',
-                  'line',
-                  'gross_margin_pct',
-                  'month',
-                ),
-                mk(
-                  'Net Margin % Trend',
-                  'Monthly net margin percentage',
-                  'line',
-                  'net_margin_pct',
-                  'month',
-                ),
-                mk(
-                  'P&L KPI Summary',
-                  'Revenue, Gross Profit, Net Income, Margins',
-                  'metric',
-                  'pl_summary',
-                  'summary',
-                ),
-              ]);
-            }
-
-            // EBITDA repairs
-            if (errs.includes('EBITDA_REQUIRES_EBITDA_WIDGET')) {
-              return replaceAll([
-                mk(
-                  'EBITDA Trend',
-                  'Monthly EBITDA (net income + D&A add-back)',
-                  'line',
-                  'ebitda',
-                  'month',
-                ),
-                mk(
-                  'P&L KPI Summary',
-                  'Revenue, Expenses, Gross Profit, Net Income, Margins',
-                  'metric',
-                  'pl_summary',
-                  'summary',
-                ),
-              ]);
-            }
-
-            // GL repairs
-            if (errs.includes('GL_REQUIRES_GL_WIDGET')) {
-              return replaceAll([
-                mk(
-                  'GL Journal Entries',
-                  'All journal lines with debit/credit, account, amount',
-                  'table',
-                  'gl_transactions',
-                  'list',
-                ),
-                mk(
-                  'Top Expenses by Account',
-                  'GL expense breakdown ranked by spend',
-                  'bar',
-                  'expense',
-                  'account',
-                ),
-              ]);
-            }
-
-            return out;
-          };
-
-          const repaired = applyPieDonutLabelMode(
-            repair(validationErrors, constrainedWidgetsWithLabelMode),
-            query,
-          );
-          const remaining = this.validateWidgetsAgainstSpec(spec, repaired);
-          if (remaining.length > 0) {
-            this.logger.warn(
-              `[Agent:Planner] Plan rejected by spec validation: ${validationErrors.join(',')}; repair failed: ${remaining.join(',')}`,
-            );
-            return fallback;
-          }
-          this.logger.warn(
-            `[Agent:Planner] Plan repaired after spec validation: ${validationErrors.join(',')}`,
-          );
-          // Proceed with repaired widgets.
-          return {
-            tools_to_execute: this.deriveToolsFromWidgets(repaired, query),
-            should_generate_dashboard: true,
-            dashboard: {
-              title: best.title,
-              description: 'AI-generated financial intelligence dashboard',
-              widgets: repaired,
-            },
-            analysis_focus: query,
-          };
-        }
-        this.logger.log(
-          `[Agent:Planner] Ollama succeeded — picked plan score=${best.score.toFixed(1)}, widgets=${best.widgets.length}, tools=${best.tools.length}`,
-        );
-          return {
-            tools_to_execute: this.deriveToolsFromWidgets(
-            constrainedWidgetsWithLabelMode,
-            query,
-          ),
-          should_generate_dashboard: true,
-          dashboard: {
-            title: best.title,
-            description: 'AI-generated financial intelligence dashboard',
-            widgets: constrainedWidgetsWithLabelMode,
-          },
-          analysis_focus: query,
-        };
-      }
-
-      this.logger.warn(
-        '[Agent:Planner] Ollama returned 0 valid widgets — activating emergency fallback',
-      );
-    } catch (err: any) {
-      this.logger.warn(
-        `[Agent:Planner] Ollama failed (${err.message}) — activating emergency fallback`,
-      );
-    }
-
-    return fallback;
+  // --- legacy generatePlan() (vocab/metricData planner) DELETED: its 3 roles in
+  // --- query() were retired (no_data rescue validated redundant; offline →
+  // --- honest error + plan cache; edit tools → deriveToolsFromWidgets). ---
+
+  // High-precision percent-format inference for metric="dynamic" charts built from
+  // LLM SQL (which, unlike the catalog path, carry no measure.format). Returns
+  // 'percent' ONLY on an explicit percentage signal and never when an explicit USD/$
+  // unit is present, so it can never mislabel a currency chart. The LLM already states
+  // the unit in yAxisLabel (e.g. "Gross Margin (%)", "MoM Growth (%)").
+  private inferPercentFormat(
+    ...labels: Array<string | undefined>
+  ): 'percent' | null {
+    const s = labels.filter(Boolean).join(' ').toLowerCase();
+    if (!s) return null;
+    if (/\busd\b|\(\s*\$\s*\)|dollars?/.test(s)) return null; // explicit currency → leave as-is
+    if (/%|\bpercent(age)?\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(s)) return 'percent';
+    return null;
   }
 
   private deriveToolsFromWidgets(
@@ -16846,7 +14027,7 @@ export class AgentService {
         .join('\n');
 
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 120_000);
+      const timer = setTimeout(() => controller.abort(), LLM_CHAT_TIMEOUT_MS);
       const response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -17043,6 +14224,9 @@ export class AgentService {
           ...(typeof a?.yAxisLabel === 'string'
             ? { yAxisLabel: a.yAxisLabel.slice(0, 60) }
             : {}),
+          ...(this.inferPercentFormat(a?.yAxisLabel, a?.title)
+            ? { display: { valueFormat: 'percent' as const } }
+            : {}),
           dynamicSql: finalSql,
         });
       }
@@ -17169,21 +14353,29 @@ export class AgentService {
       if (second) return { kind: 'second_axis', second };
     }
     if (
-      /\bnormali[sz]e\b|\b100\s*%|\bas a (?:percentage|percent|%)\s+of\b|\b%\s*of\s*(?:the\s+)?(?:company\s+)?total\b|\bshare of (?:the\s+)?total\b|\bpercentage of (?:the\s+)?(?:company\s+)?total\b|\bproportion of (?:the\s+)?total\b/.test(
+      /\bnormali[sz]e\b|\b100\s*%|\bas a (?:percentage|percent|%)\s+of\s+(?:the\s+)?(?:company\s+|grand\s+)?total\b|\b%\s*of\s*(?:the\s+)?(?:company\s+)?total\b|\bshare of (?:the\s+)?total\b|\bpercentage of (?:the\s+)?(?:company\s+)?total\b|\bproportion of (?:the\s+)?total\b/.test(
         q,
       )
     )
       return { kind: 'normalize' };
+    // A flat company/overall average is a SINGLE reference line. But "average <measure>
+    // ... by <dimension>" (e.g. "add average monthly salary line by country") is a
+    // PER-CATEGORY series, not a flat line — let it fall through to the measure-add
+    // (combo) path instead of being hijacked into a company-average reference line.
+    const isGroupedAverageSeries =
+      /\b(?:average|avg|mean)\b[^.]*\bby\s+[a-z]/i.test(q) &&
+      !/\b(company[\s-]*wide|overall|grand|across\s+all)\b/i.test(q);
     if (
-      /\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b[^.]*\bline\b/.test(q) ||
-      /\bline\b[^.]*\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b/.test(q) ||
-      /\boverlay\b[^.]*\baverage\b/.test(q) ||
-      /\btrend\s+indicators?\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
-      // NOTE the group: bare "compare" must NOT trigger an average line — that
-      // hijacked every "add <measure> to compare" request into a company-average
-      // reference line instead of adding the named measure as a 2nd series.
-      /\b(?:compare|comparing)\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
-      /\breference\s+line\b/.test(q)
+      !isGroupedAverageSeries &&
+      (/\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b[^.]*\bline\b/.test(q) ||
+        /\bline\b[^.]*\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b/.test(q) ||
+        /\boverlay\b[^.]*\baverage\b/.test(q) ||
+        /\btrend\s+indicators?\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
+        // NOTE the group: bare "compare" must NOT trigger an average line — that
+        // hijacked every "add <measure> to compare" request into a company-average
+        // reference line instead of adding the named measure as a 2nd series.
+        /\b(?:compare|comparing)\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
+        /\breference\s+line\b/.test(q))
     )
       return { kind: 'reference_line' };
     return null;
@@ -17262,22 +14454,35 @@ export class AgentService {
   }
 
   private detectEbpoMeasureMention(q: string): string | null {
+    return this.detectEbpoMeasureMentions(q)[0] ?? null;
+  }
+
+  private detectEbpoMeasureMentions(q: string): string[] {
     const text = String(q ?? '').toLowerCase();
-    if (!text.trim()) return null;
+    if (!text.trim()) return [];
+    const out: string[] = [];
+    const add = (id: string) => {
+      if (!out.includes(id)) out.push(id);
+    };
     const checks: Array<[RegExp, string]> = [
-      [/\btotal\s+revenue\b|\brevenue\b/, 'total_revenue'],
+      [/\byear[-\s]+over[-\s]+year\s+revenue\s+growth\b|\brevenue\s+yoy\s+growth\b|\byoy\s+revenue\s+growth\b/, 'revenue_yoy_pct'],
       [/\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/, 'gross_margin_pct'],
       [/\bgross\s+margin\b/, 'gross_margin'],
+      [/\btotal\s+revenue\b|\brevenue\b/, 'total_revenue'],
       [/\btotal\s+cost\b|\bcost\b/, 'total_cost'],
       [/\bpayroll\s*(?:to|\/)\s*revenue\b|\bpayroll\s+ratio\b/, 'payroll_to_revenue_pct'],
       [/\btotal\s+payroll\b|\bpayroll\b/, 'total_payroll'],
+      [/\bbase\s+salary\b|\bbase\s+pay\b/, 'total_base_salary'],
+      [/\bovertime\b|\bovertime\s+cost\b/, 'total_overtime'],
+      [/\bbonus\b|\bbonuses\b/, 'total_bonus'],
+      [/\bbenefits\b|\bbenefit\s+cost\b/, 'total_benefits'],
       [/\boperating\s+cash\s+flow\b|\boperating\s+cf\b/, 'operating_cf'],
       [/\binvesting\s+cash\s+flow\b|\binvesting\s+cf\b/, 'investing_cf'],
       [/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/, 'financing_cf'],
-      [/\bfree\s+cash\s+flow\b|\bfree\s+cf\b/, 'free_cash_flow'],
+      [/\bfree\s+cash\s+flow\b|\bfree\s+cf\b|\bfcf\b/, 'free_cash_flow'],
       [/\bcash\s+balance\b/, 'cash_balance'],
-      [/\boutstanding\s+receivables?\b|\bar\s+outstanding\b|\breceivables?\b/, 'ar_outstanding'],
-      [/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/, 'ap_outstanding'],
+      [/\boutstanding\s+receivables?\b|\bar\s+outstanding\b|\breceivables?\b|\ba\/?r\b/, 'ar_outstanding'],
+      [/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b|\ba\/?p\b/, 'ap_outstanding'],
       [/\bcollection\s+rate\b/, 'collection_rate_pct'],
       [/\bdso\b/, 'dso_days'],
       [/\bdpo\b/, 'dpo_days'],
@@ -17288,6 +14493,7 @@ export class AgentService {
       [/\btickets?\s+resolved\b/, 'tickets_resolved'],
       [/\bhandling\s+time\b|\baht\b/, 'avg_aht_minutes'],
       [/\bemployee\s+count\b|\bheadcount\b/, 'employee_count'],
+      [/\baverage\s+salary\b|\bavg\s+salary\b|\bmonthly\s+salary\b/, 'avg_monthly_salary'],
       [/\brevenue\s+per\s+employee\b/, 'revenue_per_employee'],
       [/\bcost\s+per\s+employee\b/, 'cost_per_employee'],
       [/\basset\s+cost\b/, 'asset_cost'],
@@ -17299,7 +14505,28 @@ export class AgentService {
       [/\bnet\s+movement\b/, 'net_movement'],
       [/\bclosing\s+balance\b/, 'closing_balance'],
     ];
-    return checks.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+    for (const [pattern, id] of checks) if (pattern.test(text)) add(id);
+
+    const normalize = (value: string) =>
+      ` ${value
+        .toLowerCase()
+        .replace(/[^a-z0-9%]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()} `;
+    const haystack = normalize(text);
+    for (const [id, measure] of Object.entries(EBPO_MEASURES)) {
+      const candidates = [measure.label, ...(measure.aliases ?? [])];
+      if (candidates.some((candidate) => haystack.includes(normalize(candidate)))) add(id);
+    }
+    return out;
+  }
+
+  private detectEbpoScorecardMeasures(q: string): string[] {
+    const text = String(q ?? '').toLowerCase();
+    if (!/\b(scorecard|kpis?|kpi\s+cards?|metric\s+cards?|cards?)\b/.test(text)) return [];
+    const measures = this.detectEbpoMeasureMentions(text);
+    if (measures.length < 2) return [];
+    return measures;
   }
 
   private detectEbpoAdditionalMeasures(q: string): string[] {
@@ -17316,8 +14543,7 @@ export class AgentService {
     if (/\bcredits?\b|\bcredit\s+impact\b/.test(text)) add('total_credit');
     if (/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(text)) add('ap_outstanding');
 
-    const single = this.detectEbpoMeasureMention(text);
-    if (single) add(single);
+    for (const mid of this.detectEbpoMeasureMentions(text)) add(mid);
     return out;
   }
 
@@ -18037,6 +15263,156 @@ export class AgentService {
 
       if (
         !spec &&
+        /\bpayroll\s+as\s+a\s+percentage\s+of\s+revenue\b|\bpayroll\s+to\s+revenue\b/.test(q) &&
+        /\bbusiness\s+unit\b/.test(String(w.title ?? '').toLowerCase())
+      ) {
+        const sql = `
+          SELECT
+            business_unit_rollup.business_unit AS name,
+            round(business_unit_rollup.total_revenue_usd, 2) AS revenue,
+            round(
+              any(payroll_rollup.total_payroll_usd)
+              * business_unit_rollup.total_revenue_usd
+              / nullIf(any(revenue_rollup.total_revenue_usd), 0),
+              2
+            ) AS payroll,
+            round(
+              any(payroll_rollup.total_payroll_usd)
+              * business_unit_rollup.total_revenue_usd
+              / nullIf(any(revenue_rollup.total_revenue_usd), 0)
+              / nullIf(business_unit_rollup.total_revenue_usd, 0) * 100,
+              2
+            ) AS payroll_to_revenue_pct,
+            round(business_unit_rollup.gross_margin_usd, 2) AS gross_margin
+          FROM (
+            SELECT
+              tenant_id,
+              org_id,
+              business_unit,
+              sum(total_revenue_usd) AS total_revenue_usd,
+              sum(gross_margin_usd) AS gross_margin_usd
+            FROM ${this.analyticsDb}.v_ebpo_revenue_by_business_unit
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+            GROUP BY tenant_id, org_id, business_unit
+          ) business_unit_rollup
+          LEFT JOIN (
+            SELECT
+              tenant_id,
+              org_id,
+              sum(total_payroll_usd) AS total_payroll_usd
+            FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+            GROUP BY tenant_id, org_id
+          ) payroll_rollup
+            ON payroll_rollup.tenant_id = business_unit_rollup.tenant_id
+            AND payroll_rollup.org_id = business_unit_rollup.org_id
+          LEFT JOIN (
+            SELECT
+              tenant_id,
+              org_id,
+              sum(total_revenue_usd) AS total_revenue_usd
+            FROM ${this.analyticsDb}.v_ebpo_revenue_by_business_unit
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+            GROUP BY tenant_id, org_id
+          ) revenue_rollup
+            ON revenue_rollup.tenant_id = business_unit_rollup.tenant_id
+            AND revenue_rollup.org_id = business_unit_rollup.org_id
+          GROUP BY business_unit_rollup.business_unit, business_unit_rollup.total_revenue_usd, business_unit_rollup.gross_margin_usd
+          ORDER BY revenue DESC
+          LIMIT 100
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added payroll as a percentage of revenue.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                display: { secondaryAxisFormat: 'percent', secondaryLabel: 'Payroll / revenue' },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        !spec &&
+        /\bpayroll\s+cost\b/.test(q) &&
+        /\bbubble\b|\bsize\b/.test(q) &&
+        /\bdelivery\s+center\b/.test(String(w.title ?? '').toLowerCase())
+      ) {
+        const sql = `
+          WITH payroll_by_country AS (
+            SELECT
+              formatDateTime(period_date, '%Y-%m') AS ym,
+              country,
+              sum(total_payroll_usd) AS total_payroll_usd
+            FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+            GROUP BY ym, country
+          ),
+          center_base AS (
+            SELECT
+              formatDateTime(period_date, '%Y-%m') AS ym,
+              delivery_center,
+              country,
+              avg(utilization_pct) AS utilization_pct,
+              avg(revenue_per_employee_usd) AS revenue_per_employee_usd,
+              sum(employee_count) AS employee_count
+            FROM ${this.analyticsDb}.v_ebpo_delivery_center_efficiency_monthly
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+            GROUP BY ym, delivery_center, country
+          ),
+          country_totals AS (
+            SELECT
+              ym,
+              country,
+              sum(employee_count) AS country_employee_count
+            FROM center_base
+            GROUP BY ym, country
+          )
+          SELECT
+            c.delivery_center AS name,
+            round(avg(c.utilization_pct), 2) AS x,
+            round(avg(c.revenue_per_employee_usd), 2) AS y,
+            round(avg(p.total_payroll_usd * c.employee_count / nullIf(t.country_employee_count, 0)), 2) AS z
+          FROM center_base c
+          LEFT JOIN country_totals t
+            ON t.ym = c.ym
+            AND t.country = c.country
+          LEFT JOIN payroll_by_country p
+            ON p.ym = c.ym
+            AND p.country = c.country
+          GROUP BY c.delivery_center
+          ORDER BY y DESC
+          LIMIT 100
+        `;
+        if (await verify(sql, 'bubble')) {
+          return {
+            summary: 'Added payroll cost as bubble size using a country payroll allocation by employee share.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'bubble',
+                dynamicSql: sql.trim(),
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        !spec &&
         /\bnet\s+movement\b/.test(String(w.title ?? '').toLowerCase()) &&
         /\bdebits?\b|\bcredits?\b|\bdebit\s+impact\b|\bcredit\s+impact\b/.test(q)
       ) {
@@ -18621,13 +15997,6 @@ export class AgentService {
       /\bsecond (?:line|series|bar|column|axis)\b/.test(q);
     if (!additive) return null;
     // Pure presentation/transform asks are handled by the transform builder, not here.
-    if (
-      /\b(?:% contribution|contribution|normali[sz]e|100 %|moving average|growth|reference line|average line|data label|labels|highlight|cumulative)\b/.test(
-        q,
-      )
-    )
-      return null;
-
     const current = (
       currentSpec.measures?.length
         ? currentSpec.measures
@@ -18636,6 +16005,15 @@ export class AgentService {
           : []
     ).filter((m): m is string => !!m);
     if (current.length === 0) return null;
+
+    const mentioned = this.detectEbpoMeasureMentions(req).filter((mid) => !current.includes(mid));
+    if (
+      /\b(?:% contribution|contribution|normali[sz]e|100 %|moving average|growth|reference line|average line|data label|labels|highlight|cumulative)\b/.test(
+        q,
+      ) &&
+      !mentioned.includes('revenue_yoy_pct')
+    )
+      return null;
 
     // Significant words of a label (≥4 chars, dropping filler) — lets "benefits as a
     // percentage of base salary" match "Benefits % of Base Salary" even though the
@@ -18646,19 +16024,20 @@ export class AgentService {
         .split(' ')
         .filter((w) => w.length >= 4 && !['of', 'the', 'per', 'and'].includes(w));
 
-    const matched: string[] = [];
+    const matched: string[] = [...mentioned];
     for (const [mid, def] of Object.entries(EBPO_MEASURES)) {
       if (current.includes(mid) || matched.includes(mid)) continue;
       const idPhrase = norm(mid.replace(/_/g, ' '));
-      const labelCore = norm(def.label);
-      const tokens = sigTokens(def.label);
-      const allTokensPresent =
-        tokens.length >= 2 && tokens.every((t) => q.includes(` ${t} `) || q.includes(`${t} `));
-      if (
-        q.includes(idPhrase) ||
-        (labelCore.trim().length >= 2 && q.includes(labelCore)) ||
-        allTokensPresent
-      ) {
+      const candidates = [def.label, ...(def.aliases ?? [])];
+      const matchedCandidate = candidates.some((candidate) => {
+        const labelCore = norm(candidate);
+        const tokens = sigTokens(candidate);
+        const allTokensPresent =
+          tokens.length >= 2 &&
+          tokens.every((t) => q.includes(` ${t} `) || q.includes(`${t} `));
+        return (labelCore.trim().length >= 2 && q.includes(labelCore)) || allTokensPresent;
+      });
+      if (q.includes(idPhrase) || matchedCandidate) {
         matched.push(mid);
       }
     }
@@ -19423,7 +16802,7 @@ export class AgentService {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 300_000);
+      const timeout = setTimeout(() => controller.abort(), LLM_CHAT_TIMEOUT_MS);
 
       const response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
         method: 'POST',
@@ -20156,47 +17535,6 @@ export class AgentService {
       default:
         return { error: `Unknown tool: ${tool}` };
     }
-  }
-
-  // ─── Synthesis Message Builder ────────────────────────────────────────────
-
-  private buildSynthesisMessages(
-    userQuery: string,
-    toolResults: ToolResult[],
-    plan: AgentPlan,
-    dashboardId: string | null,
-    dashboardTitle: string,
-    intent: QueryIntent,
-    editPlan: DashboardEditPlan | null,
-    actualWidgetCount: number,
-  ): Array<{ role: string; content: string }> {
-    const toolSummary = toolResults
-      .map((r) => {
-        const dataStr = JSON.stringify(r.data, null, 2);
-        const preview =
-          dataStr.length > 4000
-            ? dataStr.slice(0, 4000) + '\n...(truncated)'
-            : dataStr;
-        return `### ${this.toolLabel(r.tool)} (${r.rowCount} records)\n\`\`\`json\n${preview}\n\`\`\``;
-      })
-      .join('\n\n');
-
-    let dashboardNote = '';
-    if (dashboardId && intent === 'EDIT_DASHBOARD' && editPlan) {
-      dashboardNote = `\n\nThe dashboard "${dashboardTitle}" has been updated: ${editPlan.summary}. Reference it in your brief.`;
-    } else if (dashboardId && intent === 'CREATE_DASHBOARD') {
-      dashboardNote = `\n\nDashboard "${dashboardTitle}" generated with ${actualWidgetCount} charts.`;
-    }
-
-    const userContent = `USER QUERY: "${userQuery}"
-${dashboardNote}
-
-Write your 2-3 sentence summary now.`;
-
-    return [
-      { role: 'system', content: SYNTHESIZER_SYSTEM },
-      { role: 'user', content: userContent },
-    ];
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -21854,6 +19192,15 @@ Output SQL ONLY — no explanation, no markdown.`;
       // that never involved invoices — it reads as broken. Stay silent on metrics.
       if (!map.has('financial_summary')) return '';
       if (totalInvoices === 0) {
+        // Only assert "no invoices" for an invoice/receivables dashboard. For a
+        // payroll / employee-count / cash-flow / asset chart (EBPO orgs have no
+        // invoice table at all) this sentence is irrelevant and reads as broken —
+        // stay silent instead.
+        const invoiceFocused =
+          /invoice|receivable|\bcollect|outstanding|overdue|\bbilled\b|aging|\bAR\b|\bAP\b|payables?/i.test(
+            String(meta.dashboardTitle ?? ''),
+          );
+        if (!invoiceFocused) return '';
         if (spec.entityFilter?.orgName) {
           return `No invoices found for ${spec.entityFilter.orgName} in this scope yet (0 invoices).`;
         }

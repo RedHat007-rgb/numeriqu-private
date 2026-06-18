@@ -43,6 +43,7 @@ export type EbpoKind = 'flow' | 'stock' | 'ratio' | 'count';
 export interface EbpoMeasureDef {
   id: string;
   label: string;
+  aliases?: string[];
   format: 'currency' | 'number' | 'percent';
   agg: EbpoAgg;
   kind: EbpoKind;
@@ -82,92 +83,463 @@ const M = (
   agg: EbpoAgg,
   kind: EbpoKind,
   decimals?: number,
-): EbpoMeasureDef => ({ id, label, format, agg, kind, decimals });
+  aliases?: string[],
+): EbpoMeasureDef => ({ id, label, aliases, format, agg, kind, decimals });
 
 export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   // Revenue / cost / margin (flows)
-  total_revenue: M('total_revenue', 'Total Revenue', 'currency', 'sum', 'flow'),
-  total_cost: M('total_cost', 'Total Cost', 'currency', 'sum', 'flow'),
-  gross_margin: M('gross_margin', 'Gross Margin', 'currency', 'sum', 'flow'),
-  gross_margin_pct: M('gross_margin_pct', 'Gross Margin %', 'percent', 'avg', 'ratio', 1),
-  revenue_yoy_pct: M('revenue_yoy_pct', 'Revenue YoY Growth %', 'percent', 'avg', 'ratio', 1),
+  total_revenue: M(
+    'total_revenue',
+    'Total Revenue',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['revenue', 'sales', 'income'],
+  ),
+  total_cost: M(
+    'total_cost',
+    'Total Cost',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['cost', 'expense'],
+  ),
+  gross_margin: M(
+    'gross_margin',
+    'Gross Margin',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['gross profit'],
+  ),
+  gross_margin_pct: M(
+    'gross_margin_pct',
+    'Gross Margin %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    ['gross margin percentage', 'gross margin percent', 'gross margin pct'],
+  ),
+  revenue_yoy_pct: M(
+    'revenue_yoy_pct',
+    'Revenue YoY Growth %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    [
+      'year over year revenue growth',
+      'year-over-year revenue growth',
+      'revenue year over year growth',
+      'revenue growth year over year',
+      'yoy revenue growth',
+    ],
+  ),
   // Derived CFO ratios — precomputed in the canonical SUPERSET view
   // v_ebpo_cfo_ratios_monthly. Catalogued so create AND combo follow-ups
   // ("add X as a comparison line") are deterministic via multi-measure specs.
   // Current/quick ratio remain refused (no full current-liabilities data) — never faked.
-  cost_to_income_pct: M('cost_to_income_pct', 'Cost-to-Income %', 'percent', 'avg', 'ratio', 1),
-  fcf_margin_pct: M('fcf_margin_pct', 'Free Cash Flow Margin %', 'percent', 'avg', 'ratio', 1),
-  operating_cf_to_revenue_pct: M('operating_cf_to_revenue_pct', 'Operating Cash Flow % of Revenue', 'percent', 'avg', 'ratio', 1),
-  ebitda_style_margin_pct: M('ebitda_style_margin_pct', 'EBITDA-style Margin %', 'percent', 'avg', 'ratio', 1),
-  working_capital: M('working_capital', 'Working Capital', 'currency', 'avg', 'stock'),
+  cost_to_income_pct: M(
+    'cost_to_income_pct',
+    'Cost-to-Income %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    ['cost to income ratio'],
+  ),
+  fcf_margin_pct: M(
+    'fcf_margin_pct',
+    'Free Cash Flow Margin %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    ['fcf margin', 'free cash flow margin', 'free cash flow margin percentage'],
+  ),
+  operating_cf_to_revenue_pct: M(
+    'operating_cf_to_revenue_pct',
+    'Operating Cash Flow % of Revenue',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    [
+      'operating cash flow percentage of revenue',
+      'ocf to revenue',
+      'cash conversion',
+      'cash conversion ratio',
+      'operating cash flow divided by revenue',
+      'operating cash flow / revenue',
+    ],
+  ),
+  ebitda_style_margin_pct: M(
+    'ebitda_style_margin_pct',
+    'EBITDA-style Margin %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    ['ebitda margin', 'ebitda style margin', 'revenue minus cost minus payroll'],
+  ),
+  working_capital: M(
+    'working_capital',
+    'Working Capital',
+    'currency',
+    'avg',
+    'stock',
+    undefined,
+    ['net working capital', 'net working capital'],
+  ),
   // Payroll (flows)
-  total_payroll: M('total_payroll', 'Total Payroll', 'currency', 'sum', 'flow'),
-  total_base_salary: M('total_base_salary', 'Total Base Salary', 'currency', 'sum', 'flow'),
-  total_overtime: M('total_overtime', 'Total Overtime', 'currency', 'sum', 'flow'),
-  total_bonus: M('total_bonus', 'Total Bonus', 'currency', 'sum', 'flow'),
-  total_benefits: M('total_benefits', 'Total Benefits', 'currency', 'sum', 'flow'),
-  payroll_to_revenue_pct: M('payroll_to_revenue_pct', 'Payroll / Revenue %', 'percent', 'avg', 'ratio', 1),
+  total_payroll: M(
+    'total_payroll',
+    'Total Payroll',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['payroll', 'payroll cost'],
+  ),
+  total_base_salary: M(
+    'total_base_salary',
+    'Total Base Salary',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['base salary', 'base salaries'],
+  ),
+  total_overtime: M(
+    'total_overtime',
+    'Total Overtime',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['overtime', 'overtime cost'],
+  ),
+  total_bonus: M(
+    'total_bonus',
+    'Total Bonus',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['bonus', 'bonuses'],
+  ),
+  total_benefits: M(
+    'total_benefits',
+    'Total Benefits',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['benefits', 'benefit cost'],
+  ),
+  payroll_to_revenue_pct: M(
+    'payroll_to_revenue_pct',
+    'Payroll / Revenue %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    [
+      'payroll to revenue percentage',
+      'payroll over revenue percentage',
+      'payroll revenue ratio',
+      'payroll ratio',
+    ],
+  ),
   benefits_to_base_pct: {
-    id: 'benefits_to_base_pct', label: 'Benefits % of Base Salary', format: 'percent', agg: 'avg', kind: 'ratio',
-    decimals: 1, derived: { num: 'total_benefits', den: 'total_base_salary', scale: 100 },
+    id: 'benefits_to_base_pct',
+    label: 'Benefits % of Base Salary',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    derived: { num: 'total_benefits', den: 'total_base_salary', scale: 100 },
   },
-  avg_monthly_salary: M('avg_monthly_salary', 'Avg Monthly Salary', 'currency', 'avg', 'ratio'),
+  avg_monthly_salary: M(
+    'avg_monthly_salary',
+    'Avg Monthly Salary',
+    'currency',
+    'avg',
+    'ratio',
+  ),
   // Cash flow
-  operating_cf: M('operating_cf', 'Operating Cash Flow', 'currency', 'sum', 'flow'),
-  investing_cf: M('investing_cf', 'Investing Cash Flow', 'currency', 'sum', 'flow'),
-  financing_cf: M('financing_cf', 'Financing Cash Flow', 'currency', 'sum', 'flow'),
-  free_cash_flow: M('free_cash_flow', 'Free Cash Flow', 'currency', 'sum', 'flow'),
-  cash_balance: M('cash_balance', 'Cash Balance', 'currency', 'max', 'stock'),
+  operating_cf: M(
+    'operating_cf',
+    'Operating Cash Flow',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['operating cf', 'ocf'],
+  ),
+  investing_cf: M(
+    'investing_cf',
+    'Investing Cash Flow',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['investing cf'],
+  ),
+  financing_cf: M(
+    'financing_cf',
+    'Financing Cash Flow',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['financing cf'],
+  ),
+  free_cash_flow: M(
+    'free_cash_flow',
+    'Free Cash Flow',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['free cf', 'fcf'],
+  ),
+  cash_balance: M(
+    'cash_balance',
+    'Cash Balance',
+    'currency',
+    'max',
+    'stock',
+    undefined,
+    ['cash'],
+  ),
   // Working capital (stocks / ratios)
-  ar_outstanding: M('ar_outstanding', 'AR Outstanding', 'currency', 'sum', 'stock'),
-  ap_outstanding: M('ap_outstanding', 'AP Outstanding', 'currency', 'sum', 'stock'),
-  collection_rate_pct: M('collection_rate_pct', 'Collection Rate %', 'percent', 'avg', 'ratio', 1),
-  dso_days: M('dso_days', 'DSO (days)', 'number', 'avg', 'ratio', 1),
-  dpo_days: M('dpo_days', 'DPO (days)', 'number', 'avg', 'ratio', 1),
-  invoice_amount: M('invoice_amount', 'Invoiced Amount', 'currency', 'sum', 'flow'),
-  collected_amount: M('collected_amount', 'Collected Amount', 'currency', 'sum', 'flow'),
+  ar_outstanding: M(
+    'ar_outstanding',
+    'AR Outstanding',
+    'currency',
+    'sum',
+    'stock',
+    undefined,
+    [
+      'ar',
+      'a/r',
+      'outstanding receivables',
+      'receivables',
+      'accounts receivable outstanding',
+    ],
+  ),
+  ap_outstanding: M(
+    'ap_outstanding',
+    'AP Outstanding',
+    'currency',
+    'sum',
+    'stock',
+    undefined,
+    [
+      'ap',
+      'a/p',
+      'outstanding payables',
+      'payables',
+      'accounts payable outstanding',
+    ],
+  ),
+  collection_rate_pct: M(
+    'collection_rate_pct',
+    'Collection Rate %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    ['collection rate percentage'],
+  ),
+  dso_days: M('dso_days', 'DSO (days)', 'number', 'avg', 'ratio', 1, [
+    'days sales outstanding',
+  ]),
+  dpo_days: M('dpo_days', 'DPO (days)', 'number', 'avg', 'ratio', 1, [
+    'days payable outstanding',
+  ]),
+  invoice_amount: M(
+    'invoice_amount',
+    'Invoiced Amount',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['invoice amount', 'invoices'],
+  ),
+  collected_amount: M(
+    'collected_amount',
+    'Collected Amount',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['collected amount', 'collections'],
+  ),
   payment_rate_pct: {
-    id: 'payment_rate_pct', label: 'Payment Rate %', format: 'percent', agg: 'avg', kind: 'ratio',
-    decimals: 1, derived: { num: 'paid_amount', den: 'invoice_amount', scale: 100 },
+    id: 'payment_rate_pct',
+    label: 'Payment Rate %',
+    aliases: ['payment rate percentage', 'paid rate'],
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    derived: { num: 'paid_amount', den: 'invoice_amount', scale: 100 },
   },
   // Operations (ratios / counts)
-  sla_compliance_pct: M('sla_compliance_pct', 'SLA Compliance %', 'percent', 'avg', 'ratio', 1),
-  csat_pct: M('csat_pct', 'CSAT %', 'percent', 'avg', 'ratio', 1),
-  utilization_pct: M('utilization_pct', 'Avg Utilization %', 'percent', 'avg', 'ratio', 1),
+  sla_compliance_pct: M(
+    'sla_compliance_pct',
+    'SLA Compliance %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    ['sla compliance percentage', 'sla percent'],
+  ),
+  csat_pct: M('csat_pct', 'CSAT %', 'percent', 'avg', 'ratio', 1, [
+    'customer satisfaction',
+    'csat percentage',
+  ]),
+  utilization_pct: M(
+    'utilization_pct',
+    'Avg Utilization %',
+    'percent',
+    'avg',
+    'ratio',
+    1,
+    ['utilization percentage', 'utilisation percentage'],
+  ),
   calls_handled: M('calls_handled', 'Calls Handled', 'number', 'sum', 'count'),
-  tickets_resolved: M('tickets_resolved', 'Tickets Resolved', 'number', 'sum', 'count'),
-  avg_aht_minutes: M('avg_aht_minutes', 'Avg Handling Time (min)', 'number', 'avg', 'ratio', 1),
+  tickets_resolved: M(
+    'tickets_resolved',
+    'Tickets Resolved',
+    'number',
+    'sum',
+    'count',
+  ),
+  avg_aht_minutes: M(
+    'avg_aht_minutes',
+    'Avg Handling Time (min)',
+    'number',
+    'avg',
+    'ratio',
+    1,
+  ),
   // People / efficiency
-  employee_count: M('employee_count', 'Employee Count', 'number', 'sum', 'count'),
-  revenue_per_employee: M('revenue_per_employee', 'Revenue per Employee', 'currency', 'avg', 'ratio'),
-  cost_per_employee: M('cost_per_employee', 'Cost per Employee', 'currency', 'avg', 'ratio'),
+  employee_count: M(
+    'employee_count',
+    'Employee Count',
+    'number',
+    'sum',
+    'count',
+    undefined,
+    ['headcount', 'employees'],
+  ),
+  revenue_per_employee: M(
+    'revenue_per_employee',
+    'Revenue per Employee',
+    'currency',
+    'avg',
+    'ratio',
+    undefined,
+    ['revenue per fte'],
+  ),
+  cost_per_employee: {
+    id: 'cost_per_employee',
+    label: 'Cost per Employee',
+    aliases: ['cost per fte', 'payroll cost per employee', 'cost per employee by country'],
+    format: 'currency',
+    agg: 'avg',
+    kind: 'ratio',
+    derived: { num: 'total_payroll', den: 'employee_count', scale: 1 },
+  },
   // Fixed assets (stocks)
   asset_cost: M('asset_cost', 'Asset Cost', 'currency', 'sum', 'flow'),
-  accumulated_depreciation: M('accumulated_depreciation', 'Accumulated Depreciation', 'currency', 'sum', 'flow'),
-  net_book_value: M('net_book_value', 'Net Book Value', 'currency', 'sum', 'stock'),
+  accumulated_depreciation: M(
+    'accumulated_depreciation',
+    'Accumulated Depreciation',
+    'currency',
+    'sum',
+    'flow',
+  ),
+  net_book_value: M(
+    'net_book_value',
+    'Net Book Value',
+    'currency',
+    'sum',
+    'stock',
+  ),
   asset_count: M('asset_count', 'Asset Count', 'number', 'sum', 'count'),
   // Derived asset ratios (no precomputed column — computed as ratio-of-sums).
   depreciation_pct: {
-    id: 'depreciation_pct', label: 'Depreciation %', format: 'percent', agg: 'avg', kind: 'ratio',
-    decimals: 1, derived: { num: 'accumulated_depreciation', den: 'asset_cost', scale: 100 },
+    id: 'depreciation_pct',
+    label: 'Depreciation %',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    derived: { num: 'accumulated_depreciation', den: 'asset_cost', scale: 100 },
   },
   nbv_to_cost_pct: {
-    id: 'nbv_to_cost_pct', label: 'Net Book Value % of Cost', format: 'percent', agg: 'avg', kind: 'ratio',
-    decimals: 1, derived: { num: 'net_book_value', den: 'asset_cost', scale: 100 },
+    id: 'nbv_to_cost_pct',
+    label: 'Net Book Value % of Cost',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    derived: { num: 'net_book_value', den: 'asset_cost', scale: 100 },
   },
   // GL / trial balance
   total_debit: M('total_debit', 'Total Debit', 'currency', 'sum', 'flow'),
   total_credit: M('total_credit', 'Total Credit', 'currency', 'sum', 'flow'),
   net_movement: M('net_movement', 'Net Movement', 'currency', 'sum', 'flow'),
-  closing_balance: M('closing_balance', 'Closing Balance', 'currency', 'sum', 'stock'),
-  opening_balance: M('opening_balance', 'Opening Balance', 'currency', 'sum', 'stock'),
+  closing_balance: M(
+    'closing_balance',
+    'Closing Balance',
+    'currency',
+    'sum',
+    'stock',
+  ),
+  opening_balance: M(
+    'opening_balance',
+    'Opening Balance',
+    'currency',
+    'sum',
+    'stock',
+  ),
   // AP / delivery-center extras (unlock invoice/paid combos and per-center revenue)
-  paid_amount: M('paid_amount', 'Paid Amount', 'currency', 'sum', 'flow'),
-  allocated_revenue: M('allocated_revenue', 'Revenue (allocated)', 'currency', 'sum', 'flow'),
+  paid_amount: M(
+    'paid_amount',
+    'Paid Amount',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['paid', 'amount paid'],
+  ),
+  allocated_revenue: M(
+    'allocated_revenue',
+    'Revenue (allocated)',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    ['revenue per delivery center', 'delivery center revenue', 'revenue by delivery center'],
+  ),
 };
 
 // ─── Catalog: DIMENSIONS ──────────────────────────────────────────────────────
-const D = (id: string, label: string, column?: string, isTime?: boolean): EbpoDimDef => ({
+const D = (
+  id: string,
+  label: string,
+  column?: string,
+  isTime?: boolean,
+): EbpoDimDef => ({
   id,
   label,
   column,
@@ -530,7 +902,9 @@ const catExpr = (dim: EbpoDimDef) =>
   `COALESCE(NULLIF(${dim.column}, ''), 'Unassigned')`;
 
 // label + group expr for any dimension within a chosen view
-const dimSql = (dimId: string): { label: string; group: string; isTime: boolean } => {
+const dimSql = (
+  dimId: string,
+): { label: string; group: string; isTime: boolean } => {
   const dim = EBPO_DIMENSIONS[dimId]!;
   if (dim.isTime) {
     const t = timeExpr(dimId);
@@ -548,7 +922,8 @@ const aggIfOf = (m: EbpoMeasureDef, col: string, cond: string) =>
 const viewExposesMeasure = (view: EbpoViewDef, mid: string): boolean => {
   const m = EBPO_MEASURES[mid];
   if (!m) return false;
-  if (m.derived) return m.derived.num in view.measures && m.derived.den in view.measures;
+  if (m.derived)
+    return m.derived.num in view.measures && m.derived.den in view.measures;
   return mid in view.measures;
 };
 // View-aware aggregate: derived measures compute num/den (ratio-of-sums) from the
@@ -561,7 +936,11 @@ const aggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef): string => {
   }
   return aggOf(m, view.measures[m.id]!);
 };
-const condAggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef, cond: string): string => {
+const condAggExprFor = (
+  m: EbpoMeasureDef,
+  view: EbpoViewDef,
+  cond: string,
+): string => {
   if (m.derived) {
     const n = view.measures[m.derived.num]!;
     const d = view.measures[m.derived.den]!;
@@ -575,7 +954,10 @@ const condValueExprFor = (m: EbpoMeasureDef, view: EbpoViewDef, cond: string) =>
   `round(${condAggExprFor(m, view, cond)}, ${decimalsFor(m)})`;
 
 // ─── View resolution ──────────────────────────────────────────────────────────
-const viewSupportsDim = (view: EbpoViewDef, dimId: string | null | undefined): boolean => {
+const viewSupportsDim = (
+  view: EbpoViewDef,
+  dimId: string | null | undefined,
+): boolean => {
   if (!dimId) return true; // KPI / no grouping
   const dim = EBPO_DIMENSIONS[dimId];
   if (!dim) return false;
@@ -627,16 +1009,31 @@ export function validateEbpoSpec(spec: ChartSpec): CompileRefusal | null {
   // Every named measure must be real and available.
   for (const mid of measures) {
     if (EBPO_UNAVAILABLE[mid])
-      return { ok: false, refusal: `I can't use ${EBPO_UNAVAILABLE[mid]} — it isn't in this dataset.${tail}` };
+      return {
+        ok: false,
+        refusal: `I can't use ${EBPO_UNAVAILABLE[mid]} — it isn't in this dataset.${tail}`,
+      };
     if (!EBPO_MEASURES[mid])
-      return { ok: false, refusal: `I don't have a "${mid}" measure to plot.${tail}` };
+      return {
+        ok: false,
+        refusal: `I don't have a "${mid}" measure to plot.${tail}`,
+      };
   }
   if (measures.length === 0)
     return { ok: false, refusal: `I need a measure to plot.${tail}` };
-  if (EBPO_UNAVAILABLE[spec.dimension] || (spec.breakdown && EBPO_UNAVAILABLE[spec.breakdown]))
-    return { ok: false, refusal: `That breakdown isn't in this dataset.${tail}` };
+  if (
+    EBPO_UNAVAILABLE[spec.dimension] ||
+    (spec.breakdown && EBPO_UNAVAILABLE[spec.breakdown])
+  )
+    return {
+      ok: false,
+      refusal: `That breakdown isn't in this dataset.${tail}`,
+    };
   if (dimId && !EBPO_DIMENSIONS[dimId])
-    return { ok: false, refusal: `I can't break data down by "${spec.dimension}".${tail}` };
+    return {
+      ok: false,
+      refusal: `I can't break data down by "${spec.dimension}".${tail}`,
+    };
 
   // Multi-measure (combo): one view must expose all measures + the dimension.
   if (measures.length > 1) {
@@ -653,7 +1050,10 @@ export function validateEbpoSpec(spec: ChartSpec): CompileRefusal | null {
 
   // Single measure.
   if (spec.breakdown && !EBPO_DIMENSIONS[spec.breakdown])
-    return { ok: false, refusal: `I can't break data down by "${spec.breakdown}".${tail}` };
+    return {
+      ok: false,
+      refusal: `I can't break data down by "${spec.breakdown}".${tail}`,
+    };
   const view = resolveEbpoView(measures[0]!, dimId, spec.breakdown);
   if (!view) {
     const m = EBPO_MEASURES[measures[0]!]!;
@@ -692,7 +1092,9 @@ const buildWhere = (
     if (!dim || !dim.column || dim.isTime || f.values.length === 0) continue;
     if (!view.dims.includes(f.dimension)) continue;
     const list = f.values.map(quoteLit).join(', ');
-    parts.push(`${dim.column} ${f.op === 'not_in' ? 'NOT IN' : 'IN'} (${list})`);
+    parts.push(
+      `${dim.column} ${f.op === 'not_in' ? 'NOT IN' : 'IN'} (${list})`,
+    );
   }
   return parts.join(' AND ');
 };
@@ -724,18 +1126,36 @@ export async function compileEbpoSpec(
 
     if (!dimId) {
       // Scorecard: one (name, value) row per measure.
-      const where = buildWhere(mview, [], spec.filters, db, allStock && mview.hasTime);
-      const sql = measures
-        .map((mid) => {
-          const m = EBPO_MEASURES[mid]!;
-          return `SELECT ${quoteLit(m.label)} AS name, ${valueExprFor(m, mview)} AS value FROM ${mtbl} WHERE ${where}`;
-        })
-        .join('\nUNION ALL\n');
-      return { ok: true, sql, measure: EBPO_MEASURES[measures[0]!]!, view: mview.name };
+      const where = buildWhere(
+        mview,
+        [],
+        spec.filters,
+        db,
+        allStock && mview.hasTime,
+      );
+      const sql =
+        measures
+          .map((mid) => {
+            const m = EBPO_MEASURES[mid]!;
+            return `SELECT ${quoteLit(m.label)} AS name, ${valueExprFor(m, mview)} AS value FROM ${mtbl} WHERE ${where}`;
+          })
+          .join('\nUNION ALL\n') + `\nLIMIT ${topN}`;
+      return {
+        ok: true,
+        sql,
+        measure: EBPO_MEASURES[measures[0]!]!,
+        view: mview.name,
+      };
     }
 
     const mdim = dimSql(dimId);
-    const where = buildWhere(mview, [dimId], spec.filters, db, allStock && mview.hasTime && !mdim.isTime);
+    const where = buildWhere(
+      mview,
+      [dimId],
+      spec.filters,
+      db,
+      allStock && mview.hasTime && !mdim.isTime,
+    );
     const ct = String(spec.chartType ?? '').toLowerCase();
     // Scatter/bubble are measure-vs-measure per point: emit the x/y/z(/w) column
     // convention the frontend expects (name=point label, x=1st measure, y=2nd, z=size).
@@ -761,7 +1181,12 @@ export async function compileEbpoSpec(
     const sql =
       `SELECT ${mdim.label} AS name, ${series} ` +
       `FROM ${mtbl} WHERE ${where} GROUP BY ${mdim.group} ORDER BY ${order} LIMIT ${topN}`;
-    return { ok: true, sql, measure: EBPO_MEASURES[measures[0]!]!, view: mview.name };
+    return {
+      ok: true,
+      sql,
+      measure: EBPO_MEASURES[measures[0]!]!,
+      view: mview.name,
+    };
   }
 
   // ── Single measure ─────────────────────────────────────────────────────────
@@ -779,8 +1204,14 @@ export async function compileEbpoSpec(
 
   // KPI / single value — no grouping.
   if (!dimId) {
-    const where = buildWhere(view, [], spec.filters, db, measure.kind === 'stock' && view.hasTime);
-    const sql = `SELECT ${value} AS value FROM ${tbl} WHERE ${where}`;
+    const where = buildWhere(
+      view,
+      [],
+      spec.filters,
+      db,
+      measure.kind === 'stock' && view.hasTime,
+    );
+    const sql = `SELECT ${value} AS value FROM ${tbl} WHERE ${where} LIMIT 1`;
     return { ok: true, sql, measure, view: view.name };
   }
 
@@ -788,7 +1219,13 @@ export async function compileEbpoSpec(
   let baseSql: string;
 
   if (!bdId) {
-    const where = buildWhere(view, [dimId], spec.filters, db, isStockNonTime(dim.isTime));
+    const where = buildWhere(
+      view,
+      [dimId],
+      spec.filters,
+      db,
+      isStockNonTime(dim.isTime),
+    );
     const having = havingExpr ? ` HAVING ${havingExpr}` : '';
     const order = dim.isTime
       ? `${dim.group} ASC`
@@ -803,7 +1240,13 @@ export async function compileEbpoSpec(
       `GROUP BY ${dim.group}${having} ORDER BY ${order} LIMIT ${topN}`;
   } else {
     const bd = dimSql(bdId);
-    const where = buildWhere(view, [dimId, bdId], spec.filters, db, isStockNonTime(dim.isTime));
+    const where = buildWhere(
+      view,
+      [dimId, bdId],
+      spec.filters,
+      db,
+      isStockNonTime(dim.isTime),
+    );
     // Discover the concrete breakdown values (top by measure) for the WIDE pivot.
     const colRows = await runRows(
       `SELECT ${bd.label} AS v, ${aggExprFor(measure, view)} AS m FROM ${tbl} WHERE ${where} ` +
@@ -812,9 +1255,13 @@ export async function compileEbpoSpec(
     const cols = colRows
       .map((r) => String((r as any).v ?? ''))
       .filter((v) => v.length > 0);
-    if (cols.length === 0) return { ok: false, refusal: 'No data matches that breakdown.' };
+    if (cols.length === 0)
+      return { ok: false, refusal: 'No data matches that breakdown.' };
     const series = cols
-      .map((v) => `${condValueExprFor(measure, view, `${bd.label} = ${quoteLit(v)}`)} AS ${quoteIdent(v)}`)
+      .map(
+        (v) =>
+          `${condValueExprFor(measure, view, `${bd.label} = ${quoteLit(v)}`)} AS ${quoteIdent(v)}`,
+      )
       .join(', ');
     baseSql =
       `SELECT ${dim.label} AS name, ${series} ` +
@@ -822,7 +1269,11 @@ export async function compileEbpoSpec(
       `GROUP BY ${dim.group} ORDER BY ${dim.isTime ? `${dim.group} ASC` : 'name ASC'} LIMIT ${topN}`;
   }
 
-  const sql = applyTransforms(baseSql, normalizeTransforms(spec.transforms), !bdId);
+  const sql = applyTransforms(
+    baseSql,
+    normalizeTransforms(spec.transforms),
+    !bdId,
+  );
   return { ok: true, sql, measure, view: view.name };
 }
 
@@ -831,23 +1282,33 @@ function normalizeTransforms(input: ChartSpec['transforms']): SpecTransform[] {
   const out: SpecTransform[] = [];
   for (const t of input ?? []) {
     const kind = typeof t === 'string' ? t : (t as any)?.kind;
-    if (kind === 'normalize' || kind === 'growth_pct' || kind === 'reference_line')
+    if (
+      kind === 'normalize' ||
+      kind === 'growth_pct' ||
+      kind === 'reference_line'
+    )
       out.push({ kind });
     else if (kind === 'moving_average') {
-      const window = typeof (t as any)?.window === 'number' ? (t as any).window : 3;
+      const window =
+        typeof (t as any)?.window === 'number' ? (t as any).window : 3;
       out.push({ kind: 'moving_average', window });
     }
   }
   return out;
 }
 
-function applyTransforms(baseSql: string, transforms: SpecTransform[], singleSeries: boolean): string {
+function applyTransforms(
+  baseSql: string,
+  transforms: SpecTransform[],
+  singleSeries: boolean,
+): string {
   let sql = baseSql;
   for (const t of transforms) {
     const numericCols = singleSeries ? ['value'] : null;
     const id = (c: string) => '`' + c.replace(/`/g, '') + '`';
     const ref = (c: string) => '_b.' + id(c);
-    const wrap = (proj: string) => `WITH _b AS (\n${sql}\n)\nSELECT ${proj}\nFROM _b\nLIMIT 1000`;
+    const wrap = (proj: string) =>
+      `WITH _b AS (\n${sql}\n)\nSELECT ${proj}\nFROM _b\nLIMIT 1000`;
     const seriesCols = () =>
       numericCols ??
       Array.from(sql.matchAll(/\bAS\s+(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_]\w*))/g))
@@ -858,10 +1319,20 @@ function applyTransforms(baseSql: string, transforms: SpecTransform[], singleSer
       const cols = seriesCols();
       if (cols.length === 1) {
         const c = cols[0]!;
-        sql = wrap(`_b.name AS name, round(${ref(c)} / nullIf(sum(${ref(c)}) OVER (), 0) * 100, 1) AS ${id(c)}`);
+        sql = wrap(
+          `_b.name AS name, round(${ref(c)} / nullIf(sum(${ref(c)}) OVER (), 0) * 100, 1) AS ${id(c)}`,
+        );
       } else {
         const total = cols.map(ref).join(' + ');
-        sql = wrap(['_b.name AS name', ...cols.map((c) => `round(${ref(c)} / nullIf(${total}, 0) * 100, 1) AS ${id(c)}`)].join(', '));
+        sql = wrap(
+          [
+            '_b.name AS name',
+            ...cols.map(
+              (c) =>
+                `round(${ref(c)} / nullIf(${total}, 0) * 100, 1) AS ${id(c)}`,
+            ),
+          ].join(', '),
+        );
       }
     } else if (t.kind === 'growth_pct') {
       const cols = seriesCols();
@@ -873,12 +1344,28 @@ function applyTransforms(baseSql: string, transforms: SpecTransform[], singleSer
     } else if (t.kind === 'moving_average') {
       const n = Math.max(2, Math.min(12, t.window || 3));
       const cols = seriesCols();
-      const ma = cols.map((c) => `round(avg(${ref(c)}) OVER (ROWS BETWEEN ${n - 1} PRECEDING AND CURRENT ROW), 2) AS ${id(c + `_MA${n}`)}`);
-      sql = wrap(['_b.name AS name', ...cols.map((c) => `${ref(c)} AS ${id(c)}`), ...ma].join(', '));
+      const ma = cols.map(
+        (c) =>
+          `round(avg(${ref(c)}) OVER (ROWS BETWEEN ${n - 1} PRECEDING AND CURRENT ROW), 2) AS ${id(c + `_MA${n}`)}`,
+      );
+      sql = wrap(
+        [
+          '_b.name AS name',
+          ...cols.map((c) => `${ref(c)} AS ${id(c)}`),
+          ...ma,
+        ].join(', '),
+      );
     } else if (t.kind === 'reference_line') {
       const cols = seriesCols();
-      const rowTotal = cols.length >= 2 ? `(${cols.map(ref).join(' + ')})` : ref(cols[0]!);
-      sql = wrap(['_b.name AS name', ...cols.map((c) => `${ref(c)} AS ${id(c)}`), `round((SELECT avg(${rowTotal}) FROM _b), 2) AS company_average`].join(', '));
+      const rowTotal =
+        cols.length >= 2 ? `(${cols.map(ref).join(' + ')})` : ref(cols[0]!);
+      sql = wrap(
+        [
+          '_b.name AS name',
+          ...cols.map((c) => `${ref(c)} AS ${id(c)}`),
+          `round((SELECT avg(${rowTotal}) FROM _b), 2) AS company_average`,
+        ].join(', '),
+      );
     }
   }
   return sql;
@@ -895,7 +1382,12 @@ export const EBPO_CATALOG = {
 // it can never drift from what compileEbpoSpec actually supports.
 export function ebpoCatalogPromptText(): string {
   const measures = Object.values(EBPO_MEASURES)
-    .map((m) => `  - ${m.id} (${m.label}, ${m.format})`)
+    .map((m) => {
+      const aliases = m.aliases?.length
+        ? `; aliases: ${m.aliases.join(', ')}`
+        : '';
+      return `  - ${m.id} (${m.label}, ${m.format}${aliases})`;
+    })
     .join('\n');
   const dims = Object.values(EBPO_DIMENSIONS)
     .map((d) => `  - ${d.id} (${d.label}${d.isTime ? ', time' : ''})`)
@@ -905,6 +1397,8 @@ export function ebpoCatalogPromptText(): string {
     'MEASURES (pick exactly one as "measure"):',
     measures,
     'COMBO / MULTI-MEASURE: to plot several measures together — "compare X and Y", "X as columns and Y as a line", "add Z as a comparison line", clustered bars of two measures — set "measures": [id1, id2, ...] (each from the list above; the first should equal "measure") and usually chartType "combo". All chosen measures must share a grain (e.g. all monthly). Do NOT combine "measures" with "breakdown".',
+    'SPLIT INTO LISTED MEASURES: when the user says "split into A, B, C" and A/B/C are measure names or aliases (for example payroll split into base salary, overtime, bonus, benefits), use "measures": [...] with a shared dimension such as month. Do not use "breakdown" unless the split is by a dimension such as department, client, country, vendor, or business unit.',
+    'KPI / SCORECARD: for a scorecard or KPI-card request, use chartType "kpi", omit dimension, and put every requested metric in "measures". This produces one card row per measure from the same semantic view.',
     'SCATTER / BUBBLE: for "X versus Y by <entity>" set dimension=<entity> and measures=[xId, yId] with chartType "scatter". For "size each bubble by W" add the size measure: measures=[xId, yId, sizeId] with chartType "bubble". All measures must come from one view that also has the entity dimension.',
     'DIMENSIONS (pick one as "dimension"; optionally one as "breakdown" for a single-measure series split; omit "dimension" for a single KPI value):',
     dims,

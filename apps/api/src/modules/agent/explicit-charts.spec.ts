@@ -144,6 +144,23 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.add).toHaveLength(0);
   });
 
+  test('does not short-circuit delivery-center payroll-cost bubble follow-ups', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+
+    const refusal = svc.detectUnavailableData(
+      'In the same chart, size bubbles by payroll cost by delivery center.',
+      true,
+    );
+
+    expect(refusal).toBeNull();
+  });
+
   test('builds a full CFO dashboard for financial position and operating performance', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 

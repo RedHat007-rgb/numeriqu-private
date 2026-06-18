@@ -43,6 +43,18 @@ describe('EBPO catalog — view resolution', () => {
     // DSO only exists in the time-only KPI view → cannot be grouped by client.
     expect(resolveEbpoView('dso_days', 'client', null)).toBeNull();
   });
+
+  test('derived cost per employee resolves to the payroll view by country', () => {
+    expect(resolveEbpoView('cost_per_employee', 'country', null)?.name).toBe(
+      'v_ebpo_payroll_monthly',
+    );
+  });
+
+  test('allocated revenue resolves to the delivery-center efficiency view', () => {
+    expect(resolveEbpoView('allocated_revenue', 'delivery_center', null)?.name).toBe(
+      'v_ebpo_delivery_center_efficiency_monthly',
+    );
+  });
 });
 
 describe('EBPO compiler — aggregation correctness', () => {
@@ -190,6 +202,21 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
     expect(sql).toMatch(/AS name/);
     expect(sql).toMatch(/sum\(total_revenue_usd\).*AS x/);
     expect(sql).toMatch(/sum\(gross_margin_usd\).*AS y/);
+  });
+
+  test('client revenue and collection rate bubble compiles against the client revenue view', async () => {
+    const sql = await sqlFor(
+      base({
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'collection_rate_pct', 'ar_outstanding'],
+        dimension: 'client',
+        chartType: 'bubble',
+      }),
+    );
+    expect(sql).toContain('analytics.v_ebpo_client_revenue_collection');
+    expect(sql).toMatch(/AS x/);
+    expect(sql).toMatch(/AS y/);
+    expect(sql).toMatch(/AS z/);
   });
 
   test('bubble adds a z (size) column', async () => {

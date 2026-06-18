@@ -1,0 +1,152 @@
+[
+ {
+  "id": 1,
+  "section": "pranjal",
+  "main": "Create a line chart showing monthly opening balance and closing balance by account.",
+  "followup": "In the same chart, highlight accounts with the largest balance movement."
+ },
+ {
+  "id": 2,
+  "section": "pranjal",
+  "main": "Create a column chart showing debit movement and credit movement by account.",
+  "followup": "In the same chart, add net movement as a line."
+ },
+ {
+  "id": 3,
+  "section": "pranjal",
+  "main": "Create a heat map showing closing balance by account and month.",
+  "followup": "In the same chart, highlight the highest and lowest balances."
+ },
+ {
+  "id": 4,
+  "section": "pranjal",
+  "main": "Create a bar chart showing total debit amount by account.",
+  "followup": "In the same chart, add total credit amount for comparison."
+ },
+ {
+  "id": 5,
+  "section": "pranjal",
+  "main": "Create a waterfall chart showing net movement by account.",
+  "followup": "In the same chart, add debit and credit impact labels."
+ },
+ {
+  "id": 6,
+  "section": "pranjal",
+  "main": "Create a bar chart showing outstanding receivables by client.",
+  "followup": "In the same chart, add collected amount to compare collections."
+ },
+ {
+  "id": 7,
+  "section": "pranjal",
+  "main": "Create a stacked bar chart showing outstanding receivables by aging bucket.",
+  "followup": "In the same chart, add percentage contribution of each aging bucket."
+ },
+ {
+  "id": 8,
+  "section": "pranjal",
+  "main": "Create a column chart showing invoice amount, collected amount, and outstanding receivables by month.",
+  "followup": "In the same chart, add collection rate as a line."
+ },
+ {
+  "id": 9,
+  "section": "pranjal",
+  "main": "Create a heat map showing outstanding receivables by client and aging bucket.",
+  "followup": "In the same chart, highlight balances in the oldest aging bucket."
+ },
+ {
+  "id": 10,
+  "section": "pranjal",
+  "main": "Create a Pareto chart showing clients ranked by outstanding receivables.",
+  "followup": "In the same chart, add cumulative outstanding percentage line."
+ },
+ {
+  "id": 11,
+  "section": "pranjal",
+  "main": "Create a bar chart showing outstanding payables by vendor.",
+  "followup": "In the same chart, add paid amount to compare payment progress."
+ },
+ {
+  "id": 12,
+  "section": "pranjal",
+  "main": "Create a stacked bar chart showing outstanding payables by aging bucket.",
+  "followup": "In the same chart, add percentage contribution of each aging bucket."
+ },
+ {
+  "id": 13,
+  "section": "pranjal",
+  "main": "Create a column chart showing payable invoice amount, paid amount, and outstanding payables by month.",
+  "followup": "In the same chart, add outstandings average line."
+ },
+ {
+  "id": 14,
+  "section": "pranjal",
+  "main": "Create a heat map showing outstanding payables by vendor and aging bucket.",
+  "followup": "In the same chart, highlight balances in the oldest aging bucket."
+ },
+ {
+  "id": 15,
+  "section": "pranjal",
+  "main": "Create a Pareto chart showing vendors ranked by outstanding payables.",
+  "followup": "In the same chart, add cumulative outstanding percentage line."
+ },
+ {
+  "id": 16,
+  "section": "pranjal",
+  "main": "Create a column chart showing monthly total payroll.",
+  "followup": "In the same chart, split payroll into base salary, overtime, bonus, and benefits."
+ },
+ {
+  "id": 17,
+  "section": "pranjal",
+  "main": "Create a stacked bar chart showing total payroll by department.",
+  "followup": "In the same chart, add employee count by department."
+ },
+ {
+  "id": 18,
+  "section": "pranjal",
+  "main": "Create a bar chart showing total payroll by country.",
+  "followup": "In the same chart, add average monthly salary line by country."
+ },
+ {
+  "id": 19,
+  "section": "pranjal",
+  "main": "Create a line chart showing monthly overtime cost.",
+  "followup": "In the same chart, add total payroll to compare overtime impact."
+ },
+ {
+  "id": 20,
+  "section": "pranjal",
+  "main": "Create a column chart showing total bonus by department.",
+  "followup": "In the same chart, add bonus as a percentage of total payroll."
+ },
+ {
+  "id": 21,
+  "section": "pranjal",
+  "main": "Create a stacked column chart showing monthly payroll by department.",
+  "followup": "In the same chart, add benefits as a percentage of base salary."
+ },
+ {
+  "id": 22,
+  "section": "pranjal",
+  "main": "Create a heat map showing payroll by department and country.",
+  "followup": "In the same chart, highlight the highest payroll concentration areas."
+ },
+ {
+  "id": 23,
+  "section": "pranjal",
+  "main": "Create a bar chart showing average salary by employee grade.",
+  "followup": "In the same chart, add employee count by grade."
+ },
+ {
+  "id": 24,
+  "section": "pranjal",
+  "main": "Create a bar chart showing salary distribution by department.",
+  "followup": "In the same chart, add median salary markers for each department."
+ },
+ {
+  "id": 25,
+  "section": "pranjal",
+  "main": "Create a column chart showing employee count by department.",
+  "followup": "In the same chart, add total payroll by department."
+ }
+]

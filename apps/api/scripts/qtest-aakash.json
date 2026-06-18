@@ -1,0 +1,152 @@
+[
+ {
+  "id": 1,
+  "section": "aakash",
+  "main": "Create a column chart showing monthly total revenue.",
+  "followup": "In the same chart, add a line for monthly gross margin to compare revenue and margin trend."
+ },
+ {
+  "id": 2,
+  "section": "aakash",
+  "main": "Create a line chart showing month-on-month revenue growth percentage.",
+  "followup": "In the same chart, add a median growth line to compare monthly performance."
+ },
+ {
+  "id": 3,
+  "section": "aakash",
+  "main": "Create a stacked column chart showing monthly revenue by business unit.",
+  "followup": "In the same chart, show percentage contribution of each business unit to monthly revenue."
+ },
+ {
+  "id": 4,
+  "section": "aakash",
+  "main": "Create a bar chart showing total revenue by client.",
+  "followup": "In the same chart, add gross margin by client to compare revenue quality."
+ },
+ {
+  "id": 5,
+  "section": "aakash",
+  "main": "Create a donut chart showing revenue share by contract type.",
+  "followup": "In the same chart, show actual value labels for each contract type."
+ },
+ {
+  "id": 6,
+  "section": "aakash",
+  "main": "Create a clustered bar chart comparing revenue and cost by business unit.",
+  "followup": "In the same chart, add gross margin percentage for each business unit."
+ },
+ {
+  "id": 7,
+  "section": "aakash",
+  "main": "Create a line chart showing monthly gross margin trend.",
+  "followup": "In the same chart, add total revenue as a comparison line."
+ },
+ {
+  "id": 8,
+  "section": "aakash",
+  "main": "Create a combo chart with monthly revenue as columns and gross margin percentage as a line.",
+  "followup": "In the same chart, add an average gross margin percentage reference line."
+ },
+ {
+  "id": 9,
+  "section": "aakash",
+  "main": "Create a heat map showing gross margin percentage by business unit and month.",
+  "followup": "In the same chart, highlight the highest and lowest margin months."
+ },
+ {
+  "id": 10,
+  "section": "aakash",
+  "main": "Create a waterfall chart showing revenue, cost, and gross margin by month.",
+  "followup": "In the same chart, add gross margin percentage labels for each month."
+ },
+ {
+  "id": 11,
+  "section": "aakash",
+  "main": "Create a column chart showing total cost by business unit.",
+  "followup": "In the same chart, add revenue to compare cost against revenue."
+ },
+ {
+  "id": 12,
+  "section": "aakash",
+  "main": "Create a treemap showing revenue contribution by client.",
+  "followup": "In the same chart, replace revenue with gross margin percentage."
+ },
+ {
+  "id": 13,
+  "section": "aakash",
+  "main": "Create a scatter plot showing revenue versus gross margin by client.",
+  "followup": "In the same chart, size each bubble by cost."
+ },
+ {
+  "id": 14,
+  "section": "aakash",
+  "main": "Create a bar chart showing average gross margin percentage by contract type.",
+  "followup": "In the same chart, add total revenue for each contract type."
+ },
+ {
+  "id": 15,
+  "section": "aakash",
+  "main": "Create a stacked area chart showing monthly revenue by contract type.",
+  "followup": "In the same chart, add a total revenue trend line."
+ },
+ {
+  "id": 16,
+  "section": "aakash",
+  "main": "Create a ranked bar chart showing top clients by gross margin.",
+  "followup": "In the same chart, add revenue for each client."
+ },
+ {
+  "id": 17,
+  "section": "aakash",
+  "main": "Create a 100% stacked column chart showing monthly revenue mix by business unit.",
+  "followup": "In the same chart, show total revenue labels above each month."
+ },
+ {
+  "id": 18,
+  "section": "aakash",
+  "main": "Create a line chart showing monthly cost as a percentage of revenue.",
+  "followup": "In the same chart, add a median cost-to-revenue line."
+ },
+ {
+  "id": 19,
+  "section": "aakash",
+  "main": "Create a heat map showing revenue by client and contract type.",
+  "followup": "In the same chart, add gross margin percentage."
+ },
+ {
+  "id": 20,
+  "section": "aakash",
+  "main": "Create a bar chart showing gross margin by client.",
+  "followup": "In the same chart, add gross margin percentage line."
+ },
+ {
+  "id": 21,
+  "section": "aakash",
+  "main": "Create a line chart showing monthly cash balance.",
+  "followup": "In the same chart, add free cash flow as a comparison line."
+ },
+ {
+  "id": 22,
+  "section": "aakash",
+  "main": "Create a column chart showing monthly operating cash flow.",
+  "followup": "In the same chart, add investing cash flow and financing cash flow."
+ },
+ {
+  "id": 23,
+  "section": "aakash",
+  "main": "Create a stacked column chart showing operating, investing, and financing cash flow by month.",
+  "followup": "In the same chart, add cash balance as a line."
+ },
+ {
+  "id": 24,
+  "section": "aakash",
+  "main": "Create a column chart showing monthly free cash flow.",
+  "followup": "In the same chart, add a zero reference line to identify negative months."
+ },
+ {
+  "id": 25,
+  "section": "aakash",
+  "main": "Create a waterfall chart showing monthly movement of operating cash flow.",
+  "followup": "Replace operting cash flow with investing cash flow."
+ }
+]

@@ -1,0 +1,152 @@
+[
+ {
+  "id": 1,
+  "section": "asyraf",
+  "main": "Create a bar chart showing employee count by country and delivery center.",
+  "followup": "In the same chart, add average salary labels."
+ },
+ {
+  "id": 2,
+  "section": "asyraf",
+  "main": "Create a Pareto chart showing departments ranked by total payroll.",
+  "followup": "In the same chart, add cumulative payroll percentage line."
+ },
+ {
+  "id": 3,
+  "section": "asyraf",
+  "main": "Create a column chart showing overtime cost by department.",
+  "followup": "In the same chart, add overtime as a percentage of total payroll."
+ },
+ {
+  "id": 4,
+  "section": "asyraf",
+  "main": "Create a bar chart showing benefits cost by country.",
+  "followup": "In the same chart, add benefits as a percentage of base salary."
+ },
+ {
+  "id": 5,
+  "section": "asyraf",
+  "main": "Create a column chart showing payroll cost per employee by country.",
+  "followup": "In the same chart, add an overall average payroll cost per employee line."
+ },
+ {
+  "id": 6,
+  "section": "asyraf",
+  "main": "Create a line chart showing monthly calls handled by delivery center.",
+  "followup": "In the same chart, add tickets resolved as another line."
+ },
+ {
+  "id": 7,
+  "section": "asyraf",
+  "main": "Create a column chart showing average SLA compliance by delivery center.",
+  "followup": "In the same chart, add CSAT percentage for comparison."
+ },
+ {
+  "id": 8,
+  "section": "asyraf",
+  "main": "Create a scatter plot showing average handling time versus CSAT percentage.",
+  "followup": "In the same chart, size each bubble by calls handled."
+ },
+ {
+  "id": 9,
+  "section": "asyraf",
+  "main": "Create a heat map showing SLA compliance by delivery center and month.",
+  "followup": "In the same chart, highlight months below the target SLA level."
+ },
+ {
+  "id": 10,
+  "section": "asyraf",
+  "main": "Create a line chart showing monthly utilization percentage by delivery center.",
+  "followup": "In the same chart, add SLA compliance percentage."
+ },
+ {
+  "id": 11,
+  "section": "asyraf",
+  "main": "Create a bar chart showing total tickets resolved by delivery center.",
+  "followup": "In the same chart, add average handling time as a line."
+ },
+ {
+  "id": 12,
+  "section": "asyraf",
+  "main": "Create a combo chart showing calls handled as columns and CSAT percentage as a line.",
+  "followup": "In the same chart, add SLA compliance percentage as another line."
+ },
+ {
+  "id": 13,
+  "section": "asyraf",
+  "main": "Create a ranked bar chart showing delivery centers by average CSAT percentage.",
+  "followup": "In the same chart, add calls handled as labels."
+ },
+ {
+  "id": 14,
+  "section": "asyraf",
+  "main": "Create a column chart showing monthly average handling time.",
+  "followup": "In the same chart, add a median handling time line."
+ },
+ {
+  "id": 15,
+  "section": "asyraf",
+  "main": "Create a scatter plot showing utilization percentage versus SLA compliance percentage.",
+  "followup": "In the same chart, size bubbles by tickets resolved."
+ },
+ {
+  "id": 16,
+  "section": "asyraf",
+  "main": "Create a bar chart showing net book value by delivery center.",
+  "followup": "In the same chart, add asset cost to compare current value versus original cost."
+ },
+ {
+  "id": 17,
+  "section": "asyraf",
+  "main": "Create a stacked bar chart showing net book value by asset type and delivery center.",
+  "followup": "In the same chart, add accumulated depreciation labels."
+ },
+ {
+  "id": 18,
+  "section": "asyraf",
+  "main": "Create a donut chart showing asset cost share by asset type.",
+  "followup": "In the same chart, add net book value share by asset type."
+ },
+ {
+  "id": 19,
+  "section": "asyraf",
+  "main": "Create a bar chart showing accumulated depreciation by asset type.",
+  "followup": "In the same chart, add depreciation percentage."
+ },
+ {
+  "id": 20,
+  "section": "asyraf",
+  "main": "Create a treemap showing net book value by delivery center and asset type.",
+  "followup": "In the same chart, color the treemap by depreciation percentage."
+ },
+ {
+  "id": 21,
+  "section": "asyraf",
+  "main": "Create a scatter plot showing asset cost versus net book value by asset type.",
+  "followup": "In the same chart, size each bubble by accumulated depreciation."
+ },
+ {
+  "id": 22,
+  "section": "asyraf",
+  "main": "Create a ranked bar chart showing delivery centers by depreciation percentage.",
+  "followup": "In the same chart, add net book value labels."
+ },
+ {
+  "id": 23,
+  "section": "asyraf",
+  "main": "Create a column chart comparing asset cost, accumulated depreciation, and net book value by asset type.",
+  "followup": "In the same chart, add net book value percentage of asset cost as a line."
+ },
+ {
+  "id": 24,
+  "section": "asyraf",
+  "main": "Create a heat map showing net book value by asset type and delivery center.",
+  "followup": "In the same chart, highlight the highest value asset category."
+ },
+ {
+  "id": 25,
+  "section": "asyraf",
+  "main": "Create a bar chart showing asset intensity by delivery center using net book value per call handled.",
+  "followup": "In the same chart, add CSAT percentage as a line."
+ }
+]

@@ -622,9 +622,23 @@ const CustomTooltip = ({ active, payload, label, metric, grouping, valueFormatte
           />
           <span className="text-xs font-semibold text-text-primary">
             {typeof entry.value === "number"
-              ? typeof valueFormatter === "function"
-                ? valueFormatter(entry.value, entry)
-                : formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
+              ? (() => {
+                  // Per-series unit: a series whose NAME marks it a percentage (e.g.
+                  // "Gross Margin %") must format as % even inside a $ combo — the
+                  // chart-level valueFormatter would otherwise label it as dollars.
+                  const _nm = String(entry.name ?? "").toLowerCase();
+                  const _isPct =
+                    !/\busd\b|\$/.test(_nm) &&
+                    /%|\bpercent(age)?\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(_nm);
+                  if (_isPct) return fmtPercent(entry.value);
+                  return typeof valueFormatter === "function"
+                    ? valueFormatter(entry.value, entry)
+                    : formatValue(
+                        String(metric ?? ""),
+                        String(grouping ?? ""),
+                        entry.value,
+                      );
+                })()
               : entry.value}
           </span>
           {entry.name && entry.name !== "value" && (
@@ -865,6 +879,16 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     if (_vfmt === "percent") return `${n.toFixed(_vdec ?? 1)}%`;
     if (_vfmt === "currency") return fmtCurrency(n);
     if (_vfmt === "number") return fmtNumber(n);
+    // Safety net for dynamic charts with no explicit valueFormat: trust the unit the
+    // planner stated in yAxisLabel (e.g. "Gross Margin (%)"). High-precision — never
+    // overrides an explicit $/USD unit, so a currency chart can't be mislabeled.
+    const _lbl = String(chart.config.yAxisLabel ?? "").toLowerCase();
+    if (
+      _lbl &&
+      !/\busd\b|\(\s*\$\s*\)|dollars?/.test(_lbl) &&
+      /%|\bpercent(age)?\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(_lbl)
+    )
+      return fmtPercent(n);
     return formatValue(_metric, _grouping, n);
   };
 
@@ -1157,13 +1181,24 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     // "value" column — so hardcoding dataKey="value" drew an empty bar and only one
     // line. Derive the keys from the data instead, preserving order.
     const firstRow = (data[0] ?? {}) as Record<string, unknown>;
+    // ClickHouse serializes integer columns (e.g. employee_count) as JSON STRINGS
+    // while floats arrive as numbers. A strict typeof==="number" check therefore
+    // silently DROPPED the integer series — the reported "combo shows only payroll"
+    // bug. Accept any value that parses to a finite number (matches the multi-series
+    // path's inferNumericSeriesKeys).
     const orderedKeys = Object.keys(firstRow).filter(
-      (k) => k !== "name" && typeof firstRow[k] === "number",
+      (k) => k !== "name" && toFiniteNumber(firstRow[k]) !== null,
     );
     const seriesKeys = orderedKeys.length > 0 ? orderedKeys : inferNumericSeriesKeys(data);
     const barKey = seriesKeys.includes("value") ? "value" : (seriesKeys[0] ?? null);
     const lineSeriesKeys = seriesKeys.filter((k) => k !== barKey);
     const lineKey = lineSeriesKeys[0] ?? null;
+    // Coerce series values to numbers so Recharts plots string-typed integers.
+    const comboData = data.map((r) => {
+      const o: Record<string, unknown> = { ...r };
+      for (const k of seriesKeys) o[k] = toFiniteNumber(r[k]) ?? 0;
+      return o;
+    });
     const LINE_COLORS = [
       "rgb(var(--color-accent-cyan))",
       "rgb(var(--color-accent-violet))",
@@ -1180,7 +1215,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 8, right: 12, left: 12, bottom: 0 }}>
+          <ComposedChart data={comboData} margin={{ top: 8, right: 12, left: 12, bottom: 0 }}>
             <defs>
               <linearGradient id={`grad-bar-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="rgb(var(--color-accent-blue))" stopOpacity={1} />

@@ -19,10 +19,12 @@ import { createClient } from '@clickhouse/client';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env'), quiet: true });
 
+// Scope is env-overridable so the same harness can probe the GL org
+// (sample_gl_2024) as well as the EBPO org. Defaults to EBPO for back-compat.
 const SCOPE = {
-  tenantId: '7375b5aa-f5bc-4739-88e1-02be1203439b',
+  tenantId: process.env.HARNESS_TENANT || '7375b5aa-f5bc-4739-88e1-02be1203439b',
   connectionIds: [] as string[],
-  externalOrgIds: ['ebpo_enterprise'],
+  externalOrgIds: [process.env.HARNESS_ORG || 'ebpo_enterprise'],
 };
 
 const ch = createClient({
@@ -80,7 +82,7 @@ function expectsCombo(followup: string): boolean {
   const q = followup.toLowerCase();
   const addy = /\b(add|also|include|compare|comparison|another|second|alongside|on top|overlay|as a (line|column|bar))\b/.test(q);
   const transformOnly =
-    /\b(highlight|percentage contribution|% contribution|data label|labels|value labels|actual value labels|reference line|zero (reference )?line|average line|overall average|median\b.*\bline|median (line|growth)|trend indicators?|kpi cards?|dashboard|color|colour|decimal|slicer|button)\b/.test(q);
+    /\b(highlight|percentage contribution|% contribution|data label|labels|value labels|actual value labels|reference line|zero (reference )?line|average line|overall average|median\b.*\bline|median (line|growth)|trend indicators?|kpi cards?|cards?|scorecard|dashboard|color|colour|decimal|slicer|button)\b/.test(q);
   return addy && !transformOnly;
 }
 
@@ -263,7 +265,7 @@ async function main() {
   };
   const lines: string[] = [];
   lines.push(`# EBPO 100-question test — ${new Date().toISOString()}`);
-  lines.push(`\nRan ${results.length} questions (id ${from}–${to}) against EBPO org, production-like (no AGENT_SPEC_MODE).`);
+  lines.push(`\nRan ${results.length} questions (id ${from}–${to}) against EBPO org. AGENT_SPEC_MODE=${process.env.AGENT_SPEC_MODE ?? '(unset)'} (resolved from env at runtime — NOTE: .env sets this, so the spec-first planner is active unless you explicitly unset it).`);
   lines.push(`\n## CREATE outcomes\n\`\`\`\n${JSON.stringify(tally('create'), null, 2)}\n\`\`\``);
   lines.push(`OK source split: \`${JSON.stringify(srcTally('create'))}\``);
   lines.push(`\n## FOLLOW-UP outcomes\n\`\`\`\n${JSON.stringify(tally('fu'), null, 2)}\n\`\`\``);

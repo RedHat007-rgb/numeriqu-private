@@ -1,0 +1,182 @@
+[
+  {
+    "id": 1,
+    "section": "random tricky 1",
+    "main": "Show me monthly revenue and cost together, columns are fine.",
+    "followup": "Now add gross margin percentage as a line on the same chart."
+  },
+  {
+    "id": 2,
+    "section": "random tricky 2",
+    "main": "Which business units are making the most revenue? use a ranked bar chart.",
+    "followup": "Add gross profit next to revenue, same business-unit ranking."
+  },
+  {
+    "id": 3,
+    "section": "random tricky 3",
+    "main": "Plot free cash flow by month, I want the trend not just a card.",
+    "followup": "Overlay cash balance too, but do not sum cash balance across months."
+  },
+  {
+    "id": 4,
+    "section": "random tricky 4",
+    "main": "Give me AP outstanding by vendor as a bar chart.",
+    "followup": "Add payment rate percentage as another series."
+  },
+  {
+    "id": 5,
+    "section": "random tricky 5",
+    "main": "Create AR outstanding by client, highest first.",
+    "followup": "Also show collection rate % so I can compare risk and collection quality."
+  },
+  {
+    "id": 6,
+    "section": "random tricky 6",
+    "main": "Make a heatmap of SLA compliance by delivery center and month.",
+    "followup": "Highlight only months below target SLA."
+  },
+  {
+    "id": 7,
+    "section": "random tricky 7",
+    "main": "Show CSAT by country over time as a line chart.",
+    "followup": "Add utilization percent as a second line."
+  },
+  {
+    "id": 8,
+    "section": "random tricky 8",
+    "main": "I need a payroll stack by month split into base salary, overtime, bonus, and benefits.",
+    "followup": "Change it to 100% stacked so each month shows percentage contribution."
+  },
+  {
+    "id": 9,
+    "section": "random tricky 9",
+    "main": "Build a CFO KPI scorecard: revenue, cost, gross margin, FCF, AR, AP, DSO, DPO.",
+    "followup": "Add gross margin percentage and payroll to revenue percentage cards too."
+  },
+  {
+    "id": 10,
+    "section": "random tricky 10",
+    "main": "Show revenue by client and contract type as stacked columns.",
+    "followup": "Switch the labels from percentages to actual dollar values."
+  },
+  {
+    "id": 11,
+    "section": "random tricky 11",
+    "main": "Rank departments by total payroll.",
+    "followup": "Add cumulative payroll percent line like a Pareto."
+  },
+  {
+    "id": 12,
+    "section": "random tricky 12",
+    "main": "Show average monthly salary by department and grade as a matrix.",
+    "followup": "Add employee count into the same view."
+  },
+  {
+    "id": 13,
+    "section": "random tricky 13",
+    "main": "Make a scatter plot of revenue per employee versus cost per employee by department.",
+    "followup": "Size the dots by employee count."
+  },
+  {
+    "id": 14,
+    "section": "random tricky 14",
+    "main": "Show net book value by asset type.",
+    "followup": "Add depreciation percentage of asset cost as a line."
+  },
+  {
+    "id": 15,
+    "section": "random tricky 15",
+    "main": "What is the 4 year revenue trend with gross margin %?",
+    "followup": "Add year over year revenue growth percentage too."
+  },
+  {
+    "id": 16,
+    "section": "random tricky 16",
+    "main": "Show monthly DSO and DPO on one chart.",
+    "followup": "Add AR and AP outstanding values as bars behind those lines."
+  },
+  {
+    "id": 17,
+    "section": "random tricky 17",
+    "main": "Create a chart of cost to income ratio by month.",
+    "followup": "Add payroll over revenue percentage as a comparison."
+  },
+  {
+    "id": 18,
+    "section": "random tricky 18",
+    "main": "Show operating cash flow as percentage of revenue monthly.",
+    "followup": "Add free cash flow margin percentage too."
+  },
+  {
+    "id": 19,
+    "section": "random tricky 19",
+    "main": "Show calls handled by delivery center.",
+    "followup": "Add average handling time in minutes."
+  },
+  {
+    "id": 20,
+    "section": "random tricky 20",
+    "main": "Create a donut showing revenue share by business unit.",
+    "followup": "Explode the biggest slice and show actual dollar labels."
+  },
+  {
+    "id": 21,
+    "section": "random tricky 21",
+    "main": "Show revenue and gross margin by industry.",
+    "followup": "Add collection rate percentage too."
+  },
+  {
+    "id": 22,
+    "section": "random tricky 22",
+    "main": "Show current ratio by month.",
+    "followup": "Add quick ratio too."
+  },
+  {
+    "id": 23,
+    "section": "random tricky 23",
+    "main": "Make a chart of budget versus actual revenue by month.",
+    "followup": "Add variance percentage."
+  },
+  {
+    "id": 24,
+    "section": "random tricky 24",
+    "main": "Create revenue by business unit.",
+    "followup": "make it prettier with trend indicators against monthly average"
+  },
+  {
+    "id": 25,
+    "section": "random tricky 25",
+    "main": "Compare outstanding receivables and payables by month with cash balance.",
+    "followup": "Add working capital as cash plus AR minus AP."
+  },
+  {
+    "id": 26,
+    "section": "random tricky 26",
+    "main": "Create SLA compliance by region as bars.",
+    "followup": "c"
+  },
+  {
+    "id": 27,
+    "section": "random tricky 27",
+    "main": "Show revenue per employee by business unit.",
+    "followup": "Add gross margin per employee as another series."
+  },
+  {
+    "id": 28,
+    "section": "random tricky 28",
+    "main": "Show invoice amount versus paid amount by AP aging bucket.",
+    "followup": "Add payment rate percentage on top."
+  },
+  {
+    "id": 29,
+    "section": "random tricky 29",
+    "main": "Show invoice amount versus collected amount by AR aging bucket.",
+    "followup": "Add collection rate percentage on top."
+  },
+  {
+    "id": 30,
+    "section": "random tricky 30",
+    "main": "Show monthly gross margin percentage.",
+    "followup": "Replace it with total revenue by month instead."
+  }
+]

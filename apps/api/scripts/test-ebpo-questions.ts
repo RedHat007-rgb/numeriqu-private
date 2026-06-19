@@ -99,11 +99,30 @@ function requestedType(prompt: string): string {
   if (/\bpie\b/.test(q)) return 'pie';
   if (/box\s*plot/.test(q)) return 'box_plot';
   if (/pareto/.test(q)) return 'pareto';
-  if (/dashboard|scorecard/.test(q)) return 'dashboard';
+  if (/\bdashboard\b/.test(q)) return 'dashboard';
+  if (/\bscorecard\b/.test(q)) return 'kpi';
   if (/area\s*chart/.test(q)) return 'area';
   if (/line\s*chart|line\s+for|line\b/.test(q)) return 'line';
   if (/column\s*chart|clustered|grouped|\bbar\s*chart|ranked\s*bar/.test(q)) return 'bar';
   return '?';
+}
+
+// Family-aware type match: a "bar"/"column"/"ranked bar" request is satisfied by any
+// bar-family render (bar/horizontal_bar); a "line" by line/area; etc. Stacked, pareto,
+// scatter, heatmap… must match exactly. This flags REAL mismatches (Pareto→bar,
+// stacked-not-stacked, line→combo) without false-flagging horizontal/ranked bars.
+function typeFamilyMatch(req: string, got: string): boolean {
+  if (!req || req === '?' || !got) return true;
+  const family: Record<string, string> = {
+    bar: 'bar', horizontal_bar: 'bar', column: 'bar',
+    line: 'line', area: 'line',
+    stacked_bar: 'stacked', stacked_area: 'stacked',
+  };
+  const fam = (t: string) => family[t] ?? t;
+  // A bar request is happy with either bar orientation.
+  if (req === 'bar') return fam(got) === 'bar';
+  if (req === 'line') return fam(got) === 'line';
+  return fam(req) === fam(got);
 }
 
 // Value sanity: a percent/ratio measure should never be a huge number. Catches
@@ -117,6 +136,46 @@ function valueSanity(spec: any, rows: Array<Record<string, unknown>>): string {
   if (!m || m.format !== 'percent') return '';
   const bad = rows.find((r) => Math.abs(Number(r.value) || 0) > 250);
   return bad ? `pct value ${bad.value} out of sane range` : '';
+}
+
+function semanticShapeIssue(prompt: string, spec: any, cols: string[]): string {
+  if (!spec) return '';
+  const q = prompt.toLowerCase();
+  const expectedDims = new Set<string>();
+  const dimPatterns: Array<[RegExp, string]> = [
+    [/\bmonthly\b|\bby month\b|\bmonth-on-month\b/, 'month'],
+    [/\bbusiness unit\b/, 'business_unit'],
+    [/\bcontract type\b/, 'contract_type'],
+    [/\bdelivery cent(?:er|re)\b/, 'delivery_center'],
+    [/\baging bucket\b/, 'aging_bucket'],
+    [/\basset type\b/, 'asset_type'],
+    [/\bby client\b|\bclients? ranked\b|\bclient revenue\b|\bclient gross\b/, 'client'],
+    [/\bby vendor\b|\bvendors? ranked\b/, 'vendor'],
+    [/\bby department\b|\bdepartments? ranked\b/, 'department'],
+    [/\bby account\b/, 'account'],
+    [/\bby country\b/, 'country'],
+    [/\bby grade\b/, 'grade'],
+  ];
+  for (const [pattern, id] of dimPatterns)
+    if (pattern.test(q)) expectedDims.add(id);
+  if (/\bscorecard\b|\bkpi\s+cards?\b/.test(q)) expectedDims.delete('month');
+  const actualDims = new Set([spec.dimension, spec.breakdown].filter(Boolean));
+  const missingDims = [...expectedDims].filter((id) => !actualDims.has(id));
+  if (missingDims.length)
+    return `missing requested dimension(s): ${missingDims.join(', ')}`;
+
+  const measures = (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean);
+  if (spec.breakdown && measures.length > 1) {
+    if (cols.length <= measures.length)
+      return `breakdown ${spec.breakdown} collapsed to only ${cols.length} measure series`;
+    const { EBPO_MEASURES } = require('../src/modules/agent/chart-spec-ebpo');
+    const missingLabels = measures
+      .map((id: string) => EBPO_MEASURES[id]?.label)
+      .filter((label: string | undefined) => label && !cols.some((c) => c.includes(label)));
+    if (missingLabels.length)
+      return `missing requested measure series: ${missingLabels.join(', ')}`;
+  }
+  return '';
 }
 
 type QRow = { id: number; section: string; main: string; followup: string; fb_main?: string; fb_follow?: string };
@@ -180,19 +239,52 @@ async function main() {
             rec._createCols = numericCols(data);
           } catch (e: any) { err = String(e?.message ?? e).slice(0, 90); }
         }
+        const typeMatch = rec.reqType === '?'
+          ? null
+          : rec.reqType === 'dashboard'
+            ? wcount > 1
+            : typeFamilyMatch(rec.reqType, String(w?.type));
+        const semanticIssue = semanticShapeIssue(q.main, w?._spec, rec._createCols ?? []);
         rec.create = {
-          status: err ? 'SQL_ERROR' : rows < 0 ? 'UNVERIFIED' : rows === 0 ? 'ZERO_ROWS' : suspect ? 'SUSPECT_VALUE' : 'OK',
+          // Honesty fix: a chart that renders the WRONG TYPE is not "OK" just because
+          // its SQL returned rows. typeMatch is now part of the verdict (family-aware,
+          // so ranked/horizontal bars still count as bars). This is what let prior runs
+          // report "all OK" while reviewers saw Pareto→bar, stacked-not-stacked, etc.
+          status: err
+            ? 'SQL_ERROR'
+            : rows < 0
+              ? 'UNVERIFIED'
+              : rows === 0
+                ? 'ZERO_ROWS'
+                : suspect
+                  ? 'SUSPECT_VALUE'
+                  : typeMatch === false
+                    ? 'TYPE_MISMATCH'
+                    : semanticIssue
+                      ? 'SEMANTIC_MISMATCH'
+                    : 'OK',
           source, type: w?.type, widgets: wcount, rows, err, suspect: suspect || undefined,
-          typeMatch: rec.reqType === '?' ? null : rec.reqType === String(w?.type),
+          typeMatch, semanticIssue: semanticIssue || undefined,
           spec: w?._spec ?? null,
           display: (w as any)?.display ?? null,
         };
         // carry the built dashboard into the follow-up
+        const builtWidgets = plan?.plan?.dashboard?.widgets ?? [];
         rec._dash = {
           id: 'd', title: plan?.plan?.dashboard?.title ?? 'T',
-          widgets: [{ id: 'w0', title: w?.title ?? 'c', chartType: w?.type,
-            queryConfig: { metric: 'dynamic', grouping: 'query', dynamicSql: w?._sql, spec: w?._spec },
-            displayOrder: 0 }],
+          widgets: builtWidgets.map((widget: any, index: number) => ({
+            id: `w${index}`,
+            title: widget?.title ?? `Chart ${index + 1}`,
+            chartType: widget?.type,
+            queryConfig: {
+              metric: widget?.metric ?? 'dynamic',
+              grouping: widget?.grouping ?? 'query',
+              dynamicSql: widget?._sql,
+              spec: widget?._spec,
+              display: widget?.display ?? null,
+            },
+            displayOrder: index,
+          })),
         };
       }
     } catch (e: any) {
@@ -206,7 +298,8 @@ async function main() {
         if (plan?.refusal) {
           rec.fu = { status: 'REFUSED', msg: String(plan.refusal).slice(0, 120) };
         } else {
-          const m = (plan?.modify ?? [])[0];
+          const modifications = plan?.modify ?? [];
+          const m = modifications[0];
           if (!m) {
             rec.fu = { status: 'NOOP', summary: (plan?.summary || '').slice(0, 80) };
           } else {
@@ -222,14 +315,38 @@ async function main() {
             // combo has >=2 numeric series. 1 series = the chart was REPLACED.
             const comboExpected = expectsCombo(q.followup);
             const comboOk = !comboExpected || rows < 0 ? null : fcols.length >= 2;
+            const preserveExpected =
+              /^in the same (chart|dashboard)\b/i.test(q.followup.trim()) &&
+              !/\b(replace|switch|convert|change)\b/i.test(q.followup) &&
+              (rec._createCols?.length ?? 0) >= 2;
+            const missingOriginalSeries = preserveExpected
+              ? (rec._createCols as string[]).filter(
+                  (c) =>
+                    !fcols.includes(c) &&
+                    !fcols.some((next) => next.startsWith(`${c} | `)),
+                )
+              : [];
+            const expectsEveryDashboardMetric =
+              /\bsame dashboard\b/i.test(q.followup) &&
+              /\beach metric\b|\bevery metric\b/i.test(q.followup);
+            const dashboardEditComplete =
+              !expectsEveryDashboardMetric ||
+              modifications.length >= (rec._dash?.widgets?.length ?? 1);
             rec.fu = {
               status: err ? 'SQL_ERROR'
                 : rows < 0 ? (comboExpected ? 'UNVERIFIED' : 'OK')
                 : rows === 0 ? 'ZERO_ROWS'
                 : comboOk === false ? 'COMBO_REPLACED'
+                : missingOriginalSeries.length ? 'SERIES_DROPPED'
+                : !dashboardEditComplete ? 'PARTIAL_DASHBOARD_EDIT'
                 : 'OK',
               source, type: m.type, rows, err,
               comboExpected, comboOk, createCols: rec._createCols ?? [], fuCols: fcols,
+              preserveExpected, missingOriginalSeries,
+              modifyCount: modifications.length,
+              dashboardWidgetCount: rec._dash?.widgets?.length ?? 1,
+              dashboardEditComplete,
+              spec: m.spec ?? null, display: m.display ?? null,
               summary: (plan?.summary || '').slice(0, 80),
             };
           }

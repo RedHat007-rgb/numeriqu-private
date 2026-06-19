@@ -603,6 +603,8 @@ TABLE: v_ebpo_revenue_by_client_contract
 TABLE: v_ebpo_revenue_by_business_unit
   Columns: tenant_id, org_id, business_unit, contract_type, total_revenue_usd,
     total_cost_usd, gross_margin_usd, gross_margin_pct
+  Use for revenue, payroll, and gross margin by business unit. Treat total_cost_usd as the
+    payroll/cost series when a prompt asks for payroll by business unit.
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 
 TABLE: v_ebpo_revenue_by_business_unit_monthly
@@ -653,6 +655,9 @@ TABLE: v_ebpo_trial_balance_monthly
     account_number, account_name, opening_balance_usd, debit_movement_usd,
     credit_movement_usd, closing_balance_usd, net_movement_usd
   Use for opening/closing balance by account and closing balance by account/month heatmaps.
+  For those heatmaps, DO NOT ask whether to use "all accounts" vs "top accounts" — the
+  dataset already supports the full matrix. Build the full heatmap and cap pivot width
+  only if required by the compiler.
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 
 TABLE: v_ebpo_ar_aging

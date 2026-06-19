@@ -18,6 +18,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       'Create a bar chart showing total revenue for each month and highlight the highest and lowest revenue months.',
       'Create a donut chart showing the split of total transaction value by invoice type.',
       'Create a waterfall chart showing net monthly financial position using total credits minus total debits.',
+      'Create a waterfall chart showing monthly revenue, cost, and gross margin progression.',
+      'Create a bar chart showing revenue, payroll, and gross margin by business unit.',
     ].join('\n'));
 
     expect(Array.isArray(widgets)).toBe(true);
@@ -33,6 +35,16 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     const wf = widgets.find((w: any) => w.metric === 'net_position' && w.grouping === 'month');
     expect(wf?.type).toBe('waterfall');
+
+    const monthlyGrossMargin = widgets.find(
+      (w: any) => w.metric === 'gross_margin' && w.grouping === 'month',
+    );
+    expect(monthlyGrossMargin?.type).toBe('waterfall');
+
+    const businessUnitFinancials = widgets.find(
+      (w: any) => w.metric === 'bu_financials' && w.grouping === 'business_unit',
+    );
+    expect(businessUnitFinancials?.type).toBe('bar');
   });
 
   test('detects pure chart-type edit requests like "switch to bar charts"', () => {
@@ -159,6 +171,55 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(refusal).toBeNull();
+  });
+
+  test('highlights the largest account mover without replacing opening/closing lines', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.queryRows = async (sql: string) => {
+      if (sql.includes('AS movement'))
+        return [{ account_name: 'Accounts Payable', movement: 900 }];
+      if (sql.includes(' AS v,'))
+        return [
+          { v: 'Cash', m: 100 },
+          { v: 'Accounts Payable', m: -80 },
+        ];
+      return [];
+    };
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2026', 'Cash | Opening Balance': 10 }],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoBalanceMovementHighlightPlan(
+      [
+        {
+          index: 0,
+          w: { chartType: 'line' },
+          spec: {
+            measure: 'opening_balance',
+            measures: ['opening_balance', 'closing_balance'],
+            dimension: 'month',
+            breakdown: 'account',
+            chartType: 'line',
+          },
+        },
+      ],
+      'In the same chart, highlight accounts with the largest balance movement.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify[0].type).toBe('line');
+    expect(plan.modify[0].dynamicSql).toContain('Cash | Opening Balance');
+    expect(plan.modify[0].display.showAllSeries).toBe(true);
+    expect(plan.modify[0].display.highlightSeries).toEqual([
+      'Accounts Payable | Opening Balance',
+      'Accounts Payable | Closing Balance',
+    ]);
   });
 
   test('builds a full CFO dashboard for financial position and operating performance', () => {

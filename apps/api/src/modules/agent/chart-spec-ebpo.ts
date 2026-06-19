@@ -315,7 +315,7 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     'max',
     'stock',
     undefined,
-    ['cash'],
+    [],
   ),
   // Working capital (stocks / ratios)
   ar_outstanding: M(
@@ -348,6 +348,26 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
       'accounts payable outstanding',
     ],
   ),
+  ar_to_revenue_pct: {
+    id: 'ar_to_revenue_pct',
+    label: 'Receivables / Revenue %',
+    aliases: ['receivables as a percentage of revenue', 'ar to revenue'],
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    derived: { num: 'ar_outstanding', den: 'total_revenue', scale: 100 },
+  },
+  ap_to_cost_pct: {
+    id: 'ap_to_cost_pct',
+    label: 'Payables / Cost %',
+    aliases: ['payables as a percentage of cost', 'ap to cost'],
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    derived: { num: 'ap_outstanding', den: 'total_cost', scale: 100 },
+  },
   collection_rate_pct: M(
     'collection_rate_pct',
     'Collection Rate %',
@@ -964,18 +984,45 @@ const viewSupportsDim = (
   return dim.isTime ? view.hasTime : view.dims.includes(dimId);
 };
 
+const scoreEbpoView = (
+  view: EbpoViewDef,
+  measureIds: string[],
+  dimId: string | null | undefined,
+  breakdownId: string | null | undefined,
+): number => {
+  let score = 0;
+  const dim = dimId ? EBPO_DIMENSIONS[dimId] : null;
+  const requestedNonTime = !!dim && !dim.isTime;
+  const requestedTime = !!dim?.isTime;
+  const measures = measureIds.map((id) => EBPO_MEASURES[id]!).filter(Boolean);
+
+  // Non-time count charts should prefer snapshot / headcount-style views over
+  // time-grained payroll views, otherwise monthly counts get summed again and
+  // inflate into the 1.1K–1.8K range instead of matching the true 800 total.
+  if (requestedNonTime && measures.some((m) => m.kind === 'count')) {
+    if (view.hasTime) score += 1000;
+    if (/employee_headcount/i.test(view.name)) score -= 250;
+    if (/salary_by_dept_grade/i.test(view.name)) score -= 100;
+  }
+
+  if (breakdownId) {
+    const bd = EBPO_DIMENSIONS[breakdownId];
+    if (bd?.isTime && !view.hasTime) score += 100;
+  }
+
+  return score;
+};
+
 export const resolveEbpoView = (
   measureId: string,
   dimId: string | null | undefined,
   breakdownId: string | null | undefined,
 ): EbpoViewDef | null => {
-  for (const v of EBPO_VIEWS) {
-    if (!viewExposesMeasure(v, measureId)) continue;
-    if (!viewSupportsDim(v, dimId)) continue;
-    if (breakdownId && !viewSupportsDim(v, breakdownId)) continue;
-    return v;
-  }
-  return null;
+  const candidates = EBPO_VIEWS.filter(
+    (v) => viewExposesMeasure(v, measureId) && viewSupportsDim(v, dimId) && (!breakdownId || viewSupportsDim(v, breakdownId)),
+  );
+  if (candidates.length === 0) return null;
+  return candidates.sort((a, b) => scoreEbpoView(a, [measureId], dimId, breakdownId) - scoreEbpoView(b, [measureId], dimId, breakdownId))[0] ?? null;
 };
 
 // Multi-measure (combo / dual-axis): find ONE view exposing EVERY measure + the
@@ -983,13 +1030,15 @@ export const resolveEbpoView = (
 export const resolveEbpoViewMulti = (
   measureIds: string[],
   dimId: string | null | undefined,
+  breakdownId?: string | null,
 ): EbpoViewDef | null => {
-  for (const v of EBPO_VIEWS) {
-    if (!measureIds.every((m) => viewExposesMeasure(v, m))) continue;
-    if (!viewSupportsDim(v, dimId)) continue;
-    return v;
-  }
-  return null;
+  const candidates = EBPO_VIEWS.filter(
+    (v) => measureIds.every((m) => viewExposesMeasure(v, m)) && viewSupportsDim(v, dimId) && (!breakdownId || viewSupportsDim(v, breakdownId)),
+  );
+  if (candidates.length === 0) return null;
+  return candidates.sort(
+    (a, b) => scoreEbpoView(a, measureIds, dimId, breakdownId) - scoreEbpoView(b, measureIds, dimId, breakdownId),
+  )[0] ?? null;
 };
 
 // Distinct, order-preserving measure list (>1 ⇒ multi-measure combo).
@@ -1037,7 +1086,7 @@ export function validateEbpoSpec(spec: ChartSpec): CompileRefusal | null {
 
   // Multi-measure (combo): one view must expose all measures + the dimension.
   if (measures.length > 1) {
-    if (!resolveEbpoViewMulti(measures, dimId)) {
+    if (!resolveEbpoViewMulti(measures, dimId, spec.breakdown)) {
       const labels = measures.map((m) => EBPO_MEASURES[m]!.label).join(', ');
       const by = dimId ? ` by ${EBPO_DIMENSIONS[dimId]!.label}` : '';
       return {
@@ -1117,10 +1166,12 @@ export async function compileEbpoSpec(
   const topN = spec.topN && spec.topN > 0 ? Math.floor(spec.topN) : 50;
 
   // ── Multi-measure (combo / dual-axis / multi-KPI) ──────────────────────────
-  // Plot every measure against the dimension as separate series (one value column
-  // each → the frontend renders multi-series / combo). No breakdown (would be 3-D).
+  // Plot every measure against the dimension as separate series. When a breakdown
+  // is also requested, pivot breakdown x measure into explicit WIDE series instead
+  // of silently dropping the breakdown (e.g. account | opening/closing balance).
   if (measures.length > 1) {
-    const mview = resolveEbpoViewMulti(measures, dimId)!;
+    const bdId = spec.breakdown || null;
+    const mview = resolveEbpoViewMulti(measures, dimId, bdId)!;
     const mtbl = `${db}.${mview.name}`;
     const allStock = measures.every((m) => EBPO_MEASURES[m]!.kind === 'stock');
 
@@ -1151,7 +1202,7 @@ export async function compileEbpoSpec(
     const mdim = dimSql(dimId);
     const where = buildWhere(
       mview,
-      [dimId],
+      [dimId, bdId].filter((id): id is string => !!id),
       spec.filters,
       db,
       allStock && mview.hasTime && !mdim.isTime,
@@ -1160,6 +1211,39 @@ export async function compileEbpoSpec(
     // Scatter/bubble are measure-vs-measure per point: emit the x/y/z(/w) column
     // convention the frontend expects (name=point label, x=1st measure, y=2nd, z=size).
     const isScatter = ct === 'scatter' || ct === 'bubble';
+    if (bdId && !isScatter) {
+      const bd = dimSql(bdId);
+      const primary = EBPO_MEASURES[measures[0]!]!;
+      const maxValues = Math.max(1, Math.floor(maxBreakdownCols / measures.length));
+      const colRows = await runRows(
+        `SELECT ${bd.label} AS v, ${aggExprFor(primary, mview)} AS m FROM ${mtbl} WHERE ${where} ` +
+          `GROUP BY ${bd.group} HAVING m != 0 ORDER BY abs(m) DESC LIMIT ${maxValues}`,
+      );
+      const values = colRows
+        .map((r) => String((r as any).v ?? ''))
+        .filter((v) => v.length > 0);
+      if (values.length === 0)
+        return { ok: false, refusal: 'No data matches that breakdown.' };
+      const series = values
+        .flatMap((value) =>
+          measures.map((mid) => {
+            const measure = EBPO_MEASURES[mid]!;
+            const alias = `${value} | ${measure.label}`;
+            return `${condValueExprFor(measure, mview, `${bd.label} = ${quoteLit(value)}`)} AS ${quoteIdent(alias)}`;
+          }),
+        )
+        .join(', ');
+      const sql =
+        `SELECT ${mdim.label} AS name, ${series} ` +
+        `FROM ${mtbl} WHERE ${where} GROUP BY ${mdim.group} ` +
+        `ORDER BY ${mdim.isTime ? `${mdim.group} ASC` : 'name ASC'} LIMIT ${topN}`;
+      return {
+        ok: true,
+        sql,
+        measure: primary,
+        view: mview.name,
+      };
+    }
     const xyz = ['x', 'y', 'z', 'w'];
     const lead = quoteIdent(EBPO_MEASURES[measures[0]!]!.label);
     const series = measures
@@ -1247,10 +1331,13 @@ export async function compileEbpoSpec(
       db,
       isStockNonTime(dim.isTime),
     );
-    // Discover the concrete breakdown values (top by measure) for the WIDE pivot.
+    // Discover the concrete breakdown values for the WIDE pivot. Rank by MAGNITUDE and
+    // keep any non-zero category: `HAVING m > 0` used to silently drop every
+    // negative-value category, so a "closing balance by account" heatmap showed only
+    // the 2 positive accounts (AR, Cash) and hid the 7 negative ones. abs() keeps them.
     const colRows = await runRows(
       `SELECT ${bd.label} AS v, ${aggExprFor(measure, view)} AS m FROM ${tbl} WHERE ${where} ` +
-        `GROUP BY ${bd.group} HAVING m > 0 ORDER BY m DESC LIMIT ${maxBreakdownCols}`,
+        `GROUP BY ${bd.group} HAVING m != 0 ORDER BY abs(m) DESC LIMIT ${maxBreakdownCols}`,
     );
     const cols = colRows
       .map((r) => String((r as any).v ?? ''))
@@ -1371,6 +1458,86 @@ function applyTransforms(
   return sql;
 }
 
+// ─── Combo series roles ───────────────────────────────────────────────────────
+// Decide, for a multi-measure combo, which measures render as clustered bars vs
+// lines and on which axis. This is the deterministic source of truth the web combo
+// renderer consumes (display.series) so it can draw N bars + M lines correctly.
+//
+// Rules (grounded in the data-2 tester feedback):
+//  • The base style follows the requested chart type: a line/area base keeps every
+//    same-unit measure as a LINE (Velan Q8 "add another line not bar"); a
+//    bar/column/combo base keeps same-unit measures as CLUSTERED BARS
+//    (Aakash Q6 "show both as bars", Pranjal Q2 debit+credit columns).
+//  • A measure whose unit differs from the primary (e.g. a % paired with $) becomes
+//    a LINE on the secondary (right) axis with its own format — fixing the
+//    wrong-"%"-axis / "percentages too high" bugs.
+//  • Explicit phrasing overrides: forceLine (e.g. "add net movement as a line")
+//    makes that measure a line even when it shares the primary's unit; forceBar
+//    makes it a clustered bar.
+export interface EbpoSeriesRole {
+  key: string; // data column name = measure label
+  role: 'bar' | 'line';
+  axis: 'left' | 'right';
+  format: 'currency' | 'number' | 'percent';
+  decimals?: number | null;
+}
+
+export function ebpoComboSeriesRoles(
+  measureIds: string[],
+  opts?: {
+    baseType?: string | null;
+    forceLine?: Iterable<string>;
+    forceBar?: Iterable<string>;
+  },
+): EbpoSeriesRole[] {
+  const defs = measureIds
+    .map((id) => EBPO_MEASURES[id])
+    .filter((d): d is EbpoMeasureDef => !!d);
+  if (defs.length === 0) return [];
+  const leftFormat = defs[0]!.format;
+  const baseIsLine = /line|area/.test(String(opts?.baseType ?? '').toLowerCase());
+  const forceLine = new Set(opts?.forceLine ?? []);
+  const forceBar = new Set(opts?.forceBar ?? []);
+
+  return defs.map((def) => {
+    let role: 'bar' | 'line';
+    if (forceLine.has(def.id)) role = 'line';
+    else if (forceBar.has(def.id)) role = 'bar';
+    else if (def.format !== leftFormat)
+      role = 'line'; // different unit → overlay line
+    else role = baseIsLine ? 'line' : 'bar'; // same unit → follow base style
+    // A line whose unit differs from the left (primary) axis goes on the right axis;
+    // everything sharing the primary unit stays on the left so magnitudes are comparable.
+    const axis: 'left' | 'right' =
+      role === 'line' && def.format !== leftFormat ? 'right' : 'left';
+    return {
+      key: def.label,
+      role,
+      axis,
+      format: def.format,
+      decimals: def.decimals ?? null,
+    };
+  });
+}
+
+// The accurate chart type for a multi-measure result, so the type LABEL matches what
+// renders: all-bar + one unit → "bar" (clustered columns); all-line + one unit →
+// "line" (multi-line); anything mixed (roles or units / dual-axis) → "combo".
+export function ebpoComboChartType(
+  series: EbpoSeriesRole[],
+  opts?: { forceStacked?: 'bar' | 'area' | null; forceCombo?: boolean },
+): string {
+  if (opts?.forceStacked)
+    return opts.forceStacked === 'area' ? 'stacked_area' : 'stacked_bar';
+  if (opts?.forceCombo) return 'combo';
+  if (series.length === 0) return 'combo';
+  const roles = new Set(series.map((s) => s.role));
+  const formats = new Set(series.map((s) => s.format));
+  if (roles.size === 1 && formats.size === 1)
+    return roles.has('bar') ? 'bar' : 'line';
+  return 'combo';
+}
+
 export const EBPO_CATALOG = {
   MEASURES: EBPO_MEASURES,
   DIMENSIONS: EBPO_DIMENSIONS,
@@ -1406,6 +1573,6 @@ export function ebpoCatalogPromptText(): string {
     `NOT AVAILABLE (if the request needs any of these, return a refusal): ${unavailable}.`,
     'THRESHOLD (optional): keep only rows whose measure passes a number ("clients above $1M", "departments under $100k") → having:{op:"gt"|"lt"|"gte"|"lte", value:<number>}.',
     'TRANSFORMS (optional): normalize, growth_pct, moving_average(window), reference_line.',
-    'CHART TYPES: bar, horizontal_bar, line, area, pie, donut, scatter, treemap, heatmap, matrix, stacked_bar, stacked_area, combo, waterfall, kpi.',
+    'CHART TYPES: bar, horizontal_bar, line, area, pie, donut, scatter, treemap, heatmap, matrix, stacked_bar, stacked_area, combo, waterfall, pareto, kpi. Use "pareto" for a single measure RANKED descending with a cumulative-percentage line ("Pareto chart", "ranked … with cumulative %") — one measure + one categorical dimension, no breakdown.',
   ].join('\n');
 }

@@ -71,6 +71,10 @@ interface ChartConfig {
   display?: {
     donut?: boolean | null;
     highlightMaxMin?: boolean | null;
+    showAllSeries?: boolean | null;
+    highlightSeries?: string[] | null;
+    labelSeries?: string | null;
+    referenceAxis?: "left" | "right" | null;
     labelMode?: "percent" | "value" | null;
     // Layer D follow-up render hints.
     normalized?: boolean | null; // values are 0–100 %, format axis as %
@@ -78,6 +82,15 @@ interface ChartConfig {
     movingAverageSuffix?: string | null; // series ending in this suffix render dashed
     secondaryAxisFormat?: "number" | "currency" | "percent" | null; // combo right-axis format
     secondaryLabel?: string | null; // combo second-measure label
+    // Per-series roles for multi-measure combos: draw N clustered bars + M lines on
+    // the correct axes. When present this fully drives the combo renderer.
+    series?: Array<{
+      key: string;
+      role: "bar" | "line";
+      axis: "left" | "right";
+      format: "currency" | "number" | "percent";
+      decimals?: number | null;
+    }> | null;
     valueFormat?: "currency" | "number" | "percent" | null; // primary value unit (EBPO dynamic charts)
     valueDecimals?: number | null; // decimals for the primary value (e.g. 1 for %)
     showTotals?: boolean | null; // matrix/heatmap totals are rendered when true/default
@@ -965,6 +978,11 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     // Reference column is drawn as a flat ReferenceLine, not a plotted series.
     const seriesKeys = allKeys.filter((k) => k !== refSeriesKey);
     const isMultiSeries = !hasValueSeries && seriesKeys.length > 0;
+    const highlightedSeries = new Set(chart.config.display?.highlightSeries ?? []);
+    const hasSeriesHighlight = seriesKeys.some((key) => highlightedSeries.has(key));
+    const visibleSeriesKeys = chart.config.display?.showAllSeries
+      ? seriesKeys
+      : seriesKeys.slice(0, isExpanded ? 12 : 8);
 
     const vals = isMultiSeries
       ? []
@@ -1037,8 +1055,9 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             )}
 	            {isMultiSeries ? (
               <>
-                {seriesKeys.slice(0, isExpanded ? 12 : 8).map((k, idx) => {
+                {visibleSeriesKeys.map((k, idx) => {
                   const isMa = Boolean(maSuffix && k.endsWith(maSuffix));
+                  const isHighlighted = highlightedSeries.has(k);
                   const color = seriesColor(k, seriesKeys, idx);
                   return (
                     <Area
@@ -1047,10 +1066,19 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                       dataKey={k}
                       name={k.replace(/_/g, " ")}
                       stroke={color}
-                      strokeWidth={isExpanded ? 2.3 : 2}
+                      strokeWidth={isHighlighted ? (isExpanded ? 4 : 3.4) : isExpanded ? 2.3 : 2}
+                      strokeOpacity={hasSeriesHighlight && !isHighlighted ? 0.22 : 1}
                       strokeDasharray={isMa ? "5 3" : undefined}
                       fill={color}
-                      fillOpacity={isMa ? 0 : chart.type === "area" ? 0.18 : 0.08}
+                      fillOpacity={
+                        hasSeriesHighlight && !isHighlighted
+                          ? 0.01
+                          : isMa
+                            ? 0
+                            : chart.type === "area"
+                              ? 0.18
+                              : 0.08
+                      }
                       dot={false}
                       activeDot={{
                         r: 5,
@@ -1176,41 +1204,90 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 		  }
 
   if (chart.type === "combo") {
-    // Series in SQL/select order (= measures[] order): the first is the bar, the
-    // rest are lines. EBPO multi-measure combos emit MEASURE-NAMED columns and no
-    // "value" column — so hardcoding dataKey="value" drew an empty bar and only one
-    // line. Derive the keys from the data instead, preserving order.
+    // EBPO multi-measure combos emit MEASURE-NAMED columns (no "value" column).
+    // ClickHouse serializes integers as JSON STRINGS, so accept anything that parses
+    // to a finite number (a strict typeof check used to silently drop integer series).
     const firstRow = (data[0] ?? {}) as Record<string, unknown>;
-    // ClickHouse serializes integer columns (e.g. employee_count) as JSON STRINGS
-    // while floats arrive as numbers. A strict typeof==="number" check therefore
-    // silently DROPPED the integer series — the reported "combo shows only payroll"
-    // bug. Accept any value that parses to a finite number (matches the multi-series
-    // path's inferNumericSeriesKeys).
-    const orderedKeys = Object.keys(firstRow).filter(
-      (k) => k !== "name" && toFiniteNumber(firstRow[k]) !== null,
+    const dataKeys = Object.keys(firstRow).filter(
+      (k) =>
+        k !== "name" &&
+        k !== refSeriesKey &&
+        k !== chart.config.display?.labelSeries &&
+        toFiniteNumber(firstRow[k]) !== null,
     );
-    const seriesKeys = orderedKeys.length > 0 ? orderedKeys : inferNumericSeriesKeys(data);
-    const barKey = seriesKeys.includes("value") ? "value" : (seriesKeys[0] ?? null);
-    const lineSeriesKeys = seriesKeys.filter((k) => k !== barKey);
-    const lineKey = lineSeriesKeys[0] ?? null;
-    // Coerce series values to numbers so Recharts plots string-typed integers.
+    const orderedKeys = dataKeys.length > 0 ? dataKeys : inferNumericSeriesKeys(data);
+
+    type ComboFmt = "currency" | "number" | "percent";
+    type ComboSeries = { key: string; role: "bar" | "line"; axis: "left" | "right"; format: ComboFmt };
+    // Per-series roles from the backend (display.series) are the source of truth:
+    // they say which measures are clustered BARS vs LINES and on which axis. This
+    // replaces the old "first column = bar, every other = a %-axis line" assumption
+    // that broke "show both as bars", "debit/credit columns missing", and units.
+    const metaRaw = (chart.config.display?.series ?? []).filter(
+      (s): s is NonNullable<typeof s> =>
+        !!s && typeof s.key === "string" && orderedKeys.includes(s.key),
+    );
+    let series: ComboSeries[];
+    if (metaRaw.length >= 1) {
+      series = metaRaw.map((s) => ({
+        key: s.key,
+        role: s.role === "line" ? "line" : "bar",
+        axis: s.axis === "right" ? "right" : "left",
+        format: (s.format ?? "number") as ComboFmt,
+      }));
+      // Defensive: any numeric column the backend didn't describe is added as a line.
+      for (const k of orderedKeys)
+        if (!series.some((s) => s.key === k))
+          series.push({ key: k, role: "line", axis: "right", format: "number" });
+    } else {
+      // Legacy heuristic fallback (non-EBPO combos without series metadata).
+      const barKey = orderedKeys.includes("value") ? "value" : orderedKeys[0];
+      const secFmt = (chart.config.display?.secondaryAxisFormat ?? "percent") as ComboFmt;
+      const leftFmt = (chart.config.display?.valueFormat ?? "currency") as ComboFmt;
+      series = orderedKeys.map((k) => ({
+        key: k,
+        role: k === barKey ? "bar" : "line",
+        axis: k === barKey ? "left" : "right",
+        format: k === barKey ? leftFmt : secFmt,
+      }));
+    }
+
+    const barSeries = series.filter((s) => s.role === "bar");
+    const lineSeries = series.filter((s) => s.role === "line");
+    const usesRight = series.some((s) => s.axis === "right");
+    const leftFmt: ComboFmt =
+      series.find((s) => s.axis === "left")?.format ??
+      (chart.config.display?.valueFormat as ComboFmt) ??
+      "currency";
+    const rightFmt: ComboFmt =
+      series.find((s) => s.axis === "right")?.format ??
+      (chart.config.display?.secondaryAxisFormat as ComboFmt) ??
+      "percent";
+    const fmtFor = (fmt: ComboFmt) => (v: number) =>
+      fmt === "currency"
+        ? fmtCurrency(Number(v) || 0)
+        : fmt === "percent"
+          ? `${(Number(v) || 0).toFixed(1)}%`
+          : fmtNumber(Number(v) || 0);
+    const fmtMap = new Map<string, ComboFmt>(series.map((s) => [s.key, s.format]));
+
     const comboData = data.map((r) => {
       const o: Record<string, unknown> = { ...r };
-      for (const k of seriesKeys) o[k] = toFiniteNumber(r[k]) ?? 0;
+      for (const s of series) o[s.key] = toFiniteNumber(r[s.key]) ?? 0;
       return o;
     });
+    const BAR_COLORS = [
+      `url(#grad-bar-${chart.id})`,
+      "rgb(var(--color-accent-blue))",
+      "rgb(var(--color-accent-cyan))",
+      "rgb(var(--color-accent-violet))",
+    ];
     const LINE_COLORS = [
       "rgb(var(--color-accent-cyan))",
       "rgb(var(--color-accent-violet))",
       "rgb(var(--color-accent-blue))",
     ];
-    const secFmt = chart.config.display?.secondaryAxisFormat ?? "percent";
-    const secTick = (v: number) =>
-      secFmt === "currency"
-        ? fmtCurrency(Number(v) || 0)
-        : secFmt === "number"
-          ? fmtNumber(Number(v) || 0)
-          : `${(Number(v) || 0).toFixed(1)}%`;
+    const barSize = barSeries.length > 1 ? 28 : 56;
 
     return (
       <div style={{ height: h, width: "100%" }}>
@@ -1236,20 +1313,18 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v: number) =>
-                fmtVal(Number(v) || 0)
-              }
+              tickFormatter={(v: number) => fmtFor(leftFmt)(Number(v) || 0)}
               width={56}
               tickMargin={8}
             />
-            {lineKey && (
+            {usesRight && (
               <YAxis
                 yAxisId="right"
                 orientation="right"
                 tick={tickStyle}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={secTick}
+                tickFormatter={(v: number) => fmtFor(rightFmt)(Number(v) || 0)}
                 width={44}
                 tickMargin={8}
               />
@@ -1260,32 +1335,46 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   metric={chart.config.metric}
                   grouping={chart.config.grouping}
                   valueFormatter={(value: number, entry: any) =>
-                    entry?.dataKey === barKey
-                      ? fmtVal(Number(value) || 0)
-                      : secTick(Number(value) || 0)
+                    fmtFor(fmtMap.get(String(entry?.dataKey)) ?? leftFmt)(Number(value) || 0)
                   }
                 />
               }
             />
-            {barKey && (
-              <Bar
-                yAxisId="left"
-                dataKey={barKey}
-                name={barKey === "value" ? "value" : barKey.replace(/_/g, " ")}
-                fill={`url(#grad-bar-${chart.id})`}
-                radius={[6, 6, 0, 0]}
-                maxBarSize={56}
+            {refSeriesKey && refValue != null && Number.isFinite(refValue) && (
+              <ReferenceLine
+                yAxisId={chart.config.display?.referenceAxis ?? "left"}
+                y={refValue}
+                stroke="rgb(var(--color-accent-cyan))"
+                strokeDasharray="6 3"
+                strokeWidth={1.6}
+                label={{
+                  value: refSeriesKey.replace(/_/g, " "),
+                  position: "insideTopRight",
+                  fill: "rgb(var(--color-accent-cyan))",
+                  fontSize: 10,
+                }}
               />
             )}
-            {lineSeriesKeys.map((lk, i) => {
+            {barSeries.map((s, i) => (
+              <Bar
+                key={s.key}
+                yAxisId={s.axis}
+                dataKey={s.key}
+                name={s.key === "value" ? "value" : s.key.replace(/_/g, " ")}
+                fill={BAR_COLORS[i % BAR_COLORS.length]}
+                radius={[6, 6, 0, 0]}
+                maxBarSize={barSize}
+              />
+            ))}
+            {lineSeries.map((s, i) => {
               const color = LINE_COLORS[i % LINE_COLORS.length];
               return (
                 <Line
-                  key={lk}
-                  yAxisId="right"
+                  key={s.key}
+                  yAxisId={s.axis}
                   type="monotone"
-                  dataKey={lk}
-                  name={lk.replace(/_/g, " ")}
+                  dataKey={s.key}
+                  name={s.key.replace(/_/g, " ")}
                   stroke={color}
                   strokeWidth={isExpanded ? 2.5 : 2}
                   dot={isExpanded ? { r: 4, fill: color, strokeWidth: 0 } : false}
@@ -1318,8 +1407,11 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 
 	  if (chart.type === "bar" || chart.type === "stacked_bar") {
     const barData = chart.type === "stacked_bar" ? pivotLongSeriesRows(data) : data;
+    const labelSeriesKey = chart.config.display?.labelSeries ?? null;
     // Detect multi-series FIRST (pivot data with one column per entity, no "value" key)
-    const rawSeriesKeys = inferNumericSeriesKeys(barData);
+    const rawSeriesKeys = inferNumericSeriesKeys(barData).filter(
+      (key) => key !== labelSeriesKey,
+    );
     const rawHasValueSeries = hasFiniteValueKey(barData, "value");
     const isActuallyMultiSeries = !rawHasValueSeries && rawSeriesKeys.length >= 1;
 
@@ -1515,12 +1607,31 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     )}
                   </Bar>
                 ))}
-                {isStackedBarChart && (
+                {isStackedBarChart && !labelSeriesKey && (
                   <Bar dataKey="_total" stackId="stack" fill="transparent"
                     maxBarSize={isExpanded ? 48 : 36} isAnimationActive={false} legendType="none">
                     <LabelList dataKey="_total" position="top"
                       style={{ fill: "rgb(var(--color-text-muted))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
                       formatter={(v: unknown) => fmtCurrency(Number(v) || 0)} />
+                  </Bar>
+                )}
+                {labelSeriesKey && (
+                  <Bar
+                    dataKey={labelSeriesKey}
+                    fill="transparent"
+                    isAnimationActive={false}
+                    legendType="none"
+                  >
+                    <LabelList
+                      dataKey={labelSeriesKey}
+                      position="top"
+                      style={{
+                        fill: "rgb(var(--color-text-secondary))",
+                        fontSize: isExpanded ? 10 : 9,
+                        fontWeight: 600,
+                      }}
+                      formatter={(v: unknown) => yTick(Number(v) || 0)}
+                    />
                   </Bar>
                 )}
                 <Legend

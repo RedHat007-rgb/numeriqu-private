@@ -137,6 +137,14 @@ export type DeleteChartTarget =
 export interface DisplayHints {
   donut?: boolean | null;
   highlightMaxMin?: boolean | null;
+  // Keep every semantic series visible when a request explicitly asks for a
+  // dimension plus breakdown (for example, opening/closing balance by account).
+  showAllSeries?: boolean | null;
+  // Exact WIDE data keys to emphasize while preserving the other chart series.
+  highlightSeries?: string[] | null;
+  // Numeric data column rendered as labels only, not as another plotted series.
+  labelSeries?: string | null;
+  referenceAxis?: 'left' | 'right' | null;
   labelMode?: 'percent' | 'value' | null;
   // Values are 0–100 percentages (normalize-to-100%): format axis/labels as %.
   normalized?: boolean | null;
@@ -147,6 +155,19 @@ export interface DisplayHints {
   // Combo (dual-axis) second-measure axis formatting + label.
   secondaryAxisFormat?: 'number' | 'currency' | 'percent' | null;
   secondaryLabel?: string | null;
+  // Per-series roles for multi-measure combos. Lets the renderer draw N clustered
+  // bars + M lines on the correct axes instead of the legacy "first column = bar,
+  // every other column = a line on a percent right-axis" assumption (the root cause
+  // of "both should be bars", "debit/credit columns missing", and wrong-% axis bugs).
+  // `key` is the data column name (= measure label). When present it fully drives the
+  // combo renderer; absent → legacy heuristic (back-compat).
+  series?: Array<{
+    key: string;
+    role: 'bar' | 'line';
+    axis: 'left' | 'right';
+    format: 'currency' | 'number' | 'percent';
+    decimals?: number | null;
+  }> | null;
   // Primary value unit, so the web formats EBPO dynamic charts (metric='dynamic')
   // correctly — a percent measure must render as % not $ (Q37/Q72 fix).
   valueFormat?: 'currency' | 'number' | 'percent' | null;

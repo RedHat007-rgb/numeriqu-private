@@ -125,4 +125,17 @@ describe('AgentService explicit chart prompt suite', () => {
     expect(explicit?.requiredTypes ?? []).not.toContain('box_plot');
     expect(explicit?.requiredTypes ?? []).not.toContain('combo');
   });
+
+  test('closing balance heatmap by account and month does not trigger clarification', () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const svc = AgentService.prototype as any;
+    expect(
+      svc.getClarificationPrompt(
+        'Create a heat map showing closing balance by account and month.',
+        'CREATE_DASHBOARD',
+      ),
+    ).toBeNull();
+  });
 });

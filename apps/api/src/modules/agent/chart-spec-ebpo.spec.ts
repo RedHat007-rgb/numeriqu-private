@@ -50,6 +50,13 @@ describe('EBPO catalog — view resolution', () => {
     );
   });
 
+  test('employee count by department avoids the monthly payroll view', () => {
+    const view = resolveEbpoView('employee_count', 'department', null);
+    expect(view).not.toBeNull();
+    expect(view?.hasTime).toBe(false);
+    expect(view?.name).not.toBe('v_ebpo_payroll_monthly');
+  });
+
   test('allocated revenue resolves to the delivery-center efficiency view', () => {
     expect(resolveEbpoView('allocated_revenue', 'delivery_center', null)?.name).toBe(
       'v_ebpo_delivery_center_efficiency_monthly',
@@ -122,6 +129,13 @@ describe('EBPO compiler — shapes', () => {
     const sql = await sqlFor(base({ measure: 'total_revenue', dimension: 'month', chartType: 'line' }));
     expect(sql).toMatch(/ORDER BY toStartOfMonth\(period_date\) ASC/);
   });
+
+  test('employee count by department compiles against a non-time headcount view', async () => {
+    const sql = await sqlFor(base({ measure: 'employee_count', dimension: 'department', chartType: 'bar' }));
+    expect(sql).toMatch(/analytics\.v_ebpo_(employee_headcount|salary_by_dept_grade)/);
+    expect(sql).not.toContain('v_ebpo_payroll_monthly');
+    expect(sql).not.toContain('period_date = (SELECT max(period_date)');
+  });
 });
 
 describe('EBPO compiler — honest refusals', () => {
@@ -168,6 +182,21 @@ describe('EBPO catalog — derived CFO ratios', () => {
     expect(sql).toContain('"Gross Margin %"');
   });
 
+  test('receivables/revenue and payables/cost compile as ratios of sums', async () => {
+    const arSql = await sqlFor(
+      base({ measure: 'ar_to_revenue_pct', dimension: 'month', chartType: 'line' }),
+    );
+    const apSql = await sqlFor(
+      base({ measure: 'ap_to_cost_pct', dimension: 'month', chartType: 'line' }),
+    );
+    expect(arSql).toMatch(
+      /sum\(ar_outstanding_usd\) \/ nullIf\(sum\(total_revenue_usd\), 0\) \* 100/,
+    );
+    expect(apSql).toMatch(
+      /sum\(ap_outstanding_usd\) \/ nullIf\(sum\(total_cost_usd\), 0\) \* 100/,
+    );
+  });
+
   test('current/quick ratio are NOT catalogued (refused upstream, never faked)', () => {
     expect(EBPO_MEASURES['current_ratio']).toBeUndefined();
     expect(EBPO_MEASURES['quick_ratio']).toBeUndefined();
@@ -184,6 +213,30 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
     expect(sql).toMatch(/GROUP BY toStartOfMonth\(period_date\)/);
     // single FROM — all series come from one view
     expect((sql.match(/FROM analytics\./g) || []).length).toBe(1);
+  });
+
+  test('multi-measure plus breakdown preserves both measures for every breakdown value', async () => {
+    const sql = await sqlFor(
+      base({
+        measure: 'opening_balance',
+        measures: ['opening_balance', 'closing_balance'],
+        dimension: 'month',
+        breakdown: 'account',
+        chartType: 'line',
+      }),
+      async () => [
+        { v: 'Cash', m: 100 },
+        { v: 'Accounts Payable', m: -80 },
+      ],
+    );
+
+    expect(sql).toContain('analytics.v_ebpo_trial_balance_monthly');
+    expect(sql).toContain('"Cash | Opening Balance"');
+    expect(sql).toContain('"Cash | Closing Balance"');
+    expect(sql).toContain('"Accounts Payable | Opening Balance"');
+    expect(sql).toContain('"Accounts Payable | Closing Balance"');
+    expect(sql).toMatch(/sumIf\(opening_balance_usd, .*'Cash'/);
+    expect(sql).toMatch(/sumIf\(closing_balance_usd, .*'Cash'/);
   });
 
   test('cash-flow components combo resolves to the cash-flow view', async () => {

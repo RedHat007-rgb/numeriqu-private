@@ -1,22 +1,22 @@
-# EBPO 100-question test — 2026-06-18T06:53:49.454Z
+# EBPO 100-question test — 2026-06-19T06:02:26.990Z
 
-Ran 25 questions (id 1–100) against EBPO org. AGENT_SPEC_MODE=1 (resolved from env at runtime — NOTE: .env sets this, so the spec-first planner is active unless you explicitly unset it).
+Ran 1 questions (id 1–100) against EBPO org. AGENT_SPEC_MODE=1 (resolved from env at runtime — NOTE: .env sets this, so the spec-first planner is active unless you explicitly unset it).
 
 ## CREATE outcomes
 ```
 {
-  "OK": 25
+  "OK": 1
 }
 ```
-OK source split: `{"catalog":23,"llm":2}`
+OK source split: `{"catalog":1}`
 
 ## FOLLOW-UP outcomes
 ```
 {
-  "OK": 25
+  "OK": 1
 }
 ```
-OK source split: `{"catalog":17,"llm":8}`
+OK source split: `{"llm":1}`
 
 ## Problems (0)
 

@@ -347,7 +347,14 @@ export class AgentService {
       };
     }
 
-    const unsupportedFeature = this.detectUnsupportedFeature(q);
+    const supportsEbpoSalaryDistribution =
+      hasRichDataset &&
+      /\bbox\s*(?:plot|chart)\b/i.test(q) &&
+      /\bsalar(?:y|ies)\b/i.test(q) &&
+      /\bdepartments?\b/i.test(q);
+    const unsupportedFeature = supportsEbpoSalaryDistribution
+      ? null
+      : this.detectUnsupportedFeature(q);
     if (unsupportedFeature) {
       return {
         reason: unsupportedFeature.reason,
@@ -11555,6 +11562,11 @@ export class AgentService {
     // Single-widget scorecards: multi-measure specs with no dimension compile to
     // name/value KPI rows. Multi-widget dashboards still defer to the legacy path.
     'kpi',
+    // Single-measure waterfall over a dimension (time OR categorical): the compiler
+    // emits name/value and the web renderer cumulates it ("monthly movement of
+    // operating cash flow", "net movement by account"). MULTI-measure waterfalls (the
+    // revenue→cost→gross-margin bridge) are guarded off below and handled separately.
+    'waterfall',
   ]);
 
   // A treemap with a breakdown is a 2-level hierarchy the compiler doesn't model
@@ -11564,6 +11576,14 @@ export class AgentService {
     if (!AgentService.SPEC_SUPPORTED_TYPES.has(ct)) return false;
     if (ct === 'treemap' && spec.breakdown) return false;
     if (ct === 'kpi' && spec.dimension) return false;
+    // Waterfall: only the SINGLE-measure form compiles to name/value (the renderer
+    // cumulates). A multi-measure waterfall (revenue→cost→margin bridge) needs the
+    // is_total subtotal SQL — defer it to the deterministic bridge / legacy path.
+    if (ct === 'waterfall') {
+      const measureCount = (spec.measures ?? []).filter(Boolean).length;
+      if (measureCount > 1) return false;
+      if (!spec.dimension) return false; // a waterfall needs a dimension to step over
+    }
     return true;
   }
 
@@ -11579,10 +11599,12 @@ export class AgentService {
       !wantsSingleScorecard
     )
       return false;
-    // scatter/bubble ARE handled by the spec compiler now (multi-measure x/y/z), so
-    // they're no longer deferred. Waterfall and gauge/funnel/sunburst remain legacy.
+    // scatter/bubble AND single-measure waterfall ARE handled by the spec compiler now
+    // (waterfall → name/value, the renderer cumulates; specCanModelChart defers the
+    // multi-measure bridge form to the deterministic bridge / legacy). gauge/funnel/
+    // sunburst remain legacy (the compiler doesn't model them).
     if (
-      /\b(waterfall|sun\s*burst|gauge|funnel)\b/.test(
+      /\b(sun\s*burst|gauge|funnel)\b/.test(
         q,
       )
     )
@@ -11736,13 +11758,13 @@ export class AgentService {
           {
             measure: 'cash_balance',
             measures: ['cash_balance', 'working_capital', 'ar_outstanding', 'ap_outstanding'],
-            dimension: '',
-            chartType: 'kpi',
+            dimension: 'month',
+            chartType: 'line',
           },
-          'Liquidity Snapshot',
-          'Cash balance, working capital, receivables, and payables',
+          'Monthly Liquidity',
+          'Monthly cash balance, working capital, receivables, and payables',
         );
-        if (liquidity) widgets.push(liquidity);
+        if (liquidity) widgets.push({ ...liquidity, display_order: widgets.length });
       }
       if (/\bprofitability\b/.test(qLow)) {
         const profitability = await buildWidget(
@@ -11751,45 +11773,49 @@ export class AgentService {
             measures: [
               'gross_margin_pct',
               'ebitda_style_margin_pct',
-              'free_cash_flow',
-              'total_revenue',
-              'total_cost',
+              'fcf_margin_pct',
             ],
-            dimension: '',
-            chartType: 'kpi',
+            dimension: 'month',
+            chartType: 'line',
           },
-          'Profitability Snapshot',
-          'Gross margin, EBITDA-style margin, revenue, and cost',
+          'Monthly Profitability',
+          'Monthly gross margin, EBITDA-style margin, and free cash flow margin',
         );
-        if (profitability) widgets.push(profitability);
+        if (profitability) widgets.push({ ...profitability, display_order: widgets.length });
       }
       if (/\befficiency\b|\bemployee\s+efficiency\b/.test(qLow)) {
         const efficiency = await buildWidget(
           {
             measure: 'revenue_per_employee',
             measures: ['revenue_per_employee', 'cost_per_employee'],
-            dimension: '',
-            chartType: 'kpi',
+            dimension: 'month',
+            chartType: 'line',
           },
-          'Employee Efficiency Snapshot',
-          'Revenue per employee and cost per employee',
+          'Monthly Employee Efficiency',
+          'Monthly revenue per employee and cost per employee',
         );
-        if (efficiency) widgets.push(efficiency);
+        if (efficiency) widgets.push({ ...efficiency, display_order: widgets.length });
       }
       if (/\bcash\s+conversion\b/.test(qLow)) {
         const cashConversion = await buildWidget(
           {
             measure: 'operating_cf_to_revenue_pct',
             measures: ['operating_cf_to_revenue_pct', 'payroll_to_revenue_pct'],
-            dimension: '',
-            chartType: 'kpi',
+            dimension: 'month',
+            chartType: 'line',
           },
-          'Cash Conversion Snapshot',
-          'Operating cash flow and payroll as a percentage of revenue',
+          'Monthly Cash Conversion',
+          'Monthly operating cash flow and payroll as a percentage of revenue',
         );
-        if (cashConversion) widgets.push(cashConversion);
+        if (cashConversion) widgets.push({ ...cashConversion, display_order: widgets.length });
       }
-      if (widgets.length >= 2) {
+      const requestedSections = [
+        /\bliquidity\b|\bcash\s+position\b/.test(qLow),
+        /\bprofitability\b/.test(qLow),
+        /\befficiency\b|\bemployee\s+efficiency\b/.test(qLow),
+        /\bcash\s+conversion\b/.test(qLow),
+      ].filter(Boolean).length;
+      if (requestedSections > 0 && widgets.length === requestedSections) {
         return {
           kind: 'build',
           plan: {
@@ -11802,6 +11828,12 @@ export class AgentService {
             },
             analysis_focus: query,
           },
+        };
+      }
+      if (requestedSections > 0) {
+        return {
+          kind: 'no_data',
+          message: `I could only verify ${widgets.length} of ${requestedSections} requested EBPO dashboard sections, so I did not create a partial dashboard.`,
         };
       }
     }
@@ -11824,12 +11856,162 @@ export class AgentService {
                   : /\bbar\b|\bcolumn\b/.test(qLow)
                     ? 'bar'
                   : null);
+    if (
+      /\bbox\s+plot\b/.test(qLow) &&
+      /\bsalary\b/.test(qLow) &&
+      /\bdepartment\b/.test(qLow)
+    ) {
+      const sql = `
+        SELECT
+          coalesce(nullIf(department, ''), 'Unassigned') AS name,
+          round(min(monthly_salary_usd), 2) AS min,
+          round(quantileExact(0.25)(monthly_salary_usd), 2) AS q1,
+          round(quantileExact(0.5)(monthly_salary_usd), 2) AS median,
+          round(quantileExact(0.75)(monthly_salary_usd), 2) AS q3,
+          round(max(monthly_salary_usd), 2) AS max,
+          round(avg(monthly_salary_usd), 2) AS value,
+          count() AS employee_count
+        FROM ${this.analyticsDb}.ebpo_dim_employee
+        WHERE tenant_id = {tenantId:String}
+          AND org_id IN ({externalOrgIds:Array(String)})
+          AND monthly_salary_usd IS NOT NULL
+        GROUP BY name
+        ORDER BY median DESC
+        LIMIT 50
+      `;
+      const check = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType: 'box_plot',
+      }).catch(() => null);
+      if (check && !check.error && check.rows.length > 0) {
+        const title = 'Salary Distribution by Department';
+        return {
+          kind: 'build',
+          plan: {
+            tools_to_execute: [],
+            should_generate_dashboard: true,
+            dashboard: {
+              title,
+              description: 'Department salary quartiles from employee-level salary data',
+              widgets: [
+                {
+                  title,
+                  description: 'Min, quartiles, median, and max monthly salary by department',
+                  type: 'box_plot',
+                  metric: 'dynamic',
+                  grouping: 'dynamic',
+                  display_order: 0,
+                  yAxisLabel: 'Monthly Salary',
+                  _sql: sql.trim(),
+                  _spec: {
+                    measure: 'avg_monthly_salary',
+                    dimension: 'department',
+                    chartType: 'box_plot',
+                  },
+                  display: {
+                    valueFormat: 'currency',
+                    secondaryLabel: 'Median salary',
+                    showDataLabels: /\bmedian\b/.test(qLow),
+                  },
+                } as any,
+              ],
+            },
+            analysis_focus: query,
+          },
+        };
+      }
+      return {
+        kind: 'no_data',
+        message:
+          'I could not build the salary distribution box plot because employee-level salary rows were unavailable for this EBPO org.',
+      } as SmartPlanResult;
+    }
+
     if (/\bbox\s+plot\b/.test(qLow)) {
       return {
         kind: 'no_data',
         message:
-          'I cannot build a box plot from the current EBPO chart vocabulary. The underlying salary data can be shown as bars, heatmaps, or matrices instead.',
+          'I cannot build this box plot from the current dataset. I need the underlying distribution values, not only aggregated totals.',
       } as SmartPlanResult;
+    }
+
+    if (
+      /\basset\s+intensity\b/.test(qLow) &&
+      /\bdelivery\s+cent(?:er|re)\b/.test(qLow) &&
+      /\bnet\s+book\s+value\b/.test(qLow) &&
+      /\bcalls?\s+handled\b/.test(qLow)
+    ) {
+      const sql = `
+        WITH
+          _assets AS (
+            SELECT
+              delivery_center,
+              sum(net_book_value_usd) AS net_book_value
+            FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+              AND delivery_center != ''
+            GROUP BY delivery_center
+          ),
+          _operations AS (
+            SELECT
+              delivery_center,
+              sum(calls_handled) AS calls_handled
+            FROM ${this.analyticsDb}.v_ebpo_operations_monthly
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+              AND delivery_center != ''
+            GROUP BY delivery_center
+          )
+        SELECT
+          _assets.delivery_center AS name,
+          round(_assets.net_book_value / nullIf(_operations.calls_handled, 0), 2) AS value
+        FROM _assets
+        INNER JOIN _operations USING (delivery_center)
+        WHERE _operations.calls_handled > 0
+        ORDER BY value DESC
+        LIMIT 50
+      `;
+      const check = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType: 'bar',
+      }).catch(() => null);
+      if (check && !check.error && check.rows.length > 0) {
+        const title = 'Asset Intensity by Delivery Center';
+        return {
+          kind: 'build',
+          plan: {
+            tools_to_execute: [],
+            should_generate_dashboard: true,
+            dashboard: {
+              title,
+              description: 'Net book value per call handled by delivery center',
+              widgets: [
+                {
+                  title,
+                  description: 'Net book value divided by calls handled at delivery-center grain',
+                  type: 'bar',
+                  metric: 'dynamic',
+                  grouping: 'dynamic',
+                  display_order: 0,
+                  yAxisLabel: 'Net Book Value per Call',
+                  _sql: sql.trim(),
+                  _spec: {
+                    measure: 'asset_intensity',
+                    dimension: 'delivery_center',
+                    chartType: 'bar',
+                  },
+                  display: { valueFormat: 'currency' },
+                } as any,
+              ],
+            },
+            analysis_focus: query,
+          },
+        };
+      }
+      return {
+        kind: 'no_data',
+        message:
+          'I could not verify asset intensity because matching asset and call-handled rows were unavailable by delivery center.',
+      };
     }
 
     // Hard guarantee for the exact EBPO balance heatmap used in the workbook.
@@ -11854,6 +12036,37 @@ export class AgentService {
           ? 'Opening Balance by Account and Month'
           : 'Closing Balance by Account and Month',
         'Monthly balance heatmap by account',
+      );
+      if (built) return built;
+    }
+
+    // Hard guarantee for the exact "opening + closing by account over time" asks in
+    // the Data-2 workbook. The catalog/compiler can render this correctly as a
+    // multi-line or multi-bar chart, but the LLM planner sometimes flattens it into a
+    // blanket combo. Route it deterministically so the requested chart family survives.
+    if (
+      /\bopening\s+balance\b/.test(qLow) &&
+      /\bclosing\s+balance\b/.test(qLow) &&
+      /\baccount\b/.test(qLow) &&
+      /\bmonth\b/.test(qLow) &&
+      /\b(line|bar|column|area)\b/.test(qLow)
+    ) {
+      const explicitType =
+        /\barea\b/.test(qLow)
+          ? 'area'
+          : /\bbar\b|\bcolumn\b/.test(qLow)
+            ? 'bar'
+            : 'line';
+      const built = await build(
+        {
+          measure: 'opening_balance',
+          measures: ['opening_balance', 'closing_balance'],
+          dimension: 'month',
+          breakdown: 'account',
+          chartType: explicitType,
+        },
+        'Monthly Opening and Closing Balance by Account',
+        'Opening and closing balances by account over time',
       );
       if (built) return built;
     }
@@ -12226,11 +12439,135 @@ export class AgentService {
         tenantId: scope.tenantId,
         externalOrgIds: scope.externalOrgIds,
       });
+    // Revenue → Cost → Gross Margin WATERFALL BRIDGE. "Waterfall showing revenue, cost
+    // and gross margin" is a financial bridge (Revenue +, Cost −, Gross Margin =), not
+    // 48 months of cumulative revenue (the old output, which showed only revenue and an
+    // unreadable x-axis). Emit the 3-step bridge deterministically; the renderer draws
+    // Gross Margin as a from-zero subtotal via is_total.
+    {
+      const ql = String(query).toLowerCase();
+      if (
+        useEbpo &&
+        /\bwaterfall\b/.test(ql) &&
+        /\brevenue\b/.test(ql) &&
+        /\bcost\b/.test(ql) &&
+        /\bgross\s+(?:margin|profit)\b/.test(ql)
+      ) {
+        const v = `${this.analyticsDb}.v_ebpo_revenue_monthly`;
+        const sc =
+          'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+        const bridgeSql =
+          `SELECT name, value, is_total FROM (` +
+          `SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 0) AS value, 0 AS is_total, 1 AS seq FROM ${v} WHERE ${sc} ` +
+          `UNION ALL SELECT 'Cost' AS name, -round(sum(total_cost_usd), 0) AS value, 0 AS is_total, 2 AS seq FROM ${v} WHERE ${sc} ` +
+          `UNION ALL SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 0) AS value, 1 AS is_total, 3 AS seq FROM ${v} WHERE ${sc}` +
+          `) ORDER BY seq LIMIT 10`;
+        const check = await this.executeDynamicSqlChecked(bridgeSql, scope, {
+          chartType: 'waterfall',
+        }).catch(() => null);
+        if (check && !check.error && check.rows.length > 0) {
+          const finalTitle = (
+            title || 'Revenue → Cost → Gross Margin'
+          ).slice(0, 80);
+          return {
+            kind: 'build',
+            plan: {
+              tools_to_execute: [],
+              should_generate_dashboard: true,
+              dashboard: {
+                title: finalTitle,
+                description: '',
+                widgets: [
+                  {
+                    title: finalTitle,
+                    description: '',
+                    type: 'waterfall',
+                    metric: 'dynamic',
+                    grouping: 'dynamic',
+                    display_order: 0,
+                    _sql: bridgeSql,
+                    _spec: { ...spec, chartType: 'waterfall' },
+                    display: { valueFormat: 'currency' },
+                  } as any,
+                ],
+              },
+              analysis_focus: query,
+            },
+          };
+        }
+      }
+    }
     // Scatter/bubble: "X versus Y" is a measure-vs-measure plot. Force the type BEFORE
     // compile so the EBPO compiler emits x/y/z columns (not measure-named series), and
     // so the combo helper below never converts a scatter into a bar/combo.
     const isScatterReq = /\b(scatter|bubble)\b/.test(String(query).toLowerCase());
     const queryLower = String(query).toLowerCase();
+    if (
+      useEbpo &&
+      /\bbox\s+plot\b/.test(queryLower) &&
+      /\bsalary\b/.test(queryLower) &&
+      /\bdepartment\b/.test(queryLower)
+    ) {
+      const sql = `
+        SELECT
+          coalesce(nullIf(department, ''), 'Unassigned') AS name,
+          round(min(monthly_salary_usd), 2) AS min,
+          round(quantileExact(0.25)(monthly_salary_usd), 2) AS q1,
+          round(quantileExact(0.5)(monthly_salary_usd), 2) AS median,
+          round(quantileExact(0.75)(monthly_salary_usd), 2) AS q3,
+          round(max(monthly_salary_usd), 2) AS max,
+          round(avg(monthly_salary_usd), 2) AS value,
+          count() AS employee_count
+        FROM ${this.analyticsDb}.ebpo_dim_employee
+        WHERE tenant_id = {tenantId:String}
+          AND org_id IN ({externalOrgIds:Array(String)})
+          AND monthly_salary_usd IS NOT NULL
+        GROUP BY name
+        ORDER BY median DESC
+        LIMIT 50
+      `;
+      const check = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType: 'box_plot',
+      }).catch(() => null);
+      if (check && !check.error && check.rows.length > 0) {
+        const finalTitle = (title || 'Salary Distribution by Department').slice(0, 80);
+        return {
+          kind: 'build',
+          plan: {
+            tools_to_execute: [],
+            should_generate_dashboard: true,
+            dashboard: {
+              title: finalTitle,
+              description: '',
+              widgets: [
+                {
+                  title: finalTitle,
+                  description: 'Min, quartiles, median, and max monthly salary by department',
+                  type: 'box_plot',
+                  metric: 'dynamic',
+                  grouping: 'dynamic',
+                  display_order: 0,
+                  yAxisLabel: 'Monthly Salary',
+                  _sql: sql.trim(),
+                  _spec: { ...spec, chartType: 'box_plot' },
+                  display: {
+                    valueFormat: 'currency',
+                    secondaryLabel: 'Median salary',
+                    showDataLabels: /\bmedian\b/.test(queryLower),
+                  },
+                } as any,
+              ],
+            },
+            analysis_focus: query,
+          },
+        };
+      }
+      return {
+        kind: 'no_data',
+        message:
+          'I could not build the salary distribution box plot because employee-level salary rows were unavailable for this EBPO org.',
+      };
+    }
     // Normalize common analytical phrases that a model can otherwise represent with
     // the wrong operation (for example, growth-of-YoY or share-of-total receivables).
     if (/\bmonth[-\s]+on[-\s]+month\b.*\brevenue\s+growth\b/.test(queryLower)) {
@@ -12251,31 +12588,103 @@ export class AgentService {
         transforms: [],
       };
     }
+    const mentionsDeliveryCenter = /\bdelivery\s+center\b/.test(queryLower);
+    const mentionsMonth = /\bmonth\b|\bmonthly\b|\bover\s+time\b/.test(queryLower);
     if (
       isScatterReq &&
       /\butili[sz]ation\b/.test(queryLower) &&
-      /\bsla\s+compliance\b/.test(queryLower)
+      /\bsla\s+compliance\b/.test(queryLower) &&
+      !mentionsMonth
     ) {
       spec = {
         ...spec,
         measure: 'utilization_pct',
         measures: ['utilization_pct', 'sla_compliance_pct'],
-        dimension: spec.dimension || 'delivery_center',
+        dimension: 'delivery_center',
+        chartType: 'scatter',
+      };
+    }
+    if (
+      isScatterReq &&
+      /\bhandling\s+time\b|\baht\b/.test(queryLower) &&
+      /\bcsat\b|\bcustomer\s+satisfaction\b/.test(queryLower) &&
+      !mentionsMonth
+    ) {
+      spec = {
+        ...spec,
+        measure: 'avg_aht_minutes',
+        measures: ['avg_aht_minutes', 'csat_pct'],
+        dimension: 'delivery_center',
+        chartType: 'scatter',
+      };
+    }
+    const operationsScatterMeasures = new Set(
+      (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean) as string[],
+    );
+    const operationsScatterOnly =
+      [...operationsScatterMeasures].length >= 2 &&
+      [...operationsScatterMeasures].every((m) =>
+        [
+          'utilization_pct',
+          'sla_compliance_pct',
+          'csat_pct',
+          'avg_aht_minutes',
+          'calls_handled',
+          'tickets_resolved',
+        ].includes(m),
+      );
+    if (
+      isScatterReq &&
+      operationsScatterOnly &&
+      !mentionsMonth &&
+      (!spec.dimension || spec.dimension === 'client' || mentionsDeliveryCenter)
+    ) {
+      const ordered = [...operationsScatterMeasures];
+      const preferred =
+        ordered.includes('avg_aht_minutes') && ordered.includes('csat_pct')
+          ? ['avg_aht_minutes', 'csat_pct']
+          : ordered.includes('utilization_pct') && ordered.includes('sla_compliance_pct')
+            ? ['utilization_pct', 'sla_compliance_pct']
+            : ordered;
+      spec = {
+        ...spec,
+        measure: preferred[0] as string,
+        measures: preferred as string[],
+        dimension: 'delivery_center',
         chartType: 'scatter',
       };
     }
     if (
       useEbpo &&
       isScatterReq &&
-      (spec.measures?.filter(Boolean).length ?? 0) >= 2 &&
-      String(spec.chartType).toLowerCase() !== 'scatter'
+      (spec.measures?.filter(Boolean).length ?? 0) >= 2
     ) {
-      spec = { ...spec, chartType: 'scatter' };
+      // A THIRD measure (or an explicit "size … by"/"bubble" ask) is a bubble — the
+      // size measure becomes z. Without this the type fell to "scatter", whose
+      // renderer ignores z, so the requested bubble size never varied.
+      const measureCount = spec.measures!.filter(Boolean).length;
+      const wantsSize =
+        /\bsize\b|\bsized\b|\bbubble\b/.test(queryLower) && measureCount >= 3;
+      const nextType = wantsSize || measureCount >= 3 ? 'bubble' : 'scatter';
+      spec = { ...spec, chartType: nextType };
     }
     const compiled = useEbpo
       ? await compileEbpoSpec(spec, this.analyticsDb, runRows)
       : await compileSpec(spec, this.analyticsDb, runRows);
-    if (!compiled.ok) return null;
+    if (!compiled.ok) {
+      // Surface the compiler's HONEST refusal (e.g. "no single EBPO view exposes
+      // Utilization %, Employee Count and Payroll at the same grain" for a
+      // cross-dataset bubble) instead of swallowing it into a generic GL-flavored
+      // "couldn't find that" message. A real, specific reason beats a misleading one.
+      const refusal =
+        typeof (compiled as { refusal?: unknown }).refusal === 'string'
+          ? (compiled as { refusal: string }).refusal
+          : '';
+      if (refusal && !this.looksLikeSqlText(refusal)) {
+        return { kind: 'no_data', message: refusal };
+      }
+      return null;
+    }
 
     // Verify the compiled SQL actually returns data before claiming a build.
     const chartType = (spec.chartType ?? 'bar') as ChartType;
@@ -12333,6 +12742,18 @@ export class AgentService {
     if (/\bpareto\b/.test(query.toLowerCase()) && measureList.length <= 1)
       widgetType = 'pareto' as ChartType;
     const secondaryRole = comboSeries?.find((r) => r.axis === 'right');
+    // Scatter/bubble axis labels = the x/y measure labels, so the plot's axes (and
+    // the renderer's tooltip) name the real measures instead of "x"/"y" — the
+    // "x and y axis labels are wrong" tester complaint on EBPO bubble/scatter.
+    const isScatterType =
+      widgetType === 'scatter' || widgetType === 'bubble';
+    const scatterAxis =
+      isScatterType && useEbpo && measureList.length >= 2
+        ? {
+            xAxisLabel: EBPO_MEASURES[measureList[0]!]?.label ?? undefined,
+            yAxisLabel: EBPO_MEASURES[measureList[1]!]?.label ?? undefined,
+          }
+        : {};
     return {
       kind: 'build',
       plan: {
@@ -12349,6 +12770,7 @@ export class AgentService {
               metric: 'dynamic',
               grouping: 'dynamic',
               display_order: 0,
+              ...scatterAxis,
               _sql: compiled.sql,
               // Store the ACCURATE type on the spec too, so a later "add another
               // line" follow-up inherits the real base type (line stays line) instead
@@ -12469,6 +12891,67 @@ export class AgentService {
       }
     }
 
+    // Revenue → Cost → Gross Margin WATERFALL BRIDGE (deterministic, before the SQL
+    // planner which otherwise built a 48-month cumulative-revenue waterfall showing
+    // only revenue with an unreadable x-axis). A finance bridge: Revenue +, Cost −,
+    // Gross Margin = (drawn from zero via is_total).
+    if (
+      /\bwaterfall\b/i.test(query) &&
+      /\brevenue\b/i.test(query) &&
+      /\bcost\b/i.test(query) &&
+      /\bgross\s+(?:margin|profit)\b/i.test(query)
+    ) {
+      const hasEbpo = await this.orgHasEbpoData(scope).catch(() => false);
+      if (hasEbpo) {
+        const v = `${this.analyticsDb}.v_ebpo_revenue_monthly`;
+        const sc =
+          'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+        const bridgeSql =
+          `SELECT name, value, is_total FROM (` +
+          `SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 0) AS value, 0 AS is_total, 1 AS seq FROM ${v} WHERE ${sc} ` +
+          `UNION ALL SELECT 'Cost' AS name, -round(sum(total_cost_usd), 0) AS value, 0 AS is_total, 2 AS seq FROM ${v} WHERE ${sc} ` +
+          `UNION ALL SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 0) AS value, 1 AS is_total, 3 AS seq FROM ${v} WHERE ${sc}` +
+          `) ORDER BY seq LIMIT 10`;
+        const check = await this.executeDynamicSqlChecked(bridgeSql, scope, {
+          chartType: 'waterfall',
+        }).catch(() => null);
+        if (check && !check.error && check.rows.length > 0) {
+          const title = 'Revenue → Cost → Gross Margin';
+          const plan: SmartPlanResult = {
+            kind: 'build',
+            plan: {
+              tools_to_execute: [],
+              should_generate_dashboard: true,
+              dashboard: {
+                title,
+                description: 'Revenue to gross margin bridge',
+                widgets: [
+                  {
+                    title,
+                    description: 'Revenue to gross margin bridge',
+                    type: 'waterfall',
+                    metric: 'dynamic',
+                    grouping: 'dynamic',
+                    display_order: 0,
+                    _sql: bridgeSql,
+                    _spec: {
+                      measure: 'gross_margin',
+                      dimension: 'month',
+                      chartType: 'waterfall',
+                    },
+                    display: { valueFormat: 'currency' },
+                  } as any,
+                ],
+              },
+              analysis_focus: query,
+            },
+          };
+          this.setCachedSmartPlan(cacheKey, plan);
+          return plan;
+        }
+      }
+    }
+
     if (
       /\brevenue\b/i.test(query) &&
       /\bpayroll\b/i.test(query) &&
@@ -12526,6 +13009,34 @@ export class AgentService {
         `[planner] served=bu-financials source=catalog query=${JSON.stringify(query.slice(0, 80))}`,
       );
       return plan;
+    }
+
+    // Some EBPO visuals need a richer result shape than the generic
+    // measure-by-dimension compiler can emit. Route those semantic extensions
+    // before the free-SQL fallback; salary box plots, for example, require
+    // employee-level min/quartile/median/max columns rather than name/value.
+    const needsEbpoSemanticExtension =
+      /\bbox\s*(?:plot|chart)\b/i.test(query) ||
+      /\basset\s+intensity\b/i.test(query) ||
+      (/\bdashboard\b/i.test(query) &&
+        /\bliquidity\b/i.test(query) &&
+        /\bprofitability\b/i.test(query) &&
+        /\b(?:employee\s+)?efficiency\b/i.test(query) &&
+        /\bcash\s+conversion\b/i.test(query));
+    if (needsEbpoSemanticExtension) {
+      const hasEbpo = await this.orgHasEbpoData(scope).catch(() => false);
+      if (hasEbpo) {
+        const semanticPlan = await this.buildEbpoSemanticPlan(query, scope).catch(
+          () => null,
+        );
+        if (semanticPlan) {
+          this.logger.log(
+            `[planner] served=ebpo-semantic source=catalog query=${JSON.stringify(query.slice(0, 80))}`,
+          );
+          this.setCachedSmartPlan(cacheKey, semanticPlan);
+          return semanticPlan;
+        }
+      }
     }
 
     // Spec-first is now the default: the model produces a closed ChartSpec, the
@@ -14724,6 +15235,39 @@ export class AgentService {
     return wantsPercent ? 'percent' : null;
   }
 
+  // Pure "show/hide data labels" toggle. Returns 'on'/'off' only when the request
+  // is essentially about data labels and carries no other actionable edit (add a
+  // measure, convert type, percentage, reference line…) so combined asks still
+  // flow to the richer editors. Renders per-point labels even past the auto-cap.
+  private detectDataLabelsToggle(req: string): 'on' | 'off' | null {
+    const q = String(req ?? '').toLowerCase().trim();
+    if (!q) return null;
+    // Broad enough to catch the many ways a user asks for point labels:
+    // "data labels", "value labels", "show the values", "show total revenue labels
+    // above each month", "show actual value labels for each contract type", "add labels".
+    const mentionsLabels =
+      /\b(data|value|point)\s+labels?\b/.test(q) ||
+      /\b(show|add|display|turn\s+on|enable|hide|remove|turn\s+off|disable)\b[^.]*\blabels?\b/.test(
+        q,
+      ) ||
+      /\bshow\s+(?:the\s+|actual\s+)?values?\b/.test(q) ||
+      /\blabels?\s+(?:above|over|on\s+top|for\s+each|on\s+the)\b/.test(q);
+    if (!mentionsLabels) return null;
+    // Don't hijack requests that also do real data work (adding a series/measure,
+    // converting the chart, normalizing, a reference/average line, or matrix highlight).
+    if (
+      /\b(add|include|overlay)\b.*\b(line|bar|column|series|measure|metric|revenue|cost|margin|payroll|trend|average|median|reference)\b/.test(
+        q,
+      ) ||
+      /\b(convert|change|switch|turn\s+it\s+into|replace|combine|normali[sz]e|percentage\s+of|moving\s+average|cumulative|highlight|reference\s+line)\b/.test(
+        q,
+      )
+    )
+      return null;
+    if (/\b(hide|remove|turn\s+off|disable|without)\b/.test(q)) return 'off';
+    return 'on';
+  }
+
   private detectMatrixDisplayEdit(req: string): DisplayHints | null {
     const q = (req ?? '').toLowerCase();
     if (!q.trim()) return null;
@@ -14764,9 +15308,25 @@ export class AgentService {
           : 'overallAverage'
       : null;
 
+    // "highlight the highest / lowest" (no threshold, no average) → ring the extreme
+    // cell(s). This was previously dropped (green color set but no rule), so nothing
+    // got highlighted ("not highlighting highest value").
+    const wantsHighest = /\b(highest|largest|max(?:imum)?|biggest|top|peak|most)\b/.test(q);
+    const wantsLowest = /\b(lowest|smallest|min(?:imum)?|bottom|least|weakest)\b/.test(q);
+    const extremes: DisplayHints['highlightExtremes'] =
+      threshold === null && !avgMode && (wantsHighest || wantsLowest)
+        ? wantsHighest && wantsLowest
+          ? 'both'
+          : wantsHighest
+            ? 'max'
+            : 'min'
+        : null;
+
     const hints: DisplayHints = {};
     if (wantsTotals) hints.showTotals = true;
-    if (wantsHighlight || threshold !== null || avgMode) {
+    if (extremes) {
+      hints.highlightExtremes = extremes;
+    } else if (wantsHighlight || threshold !== null || avgMode) {
       hints.conditionalColor = 'green';
       if (threshold !== null) hints.conditionalThreshold = threshold;
       if (avgMode) hints.conditionalThresholdMode = avgMode;
@@ -14834,6 +15394,24 @@ export class AgentService {
     ];
     for (const [pattern, id] of checks) if (pattern.test(text)) add(id);
 
+    const shouldPreferGrossMarginPercent = () => {
+      const asksGrossMarginPercent =
+        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(text);
+      const separatelyAsksGrossMarginDollars =
+        /\bgross\s+profit\b/.test(text) ||
+        /\bgross\s+margin\b[\s\S]{0,32}\b(?:dollars?|usd|amount|value)\b/.test(text) ||
+        /\b(?:dollars?|usd|amount|value)\b[\s\S]{0,32}\bgross\s+margin\b/.test(text);
+      return asksGrossMarginPercent && !separatelyAsksGrossMarginDollars;
+    };
+    const dropGrossMarginDollarWhenPercentOnly = () => {
+      if (!shouldPreferGrossMarginPercent()) return;
+      const pctIndex = out.indexOf('gross_margin_pct');
+      if (pctIndex === -1) return;
+      const gmIndex = out.indexOf('gross_margin');
+      if (gmIndex !== -1) out.splice(gmIndex, 1);
+    };
+    dropGrossMarginDollarWhenPercentOnly();
+
     const normalize = (value: string) =>
       ` ${value
         .toLowerCase()
@@ -14845,6 +15423,7 @@ export class AgentService {
       const candidates = [measure.label, ...(measure.aliases ?? [])];
       if (candidates.some((candidate) => haystack.includes(normalize(candidate)))) add(id);
     }
+    dropGrossMarginDollarWhenPercentOnly();
     return out.filter(
       (id) =>
         !(asksArToRevenue && (id === 'ar_outstanding' || id === 'total_revenue')) &&
@@ -15247,6 +15826,82 @@ export class AgentService {
     };
   }
 
+  private async buildPerSeriesMonthlyAverageEdit(
+    activeDashboard: ActiveDashboard,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan> {
+    const modify: DashboardEditPlan['modify'] = [];
+    const quote = (column: string) => `\`${column.replace(/`/g, '')}\``;
+
+    for (let index = 0; index < activeDashboard.widgets.length; index++) {
+      const widget = activeDashboard.widgets[index]!;
+      const config = (widget.queryConfig as any) ?? {};
+      const baseSql =
+        typeof config.dynamicSql === 'string' && config.dynamicSql.trim()
+          ? config.dynamicSql.trim().replace(/;+\s*$/, '')
+          : null;
+      if (!baseSql) continue;
+      const chartType = widget.chartType as ChartType;
+      const probe = await this.executeDynamicSqlChecked(baseSql, scope, {
+        chartType,
+      }).catch(() => null);
+      if (!probe || probe.error || probe.rows.length === 0) continue;
+      const columns = Object.keys(probe.rows[0] ?? {});
+      const numeric = columns.filter(
+        (column) =>
+          column !== 'name' &&
+          probe.rows.some((row) => {
+            const value = (row as any)[column];
+            return value !== null && value !== '' && Number.isFinite(Number(value));
+          }),
+      );
+      if (numeric.length === 0) continue;
+
+      const averages = numeric.map(
+        (column) =>
+          `round(avg(${quote(column)}) OVER (), 2) AS ${quote(`${column} | Monthly Average`)}`,
+      );
+      const sql =
+        `WITH _base AS (\n${baseSql}\n)\n` +
+        `SELECT name, ${numeric.map(quote).join(', ')}, ${averages.join(', ')}\n` +
+        'FROM _base\nLIMIT 1000';
+      const verified = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType,
+      }).catch(() => null);
+      if (!verified || verified.error || verified.rows.length === 0) continue;
+      if (this.detectBadChartShape(verified.rows, chartType)) continue;
+
+      modify.push({
+        index,
+        type: chartType,
+        dynamicSql: sql,
+        spec: config.spec,
+        display: {
+          ...(config.display && typeof config.display === 'object'
+            ? config.display
+            : {}),
+          showAllSeries: true,
+        },
+      });
+    }
+
+    if (modify.length !== activeDashboard.widgets.length) {
+      return {
+        summary: '',
+        add: [],
+        remove_indices: [],
+        modify: [],
+        refusal: `I could verify monthly-average indicators for only ${modify.length} of ${activeDashboard.widgets.length} dashboard charts, so I left the dashboard unchanged rather than applying a partial edit.`,
+      };
+    }
+    return {
+      summary: 'Added a monthly-average comparison indicator for every metric in every dashboard chart.',
+      add: [],
+      remove_indices: [],
+      modify,
+    };
+  }
+
   private async buildEbpoMetricEdit(
     activeDashboard: ActiveDashboard,
     editRequest: string,
@@ -15267,6 +15922,69 @@ export class AgentService {
       const w = activeDashboard.widgets[i]!;
       const cfg = (w.queryConfig as any) ?? {};
       const spec = cfg.spec as ChartSpec | undefined;
+
+      if (
+        spec?.measure === 'asset_intensity' &&
+        spec.dimension === 'delivery_center' &&
+        /\bcsat\b|\bcustomer\s+satisfaction\b/.test(q)
+      ) {
+        const sql = `
+          WITH
+            _assets AS (
+              SELECT delivery_center, sum(net_book_value_usd) AS net_book_value
+              FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center
+              WHERE tenant_id = {tenantId:String}
+                AND org_id IN ({externalOrgIds:Array(String)})
+                AND delivery_center != ''
+              GROUP BY delivery_center
+            ),
+            _operations AS (
+              SELECT
+                delivery_center,
+                sum(calls_handled) AS calls_handled,
+                round(avg(csat_pct), 1) AS csat_pct
+              FROM ${this.analyticsDb}.v_ebpo_operations_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id IN ({externalOrgIds:Array(String)})
+                AND delivery_center != ''
+              GROUP BY delivery_center
+            )
+          SELECT
+            _assets.delivery_center AS name,
+            round(_assets.net_book_value / nullIf(_operations.calls_handled, 0), 2) AS asset_intensity,
+            _operations.csat_pct AS csat_pct
+          FROM _assets
+          INNER JOIN _operations USING (delivery_center)
+          WHERE _operations.calls_handled > 0
+          ORDER BY asset_intensity DESC
+          LIMIT 50
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added CSAT percentage as a line while preserving asset intensity by delivery center.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                spec,
+                yAxisLabel: 'Net Book Value per Call',
+                display: {
+                  valueFormat: 'currency',
+                  secondaryAxisFormat: 'percent',
+                  secondaryLabel: 'CSAT %',
+                  series: [
+                    { key: 'asset_intensity', role: 'bar', axis: 'left', format: 'currency' },
+                    { key: 'csat_pct', role: 'line', axis: 'right', format: 'percent' },
+                  ],
+                },
+              },
+            ],
+          };
+        }
+      }
 
       if (
         spec?.measure === 'total_revenue' &&
@@ -15317,16 +16035,17 @@ export class AgentService {
         }
       }
 
-      if (
-        spec &&
-        /\b(?:average|avg|mean)\b/.test(q) &&
-        /\breference\s+line\b|\baverage\b[^.]*\bline\b/.test(q)
-      ) {
+      const wantsAverageReferenceLine =
+        (/\b(?:average|avg|mean)\b/.test(q) &&
+          (/\breference\s+line\b/.test(q) || /\baverage\b[^.]*\bline\b/.test(q))) ||
+        (/\boverall\b/.test(q) && /\breference\s+line\b/.test(q));
+      if (spec && wantsAverageReferenceLine) {
         const measures = (
           spec.measures?.length ? spec.measures : [spec.measure]
         ).filter((id): id is string => !!id);
         const targetMeasure =
           this.detectEbpoMeasureMentions(q).find((id) => measures.includes(id)) ??
+          (measures.length === 1 ? measures[0] : undefined) ??
           (/\bpercent|percentage|%\b/.test(q)
             ? measures.find((id) => EBPO_MEASURES[id]?.format === 'percent')
             : undefined);
@@ -15369,6 +16088,126 @@ export class AgentService {
                       ...priorDisplay,
                       referenceSeries: referenceKey,
                       referenceAxis: targetRole?.axis ?? 'left',
+                    },
+                  },
+                ],
+              };
+            }
+          }
+        }
+      }
+
+      if (
+        w.chartType === 'waterfall' &&
+        /\blabels?\b/.test(q) &&
+        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(q)
+      ) {
+        const labelKey = 'Gross Margin % Label';
+        const sql = `
+          WITH
+            _base AS (
+              ${String(cfg.dynamicSql ?? '').trim()}
+            ),
+            _gm AS (
+              SELECT round(sum(gross_margin_usd) / nullIf(sum(total_revenue_usd), 0) * 100, 1) AS gross_margin_pct
+              FROM ${this.analyticsDb}.v_ebpo_revenue_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id IN ({externalOrgIds:Array(String)})
+            )
+          SELECT
+            _base.*,
+            if(_base.name = 'Gross Margin', _gm.gross_margin_pct, NULL) AS "${labelKey}"
+          FROM _base
+          CROSS JOIN _gm
+          LIMIT 1000
+        `;
+        if (await verify(sql, w.chartType as ChartType)) {
+          return {
+            summary:
+              'Added a gross margin percentage label to the gross margin subtotal while preserving the waterfall bridge.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: w.chartType as ChartType,
+                dynamicSql: sql.trim(),
+                spec,
+                display: {
+                  ...((cfg.display ?? {}) as DisplayHints),
+                  labelSeries: labelKey,
+                  secondaryAxisFormat: 'percent',
+                },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        spec &&
+        !spec.breakdown &&
+        w.chartType === 'bar' &&
+        /\blabels?\b/.test(q)
+      ) {
+        const existingMeasures = new Set(
+          (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean),
+        );
+        const labelMeasure = this.detectEbpoMeasureMentions(q).find(
+          (id) => !existingMeasures.has(id),
+        );
+        if (labelMeasure) {
+          const runRows = (sql: string) =>
+            this.queryRows<Record<string, unknown>>(sql, {
+              tenantId: scope.tenantId,
+              externalOrgIds: scope.externalOrgIds,
+            });
+          const [base, labels] = await Promise.all([
+            compileEbpoSpec(spec, this.analyticsDb, runRows),
+            compileEbpoSpec(
+              {
+                ...spec,
+                measure: labelMeasure,
+                measures: null,
+                chartType: 'bar',
+              },
+              this.analyticsDb,
+              runRows,
+            ),
+          ]);
+          if (base.ok && labels.ok) {
+            const def = EBPO_MEASURES[labelMeasure]!;
+            const labelKey = `${def.label} Label`;
+            const ident = (value: string) => `"${value.replace(/"/g, '""')}"`;
+            const sql = `
+              WITH
+                _base AS (${base.sql}),
+                _labels AS (${labels.sql})
+              SELECT
+                _base.*,
+                _labels.value AS ${ident(labelKey)}
+              FROM _base
+              LEFT JOIN _labels ON _labels.name = _base.name
+              LIMIT 1000
+            `;
+            if (await verify(sql, w.chartType as ChartType)) {
+              return {
+                summary: `Added ${def.label.toLowerCase()} labels without replacing the original bars.`,
+                add: [],
+                remove_indices: [],
+                modify: [
+                  {
+                    index: i,
+                    type: w.chartType as ChartType,
+                    dynamicSql: sql.trim(),
+                    spec,
+                    display: {
+                      ...((cfg.display ?? {}) as DisplayHints),
+                      valueFormat: EBPO_MEASURES[spec.measure]?.format ?? null,
+                      labelSeries: labelKey,
+                      ...(def.format === 'percent'
+                        ? { secondaryAxisFormat: 'percent' }
+                        : {}),
                     },
                   },
                 ],
@@ -15804,10 +16643,10 @@ export class AgentService {
       }
 
       if (
-        !spec &&
-        /\bpayroll\s+cost\b/.test(q) &&
+        /\bpayroll\s+cost\b|\bpayroll\b/.test(q) &&
         /\bbubble\b|\bsize\b/.test(q) &&
-        /\bdelivery\s+center\b/.test(String(w.title ?? '').toLowerCase())
+        (spec?.dimension === 'delivery_center' ||
+          /\bdelivery\s+center\b/.test(String(w.title ?? '').toLowerCase()))
       ) {
         const sql = `
           WITH payroll_by_country AS (
@@ -15826,7 +16665,6 @@ export class AgentService {
               delivery_center,
               country,
               avg(utilization_pct) AS utilization_pct,
-              avg(revenue_per_employee_usd) AS revenue_per_employee_usd,
               sum(employee_count) AS employee_count
             FROM ${this.analyticsDb}.v_ebpo_delivery_center_efficiency_monthly
             WHERE tenant_id = {tenantId:String}
@@ -15844,7 +16682,7 @@ export class AgentService {
           SELECT
             c.delivery_center AS name,
             round(avg(c.utilization_pct), 2) AS x,
-            round(avg(c.revenue_per_employee_usd), 2) AS y,
+            round(avg(c.employee_count), 2) AS y,
             round(avg(p.total_payroll_usd * c.employee_count / nullIf(t.country_employee_count, 0)), 2) AS z
           FROM center_base c
           LEFT JOIN country_totals t
@@ -15863,13 +16701,25 @@ export class AgentService {
             add: [],
             remove_indices: [],
             modify: [
-              {
-                index: i,
-                type: 'bubble',
-                dynamicSql: sql.trim(),
-              },
-            ],
-          };
+	              {
+	                index: i,
+	                type: 'bubble',
+	                dynamicSql: sql.trim(),
+                  spec: {
+                    measure: 'utilization_pct',
+                    measures: ['utilization_pct', 'employee_count', 'total_payroll'],
+                    dimension: 'delivery_center',
+                    chartType: 'bubble',
+                  },
+                  display: {
+                    valueFormat: 'percent',
+                    valueDecimals: 1,
+                  },
+                  xAxisLabel: 'Utilization %',
+                  yAxisLabel: 'Employee Count',
+	              },
+	            ],
+	          };
         }
       }
 
@@ -15947,7 +16797,7 @@ export class AgentService {
 
       if (
         spec?.measure === 'employee_count' &&
-        /\baverage\s+salary\b|\bavg\s+salary\b/.test(q)
+        /\baverage(?:\s+monthly)?\s+salary\b|\bavg(?:\s+monthly)?\s+salary\b/.test(q)
       ) {
         const dim = spec.dimension === 'country' ? 'country' : spec.dimension === 'department' ? 'department' : null;
         if (dim) {
@@ -15975,6 +16825,66 @@ export class AgentService {
                   type: 'combo',
                   dynamicSql: sql.trim(),
                   display: { secondaryAxisFormat: 'currency', secondaryLabel: 'Average salary' },
+                },
+              ],
+            };
+          }
+        }
+      }
+
+      if (
+        spec?.measure === 'total_payroll' &&
+        /\baverage(?:\s+monthly)?\s+salary\b|\bavg(?:\s+monthly)?\s+salary\b/.test(q)
+      ) {
+        const dim =
+          spec.dimension === 'country'
+            ? 'country'
+            : spec.dimension === 'department'
+              ? 'department'
+              : null;
+        if (dim) {
+          const sql = `
+            WITH payroll_rollup AS (
+              SELECT
+                ${dim} AS name,
+                round(sum(total_payroll_usd), 2) AS total_payroll
+              FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id IN ({externalOrgIds:Array(String)})
+                AND ${dim} != ''
+              GROUP BY ${dim}
+            ),
+            headcount_rollup AS (
+              SELECT
+                ${dim} AS name,
+                round(avg(avg_monthly_salary_usd), 2) AS avg_monthly_salary
+              FROM ${this.analyticsDb}.v_ebpo_employee_headcount
+              WHERE tenant_id = {tenantId:String}
+                AND org_id IN ({externalOrgIds:Array(String)})
+                AND ${dim} != ''
+              GROUP BY ${dim}
+            )
+            SELECT
+              payroll_rollup.name AS name,
+              payroll_rollup.total_payroll AS total_payroll,
+              headcount_rollup.avg_monthly_salary AS avg_monthly_salary
+            FROM payroll_rollup
+            LEFT JOIN headcount_rollup
+              ON headcount_rollup.name = payroll_rollup.name
+            ORDER BY total_payroll DESC
+            LIMIT 50
+          `;
+          if (await verify(sql, 'combo')) {
+            return {
+              summary: 'Added average monthly salary as a comparison line while keeping payroll by group.',
+              add: [],
+              remove_indices: [],
+              modify: [
+                {
+                  index: i,
+                  type: 'combo',
+                  dynamicSql: sql.trim(),
+                  display: { secondaryAxisFormat: 'currency', secondaryLabel: 'Average monthly salary' },
                 },
               ],
             };
@@ -16163,14 +17073,48 @@ export class AgentService {
         /\brevenue\s+per\s+employee\b/.test(q) &&
         /\bfree\s+cash\s+flow\s+margin\b/.test(q)
       ) {
-        return {
-          summary: 'The chart was left unchanged because current ratio cannot be calculated from the available fields.',
-          add: [],
-          remove_indices: [],
-          modify: [],
-          refusal:
-            'I cannot add Current Ratio because the EBPO dataset does not contain current liabilities. I did not substitute Working Capital or invent a ratio. Ask for gross margin percentage, cost per employee, revenue per employee, and free cash flow margin without Current Ratio and I can add those verified KPI cards.',
+        const existingMeasures = (
+          spec?.measures?.length ? spec.measures : [spec?.measure]
+        ).filter((id): id is string => !!id);
+        const validRequested = [
+          'gross_margin_pct',
+          'cost_per_employee',
+          'revenue_per_employee',
+          'fcf_margin_pct',
+        ].filter((id) => this.detectEbpoMeasureMentions(q).includes(id));
+        const measures = Array.from(new Set([...existingMeasures, ...validRequested]));
+        const nextSpec: ChartSpec = {
+          measure: measures[0],
+          measures,
+          dimension: '',
+          chartType: 'kpi',
         };
+        const compiled = await compileEbpoSpec(
+          nextSpec,
+          this.analyticsDb,
+          (sql) =>
+            this.queryRows<Record<string, unknown>>(sql, {
+              tenantId: scope.tenantId,
+              externalOrgIds: scope.externalOrgIds,
+            }),
+        );
+        if (compiled.ok && (await verify(compiled.sql, 'kpi'))) {
+          return {
+            summary:
+              'Added Gross Margin %, Cost per Employee, Revenue per Employee, and Free Cash Flow Margin KPI cards. Current Ratio was skipped because current liabilities are not available.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'kpi',
+                dynamicSql: compiled.sql,
+                spec: nextSpec,
+                display: { valueFormat: null },
+              },
+            ],
+          };
+        }
       }
     }
 
@@ -16483,8 +17427,11 @@ export class AgentService {
         .filter((w) => w.length >= 4 && !['of', 'the', 'per', 'and'].includes(w));
 
     const matched: string[] = [...mentioned];
+    const explicitPercentLike =
+      /\bpercent(?:age)?\b|\bpct\b|%|\bratio\b|\brate\b/.test(req.toLowerCase());
     for (const [mid, def] of Object.entries(EBPO_MEASURES)) {
       if (current.includes(mid) || matched.includes(mid)) continue;
+      if (def.format === 'percent' && !explicitPercentLike) continue;
       const idPhrase = norm(mid.replace(/_/g, ' '));
       const candidates = [def.label, ...(def.aliases ?? [])];
       const matchedCandidate = candidates.some((candidate) => {
@@ -16513,9 +17460,47 @@ export class AgentService {
         !(asksArToRevenue && (id === 'ar_outstanding' || id === 'total_revenue')) &&
         !(asksApToCost && (id === 'ap_outstanding' || id === 'total_cost')),
     );
-    if (exactMatched.length === 0) return null;
+    const asksGrossMarginPercentOnly =
+      /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(rawReq) &&
+      !/\bgross\s+profit\b/.test(rawReq) &&
+      !/\bgross\s+margin\b[\s\S]{0,32}\b(?:dollars?|usd|amount|value)\b/.test(rawReq) &&
+      !/\b(?:dollars?|usd|amount|value)\b[\s\S]{0,32}\bgross\s+margin\b/.test(rawReq);
+    let filteredMatched =
+      asksGrossMarginPercentOnly && exactMatched.includes('gross_margin_pct')
+        ? exactMatched.filter((id) => id !== 'gross_margin')
+        : exactMatched;
+    // When a derived ratio/percent measure is requested, don't silently add its
+    // numerator/denominator as extra series. The ratio stays derived unless the
+    // user separately asks for those raw measures in another follow-up.
+    const impliedComponents: Record<string, string[]> = {
+      gross_margin_pct: ['gross_margin', 'total_revenue'],
+      payroll_to_revenue_pct: ['total_payroll', 'total_revenue'],
+      cost_to_income_pct: ['total_cost', 'total_revenue'],
+      fcf_margin_pct: ['free_cash_flow', 'total_revenue'],
+      operating_cf_to_revenue_pct: ['operating_cf', 'total_revenue'],
+      benefits_pct_base_salary: ['total_benefits', 'total_base_salary'],
+      ar_to_revenue_pct: ['ar_outstanding', 'total_revenue'],
+      ap_to_cost_pct: ['ap_outstanding', 'total_cost'],
+      payment_rate_pct: ['paid_amount', 'invoice_amount'],
+      cost_per_employee: ['total_payroll', 'employee_count'],
+      depreciation_pct_asset_cost: ['accumulated_depreciation', 'asset_cost'],
+      net_book_value_pct: ['net_book_value', 'asset_cost'],
+    };
+    filteredMatched = filteredMatched.filter((id, _, arr) => {
+      for (const mid of arr) {
+        const derived = EBPO_MEASURES[mid]?.derived;
+        if (!derived) continue;
+        if (id === derived.num || id === derived.den) return false;
+      }
+      for (const mid of arr) {
+        const parts = impliedComponents[mid] ?? [];
+        if (parts.includes(id)) return false;
+      }
+      return true;
+    });
+    if (filteredMatched.length === 0) return null;
 
-    const measures = Array.from(new Set([...current, ...exactMatched]));
+    const measures = Array.from(new Set([...current, ...filteredMatched]));
     if (measures.length < 2) return null;
     // One EBPO view must expose EVERY measure at the current dimension (no joins).
     if (!resolveEbpoViewMulti(measures, currentSpec.dimension)) return null;
@@ -17076,6 +18061,92 @@ export class AgentService {
       };
     }
 
+    // A box plot already carries its median in the quartile-shaped dataset.
+    // "Add median markers" is therefore a presentation edit, not a request to
+    // replace min/q1/median/q3/max with a new comparison series.
+    const wantsBoxMedianMarkers =
+      /\bmedian\b[^.]*\b(markers?|labels?)\b|\b(markers?|labels?)\b[^.]*\bmedian\b/i.test(
+        editRequest,
+      );
+    if (wantsBoxMedianMarkers) {
+      const boxTargets = activeDashboard.widgets
+        .map((widget, index) => ({ widget, index }))
+        .filter(
+          ({ widget }) =>
+            String(widget.chartType ?? '').toLowerCase() === 'box_plot',
+        );
+      if (boxTargets.length > 0) {
+        return {
+          summary: 'Added median salary markers for each box-plot category.',
+          add: [],
+          remove_indices: [],
+          modify: boxTargets.map(({ widget, index }) => {
+            const config = (widget.queryConfig as any) ?? {};
+            return {
+              index,
+              type: 'box_plot' as ChartType,
+              dynamicSql: config.dynamicSql,
+              spec: config.spec,
+              display: {
+                ...(config.display && typeof config.display === 'object'
+                  ? config.display
+                  : {}),
+                showDataLabels: true,
+              },
+            };
+          }),
+        };
+      }
+    }
+
+    const wantsEveryMonthlyAverage =
+      /\bsame\s+dashboard\b/i.test(editRequest) &&
+      /\b(?:each|every)\s+metric\b/i.test(editRequest) &&
+      /\bmonthly\s+average\b/i.test(editRequest);
+    if (scope && wantsEveryMonthlyAverage && activeDashboard.widgets.length > 0) {
+      return this.buildPerSeriesMonthlyAverageEdit(activeDashboard, scope);
+    }
+
+    const wantsPartialCurrentRatioScorecard =
+      /\bkpi\s+cards?\b/i.test(editRequest) &&
+      /\bcurrent\s+ratio\b/i.test(editRequest) &&
+      /\bgross\s+margin\s+(?:percentage|percent|%)\b/i.test(editRequest) &&
+      /\brevenue\s+per\s+employee\b/i.test(editRequest) &&
+      /\bfree\s+cash\s+flow\s+margin\b/i.test(editRequest);
+    if (scope && wantsPartialCurrentRatioScorecard) {
+      const hasEbpo = await this.orgHasEbpoData(scope).catch(() => false);
+      if (hasEbpo) {
+        const partialScorecard = await this.buildEbpoMetricEdit(
+          activeDashboard,
+          editRequest,
+          scope,
+        );
+        if (partialScorecard) return partialScorecard;
+      }
+    }
+
+    const wantsCatalogSensitiveEbpoEdit =
+      (activeDashboard.widgets.some(
+        (widget) => String(widget.chartType ?? '').toLowerCase() === 'waterfall',
+      ) &&
+        /\bgross\s+margin\s+(?:percentage|percent|%)\b/i.test(editRequest) &&
+        /\blabels?\b/i.test(editRequest)) ||
+      (activeDashboard.widgets.some(
+        (widget) =>
+          (widget.queryConfig as any)?.spec?.measure === 'asset_intensity',
+      ) && /\bcsat\b|\bcustomer\s+satisfaction\b/i.test(editRequest));
+    if (scope && wantsCatalogSensitiveEbpoEdit) {
+      const hasEbpo = await this.orgHasEbpoData(scope).catch(() => false);
+      if (hasEbpo) {
+        const deterministicEdit = await this.buildEbpoMetricEdit(
+          activeDashboard,
+          editRequest,
+          scope,
+        );
+        if (deterministicEdit) return deterministicEdit;
+      }
+    }
+
     // If any chart carries a ChartSpec, edit the spec (delta) and recompile. This
     // runs when AGENT_SPEC_MODE is on (GL opt-in) OR whenever the active dashboard
     // was built from a spec — which is always true for EBPO charts (the catalog is
@@ -17223,12 +18294,21 @@ export class AgentService {
             : matrixDisplayHints.conditionalThresholdMode === 'overallAverage'
               ? 'above the overall average'
               : null;
+      const extremesLabel =
+        matrixDisplayHints.highlightExtremes === 'both'
+          ? 'Highlighted the highest and lowest cells.'
+          : matrixDisplayHints.highlightExtremes === 'max'
+            ? 'Highlighted the highest cell.'
+            : matrixDisplayHints.highlightExtremes === 'min'
+              ? 'Highlighted the lowest cell.'
+              : null;
       const summarySuffix =
-        matrixDisplayHints.conditionalThreshold != null
+        extremesLabel ??
+        (matrixDisplayHints.conditionalThreshold != null
           ? `Highlighted matrix cells above ${matrixDisplayHints.conditionalThreshold.toLocaleString()} in green and kept row/column totals visible.`
           : avgLabel
             ? `Highlighted matrix cells ${avgLabel} in green.`
-            : 'Kept matrix row and column totals visible.';
+            : 'Kept matrix row and column totals visible.');
       plan.summary = plan.summary
         ? `${plan.summary} ${summarySuffix}`
         : summarySuffix;
@@ -17294,6 +18374,36 @@ export class AgentService {
           type: explicitType,
         })),
       }));
+    }
+
+    // Pure "show/hide data labels" toggle — a presentation-only change the spec/SQL
+    // editors can't model (they'd no-op and the tester sees "same output"). Apply it
+    // deterministically as a display merge so 48-month EBPO trends actually label.
+    const dataLabelsToggle = this.detectDataLabelsToggle(editRequest);
+    if (dataLabelsToggle && activeDashboard.widgets.length > 0) {
+      const on = dataLabelsToggle === 'on';
+      // Pie/donut don't use showDataLabels — their value-vs-% labels are driven by
+      // labelMode (handled below). Apply the toggle only to the other chart types; if
+      // every widget is a pie/donut, fall through so labelMode handles the ask.
+      const targets = activeDashboard.widgets
+        .map((w, index) => ({ w, index }))
+        .filter(({ w }) => {
+          const t = String(w.chartType ?? '').toLowerCase();
+          return t !== 'pie' && t !== 'donut';
+        });
+      if (targets.length > 0) {
+        return {
+          summary: on
+            ? `Showing data labels on the chart${targets.length > 1 ? 's' : ''}.`
+            : `Hid data labels on the chart${targets.length > 1 ? 's' : ''}.`,
+          add: [],
+          remove_indices: [],
+          modify: targets.map(({ index }) => ({
+            index,
+            display: { showDataLabels: on },
+          })),
+        };
+      }
     }
 
     // Vocabulary widgets store only metric/grouping (no editable SQL). Synthesize

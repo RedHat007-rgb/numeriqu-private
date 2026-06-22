@@ -72,9 +72,14 @@ describe('EBPO compiler — aggregation correctness', () => {
     expect(sql).toContain('analytics.v_ebpo_revenue_by_business_unit');
   });
 
-  test('ratio measure uses AVG, never SUM', async () => {
+  test('ratio measure uses RATIO-OF-SUMS, never a naive SUM of the ratio', async () => {
+    // gross_margin_pct = sum(gross_margin)/sum(revenue)*100 (matches PowerBI DAX
+    // DIVIDE(SUM,SUM)). Averaging a precomputed per-row pct is wrong when the view
+    // grain is finer than the cell (BU×contract_type×month) — it produced impossible
+    // values (>100%) and NaN→0% for missing combos.
     const sql = await sqlFor(base({ measure: 'gross_margin_pct', dimension: 'business_unit', chartType: 'bar' }));
-    expect(sql).toMatch(/avg\(gross_margin_pct\)/);
+    expect(sql).toMatch(/sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100/);
+    expect(sql).not.toMatch(/avg\(gross_margin_pct\)/);
     expect(sql).not.toMatch(/sum\(gross_margin_pct\)/);
   });
 
@@ -209,7 +214,7 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
       base({ measure: 'total_revenue', measures: ['total_revenue', 'gross_margin_pct'], dimension: 'month', chartType: 'combo' }),
     );
     expect(sql).toMatch(/sum\(total_revenue_usd\).*AS "Total Revenue"/);
-    expect(sql).toMatch(/avg\(gross_margin_pct\).*AS "Gross Margin %"/);
+    expect(sql).toMatch(/sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100.*AS "Gross Margin %"/);
     expect(sql).toMatch(/GROUP BY toStartOfMonth\(period_date\)/);
     // single FROM — all series come from one view
     expect((sql.match(/FROM analytics\./g) || []).length).toBe(1);
@@ -291,6 +296,29 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
       expect(r.sql).toContain('UNION ALL');
       expect(r.sql).toContain("'Total Revenue' AS name");
       expect(r.sql).toContain("'Total Cost' AS name");
+      expect(r.sql).toContain("'Total Revenue' AS label");
+      expect(r.sql).toContain("'currency' AS format");
+    }
+  });
+
+  test('KPI scorecards can union measures from independently verified views', async () => {
+    const r = await compileEbpoSpec(
+      {
+        measure: 'gross_margin_pct',
+        measures: ['gross_margin_pct', 'cost_per_employee', 'fcf_margin_pct'],
+        dimension: '',
+        chartType: 'kpi',
+      } as ChartSpec,
+      DB,
+      noRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.view).toBe('multiple_verified_views');
+      expect(r.sql).toContain("'Gross Margin %' AS label");
+      expect(r.sql).toContain("'Cost per Employee' AS label");
+      expect(r.sql).toContain("'Free Cash Flow Margin %' AS label");
+      expect(r.sql).toContain("'percent' AS format");
     }
   });
 

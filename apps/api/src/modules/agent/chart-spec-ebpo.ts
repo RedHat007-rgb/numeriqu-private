@@ -115,15 +115,20 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     undefined,
     ['gross profit'],
   ),
-  gross_margin_pct: M(
-    'gross_margin_pct',
-    'Gross Margin %',
-    'percent',
-    'avg',
-    'ratio',
-    1,
-    ['gross margin percentage', 'gross margin percent', 'gross margin pct'],
-  ),
+  // Ratio-of-sums (sum(gm)/sum(revenue)), matching PowerBI DAX DIVIDE(SUM,SUM).
+  // Was avg of a precomputed per-row gross_margin_pct column, which is WRONG when the
+  // view grain is finer than the chart cell (e.g. BU×contract_type×month): averaging
+  // percentages produced impossible values (>100%) and NaN→0.0% for missing combos.
+  gross_margin_pct: {
+    id: 'gross_margin_pct',
+    label: 'Gross Margin %',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: ['gross margin percentage', 'gross margin percent', 'gross margin pct'],
+    derived: { num: 'gross_margin', den: 'total_revenue', scale: 100 },
+  },
   revenue_yoy_pct: M(
     'revenue_yoy_pct',
     'Revenue YoY Growth %',
@@ -1084,8 +1089,16 @@ export function validateEbpoSpec(spec: ChartSpec): CompileRefusal | null {
       refusal: `I can't break data down by "${spec.dimension}".${tail}`,
     };
 
-  // Multi-measure (combo): one view must expose all measures + the dimension.
+  // Multi-measure charts with a dimension need one shared view/grain. KPI cards
+  // have no dimension, so each independently scoped card may use its own verified
+  // provider view and the compiler safely UNIONs the results.
   if (measures.length > 1) {
+    if (!dimId && String(spec.chartType ?? '').toLowerCase() === 'kpi') {
+      const missingProvider = measures.find(
+        (measureId) => !resolveEbpoView(measureId, null, null),
+      );
+      if (!missingProvider) return null;
+    }
     if (!resolveEbpoViewMulti(measures, dimId, spec.breakdown)) {
       const labels = measures.map((m) => EBPO_MEASURES[m]!.label).join(', ');
       const by = dimId ? ` by ${EBPO_DIMENSIONS[dimId]!.label}` : '';
@@ -1171,33 +1184,38 @@ export async function compileEbpoSpec(
   // of silently dropping the breakdown (e.g. account | opening/closing balance).
   if (measures.length > 1) {
     const bdId = spec.breakdown || null;
-    const mview = resolveEbpoViewMulti(measures, dimId, bdId)!;
-    const mtbl = `${db}.${mview.name}`;
-    const allStock = measures.every((m) => EBPO_MEASURES[m]!.kind === 'stock');
 
     if (!dimId) {
-      // Scorecard: one (name, value) row per measure.
-      const where = buildWhere(
-        mview,
-        [],
-        spec.filters,
-        db,
-        allStock && mview.hasTime,
-      );
+      // Scorecard: each card can resolve from its own semantic provider. Requiring
+      // one physical view for unrelated KPIs (for example margin + people
+      // efficiency) incorrectly rejects valid executive scorecards.
       const sql =
         measures
           .map((mid) => {
             const m = EBPO_MEASURES[mid]!;
-            return `SELECT ${quoteLit(m.label)} AS name, ${valueExprFor(m, mview)} AS value FROM ${mtbl} WHERE ${where}`;
+            const view = resolveEbpoView(mid, null, null)!;
+            const where = buildWhere(
+              view,
+              [],
+              spec.filters,
+              db,
+              m.kind === 'stock' && view.hasTime,
+            );
+            const label = quoteLit(m.label);
+            return `SELECT ${label} AS name, ${label} AS label, ${valueExprFor(m, view)} AS value, ${quoteLit(m.format)} AS format FROM ${db}.${view.name} WHERE ${where}`;
           })
           .join('\nUNION ALL\n') + `\nLIMIT ${topN}`;
       return {
         ok: true,
         sql,
         measure: EBPO_MEASURES[measures[0]!]!,
-        view: mview.name,
+        view: 'multiple_verified_views',
       };
     }
+
+    const mview = resolveEbpoViewMulti(measures, dimId, bdId)!;
+    const mtbl = `${db}.${mview.name}`;
+    const allStock = measures.every((m) => EBPO_MEASURES[m]!.kind === 'stock');
 
     const mdim = dimSql(dimId);
     const where = buildWhere(

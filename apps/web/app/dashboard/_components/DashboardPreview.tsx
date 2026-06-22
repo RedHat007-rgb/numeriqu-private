@@ -76,6 +76,10 @@ interface ChartConfig {
     labelSeries?: string | null;
     referenceAxis?: "left" | "right" | null;
     labelMode?: "percent" | "value" | null;
+    // Force data labels on every point of line/area/bar/combo charts even when the
+    // point count exceeds the auto-label threshold. Set when the user explicitly
+    // asks to "show data labels" (the 48-month EBPO charts otherwise never label).
+    showDataLabels?: boolean | null;
     // Layer D follow-up render hints.
     normalized?: boolean | null; // values are 0–100 %, format axis as %
     referenceSeries?: string | null; // column drawn as a flat reference line, not a series
@@ -97,6 +101,8 @@ interface ChartConfig {
     conditionalThreshold?: number | null; // matrix cells at/above this value use conditional color
     conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null; // dynamic "above average" highlight
     conditionalColor?: "green" | null;
+    // Heatmap/matrix: ring-highlight the highest and/or lowest cell.
+    highlightExtremes?: "max" | "min" | "both" | null;
   } | null;
 }
 
@@ -554,8 +560,11 @@ function prettyChartType(type: string): string {
 }
 
 function fmtCurrency(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  // Abbreviate by MAGNITUDE so negatives match positives (−$87.6M, not −$87,596,173).
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -564,8 +573,10 @@ function fmtCurrency(value: number): string {
 }
 
 function fmtNumber(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}K`;
   return value.toFixed(0);
 }
 
@@ -683,8 +694,24 @@ const PieTooltip = ({ active, payload, metric, grouping, labelMode }: any) => {
 
 // ─── Per-Chart Insight Bar ────────────────────────────────────────────────────
 
-function ChartInsight({ type, data }: { type: string; data: DataRow[] }) {
+function ChartInsight({
+  type,
+  data,
+  valueFormat,
+}: {
+  type: string;
+  data: DataRow[];
+  valueFormat?: "currency" | "number" | "percent" | null;
+}) {
   if (data.length === 0) return null;
+  // Format the caption's headline number in the chart's real unit — a percent
+  // measure (gross margin %, overtime %) must read "33.7%", not "$34".
+  const fmtInsight = (n: number): string =>
+    valueFormat === "percent"
+      ? `${n.toFixed(1)}%`
+      : valueFormat === "number"
+        ? fmtNumber(n)
+        : fmtCurrency(n);
 
   if (type === "line") {
     const first = Number(data[0]?.value) || 0;
@@ -721,7 +748,7 @@ function ChartInsight({ type, data }: { type: string; data: DataRow[] }) {
       <div className="flex min-w-0 items-center gap-1 text-[10px] text-text-muted">
         <BarChart3Icon size={9} className="shrink-0" />
         <span className="truncate">
-          Top: <span className="font-semibold text-text-secondary">{name}</span> · {fmtCurrency(max)}
+          Top: <span className="font-semibold text-text-secondary">{name}</span> · {fmtInsight(max)}
         </span>
       </div>
     );
@@ -885,8 +912,24 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
   // The EBPO compiler sets display.valueFormat from the measure's catalog format.
   const _vfmt = chart.config.display?.valueFormat ?? null;
   const _vdec = chart.config.display?.valueDecimals ?? null;
+  // When the user explicitly asks to "show data labels", force per-point labels even
+  // past the auto-threshold (EBPO trends carry 48 months, so labels are off by default).
+  const _forceLabels = chart.config.display?.showDataLabels === true;
   const _metric = chart.config.metric;
   const _grouping = chart.config.grouping;
+  // Human-readable series name for legends/labels. Raw SQL aliases from the LLM
+  // editor arrive as snake_case ids (e.g. "payroll_to_revenue_pct", "total_revenue_usd")
+  // which testers flagged as "un-named / missing chart names". Strip unit suffixes,
+  // map pct→%, and title-case.
+  const prettySeriesName = (key: string): string => {
+    let s = String(key ?? "").replace(/_/g, " ").trim();
+    s = s.replace(/\busd\b/gi, "").replace(/\bpct\b/gi, "%");
+    s = s.replace(/\s*%/g, " %").replace(/\s{2,}/g, " ").trim();
+    return s
+      .split(" ")
+      .map((w) => (w === "%" || /^[A-Z0-9&/]+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+      .join(" ");
+  };
   const fmtVal = (value: number): string => {
     const n = Number(value) || 0;
     if (_vfmt === "percent") return `${n.toFixed(_vdec ?? 1)}%`;
@@ -904,6 +947,134 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       return fmtPercent(n);
     return formatValue(_metric, _grouping, n);
   };
+
+  // Forced data labels on a long time series (48 months) overlap into an unreadable
+  // smear. Show ~12 evenly-spaced labels instead. Stride 1 = every point.
+  const labelStride = (count: number): number =>
+    count <= 16 ? 1 : Math.max(2, Math.ceil(count / 12));
+  // LabelList `content` renderer that skips off-stride points (formatter can't see the
+  // index, so thinning must happen in a custom content renderer).
+  const thinnedLabel =
+    (stride: number, fmt: (n: number) => string, dy = -6) =>
+    (props: any) => {
+      const { x, y, value, index } = props;
+      if (value === null || value === undefined || index === undefined) return null;
+      if (stride > 1 && index % stride !== 0) return null;
+      const n = Number(value);
+      if (!Number.isFinite(n)) return null;
+      return (
+        <text
+          x={x}
+          y={y}
+          dy={dy}
+          textAnchor="middle"
+          fontSize={isExpanded ? 10 : 9}
+          fontWeight={600}
+          fill="rgb(var(--color-text-secondary))"
+        >
+          {fmt(n)}
+        </text>
+      );
+    };
+
+  if (chart.type === "box_plot") {
+    const rows = data
+      .map((row) => {
+        const min = Number((row as any).min);
+        const q1 = Number((row as any).q1);
+        const median = Number((row as any).median);
+        const q3 = Number((row as any).q3);
+        const max = Number((row as any).max);
+        return {
+          name: String((row as any).name ?? ""),
+          min,
+          q1,
+          median,
+          q3,
+          max,
+          employeeCount: Number((row as any).employee_count ?? 0),
+        };
+      })
+      .filter((row) =>
+        [row.min, row.q1, row.median, row.q3, row.max].every((value) =>
+          Number.isFinite(value),
+        ),
+      )
+      .slice(0, isExpanded ? 18 : 10);
+    if (!rows.length) {
+      return (
+        <div className="flex h-full items-center justify-center text-xs text-text-muted">
+          No box plot data available.
+        </div>
+      );
+    }
+    const domainMin = Math.min(...rows.map((row) => row.min));
+    const domainMax = Math.max(...rows.map((row) => row.max));
+    const span = Math.max(domainMax - domainMin, 1);
+    const x = (value: number) => 8 + ((value - domainMin) / span) * 84;
+
+    return (
+      <div style={{ height: h, width: "100%" }} className="flex flex-col gap-2 overflow-hidden">
+        <div className="flex justify-between px-2 text-[10px] font-semibold text-text-muted">
+          <span>{fmtVal(domainMin)}</span>
+          <span>{fmtVal(domainMax)}</span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="flex flex-col gap-2">
+            {rows.map((row) => {
+              const medianX = x(row.median);
+              return (
+                <div
+                  key={row.name}
+                  className="grid items-center gap-2"
+                  style={{ gridTemplateColumns: "minmax(96px, 0.8fr) minmax(160px, 2fr)" }}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-[11px] font-semibold text-text-primary">
+                      {row.name}
+                    </p>
+                    <p className="text-[9px] text-text-muted">
+                      {row.employeeCount ? `${fmtNumber(row.employeeCount)} employees` : ""}
+                    </p>
+                  </div>
+                  <div className="relative h-9 rounded border border-default bg-bg-card/60">
+                    <div
+                      className="absolute top-1/2 h-px -translate-y-1/2 bg-text-muted/50"
+                      style={{ left: `${x(row.min)}%`, width: `${Math.max(x(row.max) - x(row.min), 1)}%` }}
+                    />
+                    <div
+                      className="absolute top-1/2 h-4 -translate-y-1/2 rounded border border-primary/50 bg-primary/20"
+                      style={{ left: `${x(row.q1)}%`, width: `${Math.max(x(row.q3) - x(row.q1), 1)}%` }}
+                    />
+                    {[row.min, row.max].map((value, index) => (
+                      <div
+                        key={`${row.name}-${index}`}
+                        className="absolute top-1/2 h-5 w-px -translate-y-1/2 bg-text-muted"
+                        style={{ left: `${x(value)}%` }}
+                      />
+                    ))}
+                    <div
+                      className="absolute top-1/2 h-6 w-0.5 -translate-y-1/2 rounded bg-primary"
+                      style={{ left: `${medianX}%` }}
+                      title={`Median: ${fmtVal(row.median)}`}
+                    />
+                    {_forceLabels ? (
+                      <span
+                        className="absolute -top-0.5 -translate-x-1/2 rounded bg-bg-elevated px-1 text-[9px] font-bold text-text-primary shadow-sm"
+                        style={{ left: `${medianX}%` }}
+                      >
+                        {fmtVal(row.median)}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (chart.type === "metric") {
     if (chart.config.metric === "venture") {
@@ -1064,7 +1235,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                       key={k}
                       type="monotone"
                       dataKey={k}
-                      name={k.replace(/_/g, " ")}
+                      name={prettySeriesName(k)}
                       stroke={color}
                       strokeWidth={isHighlighted ? (isExpanded ? 4 : 3.4) : isExpanded ? 2.3 : 2}
                       strokeOpacity={hasSeriesHighlight && !isHighlighted ? 0.22 : 1}
@@ -1087,17 +1258,10 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                         stroke: "rgb(var(--color-bg-card))",
                       }}
                     >
-                      {!isMa && data.length <= 12 && seriesKeys.length <= 4 && (
+                      {!isMa && (_forceLabels || (data.length <= 12 && seriesKeys.length <= 4)) && (
                         <LabelList
                           dataKey={k}
-                          position="top"
-                          offset={8}
-                          style={{
-                            fill: "rgb(var(--color-text-secondary))",
-                            fontSize: isExpanded ? 10 : 9,
-                            fontWeight: 600,
-                          }}
-                          formatter={(v: unknown) => yTick(Number(v) || 0)}
+                          content={thinnedLabel(labelStride(data.length), (n) => yTick(n), -8)}
                         />
                       )}
                     </Area>
@@ -1111,7 +1275,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
                   formatter={(value: string) => (
                     <span style={{ color: "rgb(var(--color-text-secondary))" }}>
-                      {String(value).replace(/_/g, " ")}
+                      {prettySeriesName(String(value))}
                     </span>
                   )}
                 />
@@ -1135,10 +1299,9 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   stroke: "rgb(var(--color-bg-card))",
                 }}
 	              >
-	                {data.length <= 12 && (
-	                  <LabelList dataKey="value" position="top" offset={8}
-	                    style={{ fill: "rgb(var(--color-text-secondary))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
-	                    formatter={(v: unknown) => yTick(Number(v) || 0)} />
+	                {(_forceLabels || data.length <= 12) && (
+	                  <LabelList dataKey="value"
+	                    content={thinnedLabel(labelStride(data.length), (n) => yTick(n), -8)} />
 	                )}
 	              </Area>
 	            )}
@@ -1149,26 +1312,61 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 	  }
 
 	  if (chart.type === "waterfall") {
+	    const labelSeriesKey = chart.config.display?.labelSeries ?? null;
+	    // A row flagged is_total (e.g. the "Gross Margin" bar in a Revenue→Cost→Margin
+	    // bridge) is drawn from zero as a subtotal, not as another increment — without
+	    // this the bridge double-counts and only the first measure looked meaningful.
 	    const rows = data.map((d) => ({
 	      name: String((d as any).name ?? ""),
 	      value: Number((d as any).value) || 0,
+	      labelValue:
+	        labelSeriesKey && (d as any)[labelSeriesKey] !== undefined
+	          ? (d as any)[labelSeriesKey]
+	          : null,
+	      isTotal:
+	        Number((d as any).is_total) === 1 ||
+	        (d as any).is_total === true ||
+	        (d as any).isTotal === true,
 	    }));
 	    let running = 0;
 	    const wf = rows.map((r) => {
+	      if (r.isTotal) {
+	        const base = Math.min(0, r.value);
+	        return {
+	          name: r.name,
+	          base,
+	          delta: Math.abs(r.value),
+	          _pos: r.value >= 0,
+	          _total: true,
+	          _raw: r.value,
+	          _labelValue: r.labelValue,
+	        };
+	      }
 	      const start = running;
 	      const end = running + r.value;
 	      const base = Math.min(start, end);
 	      const delta = Math.abs(r.value);
 	      running = end;
-	      return { name: r.name, base, delta, _pos: r.value >= 0 };
+	      return {
+	        name: r.name,
+	        base,
+	        delta,
+	        _pos: r.value >= 0,
+	        _total: false,
+	        _raw: r.value,
+	        _labelValue: r.labelValue,
+	      };
 	    });
+	    // Few-bar bridges read best with the labels rotated only when crowded.
+	    const manyBars = wf.length > 14;
 
 	    return (
 	      <div style={{ height: h, width: "100%" }}>
 	        <ResponsiveContainer width="100%" height="100%">
-	          <BarChart data={wf} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+	          <BarChart data={wf} margin={{ top: 16, right: 4, left: 12, bottom: manyBars ? 28 : 4 }}>
 	            <CartesianGrid {...gridStyle} vertical={false} />
-	            <XAxis dataKey="name" tick={tickStyle} tickLine={false} axisLine={false} interval={0} />
+	            <XAxis dataKey="name" tick={tickStyle} tickLine={false} axisLine={false} interval={0}
+	              angle={manyBars ? -40 : 0} textAnchor={manyBars ? "end" : "middle"} height={manyBars ? 48 : 24} />
 	            <YAxis
 	              tick={tickStyle}
 	              tickLine={false}
@@ -1179,23 +1377,59 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 	              width={56}
 	              tickMargin={8}
 	            />
-	            <Tooltip content={<CustomTooltip metric={chart.config.metric} grouping={chart.config.grouping} />} />
+	            <Tooltip
+	              cursor={{ fill: "rgba(var(--color-text-muted)/0.08)" }}
+	              content={({ payload }) => {
+	                const d = payload?.[0]?.payload;
+	                if (!d) return null;
+	                return (
+	                  <div className="rounded-lg border border-default bg-bg-elevated p-2 text-[10px] shadow-lg">
+	                    <p className="font-semibold text-text-primary">{d.name}</p>
+	                    <p className="text-text-muted">{fmtVal(Number(d._raw) || 0)}{d._total ? " (subtotal)" : ""}</p>
+	                  </div>
+	                );
+	              }}
+	            />
 	            <Bar dataKey="base" stackId="wf" fill="transparent" />
 	            <Bar
 	              dataKey="delta"
 	              stackId="wf"
 	              radius={[6, 6, 0, 0]}
-	              maxBarSize={56}
-	              // eslint-disable-next-line react/no-unstable-nested-components
+	              maxBarSize={64}
 	              fillOpacity={1}
 	            >
 	              {wf.map((entry, idx) => (
 	                <Cell
 	                  key={idx}
-	                  fill={entry._pos ? "#10b981" : "#ef4444"}
+	                  fill={entry._total ? "#6366f1" : entry._pos ? "#10b981" : "#ef4444"}
 	                  stroke="none"
 	                />
 	              ))}
+	              {(_forceLabels || wf.length <= 14) && (
+	                <LabelList
+	                  dataKey="_raw"
+	                  position="top"
+	                  offset={6}
+	                  style={{ fill: "rgb(var(--color-text-secondary))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
+	                  formatter={(v: unknown) => fmtVal(Number(v) || 0)}
+	                />
+	              )}
+	              {labelSeriesKey && (
+	                <LabelList
+	                  dataKey="_labelValue"
+	                  position="insideTop"
+	                  offset={-2}
+	                  style={{ fill: "rgb(var(--color-text-muted))", fontSize: isExpanded ? 9 : 8, fontWeight: 700 }}
+	                  formatter={(v: unknown) => {
+	                    if (v === null || v === undefined || v === "") return "";
+	                    const n = Number(v);
+	                    if (!Number.isFinite(n)) return String(v);
+	                    return chart.config.display?.secondaryAxisFormat === "percent"
+	                      ? `${n.toFixed(1)}%`
+	                      : fmtVal(n);
+	                  }}
+	                />
+	              )}
 	            </Bar>
 	          </BarChart>
 	        </ResponsiveContainer>
@@ -1360,11 +1594,18 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 key={s.key}
                 yAxisId={s.axis}
                 dataKey={s.key}
-                name={s.key === "value" ? "value" : s.key.replace(/_/g, " ")}
+                name={s.key === "value" ? "value" : prettySeriesName(s.key)}
                 fill={BAR_COLORS[i % BAR_COLORS.length]}
                 radius={[6, 6, 0, 0]}
                 maxBarSize={barSize}
-              />
+              >
+                {_forceLabels && (
+                  <LabelList
+                    dataKey={s.key}
+                    content={thinnedLabel(labelStride(comboData.length), (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n), -4)}
+                  />
+                )}
+              </Bar>
             ))}
             {lineSeries.map((s, i) => {
               const color = LINE_COLORS[i % LINE_COLORS.length];
@@ -1374,7 +1615,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   yAxisId={s.axis}
                   type="monotone"
                   dataKey={s.key}
-                  name={s.key.replace(/_/g, " ")}
+                  name={prettySeriesName(s.key)}
                   stroke={color}
                   strokeWidth={isExpanded ? 2.5 : 2}
                   dot={isExpanded ? { r: 4, fill: color, strokeWidth: 0 } : false}
@@ -1384,7 +1625,14 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     strokeWidth: 2,
                     stroke: "rgb(var(--color-bg-card))",
                   }}
-                />
+                >
+                  {_forceLabels && (
+                    <LabelList
+                      dataKey={s.key}
+                      content={thinnedLabel(labelStride(comboData.length), (n) => fmtFor(fmtMap.get(s.key) ?? rightFmt)(n), -8)}
+                    />
+                  )}
+                </Line>
               );
             })}
             <Legend
@@ -1395,7 +1643,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
               formatter={(value: string) => (
                 <span style={{ color: "rgb(var(--color-text-secondary))" }}>
-                  {String(value).replace(/_/g, " ")}
+                  {prettySeriesName(String(value))}
                 </span>
               )}
             />
@@ -1592,7 +1840,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     maxBarSize={isStackedBarChart ? (isExpanded ? 48 : 36) : (isExpanded ? 20 : 16)}
                     stackId={isStackedBarChart ? "stack" : undefined}
                   >
-                    {!isStackedBarChart && displayKeys.length <= 4 && chartData.length <= 12 && (
+                    {!isStackedBarChart && (_forceLabels || (displayKeys.length <= 4 && chartData.length <= 12)) && (
                       <LabelList
                         dataKey={k}
                         position="top"
@@ -1642,7 +1890,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
                   formatter={(value: string) => (
                     <span style={{ color: "rgb(var(--color-text-secondary))" }}>
-                      {String(value).replace(/_/g, " ")}
+                      {prettySeriesName(String(value))}
                     </span>
                   )}
                 />
@@ -1671,13 +1919,29 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 	                        <Cell key={idx} fill={colorAt(idx)} />
 	                      ))
 	                    : null}
-                {(useHorizontalBars ? trimmed.length <= 15 : trimmed.length <= 12) && (
+                {(_forceLabels || (useHorizontalBars ? trimmed.length <= 15 : trimmed.length <= 12)) && (
                   <LabelList
                     dataKey="value"
                     position={useHorizontalBars ? "right" : "top"}
                     offset={useHorizontalBars ? 6 : 4}
                     style={{ fill: "rgb(var(--color-text-secondary))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
                     formatter={(v: unknown) => fmtVal(Number(v) || 0)}
+                  />
+                )}
+                {labelSeriesKey && (
+                  <LabelList
+                    dataKey={labelSeriesKey}
+                    position={useHorizontalBars ? "insideRight" : "top"}
+                    offset={useHorizontalBars ? -2 : 18}
+                    style={{ fill: "rgb(var(--color-text-muted))", fontSize: isExpanded ? 10 : 9, fontWeight: 700 }}
+                    formatter={(v: unknown) => {
+                      if (v === null || v === undefined || v === "") return "";
+                      const n = Number(v);
+                      if (!Number.isFinite(n)) return String(v);
+                      return chart.config.display?.secondaryAxisFormat === "percent"
+                        ? `${n.toFixed(1)}%`
+                        : fmtVal(n);
+                    }}
                   />
                 )}
 	              </Bar>
@@ -2189,40 +2453,59 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 
   // ── bubble (scatter with size dimension) ──────────────────────────────────
   if (chart.type === "bubble") {
-    const maxZ = Math.max(...data.map((d) => Number((d as any).z) || 0), 1);
-    const bubbleData = data.map((d) => ({
-      ...(d as any),
-      z: Math.max(4, Math.round((Number((d as any).z) / maxZ) * 30)),
-    }));
+    // ClickHouse returns numerics as strings; coerce x/y/z. Axis labels come from
+    // the chart's real xAxisLabel/yAxisLabel (the SQL's measure labels), never the
+    // old hardcoded "Amount"/"Invoices" — those mislabeled every EBPO bubble.
+    const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    const zRaw = data.map((d) => num((d as any).z));
+    const finiteZ = zRaw.filter((v): v is number => v !== null);
+    const minZ = finiteZ.length ? Math.min(...finiteZ) : 0;
+    const maxZ = finiteZ.length ? Math.max(...finiteZ) : 0;
+    const zSpan = maxZ - minZ;
+    // Normalize the size measure to [0,1] across its OWN min→max range so bubbles
+    // visibly differ even when all values are large-but-close (the "size not
+    // changing" bug). Equal values → uniform mid-size. No z → uniform.
+    const bubbleData = data.map((d) => {
+      const z = num((d as any).z);
+      const norm = z === null || zSpan <= 0 ? 0.5 : (z - minZ) / zSpan;
+      return { ...(d as any), x: num((d as any).x) ?? 0, y: num((d as any).y) ?? 0, _zsize: norm, _zval: z };
+    });
     const bubbleHasName = bubbleData[0] && typeof (bubbleData[0] as any).name === "string";
     const showBubbleLabels = bubbleHasName && bubbleData.length <= 16;
+    const xLabel = chart.config.xAxisLabel?.trim() || "x";
+    const yLabel = chart.config.yAxisLabel?.trim() || "y";
+    const hasSize = finiteZ.length > 0 && zSpan > 0;
     return (
       <div style={{ height: h, width: "100%" }} className="flex flex-col">
         <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart margin={{ top: 14, right: 12, left: 8, bottom: 24 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
-            <XAxis type="number" dataKey="x" name="Amount"
+            <XAxis type="number" dataKey="x" name={xLabel}
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
-              tickFormatter={(v: number) => fmtCurrency(v)} label={{ value: "Amount", position: "bottom", fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
-            <YAxis type="number" dataKey="y" name="Invoices"
+              tickFormatter={(v: number) => fmtNumber(Number(v) || 0)} label={{ value: xLabel, position: "insideBottom", offset: -8, fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
+            <YAxis type="number" dataKey="y" name={yLabel}
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
-              label={{ value: "Invoices", angle: -90, position: "left", fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
-            <ZAxis type="number" dataKey="z" range={[40, 400]} />
+              width={64} tickMargin={8}
+              tickFormatter={(v: number) => fmtNumber(Number(v) || 0)}
+              label={{ value: yLabel, angle: -90, position: "insideLeft", offset: 4, fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
+            <ZAxis type="number" dataKey="_zsize" domain={[0, 1]} range={[80, 620]} />
             <Tooltip cursor={{ strokeDasharray: "3 3" }}
               content={({ payload }) => {
                 const d = payload?.[0]?.payload;
                 if (!d) return null;
                 return (
                   <div className="rounded-lg border border-default bg-bg-elevated p-2 text-[10px] shadow-lg">
-                    <p className="font-semibold text-text-primary">{d.name}</p>
-                    <p className="text-text-muted">Amount: {fmtCurrency(d.revenue ?? d.x)}</p>
-                    <p className="text-text-muted">Invoices: {d.invoices ?? d.y}</p>
-                    <p className="text-text-muted">Avg Invoice: {fmtCurrency(d.avgInvoice ?? 0)}</p>
+                    {d.name && <p className="font-semibold text-text-primary">{d.name}</p>}
+                    <p className="text-text-muted">{xLabel}: {fmtNumber(Number(d.x) || 0)}</p>
+                    <p className="text-text-muted">{yLabel}: {fmtNumber(Number(d.y) || 0)}</p>
+                    {d._zval !== null && d._zval !== undefined && (
+                      <p className="text-text-muted">Size: {fmtNumber(Number(d._zval) || 0)}</p>
+                    )}
                   </div>
                 );
               }} />
-            <Scatter data={bubbleData} fillOpacity={0.75}>
+            <Scatter data={bubbleData} fillOpacity={0.7}>
               {bubbleData.map((_, i) => (
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
@@ -2248,6 +2531,9 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             ))}
           </div>
         )}
+        {!hasSize && (
+          <p className="px-1 text-[9px] text-text-muted">Uniform size — no size measure in this chart.</p>
+        )}
       </div>
     );
   }
@@ -2265,7 +2551,12 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       <div className="grid h-full w-full grid-cols-2 gap-2 p-1 md:grid-cols-3">
         {data.map((item, i) => {
           const d = item as any;
-          const fmt = d.format === "currency" ? fmtCurrency(d.value) : fmtNumber(d.value);
+          const fmt =
+            d.format === "currency"
+              ? fmtCurrency(d.value)
+              : d.format === "percent"
+                ? `${fmtNumber(d.value)}%`
+                : fmtNumber(d.value);
           const icon = iconMap[d.icon ?? ""] ?? "◈";
           const color = colorMap[d.icon ?? ""] ?? "text-violet-400";
           return (
@@ -2295,6 +2586,16 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const axisLabel = (axis: string) => prettyAxis(axis || "Name");
     const amount = (value: number) =>
       fmtVal(value);
+    // Percent/ratio heatmaps must NOT sum cells (sum of margins = nonsense like 5438%)
+    // and missing combos arrive as null (ratio-of-sums over an empty slice) — render
+    // those blank and aggregate column/row summaries as AVERAGES, not totals.
+    const isPercentGrid = chart.config.display?.valueFormat === "percent";
+    const cellNum = (row: DataRow, key: string): number | null => {
+      const raw = (row as any)[key];
+      if (raw === null || raw === undefined || raw === "") return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    };
     const lerp = (from: number, to: number, t: number) =>
       Math.round(from + (to - from) * Math.max(0, Math.min(1, t)));
     const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
@@ -2325,23 +2626,38 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       const b = lerp(113, 11, t);
       return { bg: rgb(r, g, b), fg: intensity < 0.25 ? "#ffffff" : "#111827" };
     };
+    // Aggregate non-null cells only. For percent grids use the MEAN (a sum of
+    // percentages is meaningless); otherwise SUM. The header relabels accordingly.
+    const aggCells = (vals: Array<number | null>): number => {
+      const present = vals.filter((v): v is number => v !== null);
+      if (present.length === 0) return 0;
+      const sum = present.reduce((s, v) => s + v, 0);
+      return isPercentGrid ? sum / present.length : sum;
+    };
+    const summaryHeader = isPercentGrid ? "Avg" : "Total";
     const rowTotals = rows.map((row) =>
-      colKeys.reduce((sum, key) => sum + (Number((row as any)[key]) || 0), 0),
+      aggCells(colKeys.map((key) => cellNum(row, key))),
     );
     const colTotals = colKeys.map((key) =>
-      rows.reduce((sum, row) => sum + (Number((row as any)[key]) || 0), 0),
+      aggCells(rows.map((row) => cellNum(row, key))),
     );
-    const grandTotal = rowTotals.reduce((sum, value) => sum + value, 0);
+    const grandTotal = aggCells(
+      rows.flatMap((row) => colKeys.map((key) => cellNum(row, key))),
+    );
 
     // Dynamic "above average" conditional highlight (column / row / overall mean).
     const conditionalMode = chart.config.display?.conditionalThresholdMode ?? null;
+    const meanOf = (vals: Array<number | null>): number => {
+      const present = vals.filter((v): v is number => v !== null);
+      return present.length ? present.reduce((s, v) => s + v, 0) / present.length : 0;
+    };
     const colAverages: Record<string, number> = {};
-    colKeys.forEach((key, i) => {
-      colAverages[key] = rows.length ? (colTotals[i] ?? 0) / rows.length : 0;
+    colKeys.forEach((key) => {
+      colAverages[key] = meanOf(rows.map((row) => cellNum(row, key)));
     });
-    const overallAverage = rows.length && colKeys.length
-      ? grandTotal / (rows.length * colKeys.length)
-      : 0;
+    const overallAverage = meanOf(
+      rows.flatMap((row) => colKeys.map((key) => cellNum(row, key))),
+    );
     const shouldHighlight = (value: number, colKey: string, rowAvg: number) => {
       if (chart.config.display?.conditionalColor !== "green") return false;
       if (conditionalThreshold !== null) return value >= conditionalThreshold;
@@ -2349,6 +2665,33 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       if (conditionalMode === "rowAverage") return value > rowAvg;
       if (conditionalMode === "overallAverage") return value > overallAverage;
       return false;
+    };
+
+    // "Highlight the highest / lowest" → ring the SINGLE extreme cell(s) across the
+    // whole grid (emerald for max, red for min). Only the first occurrence is ringed
+    // so a grid with many tied values (e.g. lots of 0%) doesn't ring dozens of cells.
+    const extremes = chart.config.display?.highlightExtremes ?? null;
+    let maxPos: { r: number; c: number } | null = null;
+    let minPos: { r: number; c: number } | null = null;
+    if (extremes) {
+      let maxV = -Infinity;
+      let minV = Infinity;
+      rows.forEach((row, r) =>
+        colKeys.forEach((k, c) => {
+          const v = cellNum(row, k);
+          if (v === null) return; // skip missing cells so a blank isn't "lowest"
+          if (v > maxV) { maxV = v; maxPos = { r, c }; }
+          if (v < minV) { minV = v; minPos = { r, c }; }
+        }),
+      );
+    }
+    const extremeRing = (r: number, c: number): string | null => {
+      if (!extremes) return null;
+      if ((extremes === "max" || extremes === "both") && maxPos && maxPos.r === r && maxPos.c === c)
+        return "#10b981";
+      if ((extremes === "min" || extremes === "both") && minPos && minPos.r === r && minPos.c === c)
+        return "#ef4444";
+      return null;
     };
 
     return (
@@ -2383,31 +2726,50 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 </th>
               ))}
               <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
-                Total
+                {summaryHeader}
               </th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row, rowIndex) => {
               const rowLabel = String((row as any).name ?? `Row ${rowIndex + 1}`);
-              const rowAvg = colKeys.length
-                ? colKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0) /
-                  colKeys.length
-                : 0;
+              const rowAvg = meanOf(colKeys.map((k) => cellNum(row, k)));
               return (
                 <tr key={rowLabel}>
                   <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-semibold text-text-muted shadow-sm">
                     {rowLabel}
                   </th>
-                  {colKeys.map((key) => {
-                    const value = Number((row as any)[key]) || 0;
+                  {colKeys.map((key, colIndex) => {
+                    const cv = cellNum(row, key);
+                    // Missing combo (e.g. a business unit with no rows that month) →
+                    // blank neutral cell, not a misleading "0.0%".
+                    if (cv === null) {
+                      return (
+                        <td
+                          key={key}
+                          className="rounded-md border border-black/10 px-3 py-3 text-center text-[12px] font-semibold text-text-muted"
+                          style={{ background: "rgba(var(--color-text-muted)/0.06)" }}
+                          title={`${rowLabel} / ${prettyAxis(key)}: no data`}
+                        >
+                          —
+                        </td>
+                      );
+                    }
+                    const value = cv;
                     const theme = cellTheme(value, shouldHighlight(value, key, rowAvg));
+                    const ring = extremeRing(rowIndex, colIndex);
                     return (
                       <td
                         key={key}
                         className="rounded-md border border-black/10 px-3 py-3 text-center text-[12px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition-transform transition-opacity hover:-translate-y-[1px] hover:opacity-100"
-                        style={{ background: theme.bg, color: theme.fg }}
-                        title={`${rowLabel} / ${prettyAxis(key)}: ${amount(value)}`}
+                        style={{
+                          background: theme.bg,
+                          color: theme.fg,
+                          ...(ring
+                            ? { outline: `3px solid ${ring}`, outlineOffset: "-2px", borderRadius: 6 }
+                            : {}),
+                        }}
+                        title={`${rowLabel} / ${prettyAxis(key)}: ${amount(value)}${ring === "#10b981" ? " (highest)" : ring === "#ef4444" ? " (lowest)" : ""}`}
                       >
                         {amount(value)}
                       </td>
@@ -2421,7 +2783,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             })}
             <tr>
               <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-bold text-text-primary shadow-sm">
-                Total
+                {summaryHeader}
               </th>
               {colTotals.map((value, index) => (
                 <td
@@ -2943,7 +3305,7 @@ function ChartCard({
         </span>
         {!isEmpty && (
           <div className="min-w-0 flex-1 overflow-hidden">
-            <ChartInsight type={chart.type} data={data} />
+            <ChartInsight type={chart.type} data={data} valueFormat={chart.config.display?.valueFormat} />
           </div>
         )}
       </div>
@@ -3532,7 +3894,7 @@ export function DashboardPreview({
                   <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted">
                     {expandedData.length} data points · live data
                   </span>
-                  <ChartInsight type={expandedChart.type} data={expandedData} />
+                  <ChartInsight type={expandedChart.type} data={expandedData} valueFormat={expandedChart.config.display?.valueFormat} />
                 </div>
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted">
                   NumeriQ Strategic Layer

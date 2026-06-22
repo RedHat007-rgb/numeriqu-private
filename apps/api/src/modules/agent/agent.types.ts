@@ -36,6 +36,7 @@ export type ChartType =
   | 'pareto'
   | 'gauge'
   | 'bubble'
+  | 'box_plot'
   | 'heatmap'
   | 'matrix';
 
@@ -146,6 +147,9 @@ export interface DisplayHints {
   labelSeries?: string | null;
   referenceAxis?: 'left' | 'right' | null;
   labelMode?: 'percent' | 'value' | null;
+  // Force per-point data labels on line/area/bar/combo charts even past the
+  // auto-label cap (set by a "show data labels" follow-up).
+  showDataLabels?: boolean | null;
   // Values are 0–100 percentages (normalize-to-100%): format axis/labels as %.
   normalized?: boolean | null;
   // Name of the numeric column to draw as a flat reference line rather than a series.
@@ -183,6 +187,10 @@ export interface DisplayHints {
     | 'overallAverage'
     | null;
   conditionalColor?: 'green' | null;
+  // Heatmap/matrix: ring-highlight the single highest and/or lowest cell ("highlight
+  // the highest and lowest margin months"). 'max' rings the top cell, 'min' the
+  // bottom, 'both' rings both — distinct from the threshold/average green fill.
+  highlightExtremes?: 'max' | 'min' | 'both' | null;
 }
 
 // A second measure to plot on a combo chart's secondary axis. `expr` is the

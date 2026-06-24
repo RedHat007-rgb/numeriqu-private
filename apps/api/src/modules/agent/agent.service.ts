@@ -27,13 +27,19 @@ import {
 import {
   EBPO_DIMENSIONS,
   EBPO_MEASURES,
-  EBPO_VIEWS,
   compileEbpoSpec,
   ebpoCatalogPromptText,
   ebpoComboChartType,
   ebpoComboSeriesRoles,
   resolveEbpoViewMulti,
+  valueExprFor,
 } from './chart-spec-ebpo';
+import {
+  type DatasetProfile,
+  resolveDatasetProfile,
+  checkGrounding,
+  groundingMessage,
+} from './dataset-profile';
 import {
   PLANNER_SYSTEM,
   PLANNER_SCHEMA,
@@ -394,6 +400,15 @@ export class AgentService {
         label: 'Decomposition trees',
         alternativeLabel: 'Show as a treemap',
         alternativeValue: 'Show the breakdown as a treemap visualization.',
+      };
+    }
+    if (/\bribbon\s+chart\b|\bribbon\b/.test(q)) {
+      return {
+        reason: 'CHART_TYPE_UNSUPPORTED',
+        label: 'Ribbon charts',
+        alternativeLabel: 'Show as a ranked bar or line chart',
+        alternativeValue:
+          'Show the same ranking or trend as a ranked bar chart or line chart, which are supported.',
       };
     }
     if (/\bsun\s*burst\b|\bsunburst\b|\btree\s*ring\b|\btreering\b/.test(q)) {
@@ -1059,9 +1074,17 @@ export class AgentService {
     return range.kind.toLowerCase();
   }
 
-  private requestedMonthBounds(range?: TimeRange): { start: string; end: string } | null {
+  private requestedMonthBounds(
+    range?: TimeRange,
+    anchor?: Date,
+  ): { start: string; end: string } | null {
     if (!range || range.kind === 'ALL_TIME') return null;
-    const now = new Date();
+    // Anchor relative windows ("last 6 months", YTD, MTD…) to the DATA's latest date,
+    // not the wall clock. These datasets are historical (end Dec 2025) while real "now"
+    // is 2026, so a clock-anchored "last 6 months" selects 2026 and returns ZERO rows
+    // ("No data is available for ytd"). Anchoring to the data max makes "last 6 months"
+    // mean the last 6 months that actually exist.
+    const now = anchor ?? new Date();
     const currentMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     const key = (date: Date) => this.metricMonthKey(date);
     if (range.kind === 'MTD') return { start: key(currentMonth), end: key(currentMonth) };
@@ -1127,7 +1150,13 @@ export class AgentService {
 
     const months = dated.map((item) => this.metricMonthKey(item.date)).sort();
     const availableRange = { start: months[0]!, end: months[months.length - 1]! };
-    const bounds = this.requestedMonthBounds(range);
+    // Anchor relative ranges to the latest month that actually has data (handles
+    // historical datasets where the wall clock is past the data).
+    const maxDate = dated.reduce(
+      (mx, item) => (item.date > mx ? item.date : mx),
+      dated[0]!.date,
+    );
+    const bounds = this.requestedMonthBounds(range, maxDate);
     if (!bounds) return { data: rows, availableRange };
 
     const data = dated
@@ -1222,6 +1251,23 @@ export class AgentService {
     // Enforce member scoping on read endpoints too: never mix entities for non-admins.
     if (role !== 'ADMIN' && !orgId && scope.externalOrgIds.length > 1)
       return { data: [] };
+
+    // ── GROUNDING FIREWALL ───────────────────────────────────────────────────
+    // Everything below is the hardcoded GL `metric×grouping` builder: it reads GL
+    // fact/dim tables (v_dim_clients_latest, GL invoices/journals). An EBPO org has
+    // NONE of those — all its charts are spec-compiled and run through the `dynamic`
+    // branch above. If EBPO ever fell through to here it would error or, worse, serve
+    // GL demo clients (Apex Ventures / BlueOak …) — the exact bug we are killing. So
+    // the GL builder is unreachable for EBPO: return empty and let the caller's
+    // spec-compiler path own the answer.
+    const datasetProfile = await this.getDatasetProfile(scope);
+    if (datasetProfile.kind === 'ebpo' && metric !== 'dynamic') {
+      this.logger.warn(
+        `[grounding] metricData GL builder skipped for EBPO org (metric=${metric}, grouping=${grouping})`,
+      );
+      return { data: [] };
+    }
+
     const time = this.timeWhereOn('issued_at', range, asOfExpr);
     const provider = providerHint
       ? `AND lowerUTF8(provider) = {provider:String}`
@@ -7949,25 +7995,9 @@ export class AgentService {
               : scope;
 
           if (scopeForPick.externalOrgIds.length > 0 && (!hasA || !hasB)) {
-            const rows = await this.queryRows<any>(
-              `SELECT
-                 coalesce(nullIf(client_name, ''), '') AS client_name,
-                 sum(total_invoiced) AS total_invoiced
-               FROM ${this.analyticsDb}.v_dim_clients_latest
-               WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-                 AND client_name != ''
-               GROUP BY client_name
-               ORDER BY total_invoiced DESC
-               LIMIT 25`,
-              {
-                tenantId: scopeForPick.tenantId,
-                externalOrgIds: scopeForPick.externalOrgIds,
-              },
-            );
-            const clients = rows
-              .map((r) => String(r.client_name ?? '').trim())
-              .filter(Boolean)
-              .slice(0, 20);
+            const clients = (
+              await this.listTopClientsForScope(scopeForPick, 25)
+            ).slice(0, 20);
 
             if (clients.length >= 2) {
               if (!hasA) {
@@ -9396,9 +9426,6 @@ export class AgentService {
     priorAssistantMessage: string | null,
   ): string | null {
     const q = userQuery.trim();
-    if (!/^\d+$/.test(q)) return null;
-    const n = Number(q);
-    if (!Number.isFinite(n) || n < 1 || n > 9) return null;
     if (!priorAssistantMessage) return null;
 
     // We format clarifications as:
@@ -9407,9 +9434,28 @@ export class AgentService {
     // 1) Option label
     // 2) Option label
     const lines = priorAssistantMessage.split('\n').map((l) => l.trim());
-    const line = lines.find((l) => new RegExp(`^${n}\\)\\s+`).test(l));
-    if (!line) return null;
-    const picked = line.replace(new RegExp(`^${n}\\)\\s+`), '').trim() || null;
+
+    let picked: string | null = null;
+    if (/^\d+$/.test(q)) {
+      // Answer is the option INDEX ("3").
+      const n = Number(q);
+      if (!Number.isFinite(n) || n < 1 || n > 9) return null;
+      const line = lines.find((l) => new RegExp(`^${n}\\)\\s+`).test(l));
+      if (!line) return null;
+      picked = line.replace(new RegExp(`^${n}\\)\\s+`), '').trim() || null;
+    } else {
+      // Answer is the option LABEL itself, e.g. "Last 12 months" — this is what the
+      // UI quick-action buttons send (a click, not a number). Match it against the
+      // listed options so the ORIGINAL question is still recombined below. Without
+      // this, the planner query (and the spec-plan cache key) collapse to just the
+      // answer text, so two DIFFERENT questions answered with the same option (e.g.
+      // both "Last 12 months") collide and the second renders the first's chart.
+      const optionLabels = lines
+        .map((l) => l.match(/^\d+\)\s+(.*)$/)?.[1]?.trim())
+        .filter((x): x is string => !!x);
+      picked =
+        optionLabels.find((lab) => lab.toLowerCase() === q.toLowerCase()) ?? null;
+    }
     if (!picked) return null;
 
     const header = (lines[0] ?? '').toLowerCase();
@@ -9767,6 +9813,18 @@ export class AgentService {
               wants(/\bby\s+month\b|\bmonthly\b|\beach\s+month\b/)
             )
               return { metric: 'revenue', grouping: 'month' };
+
+            // EBPO geographic revenue is allocated revenue, not total revenue.
+            // Country / region / delivery-center asks should resolve to the
+            // geography-bearing EBPO view instead of falling through to the
+            // non-geographic total-revenue catalog.
+            if (wants(/revenue/) && wants(/\bby\s+(country|countries|region|regions|cit(y|ies)|delivery\s+center|delivery\s+centers)\b/)) {
+              if (wants(/\bdelivery\s+center\b|\bdelivery\s+centers\b/))
+                return { metric: 'allocated_revenue', grouping: 'delivery_center' };
+              if (wants(/\bregion\b|\bregions\b/)) return { metric: 'allocated_revenue', grouping: 'region' };
+              if (wants(/\bcountry\b|\bcountries\b/)) return { metric: 'allocated_revenue', grouping: 'country' };
+              if (wants(/\bcity\b|\bcities\b/)) return { metric: 'allocated_revenue', grouping: 'city' };
+            }
 
             // Month-over-month revenue growth %
             if (
@@ -10829,6 +10887,14 @@ export class AgentService {
       if (resolvedScope.connectionIds.length === 0)
         return 'No ERP connections found.';
 
+      // This context builder is GL-shaped (it reads v_dim_clients_latest, GL invoices,
+      // GL journal lines). For an EBPO org those tables hold a DIFFERENT company's data
+      // (or none), so running it would feed the planner GL/demo clients and pollute the
+      // EBPO brief. EBPO gets its grounding from the EBPO schema introspection + spec
+      // compiler instead, so skip GL context entirely for EBPO.
+      const profile = await this.getDatasetProfile(resolvedScope);
+      if (profile.kind === 'ebpo') return '';
+
       const orgIds =
         resolvedScope.externalOrgIds.length > 0
           ? resolvedScope.externalOrgIds
@@ -11078,6 +11144,13 @@ export class AgentService {
     lines.push(
       `• Period coverage: ${range.from_d} → ${range.to_d} (${this.num(range.n)} monthly rows). Revenue/cost/margin in USD.`,
     );
+    lines.push(
+      `• THIS DATA IS HISTORICAL — the latest month is ${range.to_d}. Any "last N months" / ` +
+        `"recent" / "trailing" / "over the last …" window is RELATIVE TO ${range.to_d}, NOT today. ` +
+        `NEVER use now()/today()/currentDate()/yesterday() — they sit past the data and return too ` +
+        `few or zero rows. For a last-N-months filter use: ` +
+        `period_date >= addMonths(toStartOfMonth(toDate('${range.to_d}-01')), -(N-1)).`,
+    );
     const k = (kpi as any[])?.[0];
     if (k) {
       lines.push(
@@ -11137,17 +11210,221 @@ export class AgentService {
   // gates and to route introspection to the EBPO semantic views.
   private async orgHasEbpoData(scope: OrgScope): Promise<boolean> {
     if (scope.externalOrgIds.length === 0) return false;
-    try {
-      const rows = await this.queryRows<any>(
-        `SELECT count() AS n FROM ${this.analyticsDb}.v_ebpo_revenue_monthly
-         WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-         LIMIT 1`,
-        { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
-      );
-      return this.num(rows?.[0]?.n) > 0;
-    } catch {
-      return false;
+    const views = [
+      'v_ebpo_revenue_monthly',
+      'v_ebpo_operations_monthly',
+      'v_ebpo_employee_headcount',
+      'v_ebpo_delivery_center_efficiency_monthly',
+      'v_ebpo_payroll_monthly',
+      'v_ebpo_cash_flow_monthly',
+      'v_ebpo_ar_aging',
+      'v_ebpo_ap_aging',
+    ];
+    for (const view of views) {
+      try {
+        const rows = await this.queryRows<any>(
+          `SELECT count() AS n FROM ${this.analyticsDb}.${view}
+           WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+           LIMIT 1`,
+          { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
+        );
+        if (this.num(rows?.[0]?.n) > 0) return true;
+      } catch {
+        // Fall through to the next EBPO view probe.
+      }
     }
+    return false;
+  }
+
+  private readonly datasetProfileCache = new Map<
+    string,
+    { profile: DatasetProfile; at: number }
+  >();
+
+  /**
+   * The single grounding boundary: resolve the org scope → the dataset it owns
+   * (EBPO vs GL). Every entity/year resolver reads its source table from this
+   * profile instead of hardcoding one, and the grounding guard uses it to block
+   * cross-dataset table access. Cached (5 min) — the org→dataset mapping is stable.
+   */
+  private async getDatasetProfile(scope: OrgScope): Promise<DatasetProfile> {
+    const key = this.scopeKey(scope);
+    const hit = this.datasetProfileCache.get(key);
+    if (hit && Date.now() - hit.at < 5 * 60_000) return hit.profile;
+    const kind = (await this.orgHasEbpoData(scope).catch(() => false))
+      ? 'ebpo'
+      : 'gl';
+    const profile = resolveDatasetProfile(kind);
+    this.datasetProfileCache.set(key, { profile, at: Date.now() });
+    return profile;
+  }
+
+  /**
+   * The single source of client names for an org, ranked by the dataset's own weight
+   * (EBPO: revenue; GL: invoiced). Every "largest/top client" and client-clarification
+   * list must use THIS — never a hardcoded GL table — so the EBPO org shows its real
+   * clients (JP Morgan, AT&T, Dell …) instead of the GL demo universe.
+   */
+  private async listTopClientsForScope(
+    scope: OrgScope,
+    limit: number,
+  ): Promise<string[]> {
+    if (scope.externalOrgIds.length === 0) return [];
+    const profile = await this.getDatasetProfile(scope);
+    const rows = await this.queryRows<any>(
+      `SELECT coalesce(nullIf(${profile.client.nameCol}, ''), '') AS client_name,
+              ${profile.client.weightExpr} AS w
+       FROM ${this.analyticsDb}.${profile.client.view}
+       WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+         AND ${profile.client.nameCol} != ''
+       GROUP BY client_name
+       ORDER BY w DESC
+       LIMIT ${Math.max(1, Math.min(500, Math.floor(limit) || 1))}`,
+      { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
+    );
+    return rows
+      .map((r) => String(r.client_name ?? '').trim())
+      .filter(Boolean);
+  }
+
+  // Map ordinal words/abbreviations to a 1-based rank. Used to turn a planner's
+  // superlative client reference ("second-largest client") into a concrete rank.
+  private static readonly ORDINAL_RANK: Record<string, number> = {
+    first: 1, '1st': 1,
+    second: 2, '2nd': 2,
+    third: 3, '3rd': 3,
+    fourth: 4, '4th': 4,
+    fifth: 5, '5th': 5,
+  };
+
+  /**
+   * Parse a superlative/placeholder client reference into the 1-based rank(s) it means,
+   * or null when the value is a real client name (leave it untouched).
+   *   "largest client" / "biggest client" / "top client" → [1]
+   *   "second-largest client" / "2nd largest"            → [2]
+   *   "top 5 clients" / "top 5"                           → [1,2,3,4,5]
+   */
+  private parseClientSuperlative(raw: string): number[] | null {
+    const v = String(raw ?? '').toLowerCase().trim();
+    if (!v) return null;
+    const topN = v.match(/\btop\s+(\d+)\b/);
+    if (topN) {
+      const n = Math.max(1, Math.min(50, parseInt(topN[1]!, 10)));
+      return Array.from({ length: n }, (_, i) => i + 1);
+    }
+    const ord = v.match(/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/);
+    if (ord && /\b(largest|biggest|highest|top)\b/.test(v)) {
+      const rank = AgentService.ORDINAL_RANK[ord[1]!];
+      if (rank) return [rank];
+    }
+    // Bare superlative referring to a client ("largest client", "the biggest client",
+    // "top client") — but NOT "top N" (handled above) and not a real name.
+    if (/\b(largest|biggest|highest)\b/.test(v) && /\b(client|customer|account)\b/.test(v))
+      return [1];
+    if (/^(largest|biggest|highest|top)\s+client$/.test(v)) return [1];
+    return null;
+  }
+
+  /**
+   * Resolve superlative client references in a spec's filters ("largest client",
+   * "second-largest client", "top 5 clients") to the dataset's REAL top clients,
+   * ranked by the dataset's own weight (EBPO: revenue — same ranking as
+   * listTopClientsForScope, never a hardcoded name). The planner emits the literal
+   * phrase; without this the compiled SQL filters `client IN ('largest client')`,
+   * matches 0 rows, and the user gets a false "No data matches that breakdown."
+   *
+   * Also drops a degenerate `breakdown: 'client'` when the filter narrows to a single
+   * client (breaking down one client by client is a needless 1-column pivot that
+   * routes a clean monthly series into the wide-pivot path).
+   */
+  /**
+   * General safety net: when the request is ABOUT one client by a superlative/Nth
+   * reference ("for the largest/biggest/top/second-largest/smallest client") but the
+   * planner produced no client filter, inject it (and, if it grouped BY client, flip the
+   * dimension to month — the entity is the subject, plotted over time). The superlative
+   * PHRASE is passed through; resolveSpecClientFilters turns it into real names. This is
+   * intent-general (any superlative form), not tied to specific question wording.
+   */
+  private repairMissingEntityFilter(spec: ChartSpec, queryLower: string): ChartSpec {
+    const m = queryLower.match(
+      /\b(?:for|of)\s+(?:the\s+)?((?:second|third|fourth|fifth|2nd|3rd|4th|5th)?[\s-]*(?:largest|biggest|top|smallest|highest|lowest)\s+(?:client|customer))\b/,
+    );
+    if (!m) return spec;
+    const hasClientFilter = (spec.filters ?? []).some((f) =>
+      /client|customer/i.test(String((f as any)?.dimension ?? '')),
+    );
+    if (hasClientFilter) return spec;
+    const phrase = m[1]!.replace(/customers?/g, 'client').replace(/\s+/g, ' ').trim();
+    const next: ChartSpec = {
+      ...spec,
+      filters: [
+        ...(spec.filters ?? []),
+        { dimension: 'client', op: 'in', values: [phrase] },
+      ],
+    };
+    // "for the largest client" is a filter + trend, not a group-by-client. If the planner
+    // grouped by client (which would yield a single degenerate bar once filtered), plot
+    // over month instead.
+    if (next.dimension === 'client') next.dimension = 'month';
+    return next;
+  }
+
+  private async resolveSpecClientFilters(
+    spec: ChartSpec,
+    scope: OrgScope,
+  ): Promise<ChartSpec> {
+    const filters = spec.filters;
+    if (!Array.isArray(filters) || filters.length === 0) return spec;
+    let ranked: string[] | null = null;
+    let changed = false;
+    const nextFilters = [] as NonNullable<ChartSpec['filters']>;
+    for (const f of filters) {
+      const isClientDim = /client|customer/i.test(String((f as any)?.dimension ?? ''));
+      const values = Array.isArray((f as any)?.values) ? (f as any).values : [];
+      if (!isClientDim || values.length === 0) {
+        nextFilters.push(f);
+        continue;
+      }
+      const resolved: string[] = [];
+      let touched = false;
+      for (const val of values) {
+        const ranks = this.parseClientSuperlative(String(val));
+        if (!ranks) {
+          resolved.push(String(val));
+          continue;
+        }
+        touched = true;
+        if (!ranked) ranked = await this.listTopClientsForScope(scope, 50);
+        for (const r of ranks) {
+          const name = ranked[r - 1];
+          if (name) resolved.push(name);
+        }
+      }
+      if (!touched) {
+        nextFilters.push(f);
+        continue;
+      }
+      changed = true;
+      const deduped = Array.from(new Set(resolved.filter(Boolean)));
+      // Couldn't resolve to any real client → drop the filter rather than emit a
+      // guaranteed-empty `IN ('largest client')`.
+      if (deduped.length === 0) continue;
+      nextFilters.push({ ...(f as any), values: deduped });
+    }
+    if (!changed) return spec;
+    let out: ChartSpec = { ...spec, filters: nextFilters };
+    // Degenerate single-client breakdown → drop it so the compiler builds a clean
+    // name/value series (the right shape for a single client's monthly waterfall/line).
+    const clientFilterValues = nextFilters
+      .filter((f) => /client|customer/i.test(String((f as any)?.dimension ?? '')))
+      .flatMap((f) => ((f as any)?.values ?? []) as string[]);
+    if (
+      /client|customer/i.test(String(out.breakdown ?? '')) &&
+      clientFilterValues.length === 1
+    ) {
+      out = { ...out, breakdown: undefined };
+    }
+    return out;
   }
 
   // ─── Live schema introspection — feeds real dimension values to the SQL planner
@@ -11699,23 +11976,40 @@ export class AgentService {
     ): Promise<SmartPlanResult | null> => {
       const compiled = await compileEbpoSpec(spec, this.analyticsDb, runRows);
       if (!compiled.ok) return null;
-      const chartType = (spec.chartType ?? 'bar') as ChartType;
+      let chartType = (spec.chartType ?? 'bar') as ChartType;
+      // Single-measure scatter/bubble has no second axis → coerce to a bar (see
+      // specToPlan for the same general rule) so it never plots index positions.
+      const specMeasureCount =
+        (spec.measures?.filter(Boolean).length || 0) || (spec.measure ? 1 : 0);
+      if ((chartType === 'scatter' || chartType === 'bubble') && specMeasureCount < 2)
+        chartType = 'bar' as ChartType;
       const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
         chartType,
       }).catch(() => null);
       if (!check || check.error || check.rows.length === 0) return null;
+      // Pie/donut can't show negatives → coerce to bar (same general rule as specToPlan).
+      if (chartType === 'pie' || chartType === 'donut') {
+        const hasNegative = check.rows.some((row) =>
+          Object.entries(row).some(
+            ([k, v]) =>
+              k !== 'name' && k !== '__ord' && typeof v === 'number' && (v as number) < 0,
+          ),
+        );
+        if (hasNegative) chartType = 'bar' as ChartType;
+      }
       if (this.detectBadChartShape(check.rows, chartType)) return null;
+      const prettyTitle = this.prettifyChartTitle(title);
       return {
         kind: 'build',
         plan: {
           tools_to_execute: [],
           should_generate_dashboard: true,
           dashboard: {
-            title,
+            title: prettyTitle,
             description,
             widgets: [
               {
-                title: title.slice(0, 80),
+                title: prettyTitle.slice(0, 80),
                 description,
                 type: chartType,
                 metric: 'dynamic',
@@ -11724,7 +12018,10 @@ export class AgentService {
                 _sql: compiled.sql,
                 _spec: spec,
                 display: {
-                  valueFormat: compiled.measure.format,
+                  // Percent format follows what the compiler actually produced.
+                  valueFormat: (compiled as { outputPercent?: boolean }).outputPercent
+                    ? 'percent'
+                    : compiled.measure.format,
                   ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
                     ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
                     : {}),
@@ -12078,8 +12375,9 @@ export class AgentService {
         ['delivery_center', /\bdelivery\s+center\b/],
         ['business_unit', /\bbusiness\s+unit\b/],
         ['department', /\bdepartment\b|\bdept\b/],
-        ['country', /\bcountry\b/],
+        ['country', /\bcountry\b|\bcountries\b/],
         ['region', /\bregion\b/],
+        ['city', /\bcity\b|\bcities\b/],
         ['client', /\bclient\b|\bcustomer\b/],
         ['vendor', /\bvendor\b|\bsupplier\b/],
         ['asset_type', /\basset\s+type\b/],
@@ -12453,14 +12751,26 @@ export class AgentService {
         /\bcost\b/.test(ql) &&
         /\bgross\s+(?:margin|profit)\b/.test(ql)
       ) {
+        const filteredSpec = await this.resolveSpecClientFilters(
+          this.repairMissingEntityFilter(spec, ql),
+          scope,
+        ).catch(() => spec);
+        const clientFilterValues = (filteredSpec.filters ?? [])
+          .filter((f) => String((f as any)?.dimension ?? '').toLowerCase() === 'client')
+          .flatMap((f) => (((f as any)?.values ?? []) as string[]).map((v) => String(v).trim()))
+          .filter(Boolean);
         const v = `${this.analyticsDb}.v_ebpo_revenue_monthly`;
         const sc =
           'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+        const quoteLit = (value: string) => `'${value.replace(/'/g, "''")}'`;
+        const clientWhere = clientFilterValues.length
+          ? ` AND client_name IN (${clientFilterValues.map(quoteLit).join(', ')})`
+          : '';
         const bridgeSql =
           `SELECT name, value, is_total FROM (` +
-          `SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 0) AS value, 0 AS is_total, 1 AS seq FROM ${v} WHERE ${sc} ` +
-          `UNION ALL SELECT 'Cost' AS name, -round(sum(total_cost_usd), 0) AS value, 0 AS is_total, 2 AS seq FROM ${v} WHERE ${sc} ` +
-          `UNION ALL SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 0) AS value, 1 AS is_total, 3 AS seq FROM ${v} WHERE ${sc}` +
+          `SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 0) AS value, 0 AS is_total, 1 AS seq FROM ${v} WHERE ${sc}${clientWhere} ` +
+          `UNION ALL SELECT 'Cost' AS name, -round(sum(total_cost_usd), 0) AS value, 0 AS is_total, 2 AS seq FROM ${v} WHERE ${sc}${clientWhere} ` +
+          `UNION ALL SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 0) AS value, 1 AS is_total, 3 AS seq FROM ${v} WHERE ${sc}${clientWhere}` +
           `) ORDER BY seq LIMIT 10`;
         const check = await this.executeDynamicSqlChecked(bridgeSql, scope, {
           chartType: 'waterfall',
@@ -12486,7 +12796,7 @@ export class AgentService {
                     grouping: 'dynamic',
                     display_order: 0,
                     _sql: bridgeSql,
-                    _spec: { ...spec, chartType: 'waterfall' },
+                    _spec: { ...filteredSpec, chartType: 'waterfall' },
                     display: { valueFormat: 'currency' },
                   } as any,
                 ],
@@ -12569,16 +12879,10 @@ export class AgentService {
       };
     }
     // Normalize common analytical phrases that a model can otherwise represent with
-    // the wrong operation (for example, growth-of-YoY or share-of-total receivables).
-    if (/\bmonth[-\s]+on[-\s]+month\b.*\brevenue\s+growth\b/.test(queryLower)) {
-      spec = {
-        ...spec,
-        measure: 'total_revenue',
-        measures: null,
-        dimension: 'month',
-        transforms: [{ kind: 'growth_pct' }],
-      };
-    }
+    // the wrong operation (for example, share-of-total receivables). Intent→transform
+    // mapping (cumulative / growth / difference / avg-monthly) and entity-as-filter are
+    // now taught to the planner LLM directly (SPEC_PLANNER_SYSTEM) so they generalize
+    // across phrasings — no per-phrase regexes here.
     if (/\breceivables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/.test(queryLower)) {
       spec = {
         ...spec,
@@ -12590,69 +12894,69 @@ export class AgentService {
     }
     const mentionsDeliveryCenter = /\bdelivery\s+center\b/.test(queryLower);
     const mentionsMonth = /\bmonth\b|\bmonthly\b|\bover\s+time\b/.test(queryLower);
-    if (
-      isScatterReq &&
-      /\butili[sz]ation\b/.test(queryLower) &&
-      /\bsla\s+compliance\b/.test(queryLower) &&
-      !mentionsMonth
-    ) {
+    // Operations scatter/bubble (utilization, SLA, CSAT, AHT, calls, tickets) is plotted
+    // per delivery center. Earlier code HARD-OVERWROTE the measures to a fixed canonical
+    // PAIR here, which silently dropped any third (size) measure AND any other measure the
+    // user actually named — e.g. "utilization vs CSAT sized by SLA" collapsed to
+    // "utilization vs SLA scatter". Now: trust the measures the planner chose (2 → scatter,
+    // 3 → bubble via the block below), only DEFAULT the entity dimension, and only INJECT a
+    // canonical pair when the planner under-specified (<2 ops measures). General, not per-Q.
+    const opsMeasureIds = [
+      'utilization_pct',
+      'sla_compliance_pct',
+      'csat_pct',
+      'avg_aht_minutes',
+      'calls_handled',
+      'tickets_resolved',
+    ];
+    const chosenOps = (
+      (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean) as string[]
+    ).filter((m) => opsMeasureIds.includes(m));
+    const operationsScatterContext = isScatterReq && !mentionsMonth;
+    // Resolve the entity dimension: keep a VALID categorical entity dim the planner chose
+    // (e.g. region, country), but override a missing / client / bogus one (a measure id
+    // mistakenly used as the dimension) to delivery_center, the natural ops grain.
+    const opsEntityDims = [
+      'delivery_center',
+      'region',
+      'country',
+      'market_type',
+      'department',
+      'business_unit',
+    ];
+    const hasValidEntityDim =
+      !!spec.dimension && opsEntityDims.includes(spec.dimension);
+    const resolvedScatterDim =
+      mentionsDeliveryCenter || !hasValidEntityDim ? 'delivery_center' : spec.dimension!;
+    if (operationsScatterContext && chosenOps.length >= 2) {
+      // Preserve ALL chosen ops measures (the 3rd becomes the bubble size below); only
+      // pin the entity dimension.
       spec = {
         ...spec,
-        measure: 'utilization_pct',
-        measures: ['utilization_pct', 'sla_compliance_pct'],
-        dimension: 'delivery_center',
-        chartType: 'scatter',
+        measure: chosenOps[0] as string,
+        measures: chosenOps,
+        dimension: resolvedScatterDim,
       };
-    }
-    if (
-      isScatterReq &&
-      /\bhandling\s+time\b|\baht\b/.test(queryLower) &&
-      /\bcsat\b|\bcustomer\s+satisfaction\b/.test(queryLower) &&
-      !mentionsMonth
-    ) {
-      spec = {
-        ...spec,
-        measure: 'avg_aht_minutes',
-        measures: ['avg_aht_minutes', 'csat_pct'],
-        dimension: 'delivery_center',
-        chartType: 'scatter',
-      };
-    }
-    const operationsScatterMeasures = new Set(
-      (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean) as string[],
-    );
-    const operationsScatterOnly =
-      [...operationsScatterMeasures].length >= 2 &&
-      [...operationsScatterMeasures].every((m) =>
-        [
-          'utilization_pct',
-          'sla_compliance_pct',
-          'csat_pct',
-          'avg_aht_minutes',
-          'calls_handled',
-          'tickets_resolved',
-        ].includes(m),
-      );
-    if (
-      isScatterReq &&
-      operationsScatterOnly &&
-      !mentionsMonth &&
-      (!spec.dimension || spec.dimension === 'client' || mentionsDeliveryCenter)
-    ) {
-      const ordered = [...operationsScatterMeasures];
-      const preferred =
-        ordered.includes('avg_aht_minutes') && ordered.includes('csat_pct')
+    } else if (operationsScatterContext && chosenOps.length < 2) {
+      // Planner under-specified an ops scatter — inject the canonical pair implied by the
+      // wording so we still produce a valid 2-measure plot.
+      const pair =
+        /\bhandling\s+time\b|\baht\b/.test(queryLower) &&
+        /\bcsat\b|\bcustomer\s+satisfaction\b/.test(queryLower)
           ? ['avg_aht_minutes', 'csat_pct']
-          : ordered.includes('utilization_pct') && ordered.includes('sla_compliance_pct')
+          : /\butili[sz]ation\b/.test(queryLower) &&
+              /\bsla\s+compliance\b/.test(queryLower)
             ? ['utilization_pct', 'sla_compliance_pct']
-            : ordered;
-      spec = {
-        ...spec,
-        measure: preferred[0] as string,
-        measures: preferred as string[],
-        dimension: 'delivery_center',
-        chartType: 'scatter',
-      };
+            : null;
+      if (pair) {
+        spec = {
+          ...spec,
+          measure: pair[0] as string,
+          measures: pair as string[],
+          dimension: resolvedScatterDim,
+          chartType: 'scatter',
+        };
+      }
     }
     if (
       useEbpo &&
@@ -12668,6 +12972,53 @@ export class AgentService {
       const nextType = wantsSize || measureCount >= 3 ? 'bubble' : 'scatter';
       spec = { ...spec, chartType: nextType };
     }
+    // A combo (or any multi-measure chart MIXING units, e.g. revenue $ + gross margin %)
+    // needs an x-axis to plot a trend. Without a dimension the compiler emits the
+    // measures as ROWS on a single value axis ($131M sitting next to 33% — unreadable,
+    // and the combo renderer gets no series). Default such a chart to a MONTHLY trend.
+    // Same-unit measures with no dimension are left alone (a valid simple N-bar
+    // comparison, e.g. "total revenue vs total cost").
+    if (
+      useEbpo &&
+      !spec.dimension &&
+      !spec.breakdown &&
+      !isScatterReq &&
+      !['kpi', 'pie', 'donut'].includes(String(spec.chartType).toLowerCase())
+    ) {
+      const ms = (spec.measures ?? (spec.measure ? [spec.measure] : [])).filter(
+        Boolean,
+      ) as string[];
+      const fmts = new Set(
+        ms.map((m) => EBPO_MEASURES[m]?.format).filter(Boolean),
+      );
+      const isCombo = String(spec.chartType).toLowerCase() === 'combo';
+      if (ms.length >= 2 && (isCombo || fmts.size > 1)) {
+        spec = { ...spec, dimension: 'month' };
+      }
+    }
+    // Relative window: "(last|past|trailing|previous|recent) N month|quarter|year(s)" or
+    // "over the last N months" → recentMonths, anchored by the compiler to the latest data
+    // period (NOT today). Lets categorical charts (e.g. a client scatter) restrict to the
+    // last N months, and makes time-series windows robust even when topN was under-set.
+    if (useEbpo && !spec.recentMonths) {
+      const wm = queryLower.match(
+        /\b(?:last|past|trailing|previous|recent)\s+(\d{1,2})\s+(month|quarter|year)s?\b/,
+      );
+      if (wm) {
+        const n = parseInt(wm[1]!, 10);
+        const mult = wm[2] === 'year' ? 12 : wm[2] === 'quarter' ? 3 : 1;
+        if (n > 0) spec = { ...spec, recentMonths: n * mult };
+      }
+    }
+    // SAFETY NET (general, not per-phrase): if the request is ABOUT one client by a
+    // superlative ("for the largest/biggest/top/second-largest client") but the planner
+    // forgot the filter, inject it so we don't silently chart all clients. The planner is
+    // taught to do this itself; this only catches misses.
+    spec = this.repairMissingEntityFilter(spec, queryLower);
+    // Resolve superlative client references ("largest client", "second-largest client",
+    // "top 5 clients") in filters to the dataset's real top clients BEFORE compiling —
+    // otherwise the SQL filters on the literal phrase and returns nothing.
+    spec = await this.resolveSpecClientFilters(spec, scope);
     const compiled = useEbpo
       ? await compileEbpoSpec(spec, this.analyticsDb, runRows)
       : await compileSpec(spec, this.analyticsDb, runRows);
@@ -12693,7 +13044,9 @@ export class AgentService {
     }).catch(() => null);
     if (!check || check.error || check.rows.length === 0) return null;
 
-    const finalTitle = (title || compiled.measure.label).slice(0, 80);
+    const finalTitle = this.prettifyChartTitle(
+      (title || compiled.measure.label).slice(0, 80),
+    );
     // Multi-measure EBPO combos: attach per-series roles so the renderer draws the
     // right mix of clustered bars + lines (e.g. "column chart of invoice, collected,
     // outstanding" → three columns, not one bar + two lines).
@@ -12715,32 +13068,84 @@ export class AgentService {
       // bar+line), and "column chart of X, Y, Z" → clustered columns.
       const reqLine = /\bline\s+chart\b/.test(ql);
       const reqBar = /\b(?:column|bar)\s+chart\b|\bclustered\b/.test(ql);
+      const reqCombo = /\bcombo\b|combination/.test(ql);
       const baseForRoles = reqLine ? 'line' : reqBar ? 'bar' : String(chartType);
+      // An explicit "combo" must actually mix bars + a line. When every measure
+      // shares one unit (e.g. revenue, expenses, gross margin all in $), the
+      // format-based default makes them ALL bars → a grouped bar mislabeled as a
+      // combo. In that case promote the trailing measure (the conventional overlay
+      // — users list it last, "revenue, expenses, AND gross margin") to a line so
+      // the result is a genuine bar+line combo. General: keyed on chart-type intent
+      // + unit-uniformity, never on specific measure names or question wording.
+      const sameUnitCombo =
+        reqCombo &&
+        !wantsBar &&
+        new Set(
+          measureList.map((m) => EBPO_MEASURES[m]?.format).filter(Boolean),
+        ).size === 1;
       comboSeries = ebpoComboSeriesRoles(measureList, {
         baseType: baseForRoles,
         // On create the phrasing usually targets the trailing measure(s); the
         // format-based default already handles %-vs-$, so only steer the non-primary.
-        forceLine: wantsLine && !wantsBar ? measureList.slice(1) : [],
+        forceLine: wantsLine && !wantsBar
+          ? measureList.slice(1)
+          : sameUnitCombo
+            ? measureList.slice(-1)
+            : [],
         forceBar: wantsBar && !wantsLine ? measureList : [],
       });
     }
     // Accurate type so the LABEL matches the visual (all columns → "bar", all lines →
     // "line", mixed/dual-axis → "combo") instead of the planner's blanket "combo".
-    let widgetType = comboSeries
-      ? (ebpoComboChartType(comboSeries, {
-          forceStacked: /stacked/.test(` ${query.toLowerCase()} `)
-            ? /\barea\b/.test(query.toLowerCase())
-              ? 'area'
-              : 'bar'
-            : null,
-          forceCombo: /\bcombo\b|combination/.test(query.toLowerCase()),
-        }) as ChartType)
-      : chartType;
+    // EXCEPT: an explicit grid request (matrix/heatmap) is a tabular layout of
+    // month × measure-columns — keep it, don't collapse the multi-measure result to a
+    // bar/combo.
+    const explicitGrid = chartType === 'matrix' || chartType === 'heatmap';
+    let widgetType = explicitGrid
+      ? chartType
+      : comboSeries
+        ? (ebpoComboChartType(comboSeries, {
+            forceStacked: /stacked/.test(` ${query.toLowerCase()} `)
+              ? /\barea\b/.test(query.toLowerCase())
+                ? 'area'
+                : 'bar'
+              : null,
+            forceCombo: /\bcombo\b|combination/.test(query.toLowerCase()),
+          }) as ChartType)
+        : chartType;
     // Pareto: a single ranked measure → the web renderer adds the cumulative-% line.
     // Force it deterministically so "Create a Pareto chart …" never degrades to a
     // plain bar (the planner can't always be trusted to pick it).
     if (/\bpareto\b/.test(query.toLowerCase()) && measureList.length <= 1)
       widgetType = 'pareto' as ChartType;
+    // A scatter/bubble normally needs TWO numeric measures (x vs y). With a single
+    // measure by a category, a BUBBLE (needs 3) or a NON-explicit scatter falls back to
+    // a bar (a ranking). But when the user EXPLICITLY asks for a scatter ("scatter of
+    // gross margin % by client"), honor it as a categorical dot plot — category on x,
+    // the measure on y — instead of overriding their choice. The renderer plots one
+    // labelled point per category. General: keyed on the explicit chart-type ask.
+    if (
+      (widgetType === 'scatter' || widgetType === 'bubble') &&
+      measureList.length < 2 &&
+      !(isScatterReq && widgetType === 'scatter')
+    )
+      widgetType = 'bar' as ChartType;
+    // A pie/donut can only show NON-NEGATIVE parts of a whole. If the data contains a
+    // negative value (e.g. cash-flow components: investing/financing CF are negative),
+    // a pie is meaningless/"messy" — coerce to a bar so the signs are visible. General
+    // safety net behind the planner guidance; keyed on the DATA, not the question.
+    if (widgetType === 'pie' || widgetType === 'donut') {
+      const hasNegative = check.rows.some((row) =>
+        Object.entries(row).some(
+          ([k, v]) =>
+            k !== 'name' &&
+            k !== '__ord' &&
+            typeof v === 'number' &&
+            (v as number) < 0,
+        ),
+      );
+      if (hasNegative) widgetType = 'bar' as ChartType;
+    }
     const secondaryRole = comboSeries?.find((r) => r.axis === 'right');
     // Scatter/bubble axis labels = the x/y measure labels, so the plot's axes (and
     // the renderer's tooltip) name the real measures instead of "x"/"y" — the
@@ -12748,11 +13153,19 @@ export class AgentService {
     const isScatterType =
       widgetType === 'scatter' || widgetType === 'bubble';
     const scatterAxis =
-      isScatterType && useEbpo && measureList.length >= 2
-        ? {
-            xAxisLabel: EBPO_MEASURES[measureList[0]!]?.label ?? undefined,
-            yAxisLabel: EBPO_MEASURES[measureList[1]!]?.label ?? undefined,
-          }
+      isScatterType && useEbpo
+        ? measureList.length >= 2
+          ? {
+              xAxisLabel: EBPO_MEASURES[measureList[0]!]?.label ?? undefined,
+              yAxisLabel: EBPO_MEASURES[measureList[1]!]?.label ?? undefined,
+            }
+          : // Single-measure categorical scatter: x = the dimension, y = the measure.
+            {
+              xAxisLabel:
+                (spec.dimension && EBPO_DIMENSIONS[spec.dimension]?.label) ||
+                undefined,
+              yAxisLabel: EBPO_MEASURES[measureList[0]!]?.label ?? undefined,
+            }
         : {};
     return {
       kind: 'build',
@@ -12779,10 +13192,11 @@ export class AgentService {
               // Carry the measure's unit so the web formats values correctly
               // (percent measures render as % not $).
               display: {
-                valueFormat: (spec.transforms ?? []).some((t) => {
-                  const kind = typeof t === 'string' ? t : t.kind;
-                  return kind === 'growth_pct' || kind === 'normalize';
-                })
+                // Percent format must follow what the compiler ACTUALLY produced
+                // (outputPercent), never the requested transforms — otherwise a
+                // transform the compiler couldn't apply formats $ data as "%".
+                valueFormat: (compiled as { outputPercent?: boolean })
+                  .outputPercent
                   ? 'percent'
                   : compiled.measure.format,
                 ...(useEbpo && spec.breakdown && measureList.length > 1
@@ -12801,6 +13215,20 @@ export class AgentService {
                           }
                         : {}),
                     }
+                  : {}),
+                // A reference_line transform adds a flat "company_average" column — draw
+                // it as a dashed reference line (not a plotted series). peer_average also
+                // emits company_average but is a real per-period comparison line, so skip
+                // referenceSeries when it's present.
+                ...((spec.transforms ?? []).some((t) => {
+                  const k = typeof t === 'string' ? t : t.kind;
+                  return k === 'reference_line';
+                }) &&
+                !(spec.transforms ?? []).some((t) => {
+                  const k = typeof t === 'string' ? t : t.kind;
+                  return k === 'peer_average';
+                })
+                  ? { referenceSeries: 'company_average' }
                   : {}),
               },
             } as any,
@@ -12858,6 +13286,57 @@ export class AgentService {
     }
   }
 
+  /**
+   * Deterministic honest-refusal for EBPO requests this dataset genuinely cannot answer,
+   * so neither the catalog compiler nor the LLM planner fabricates a chart for them.
+   * Returns the no_data message, or null when the request is potentially answerable.
+   */
+  private ebpoUnavailableReason(query: string): string | null {
+    const q = (query ?? '').toLowerCase();
+    // "non-payroll expenses": cost of revenue (FactRevenue.CostUSD) and payroll
+    // (FactPayroll.TotalPayroll) are INDEPENDENT figures here — company payroll
+    // (~$112M) exceeds cost of revenue (~$88M) — so there is no derivable
+    // "non-payroll expense". Subtracting them goes negative; relabeling cost as
+    // non-payroll is wrong. There is genuinely no such measure.
+    if (/\bnon[-\s]?payroll\b/.test(q)) {
+      return (
+        'This dataset tracks cost of revenue and payroll as independent figures ' +
+        '(company payroll actually exceeds cost of revenue), so there is no ' +
+        '“non-payroll expense” measure to break out. I left the chart unchanged.'
+      );
+    }
+    // Cost CLASSIFICATIONS that don't exist here: the dataset has a single Total Cost
+    // figure (splittable only by business unit or contract type) — there is NO
+    // direct/indirect or fixed/variable cost split. Refuse rather than fabricate a
+    // split (e.g. relabeling one contract type as "direct cost") or collapse both
+    // parts into a single mislabeled series.
+    if (
+      /\b(?:in)?direct\s+(?:and\s+(?:in)?direct\s+)?(?:cost|expense)s?\b/.test(q) ||
+      /\b(?:fixed|variable)\s+(?:and\s+(?:fixed|variable)\s+)?(?:cost|expense)s?\b/.test(
+        q,
+      )
+    ) {
+      return (
+        'This dataset has a single Total Cost figure with no direct/indirect (or ' +
+        'fixed/variable) cost classification, so costs can’t be split that way. ' +
+        'I can show total cost, or cost broken down by business unit or contract type.'
+      );
+    }
+    // Operating profit / operating income / EBIT are NOT defined here: there's no
+    // operating-expense breakdown, so they can't be derived, and relabeling Gross
+    // Margin (which doesn't subtract payroll/opex) as "operating profit" would be
+    // wrong. Refuse and point to the real profit measures. (Net profit is allowed
+    // as a transparent waterfall bridge of revenue − cost − payroll.)
+    if (/\boperating\s+(?:profit|income|margin\b(?!\s*%))|\bebit\b/.test(q)) {
+      return (
+        'There’s no operating-profit / EBIT measure in this dataset (no operating-' +
+        'expense breakdown to derive it). I can show Gross Margin (revenue − cost) or ' +
+        'the EBITDA-style margin (revenue − cost − payroll) instead.'
+      );
+    }
+    return null;
+  }
+
   private async generateSmartPlan(
     query: string,
     scope: OrgScope,
@@ -12876,6 +13355,16 @@ export class AgentService {
         `[planner] served=smart-cache source=memory query=${JSON.stringify(query.slice(0, 80))}`,
       );
       return cachedPlan;
+    }
+
+    // Genuinely-unanswerable EBPO requests → honest no_data before any builder runs.
+    {
+      const reason = this.ebpoUnavailableReason(query);
+      if (reason && (await this.orgHasEbpoData(scope).catch(() => false))) {
+        const plan: SmartPlanResult = { kind: 'no_data', message: reason };
+        this.setCachedSmartPlan(cacheKey, plan);
+        return plan;
+      }
     }
 
     if (/\b(scorecard|kpi\s+cards?)\b/i.test(query)) {
@@ -12903,14 +13392,34 @@ export class AgentService {
     ) {
       const hasEbpo = await this.orgHasEbpoData(scope).catch(() => false);
       if (hasEbpo) {
+        const baseSpec = this.repairMissingEntityFilter(
+          {
+            measure: 'gross_margin',
+            dimension: 'month',
+            chartType: 'waterfall',
+          } as ChartSpec,
+          query.toLowerCase(),
+        );
+        const resolvedSpec = await this.resolveSpecClientFilters(
+          baseSpec,
+          scope,
+        ).catch(() => baseSpec);
+        const clientFilterValues = (resolvedSpec.filters ?? [])
+          .filter((f) => String((f as any)?.dimension ?? '').toLowerCase() === 'client')
+          .flatMap((f) => (((f as any)?.values ?? []) as string[]).map((v) => String(v).trim()))
+          .filter(Boolean);
         const v = `${this.analyticsDb}.v_ebpo_revenue_monthly`;
         const sc =
           'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+        const quoteLit = (value: string) => `'${value.replace(/'/g, "''")}'`;
+        const clientWhere = clientFilterValues.length
+          ? ` AND client_name IN (${clientFilterValues.map(quoteLit).join(', ')})`
+          : '';
         const bridgeSql =
           `SELECT name, value, is_total FROM (` +
-          `SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 0) AS value, 0 AS is_total, 1 AS seq FROM ${v} WHERE ${sc} ` +
-          `UNION ALL SELECT 'Cost' AS name, -round(sum(total_cost_usd), 0) AS value, 0 AS is_total, 2 AS seq FROM ${v} WHERE ${sc} ` +
-          `UNION ALL SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 0) AS value, 1 AS is_total, 3 AS seq FROM ${v} WHERE ${sc}` +
+          `SELECT 'Revenue' AS name, round(sum(total_revenue_usd), 0) AS value, 0 AS is_total, 1 AS seq FROM ${v} WHERE ${sc}${clientWhere} ` +
+          `UNION ALL SELECT 'Cost' AS name, -round(sum(total_cost_usd), 0) AS value, 0 AS is_total, 2 AS seq FROM ${v} WHERE ${sc}${clientWhere} ` +
+          `UNION ALL SELECT 'Gross Margin' AS name, round(sum(gross_margin_usd), 0) AS value, 1 AS is_total, 3 AS seq FROM ${v} WHERE ${sc}${clientWhere}` +
           `) ORDER BY seq LIMIT 10`;
         const check = await this.executeDynamicSqlChecked(bridgeSql, scope, {
           chartType: 'waterfall',
@@ -12934,11 +13443,7 @@ export class AgentService {
                     grouping: 'dynamic',
                     display_order: 0,
                     _sql: bridgeSql,
-                    _spec: {
-                      measure: 'gross_margin',
-                      dimension: 'month',
-                      chartType: 'waterfall',
-                    },
+                    _spec: resolvedSpec,
                     display: { valueFormat: 'currency' },
                   } as any,
                 ],
@@ -13018,6 +13523,15 @@ export class AgentService {
     const needsEbpoSemanticExtension =
       /\bbox\s*(?:plot|chart)\b/i.test(query) ||
       /\basset\s+intensity\b/i.test(query) ||
+      // Geography ("by country/region/city/delivery center"): the LLM planner is
+      // UNRELIABLE about whether a measure can be grouped by geography (it pre-refuses
+      // inconsistently), so route these through the deterministic measure×dimension
+      // resolver. It builds via the compiler when the combination exists (e.g. revenue
+      // by country → allocated_revenue, ties to $131.6M) and returns null (→ LLM →
+      // honest refusal) when it genuinely doesn't. General, not per-question.
+      /\bby\s+(?:countr(?:y|ies)|regions?|cit(?:y|ies)|delivery\s+centers?)\b/i.test(
+        query,
+      ) ||
       (/\bdashboard\b/i.test(query) &&
         /\bliquidity\b/i.test(query) &&
         /\bprofitability\b/i.test(query) &&
@@ -13957,13 +14471,18 @@ export class AgentService {
     const mentionNorm = this.normalizeEntityName(mention);
     if (!mentionNorm) return { status: 'none' };
 
+    // Resolve clients from the dataset the org actually owns. Previously this always
+    // read the GL demo dimension (v_dim_clients_latest), so the EBPO org matched
+    // against the WRONG client universe (Apex Ventures / BlueOak …) instead of its
+    // real clients (JP Morgan / AT&T / Dell …). The profile picks the right source.
+    const profile = await this.getDatasetProfile(scope);
     const candidates = await this.queryRows<any>(
       `SELECT
-         coalesce(nullIf(client_name, ''), '') AS client_name,
-         sum(total_invoiced) AS total_invoiced
-       FROM ${this.analyticsDb}.v_dim_clients_latest
+         coalesce(nullIf(${profile.client.nameCol}, ''), '') AS client_name,
+         ${profile.client.weightExpr} AS total_invoiced
+       FROM ${this.analyticsDb}.${profile.client.view}
        WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-         AND client_name != ''
+         AND ${profile.client.nameCol} != ''
        GROUP BY client_name
        ORDER BY total_invoiced DESC
        LIMIT 500`,
@@ -14805,6 +15324,117 @@ export class AgentService {
     );
   }
 
+  private resolveWidgetTypeForEdit(
+    metric: string,
+    grouping: string,
+    preferredType?: string,
+  ): ChartType {
+    const normalizedMetric = String(metric ?? '').trim();
+    const normalizedGrouping = String(grouping ?? '').trim();
+    const validMatch = VALID_WIDGETS.find(
+      (widget) =>
+        widget.metric === normalizedMetric &&
+        widget.grouping === normalizedGrouping,
+    );
+    if (preferredType) {
+      const preferredMatch = VALID_WIDGETS.find(
+        (widget) =>
+          widget.type === preferredType &&
+          widget.metric === normalizedMetric &&
+          widget.grouping === normalizedGrouping,
+      );
+      if (preferredMatch) return preferredMatch.type;
+    }
+    if (validMatch) return validMatch.type;
+    return (preferredType ?? 'bar') as ChartType;
+  }
+
+  private widgetEditHasMaterialChange(
+    widget: ActiveDashboard['widgets'][number],
+    mod: DashboardEditPlan['modify'][number],
+  ): boolean {
+    const existingConfig = (widget.queryConfig as Record<string, unknown>) ?? {};
+    const existingChartConfig =
+      ((widget as unknown as { chartConfig?: Record<string, unknown> }).chartConfig as
+        | Record<string, unknown>
+        | undefined) ?? {};
+    const nextConfig: Record<string, unknown> = { ...existingConfig };
+
+    const nextMetric =
+      typeof mod.metric === 'string' && mod.metric.trim()
+        ? mod.metric.trim()
+        : String(existingConfig.metric ?? '').trim();
+    const nextGrouping =
+      typeof mod.grouping === 'string' && mod.grouping.trim()
+        ? mod.grouping.trim()
+        : String(existingConfig.grouping ?? '').trim();
+    const preferredType = mod.type ?? (widget.chartType as ChartType | undefined);
+    const hasNewSql =
+      typeof mod.dynamicSql === 'string' && mod.dynamicSql.trim().length > 0;
+    const nextType = hasNewSql
+      ? (preferredType ?? (widget.chartType as ChartType))
+      : this.resolveWidgetTypeForEdit(nextMetric, nextGrouping, preferredType);
+
+    if (typeof mod.title === 'string' && mod.title !== widget.title) return true;
+    if (nextType !== widget.chartType) return true;
+
+    if (hasNewSql) {
+      nextConfig.dynamicSql = mod.dynamicSql!.trim();
+      nextConfig.metric = 'dynamic';
+      nextConfig.grouping = 'query';
+      if (mod.spec) nextConfig.spec = mod.spec as unknown as Prisma.InputJsonValue;
+    }
+    if (!hasNewSql && typeof mod.metric === 'string' && mod.metric.trim()) {
+      nextConfig.metric = mod.metric.trim();
+    }
+    if (!hasNewSql && typeof mod.grouping === 'string' && mod.grouping.trim()) {
+      nextConfig.grouping = mod.grouping.trim();
+    }
+    if (mod.breakdown !== undefined) nextConfig.breakdown = mod.breakdown;
+    if (mod.topN !== undefined) nextConfig.topN = mod.topN;
+    if (mod.xAxisLabel !== undefined) nextConfig.xAxisLabel = mod.xAxisLabel;
+    if (mod.yAxisLabel !== undefined) nextConfig.yAxisLabel = mod.yAxisLabel;
+    if (mod.display !== undefined) {
+      if (mod.display === null) {
+        nextConfig.display = null;
+      } else {
+        const existingDisplay =
+          existingConfig.display &&
+          typeof existingConfig.display === 'object' &&
+          !Array.isArray(existingConfig.display)
+            ? (existingConfig.display as Record<string, unknown>)
+            : {};
+        nextConfig.display = {
+          ...existingDisplay,
+          ...mod.display,
+        };
+      }
+    }
+
+    if (JSON.stringify(nextConfig) !== JSON.stringify(existingConfig)) return true;
+
+    if (typeof mod.description === 'string') {
+      const existingDescription = String(existingChartConfig.description ?? '');
+      if (mod.description !== existingDescription) return true;
+    }
+
+    return false;
+  }
+
+  private planHasMaterialEffect(
+    activeDashboard: ActiveDashboard,
+    plan: DashboardEditPlan,
+  ): boolean {
+    if (Array.isArray(plan.add) && plan.add.length > 0) return true;
+    if (Array.isArray(plan.remove_indices) && plan.remove_indices.length > 0)
+      return true;
+    if (plan.refusal) return true;
+    return (plan.modify ?? []).some((mod) => {
+      const widget = activeDashboard.widgets[mod.index];
+      return !!widget && this.widgetEditHasMaterialChange(widget, mod);
+    });
+  }
+
   private async generateSmartEditPlan(
     activeDashboard: ActiveDashboard,
     editRequest: string,
@@ -14922,10 +15552,20 @@ export class AgentService {
         rawSql: string,
         chartType: ChartType,
       ): Promise<string | null> => {
+        let cleaned = String(rawSql).trim().replace(/;+$/, '');
+        // A pie/donut editor sometimes wraps a signed measure in abs() to force the
+        // chart (e.g. abs(sum(investing_cash_flow_usd))), which hides outflows as
+        // positive slices. Strip that abs() so the real (possibly negative) values flow
+        // — the render layer then honestly shows a bar instead of a misleading pie.
+        if (chartType === 'pie' || chartType === 'donut') {
+          cleaned = cleaned
+            .replace(/\babs\s*\(\s*(round\(\s*sum\([^()]*\)\s*,\s*\d+\s*\))\s*\)/gi, '$1')
+            .replace(/\babs\s*\(\s*(sum\([^()]*\))\s*\)/gi, '$1');
+        }
         let scoped: string;
         try {
           scoped = this.validateAndScopeDynamicSql(
-            String(rawSql).trim().replace(/;+$/, ''),
+            cleaned,
             scope,
             { chartType },
           );
@@ -15020,14 +15660,19 @@ export class AgentService {
         // unchanged, which is exactly what the EBPO prompt suite is catching.
         if (requestedSqlRewrite && !mod.dynamicSql) continue;
 
-        const hasChange =
-          mod.title !== undefined ||
-          mod.type !== undefined ||
-          mod.xAxisLabel !== undefined ||
-          mod.yAxisLabel !== undefined ||
-          mod.display !== undefined ||
-          mod.dynamicSql !== undefined;
-        if (hasChange) plan.modify.push(mod);
+        // A rewritten chart whose output is a PERCENTAGE must format as % — otherwise
+        // it inherits the original chart's currency format and renders "% as $" (e.g.
+        // a "Share of Total Cost (%)" edit showing "$21"). Format must follow the DATA,
+        // not just a label: only flip to % when the new SQL actually computes a
+        // percentage (a "× 100" ratio). A %-worded title over un-rewritten dollar data
+        // would otherwise render "27556449.0%". Conversely, if the rewrite produces a
+        // non-% number while the label still says %, drop the stale % format.
+        if (mod.dynamicSql && /\*\s*100\b/.test(mod.dynamicSql)) {
+          mod.display = { ...(mod.display ?? {}), valueFormat: 'percent' };
+        }
+
+        if (this.widgetEditHasMaterialChange(activeDashboard.widgets[index]!, mod))
+          plan.modify.push(mod);
       }
 
       const slotsLeft = () =>
@@ -15063,11 +15708,7 @@ export class AgentService {
         });
       }
 
-      if (
-        plan.modify.length === 0 &&
-        plan.add.length === 0 &&
-        plan.remove_indices.length === 0
-      )
+      if (!this.planHasMaterialEffect(activeDashboard, plan))
         return null;
 
       this.logger.log(
@@ -15141,6 +15782,11 @@ export class AgentService {
       return { kind: 'yoy' };
     if (/\bprior[\s-]*year\b|\bprevious[\s-]*year\b|\blast[\s-]*year\b/.test(q))
       return { kind: 'prior_year' };
+    if (
+      /\b(cumulative|running\s+total)\b/.test(q) &&
+      !/\bpercent(?:age)?\b|%/.test(q)
+    )
+      return { kind: 'cumulative' };
     if (/\bmoving[\s-]*average\b|\brolling[\s-]*average\b|\bmoving[\s-]*avg\b/.test(q)) {
       const m = q.match(/(\d+)[\s-]*(?:month|day|period|week)/);
       return { kind: 'moving_average', window: m ? Math.max(2, Math.min(12, Number(m[1]))) : 3 };
@@ -15216,6 +15862,51 @@ export class AgentService {
   // Pure presentation toggle for pie/donut labels (percent ↔ whole values).
   // Shared by the legacy editor and the spec editor so "change the percentage to
   // values" works regardless of which path handles the edit.
+  // Title Case a chart title for display. The planner sometimes returns a fully
+  // lowercased title ("asset cost by country"); capitalize each significant word while
+  // keeping short connectors lower-case and preserving already-styled tokens (acronyms
+  // like AR/AP/DSO/YoY, the "%" sign, arrows). General — no per-title special-casing.
+  private prettifyChartTitle(raw: string): string {
+    const s = String(raw ?? '').trim();
+    if (!s) return s;
+    const small = new Set([
+      'by', 'of', 'and', 'or', 'the', 'a', 'an', 'to', 'vs', 'per', 'for',
+      'in', 'on', 'as', 'with', 'at',
+    ]);
+    return s
+      .split(/(\s+)/)
+      .map((tok) => {
+        if (/^\s+$/.test(tok)) return tok;
+        // Leave tokens that already carry meaningful case/symbols untouched (acronyms,
+        // %, arrows, mixed-case like "YoY").
+        if (/[%→/]/.test(tok) || /[A-Z]/.test(tok)) return tok;
+        const lower = tok.toLowerCase();
+        if (small.has(lower)) return lower;
+        return lower.charAt(0).toUpperCase() + lower.slice(1);
+      })
+      .join('')
+      .replace(/^([a-z])/, (m) => m.toUpperCase());
+  }
+
+  // Build a human title from an EBPO ChartSpec: "<Measure> Trend" for a time axis,
+  // "<Measure> by <Dimension>" otherwise. General — derived from the catalog labels,
+  // no per-question strings.
+  private ebpoSpecTitle(spec: ChartSpec): string {
+    const measures = Array.isArray((spec as any).measures) && (spec as any).measures.length
+      ? ((spec as any).measures as string[])
+      : [spec.measure].filter(Boolean);
+    const measureLabel = measures
+      .map((m) => EBPO_MEASURES[m as string]?.label ?? m)
+      .filter(Boolean)
+      .join(', ');
+    const dim = spec.dimension ?? null;
+    const isTime = dim === 'month' || dim === 'quarter' || dim === 'year';
+    if (!measureLabel) return 'Chart';
+    if (!dim || isTime) return this.prettifyChartTitle(`${measureLabel} Trend`);
+    const dimLabel = EBPO_DIMENSIONS[dim]?.label ?? dim;
+    return this.prettifyChartTitle(`${measureLabel} by ${dimLabel}`);
+  }
+
   private detectLabelModeEdit(req: string): 'value' | 'percent' | null {
     const q = String(req ?? '');
     const wantsValue =
@@ -15231,7 +15922,10 @@ export class AgentService {
       /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(q) ||
       /\bshow\s+percent(?:age|ages)?\b/i.test(q) ||
       /\bpercent(?:age|ages)?\s+labels?\b/i.test(q) ||
-      /\bas\s+percent(?:age|ages)?\b/i.test(q);
+      /\bas\s+percent(?:age|ages)?\b/i.test(q) ||
+      /\bcontribution(?:s)?\b/i.test(q) ||
+      /\bshare\s+of\s+total\b/i.test(q) ||
+      /\bshare\s+of\s+the\s+total\b/i.test(q);
     return wantsPercent ? 'percent' : null;
   }
 
@@ -15311,8 +16005,8 @@ export class AgentService {
     // "highlight the highest / lowest" (no threshold, no average) → ring the extreme
     // cell(s). This was previously dropped (green color set but no rule), so nothing
     // got highlighted ("not highlighting highest value").
-    const wantsHighest = /\b(highest|largest|max(?:imum)?|biggest|top|peak|most)\b/.test(q);
-    const wantsLowest = /\b(lowest|smallest|min(?:imum)?|bottom|least|weakest)\b/.test(q);
+    const wantsHighest = /\b(highest|largest|max(?:imum)?|biggest|top|peak|most|best|strongest)\b/.test(q);
+    const wantsLowest = /\b(lowest|smallest|min(?:imum)?|bottom|least|weakest|worst|poorest)\b/.test(q);
     const extremes: DisplayHints['highlightExtremes'] =
       threshold === null && !avgMode && (wantsHighest || wantsLowest)
         ? wantsHighest && wantsLowest
@@ -15322,9 +16016,16 @@ export class AgentService {
             : 'min'
         : null;
 
+    // "highlight periods with negative cash flow / losses / below zero / deficits"
+    const wantsNegative =
+      wantsHighlight &&
+      /\bnegative\b|\bbelow\s+zero\b|\bloss(?:es)?\b|\bdeficits?\b|\bshortfalls?\b/.test(q);
+
     const hints: DisplayHints = {};
     if (wantsTotals) hints.showTotals = true;
-    if (extremes) {
+    if (wantsNegative) {
+      hints.highlightNegative = true;
+    } else if (extremes) {
       hints.highlightExtremes = extremes;
     } else if (wantsHighlight || threshold !== null || avgMode) {
       hints.conditionalColor = 'green';
@@ -15338,6 +16039,171 @@ export class AgentService {
     return this.detectEbpoMeasureMentions(q)[0] ?? null;
   }
 
+  // "In the same chart ..." means additive unless the user explicitly asks to
+  // replace/convert/switch the visual. Shared by follow-up combo/spec logic so
+  // "show cumulative revenue", "show YoY growth %", etc. layer onto the current
+  // chart instead of silently replacing its primary series.
+  private isAdditiveSameChartRequest(req: string): boolean {
+    const text = String(req ?? '').toLowerCase();
+    if (!text.trim()) return false;
+    const sameChart =
+      /\bin\s+the\s+same\s+chart\b|\bon\s+the\s+same\s+chart\b|\bwithin\s+the\s+same\s+chart\b/.test(
+        text,
+      );
+    if (!sameChart) return false;
+    const replaces =
+      /\breplace\b|\bswap\b|\bswitch\b|\bconvert\b|\bturn\s+it\s+into\b|\bchange\s+(?:the\s+chart\s+)?to\b|\bmake\s+it\s+a\b/.test(
+        text,
+      );
+    if (replaces) return false;
+    return (
+      /\b(add|also|include|compare|comparison|alongside|another|plus|overlay|versus|vs|show|display|plot)\b/.test(
+        text,
+      ) || /\bsplit\b.*\binto\b/.test(text)
+    );
+  }
+
+  private isSameChartFollowUp(req: string): boolean {
+    const text = String(req ?? '').toLowerCase();
+    return (
+      /\bin\s+the\s+same\s+chart\b|\bon\s+the\s+same\s+chart\b|\bwithin\s+the\s+same\s+chart\b/.test(
+        text,
+      ) ||
+      /\bthe\s+same\s+chart\b/.test(text)
+    );
+  }
+
+  private detectRequestedChartAxes(req: string): {
+    primary: string[];
+    breakdown: string[];
+  } {
+    const q = String(req ?? '').toLowerCase();
+    const dimChecks: Array<[string, RegExp]> = [
+      ['delivery_center', /\bdelivery\s+center\b/],
+      ['business_unit', /\bbusiness\s+unit\b/],
+      ['department', /\bdepartment\b|\bdept\b/],
+      ['country', /\bcountry\b|\bcountries\b/],
+      ['region', /\bregion\b|\bregions\b/],
+      ['city', /\bcity\b|\bcities\b/],
+      ['client', /\bclient\b|\bclients\b|\bcustomer\b|\bcustomers\b/],
+      ['vendor', /\bvendor\b|\bvendors\b|\bsupplier\b|\bsuppliers\b/],
+      ['asset_type', /\basset\s+type\b/],
+      ['grade', /\bgrade\b/],
+      ['contract_type', /\bcontract\s+type\b/],
+      ['aging_bucket', /\baging\s+bucket\b|\bbucket\b/],
+      ['account', /\baccount\b|\baccounts\b|\bgl\b/],
+      ['month', /\bmonth\b|\bmonthly\b|\btrend\b|\bover\s+time\b/],
+      ['quarter', /\bquarter\b|\bquarterly\b/],
+      ['year', /\byear\b|\byearly\b|\bannual\b/],
+    ];
+    const primary = new Set<string>();
+    const breakdown = new Set<string>();
+    for (const [dim, rx] of dimChecks) {
+      if (!rx.test(q)) continue;
+      const breakdownLike =
+        new RegExp(
+          `\\b(?:breakdown|split|stack|stacked|segment|segmentation|color|colour|series)\\b[^.]*${rx.source}|${rx.source}[^.]*\\b(?:breakdown|split|stack|stacked|segment|segmentation|color|colour|series)\\b`,
+          'i',
+        ).test(q);
+      const rankLike =
+        dim !== 'month' &&
+        dim !== 'quarter' &&
+        dim !== 'year' &&
+        new RegExp(`\\b(?:rank|ranked|top|bottom)\\b[^.]*${rx.source}`, 'i').test(q);
+      const byLike = new RegExp(`\\bby\\s+${rx.source}`, 'i').test(q);
+      if (breakdownLike) breakdown.add(dim);
+      else if (rankLike || byLike) primary.add(dim);
+      else if (!this.isAdditiveSameChartRequest(req)) primary.add(dim);
+    }
+    return { primary: [...primary], breakdown: [...breakdown] };
+  }
+
+  private widgetChartAxes(widget: ActiveDashboard['widgets'][number]): {
+    dimension: string | null;
+    breakdown: string | null;
+  } {
+    const cfg = (widget.queryConfig as any) ?? {};
+    const spec = cfg.spec as ChartSpec | undefined;
+    return {
+      dimension: String(spec?.dimension ?? cfg.grouping ?? '').trim() || null,
+      breakdown: String(spec?.breakdown ?? cfg.breakdown ?? '').trim() || null,
+    };
+  }
+
+  private sameChartAxisConflict(
+    activeDashboard: ActiveDashboard,
+    req: string,
+  ): string | null {
+    if (!this.isSameChartFollowUp(req) || activeDashboard.widgets.length === 0) {
+      return null;
+    }
+    const requested = this.detectRequestedChartAxes(req);
+    if (requested.primary.length === 0 && requested.breakdown.length === 0) {
+      return null;
+    }
+
+    const timeDims = new Set(['month', 'quarter', 'year']);
+    const widgets = activeDashboard.widgets.map((widget) => ({
+      widget,
+      axes: this.widgetChartAxes(widget),
+    }));
+
+    const hasCompatibleTarget = widgets.some(({ axes }) => {
+      const currentPrimary = axes.dimension;
+      const currentBreakdown = axes.breakdown;
+      const primaryOk =
+        requested.primary.length === 0 ||
+        requested.primary.every(
+          (dim) => dim === currentPrimary || dim === currentBreakdown,
+        );
+      const breakdownOk =
+        requested.breakdown.length === 0 ||
+        requested.breakdown.every(
+          (dim) =>
+            dim === currentBreakdown ||
+            dim === currentPrimary ||
+            (!!currentPrimary && timeDims.has(currentPrimary)),
+        );
+      return primaryOk && breakdownOk;
+    });
+    if (hasCompatibleTarget) return null;
+
+    const first = widgets[0]?.axes;
+    const currentAxis = first?.dimension?.replace(/_/g, ' ') ?? 'current grouping';
+    const requestedAxis =
+      requested.primary[0]?.replace(/_/g, ' ') ??
+      requested.breakdown[0]?.replace(/_/g, ' ');
+    if (!requestedAxis) return null;
+    return `I can't keep this in the same chart because that would change the grouping from ${currentAxis} to ${requestedAxis}. I left the chart unchanged.`;
+  }
+
+  private chartAlreadyShowsCumulativeRevenue(
+    widget: ActiveDashboard['widgets'][number],
+  ): boolean {
+    const cfg = (widget.queryConfig as any) ?? {};
+    const spec = cfg.spec as ChartSpec | undefined;
+    const metric = String(cfg.metric ?? '').toLowerCase();
+    const title = String(widget.title ?? '').toLowerCase();
+    const sql = String(cfg.dynamicSql ?? '').toLowerCase();
+    const measures = (
+      spec?.measures?.length ? spec.measures : spec?.measure ? [spec.measure] : []
+    ).filter(Boolean);
+    if (measures.includes('revenue_ytd')) return true;
+    if (metric === 'revenue_cumulative') return true;
+    if (
+      /\brevenue\b/.test(title) &&
+      (/\bytd\b/.test(title) || /\bcumulative\b|\brunning\s+total\b/.test(title))
+    )
+      return true;
+    if (
+      /\brevenue\b/.test(title) &&
+      /rows\s+unbounded\s+preceding/.test(sql) &&
+      /\bvalue\b/.test(sql)
+    )
+      return true;
+    return false;
+  }
+
   private detectEbpoMeasureMentions(q: string): string[] {
     const text = String(q ?? '').toLowerCase();
     if (!text.trim()) return [];
@@ -15345,12 +16211,19 @@ export class AgentService {
       /\breceivables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/.test(text);
     const asksApToCost =
       /\bpayables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+(?:total\s+)?cost\b/.test(text);
+    const asksGeographicRevenue =
+      /\brevenue\b/.test(text) &&
+      /\bby\s+(?:countr(?:y|ies)|regions?|cit(?:y|ies)|delivery\s+centers?)\b/.test(text);
+    const asksCumulativeRevenue =
+      /\b(cumulative|running\s+total)\b/.test(text) &&
+      /\b(revenue|sales|income)\b/.test(text);
     const out: string[] = [];
     const add = (id: string) => {
       if (!out.includes(id)) out.push(id);
     };
     if (asksArToRevenue) add('ar_to_revenue_pct');
     if (asksApToCost) add('ap_to_cost_pct');
+    if (asksCumulativeRevenue) add('revenue_ytd');
     const checks: Array<[RegExp, string]> = [
       [/\byear[-\s]+over[-\s]+year\s+revenue\s+growth\b|\brevenue\s+yoy\s+growth\b|\byoy\s+revenue\s+growth\b/, 'revenue_yoy_pct'],
       [/\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/, 'gross_margin_pct'],
@@ -15424,6 +16297,10 @@ export class AgentService {
       if (candidates.some((candidate) => haystack.includes(normalize(candidate)))) add(id);
     }
     dropGrossMarginDollarWhenPercentOnly();
+    if (asksGeographicRevenue && out.includes('allocated_revenue')) {
+      const totalRevenueIndex = out.indexOf('total_revenue');
+      if (totalRevenueIndex !== -1) out.splice(totalRevenueIndex, 1);
+    }
     return out.filter(
       (id) =>
         !(asksArToRevenue && (id === 'ar_outstanding' || id === 'total_revenue')) &&
@@ -15447,6 +16324,12 @@ export class AgentService {
     };
 
     // Specific multi-measure requests first.
+    if (
+      /\bovertime\b[\s\S]{0,40}\b(?:as\s+(?:a\s+)?(?:percentage|percent|%|pct)\s+of|to|\/)\s*(?:total\s+)?payroll\b/.test(
+        text,
+      )
+    )
+      add('overtime_to_payroll_pct');
     if (/\binvesting\s+cash\s+flow\b|\binvesting\s+cf\b/.test(text)) add('investing_cf');
     if (/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/.test(text)) add('financing_cf');
     if (/\bdebits?\b|\bdebit\s+impact\b/.test(text)) add('total_debit');
@@ -15455,29 +16338,6 @@ export class AgentService {
 
     for (const mid of this.detectEbpoMeasureMentions(text)) add(mid);
     return out;
-  }
-
-  private ebpoValueExprForMeasure(measureId: string, column: string): string | null {
-    switch (measureId) {
-      case 'gross_margin_pct':
-      case 'revenue_yoy_pct':
-      case 'payroll_to_revenue_pct':
-      case 'collection_rate_pct':
-      case 'sla_compliance_pct':
-      case 'csat_pct':
-      case 'utilization_pct':
-      case 'dso_days':
-      case 'dpo_days':
-      case 'avg_aht_minutes':
-      case 'avg_monthly_salary':
-      case 'revenue_per_employee':
-      case 'cost_per_employee':
-        return `round(avg(${column}), 2)`;
-      case 'cash_balance':
-        return `round(max(${column}), 2)`;
-      default:
-        return `round(sum(${column}), 2)`;
-    }
   }
 
   private async compileEbpoMultiMeasureSql(
@@ -15501,17 +16361,10 @@ export class AgentService {
     );
     if (!compiled.ok) return null;
 
-    const view = compiled.view;
     const dimDef = EBPO_DIMENSIONS[dim];
     if (!dimDef) return null;
-    const supportsDim = (v: (typeof EBPO_VIEWS)[number]) =>
-      dimDef.isTime ? v.hasTime : v.dims.includes(dim);
-    const provider =
-      EBPO_VIEWS.find(
-        (v) => supportsDim(v) && measureIds.every((id) => id in v.measures),
-      ) ?? EBPO_VIEWS.find((v) => v.name === view);
+    const provider = resolveEbpoViewMulti(measureIds, dim);
     if (!provider) return null;
-    if (!measureIds.every((id) => id in provider.measures)) return null;
 
     const isTime = !!dimDef.isTime;
     const dimGroup =
@@ -15540,8 +16393,8 @@ export class AgentService {
     const quoteIdent = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
     const projections = measureIds
       .map((id) => {
-        const col = provider.measures[id];
-        const expr = col ? this.ebpoValueExprForMeasure(id, col) : null;
+        const measure = EBPO_MEASURES[id];
+        const expr = measure ? valueExprFor(measure, provider) : null;
         return expr ? `${expr} AS ${quoteIdent(id)}` : null;
       })
       .filter(Boolean);
@@ -15579,10 +16432,19 @@ export class AgentService {
     const hit = this.dataYearCountCache.get(key);
     if (hit && Date.now() - hit.at < 5 * 60_000) return hit.count;
     try {
-      const rows = await this.queryRows<{ y: number }>(
-        `SELECT uniqExact(toYear(date)) AS y FROM ${this.analyticsDb}.sample_gl_dump WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) LIMIT 1`,
-        { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
-      );
+      // Count distinct years from the dataset that actually backs this org, via the
+      // grounding profile. The EBPO org has NO sample_gl_dump — its data lives in the
+      // v_ebpo_* views (period_date) spanning 2022–2025; reading sample_gl_dump for
+      // EBPO returned 0/1 → a bogus "single year (2024)" and a wrong prior-year refusal.
+      const profile = await this.getDatasetProfile(scope);
+      const yearSql =
+        `SELECT uniqExact(toYear(${profile.yearSource.dateCol})) AS y ` +
+        `FROM ${this.analyticsDb}.${profile.yearSource.view} ` +
+        `WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) LIMIT 1`;
+      const rows = await this.queryRows<{ y: number }>(yearSql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
       const count = Number(rows[0]?.y ?? 1) || 1;
       this.dataYearCountCache.set(key, { count, at: Date.now() });
       return count;
@@ -15595,6 +16457,7 @@ export class AgentService {
     transform: FollowUpTransform,
     baseSql: string,
     numeric: string[],
+    opts: { chartType?: ChartType; valueIsChange?: boolean } = {},
   ): { sql: string; display?: DisplayHints; yAxisLabel?: string; type?: ChartType } | null {
     const id = (c: string) => '`' + c.replace(/`/g, '') + '`';
     const wrap = (proj: string) =>
@@ -15636,15 +16499,47 @@ export class AgentService {
           'name',
           ...numeric.map((c) => `round(${id(c)} / nullIf(${total}, 0) * 100, 1) AS ${id(c)}`),
         ].join(', ');
-        return { sql: wrap(proj), display: { normalized: true }, yAxisLabel: '% of total' };
+        return { sql: wrap(proj), display: { normalized: true, valueFormat: 'percent' }, yAxisLabel: '% of total' };
       }
       const v = id(numeric[0]!);
       const proj = `name, round(${v} / nullIf(sum(${v}) OVER (), 0) * 100, 1) AS ${v}`;
       return {
         sql: wrap(proj),
-        display: { normalized: true, labelMode: 'percent' },
+        display: { normalized: true, labelMode: 'percent', valueFormat: 'percent' },
         yAxisLabel: '% of total',
       };
+    }
+
+    if (transform.kind === 'cumulative') {
+      if (!numeric.includes('value')) return null;
+      // When the base chart's `value` is a period-over-period CHANGE (a `difference`
+      // transform — e.g. a month-over-month-changes waterfall), the running sum of
+      // `value` only recovers the period LEVEL, not cumulative revenue. Cumulative
+      // revenue is the running sum of those levels — a SECOND cumulation. ClickHouse
+      // forbids nesting window functions, so stage the level in its own CTE first.
+      let sql: string;
+      if (opts.valueIsChange) {
+        sql =
+          `WITH _base AS (\n${baseSql.replace(/;+\s*$/, '')}\n),\n` +
+          `_lvl AS (SELECT *, sum(value) OVER (ROWS UNBOUNDED PRECEDING) AS _level FROM _base)\n` +
+          `SELECT name, value, round(sum(_level) OVER (ROWS UNBOUNDED PRECEDING), 2) AS cumulative_value\n` +
+          `FROM _lvl\nLIMIT 1000`;
+      } else {
+        sql = wrap(
+          [
+            'name',
+            'value',
+            'round(sum(value) OVER (ROWS UNBOUNDED PRECEDING), 2) AS cumulative_value',
+          ].join(', '),
+        );
+      }
+      // A waterfall can't plot a second line series, so annotate each bar with the
+      // cumulative figure via labelSeries; other chart types plot it as a series.
+      const display: DisplayHints =
+        opts.chartType === 'waterfall'
+          ? { labelSeries: 'cumulative_value' }
+          : { showAllSeries: true };
+      return { sql, display };
     }
 
     if (transform.kind === 'reference_line') {
@@ -15697,7 +16592,7 @@ export class AgentService {
       const proj = ['name', ...numeric.map(pct)].join(', ');
       return {
         sql: wrap(proj),
-        display: { normalized: true, ...(numeric.length === 1 ? { labelMode: 'percent' } : {}) },
+        display: { normalized: true, valueFormat: 'percent', ...(numeric.length === 1 ? { labelMode: 'percent' } : {}) },
         yAxisLabel: '% change vs prior period',
       };
     }
@@ -15745,10 +16640,18 @@ export class AgentService {
     const needsPeriod =
       transform.kind === 'variance' || transform.kind === 'growth_pct';
     let noPriorPeriod = false;
+    let skippedAlreadyCumulative = false;
 
     const modify: DashboardEditPlan['modify'] = [];
     for (let i = 0; i < activeDashboard.widgets.length; i++) {
       const w = activeDashboard.widgets[i]!;
+      if (
+        transform.kind === 'cumulative' &&
+        this.chartAlreadyShowsCumulativeRevenue(w)
+      ) {
+        skippedAlreadyCumulative = true;
+        continue;
+      }
       const cfg = (w.queryConfig as any) ?? {};
       const sql =
         typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim() ? cfg.dynamicSql.trim() : null;
@@ -15774,7 +16677,17 @@ export class AgentService {
       );
       if (numeric.length === 0) continue;
 
-      const built = this.buildTransformSql(transform, sql, numeric);
+      // Does the base chart's `value` already represent a period-over-period change?
+      // (a `difference` transform — its running sum is a LEVEL, so a cumulative
+      // follow-up must cumulate twice to reach cumulative revenue.)
+      const baseTransforms = (cfg.spec as ChartSpec | undefined)?.transforms ?? [];
+      const valueIsChange = baseTransforms.some(
+        (t) => (typeof t === 'string' ? t : (t as any)?.kind) === 'difference',
+      );
+      const built = this.buildTransformSql(transform, sql, numeric, {
+        chartType,
+        valueIsChange,
+      });
       if (!built) continue;
       const verifyType = built.type ?? chartType;
       const check = await this.executeDynamicSqlChecked(built.sql, scope, {
@@ -15792,6 +16705,16 @@ export class AgentService {
       });
     }
     if (modify.length === 0) {
+      if (transform.kind === 'cumulative' && skippedAlreadyCumulative) {
+        return {
+          summary: '',
+          add: [],
+          remove_indices: [],
+          modify: [],
+          refusal:
+            'This chart already shows revenue YTD, which is cumulative revenue, so I left the chart unchanged.',
+        };
+      }
       if (needsPeriod && noPriorPeriod) {
         const what =
           transform.kind === 'growth_pct'
@@ -15808,6 +16731,7 @@ export class AgentService {
       return null;
     }
     const summaryByKind: Record<string, string> = {
+      cumulative: 'Added cumulative revenue as a second series in the same chart.',
       normalize: 'Normalized the chart to 100% (share of total).',
       reference_line: 'Added a company-wide average reference line.',
       moving_average: `Added a ${transform.kind === 'moving_average' ? transform.window : 3}-period moving average.`,
@@ -15922,6 +16846,89 @@ export class AgentService {
       const w = activeDashboard.widgets[i]!;
       const cfg = (w.queryConfig as any) ?? {};
       const spec = cfg.spec as ChartSpec | undefined;
+
+      if (
+        spec?.measure === 'allocated_revenue' &&
+        ['country', 'region', 'city', 'delivery_center'].includes(String(spec.dimension ?? '')) &&
+        /\bprior[\s-]*year\b|\bprevious[\s-]*year\b|\blast[\s-]*year\b/.test(q)
+      ) {
+        const yearCount = await this.dataYearCount(scope).catch(() => 0);
+        if (yearCount < 2) {
+          return {
+            summary: '',
+            add: [],
+            remove_indices: [],
+            modify: [],
+            refusal:
+              "I can't add last year's revenue — this dataset does not have an earlier year for a prior-year comparison, so I left the chart unchanged.",
+          };
+        }
+
+        const dim = String(spec.dimension);
+        const sql = `
+          WITH yearly AS (
+            SELECT
+              ${dim} AS name,
+              toYear(period_date) AS year,
+              round(sum(allocated_revenue_usd), 2) AS allocated_revenue
+            FROM ${this.analyticsDb}.v_ebpo_delivery_center_efficiency_monthly
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+              AND ${dim} != ''
+            GROUP BY ${dim}, toYear(period_date)
+          ),
+          max_year AS (
+            SELECT max(year) AS current_year
+            FROM yearly
+          )
+          SELECT
+            y.name AS name,
+            round(maxIf(y.allocated_revenue, y.year = m.current_year), 2) AS "Revenue (allocated)",
+            round(maxIf(y.allocated_revenue, y.year = m.current_year - 1), 2) AS "Revenue (Last Year)"
+          FROM yearly y
+          CROSS JOIN max_year m
+          GROUP BY y.name
+          HAVING "Revenue (allocated)" IS NOT NULL
+          ORDER BY "Revenue (allocated)" DESC
+          LIMIT 50
+        `;
+        if (await verify(sql, 'bar')) {
+          return {
+            summary: "Added last year's revenue as a second series in the same country chart.",
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'bar',
+                dynamicSql: sql.trim(),
+                spec: {
+                  ...spec,
+                  measures: ['allocated_revenue', 'revenue_ly'],
+                  chartType: 'bar',
+                },
+                display: {
+                  valueFormat: 'currency',
+                  series: [
+                    {
+                      key: 'Revenue (allocated)',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'currency',
+                    },
+                    {
+                      key: 'Revenue (Last Year)',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'currency',
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+        }
+      }
 
       if (
         spec?.measure === 'asset_intensity' &&
@@ -16043,8 +17050,10 @@ export class AgentService {
         const measures = (
           spec.measures?.length ? spec.measures : [spec.measure]
         ).filter((id): id is string => !!id);
+        const mentionedMeasures = this.detectEbpoMeasureMentions(q);
         const targetMeasure =
-          this.detectEbpoMeasureMentions(q).find((id) => measures.includes(id)) ??
+          mentionedMeasures.find((id) => measures.includes(id)) ??
+          mentionedMeasures[0] ??
           (measures.length === 1 ? measures[0] : undefined) ??
           (/\bpercent|percentage|%\b/.test(q)
             ? measures.find((id) => EBPO_MEASURES[id]?.format === 'percent')
@@ -16058,22 +17067,76 @@ export class AgentService {
           );
           if (compiled.ok) {
             const def = EBPO_MEASURES[targetMeasure]!;
-            const sourceKey = measures.length > 1 ? def.label : 'value';
             const referenceKey = `${def.label} Average`;
-            const ident = (value: string) => `"${value.replace(/"/g, '""')}"`;
-            const sql = `
-              WITH _base AS (
-                ${compiled.sql}
-              )
-              SELECT
-                _base.*,
-                round(avg(_base.${ident(sourceKey)}) OVER (), 2) AS ${ident(referenceKey)}
-              FROM _base
-              LIMIT 1000
-            `;
-            if (await verify(sql, w.chartType as ChartType)) {
+            let sql: string | null = null;
+            let referenceAxis: 'left' | 'right' = 'left';
+
+            if (!measures.includes(targetMeasure)) {
+              const targetSpec: ChartSpec = {
+                ...spec,
+                measure: targetMeasure,
+                measures: undefined,
+                chartType: 'bar',
+                transforms: (spec.transforms ?? []).filter((t) => {
+                  const kind = typeof t === 'string' ? t : t.kind;
+                  return kind !== 'reference_line' && kind !== 'peer_average';
+                }),
+              };
+              const targetCompiled = await compileEbpoSpec(targetSpec, this.analyticsDb, (sql) =>
+                this.queryRows<Record<string, unknown>>(sql, {
+                  tenantId: scope.tenantId,
+                  externalOrgIds: scope.externalOrgIds,
+                }),
+              );
+              if (targetCompiled.ok) {
+                sql = `
+                  WITH
+                    _base AS (
+                      ${compiled.sql}
+                    ),
+                    _target AS (
+                      ${targetCompiled.sql}
+                    )
+                  SELECT
+                    _base.*,
+                    (
+                      SELECT round(avg(value), 2)
+                      FROM _target
+                    ) AS "${referenceKey}"
+                  FROM _base
+                  LIMIT 1000
+                `;
+              } else if (mentionedMeasures.includes(targetMeasure)) {
+                return {
+                  summary: '',
+                  add: [],
+                  remove_indices: [],
+                  modify: [],
+                  refusal:
+                    targetCompiled.refusal ||
+                    `I can't add an average ${def.label.toLowerCase()} line because this dataset does not provide that measure at the chart's current grouping.`,
+                };
+              }
+            } else {
+              const sourceKey = measures.length > 1 ? def.label : 'value';
+              const ident = (value: string) => `"${value.replace(/"/g, '""')}"`;
+              sql = `
+                WITH _base AS (
+                  ${compiled.sql}
+                )
+                SELECT
+                  _base.*,
+                  round(avg(_base.${ident(sourceKey)}) OVER (), 2) AS ${ident(referenceKey)}
+                FROM _base
+                LIMIT 1000
+              `;
               const priorDisplay = (cfg.display ?? {}) as DisplayHints;
               const targetRole = priorDisplay.series?.find((s) => s.key === sourceKey);
+              referenceAxis = targetRole?.axis ?? 'left';
+            }
+
+            if (sql && (await verify(sql, w.chartType as ChartType))) {
+              const priorDisplay = (cfg.display ?? {}) as DisplayHints;
               return {
                 summary: `Added the average ${def.label.toLowerCase()} reference line.`,
                 add: [],
@@ -16087,7 +17150,7 @@ export class AgentService {
                     display: {
                       ...priorDisplay,
                       referenceSeries: referenceKey,
-                      referenceAxis: targetRole?.axis ?? 'left',
+                      referenceAxis,
                     },
                   },
                 ],
@@ -16136,6 +17199,7 @@ export class AgentService {
                 display: {
                   ...((cfg.display ?? {}) as DisplayHints),
                   labelSeries: labelKey,
+                  labelFormat: 'percent',
                   secondaryAxisFormat: 'percent',
                 },
               },
@@ -16205,6 +17269,7 @@ export class AgentService {
                       ...((cfg.display ?? {}) as DisplayHints),
                       valueFormat: EBPO_MEASURES[spec.measure]?.format ?? null,
                       labelSeries: labelKey,
+                      labelFormat: def.format,
                       ...(def.format === 'percent'
                         ? { secondaryAxisFormat: 'percent' }
                         : {}),
@@ -16274,6 +17339,7 @@ export class AgentService {
                       ...((cfg.display ?? {}) as DisplayHints),
                       valueFormat: EBPO_MEASURES[spec.measure]?.format ?? null,
                       labelSeries: labelKey,
+                      labelFormat: def.format,
                     },
                   },
                 ],
@@ -16404,9 +17470,121 @@ export class AgentService {
         }
       }
 
-      const extraMeasures = spec
-        ? this.detectEbpoAdditionalMeasures(q).filter((id) => id !== spec.measure)
-        : [];
+      if (
+        spec?.measure === 'asset_cost' &&
+        spec.dimension === 'asset_type' &&
+        /\bnet\s+book\s+value\b/.test(q) &&
+        /\bshare\b|\bpercent|percentage|%\b/.test(q)
+      ) {
+        const sql = `
+          WITH _base AS (
+            SELECT
+              asset_type AS name,
+              round(sum(asset_cost_usd), 2) AS asset_cost,
+              round(sum(net_book_value_usd), 2) AS net_book_value
+            FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+              AND asset_type != ''
+            GROUP BY asset_type
+          )
+          SELECT
+            name,
+            round(asset_cost / nullIf(sum(asset_cost) OVER (), 0) * 100, 1) AS "Asset Cost",
+            round(net_book_value / nullIf(sum(net_book_value) OVER (), 0) * 100, 1) AS "Net Book Value"
+          FROM _base
+          ORDER BY "Asset Cost" DESC
+          LIMIT 50
+        `;
+        if (await verify(sql, 'combo')) {
+          return {
+            summary: 'Added net book value share by asset type on a percentage basis.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                yAxisLabel: '% share',
+                display: {
+                  valueFormat: 'percent',
+                  valueDecimals: 1,
+                  series: [
+                    { key: 'Asset Cost', role: 'bar', axis: 'left', format: 'percent', decimals: 1 },
+                    {
+                      key: 'Net Book Value',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'percent',
+                      decimals: 1,
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+        }
+      }
+
+      if (
+        String(w.chartType ?? '').toLowerCase() === 'treemap' &&
+        /\bcolou?r\b|\bshade\b/.test(q) &&
+        /\bdepreciation\b/.test(q) &&
+        /\bpercent(?:age)?\b|\bpct\b|%/.test(q) &&
+        (spec?.measure === 'net_book_value' || /\bnet\s+book\s+value\b/.test(String(w.title ?? '').toLowerCase()))
+      ) {
+        const sql = `
+          SELECT
+            concat(delivery_center, ' / ', asset_type) AS name,
+            round(sum(net_book_value_usd), 2) AS value,
+            round(sum(accumulated_depreciation_usd) / nullIf(sum(asset_cost_usd), 0) * 100, 1) AS depreciation_pct
+          FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+            AND delivery_center != ''
+            AND asset_type != ''
+          GROUP BY delivery_center, asset_type
+          ORDER BY value DESC
+          LIMIT 50
+        `;
+        if (await verify(sql, 'treemap')) {
+          return {
+            summary:
+              'Updated the treemap to size by net book value and color by depreciation percentage.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'treemap',
+                dynamicSql: sql.trim(),
+                display: {
+                  ...((cfg.display ?? {}) as DisplayHints),
+                  valueFormat: 'currency',
+                  colorMetric: 'depreciation_pct',
+                  colorMetricLabel: 'Depreciation %',
+                  colorMetricFormat: 'percent',
+                },
+              },
+            ],
+          };
+        }
+      }
+
+      const comboSpec = spec ? this.buildEbpoComboEditSpec(spec, q) : null;
+      const currentMeasures = new Set(
+        (spec?.measures?.length ? spec.measures : spec?.measure ? [spec.measure] : []).filter(
+          Boolean,
+        ) as string[],
+      );
+      const extraMeasures = comboSpec
+        ? (comboSpec.measures ?? []).filter(
+            (id): id is string => !!id && !currentMeasures.has(id),
+          )
+        : spec
+          ? this.detectEbpoAdditionalMeasures(q).filter((id) => id !== spec.measure)
+          : [];
       const needsDerivedEbpoFormula =
         (spec?.measure === 'free_cash_flow' &&
           spec.dimension === 'month' &&
@@ -16805,7 +17983,7 @@ export class AgentService {
             SELECT
               ${dim} AS name,
               round(sum(employee_count), 0) AS employee_count,
-              round(avg(avg_monthly_salary_usd), 2) AS avg_monthly_salary
+              round(sum(total_monthly_salary_usd) / nullIf(sum(employee_count), 0), 2) AS avg_monthly_salary
             FROM ${this.analyticsDb}.v_ebpo_employee_headcount
             WHERE tenant_id = {tenantId:String}
               AND org_id IN ({externalOrgIds:Array(String)})
@@ -16857,7 +18035,7 @@ export class AgentService {
             headcount_rollup AS (
               SELECT
                 ${dim} AS name,
-                round(avg(avg_monthly_salary_usd), 2) AS avg_monthly_salary
+                round(sum(total_monthly_salary_usd) / nullIf(sum(employee_count), 0), 2) AS avg_monthly_salary
               FROM ${this.analyticsDb}.v_ebpo_employee_headcount
               WHERE tenant_id = {tenantId:String}
                 AND org_id IN ({externalOrgIds:Array(String)})
@@ -16919,6 +18097,94 @@ export class AgentService {
       }
 
       if (
+        spec?.measure === 'total_overtime' &&
+        spec.dimension &&
+        /\bovertime\b/.test(q) &&
+        /\bpercent(?:age)?\b|\bpct\b|%/.test(q) &&
+        /\bpayroll\b/.test(q)
+      ) {
+        const dim =
+          spec.dimension === 'country'
+            ? 'country'
+            : spec.dimension === 'department'
+              ? 'department'
+              : spec.dimension === 'month'
+                ? 'period_date'
+                : null;
+        if (dim) {
+          const sql =
+            dim === 'period_date'
+              ? `
+                SELECT
+                  formatDateTime(period_date, '%b %Y') AS name,
+                  round(sum(total_overtime_usd), 2) AS total_overtime,
+                  round(
+                    sum(total_overtime_usd)
+                    / nullIf(sum(total_payroll_usd), 0) * 100,
+                    2
+                  ) AS overtime_to_payroll_pct
+                FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
+                WHERE tenant_id = {tenantId:String}
+                  AND org_id IN ({externalOrgIds:Array(String)})
+                GROUP BY period_date
+                ORDER BY period_date ASC
+                LIMIT 100
+              `
+              : `
+                SELECT
+                  ${dim} AS name,
+                  round(sum(total_overtime_usd), 2) AS total_overtime,
+                  round(
+                    sum(total_overtime_usd)
+                    / nullIf(sum(total_payroll_usd), 0) * 100,
+                    2
+                  ) AS overtime_to_payroll_pct
+                FROM ${this.analyticsDb}.v_ebpo_payroll_monthly
+                WHERE tenant_id = {tenantId:String}
+                  AND org_id IN ({externalOrgIds:Array(String)})
+                  AND ${dim} != ''
+                GROUP BY ${dim}
+                ORDER BY total_overtime DESC
+                LIMIT 50
+              `;
+          if (await verify(sql, 'combo')) {
+            return {
+              summary: 'Added overtime as a percentage of total payroll.',
+              add: [],
+              remove_indices: [],
+              modify: [
+                {
+                  index: i,
+                  type: 'combo',
+                  dynamicSql: sql.trim(),
+                  spec: {
+                    measure: 'total_overtime',
+                    measures: ['total_overtime', 'overtime_to_payroll_pct'],
+                    dimension: spec.dimension,
+                    chartType: 'combo',
+                  },
+                  display: {
+                    valueFormat: 'currency',
+                    secondaryAxisFormat: 'percent',
+                    secondaryLabel: 'Overtime / payroll',
+                    series: [
+                      { key: 'total_overtime', role: 'bar', axis: 'left', format: 'currency' },
+                      {
+                        key: 'overtime_to_payroll_pct',
+                        role: 'line',
+                        axis: 'right',
+                        format: 'percent',
+                      },
+                    ],
+                  },
+                },
+              ],
+            };
+          }
+        }
+      }
+
+      if (
         spec?.measure === 'cash_balance' &&
         spec.dimension === 'month' &&
         /\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(q)
@@ -16942,45 +18208,6 @@ export class AgentService {
             add: [],
             remove_indices: [],
             modify: [{ index: i, type: 'combo', dynamicSql: sql.trim() }],
-          };
-        }
-      }
-
-      if (
-        spec?.measure === 'asset_cost' &&
-        spec.dimension === 'asset_type' &&
-        /\bnet\s+book\s+value\b/.test(q) &&
-        /\bpercent|percentage|%\b/.test(q)
-      ) {
-        const sql = `
-          SELECT
-            asset_type AS name,
-            round(sum(asset_cost_usd), 2) AS asset_cost,
-            round(sum(accumulated_depreciation_usd), 2) AS accumulated_depreciation,
-            round(sum(net_book_value_usd), 2) AS net_book_value,
-            round(sum(net_book_value_usd) / nullIf(sum(asset_cost_usd), 0) * 100, 2) AS net_book_value_pct
-          FROM ${this.analyticsDb}.v_ebpo_fixed_assets_by_center
-          WHERE tenant_id = {tenantId:String}
-            AND org_id IN ({externalOrgIds:Array(String)})
-            AND asset_type != ''
-          GROUP BY asset_type
-          ORDER BY asset_cost DESC
-          LIMIT 50
-        `;
-        if (await verify(sql, 'combo')) {
-          return {
-            summary: 'Added net book value percentage of asset cost as a line.',
-            add: [],
-            remove_indices: [],
-            modify: [
-              {
-                index: i,
-                type: 'combo',
-                dynamicSql: sql.trim(),
-                yAxisLabel: '% of asset cost',
-                display: { secondaryAxisFormat: 'percent' },
-              },
-            ],
           };
         }
       }
@@ -17393,6 +18620,7 @@ export class AgentService {
     const q = norm(req);
 
     const additive =
+      this.isAdditiveSameChartRequest(req) ||
       /\b(add|also|include|compare|comparison|alongside|another|plus|overlay|versus|vs)\b/.test(q) ||
       /\bsplit\b.*\binto\b/.test(q) ||
       /\bas (?:a|another) (?:line|column|bar|series)\b/.test(q) ||
@@ -17410,10 +18638,19 @@ export class AgentService {
 
     const mentioned = this.detectEbpoMeasureMentions(req).filter((mid) => !current.includes(mid));
     if (
+      current.includes('total_revenue') &&
+      /\byear[\s-]*over[\s-]*year\b|\byoy\b/.test(q) &&
+      /\bgrowth\b|\bpercent(?:age)?\b|%/.test(q) &&
+      !mentioned.includes('revenue_yoy_pct')
+    ) {
+      mentioned.push('revenue_yoy_pct');
+    }
+    if (
       /\b(?:% contribution|contribution|normali[sz]e|100 %|moving average|growth|reference line|average line|data label|labels|highlight|cumulative)\b/.test(
         q,
       ) &&
-      !mentioned.includes('revenue_yoy_pct')
+      !mentioned.includes('revenue_yoy_pct') &&
+      !mentioned.includes('revenue_ytd')
     )
       return null;
 
@@ -17455,10 +18692,16 @@ export class AgentService {
       /\bpayables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+(?:total\s+)?cost\b/.test(
         rawReq,
       );
+    const asksOvertimeToPayroll =
+      /\bovertime\b\s+(?:as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+(?:total\s+)?payroll|to\s+(?:total\s+)?payroll|\/\s*(?:total\s+)?payroll)\b/.test(
+        rawReq,
+      );
+    if (asksOvertimeToPayroll) matched.push('overtime_to_payroll_pct');
     const exactMatched = matched.filter(
       (id) =>
         !(asksArToRevenue && (id === 'ar_outstanding' || id === 'total_revenue')) &&
-        !(asksApToCost && (id === 'ap_outstanding' || id === 'total_cost')),
+        !(asksApToCost && (id === 'ap_outstanding' || id === 'total_cost')) &&
+        !(asksOvertimeToPayroll && id === 'total_payroll'),
     );
     const asksGrossMarginPercentOnly =
       /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(rawReq) &&
@@ -17481,6 +18724,7 @@ export class AgentService {
       benefits_pct_base_salary: ['total_benefits', 'total_base_salary'],
       ar_to_revenue_pct: ['ar_outstanding', 'total_revenue'],
       ap_to_cost_pct: ['ap_outstanding', 'total_cost'],
+      overtime_to_payroll_pct: ['total_payroll'],
       payment_rate_pct: ['paid_amount', 'invoice_amount'],
       cost_per_employee: ['total_payroll', 'employee_count'],
       depreciation_pct_asset_cost: ['accumulated_depreciation', 'asset_cost'],
@@ -17498,7 +18742,21 @@ export class AgentService {
       }
       return true;
     });
-    if (filteredMatched.length === 0) return null;
+    if (filteredMatched.length === 0) {
+      // No NEW measure to add. If the chart ALREADY plots multiple measures and the
+      // user is just asking to (re)display them together ("show operating, investing
+      // and financing together"), keep the existing correct multi-measure chart by
+      // recompiling the same spec — don't return null and let the free-SQL editor
+      // reshape signed data into a sign-hiding pie. (Transform/%/highlight asks already
+      // returned null above, so this only catches redundant "show … together".)
+      if (
+        current.length >= 2 &&
+        /\b(show|display|see|view|together|all|both)\b/.test(q)
+      ) {
+        return { ...currentSpec };
+      }
+      return null;
+    }
 
     const measures = Array.from(new Set([...current, ...filteredMatched]));
     if (measures.length < 2) return null;
@@ -17544,7 +18802,9 @@ export class AgentService {
           .filter((m) => !prior.has(m))
           .map((m) => EBPO_MEASURES[m!]?.label ?? m)
           .join(', ');
-        summary = `Added ${added} as a comparison series.`;
+        summary = added
+          ? `Added ${added} as a comparison series.`
+          : 'Showing the requested measures together.';
       }
       // Per-series roles drive the web combo renderer: N clustered bars + M lines on
       // correct axes (not the legacy "first=bar, rest=%-line"). Explicit phrasing in
@@ -17590,6 +18850,90 @@ export class AgentService {
       `[SpecEdit:EBPO-combo] ${modify.length} chart(s) for: "${editRequest.slice(0, 50)}"`,
     );
     return { summary: summary || 'Added a comparison series.', add: [], remove_indices: [], modify };
+  }
+
+  // "rank clients by receivables" / "order vendors by spend" / "top regions by revenue"
+  // is a RE-GROUP: switch the chart to <measure> by <entity>, sorted descending. The
+  // free-SQL editor handles this inconsistently (sometimes adds a 2nd monthly series
+  // instead of re-grouping), so build it deterministically from the catalog. General —
+  // any entity dimension + any catalog measure, no per-question strings.
+  private async buildEbpoRegroupEditPlan(
+    targets: Array<{ w: any; index: number; spec?: ChartSpec }>,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = ` ${editRequest.toLowerCase()} `;
+    // Must read as a ranking/re-grouping ask, not an "add a series" ask.
+    if (!/\b(rank|ranked|ranking|order|sort|top)\b/.test(q)) return null;
+    if (/\badd\b|\bas (?:a |another )?(?:line|series|bar|column)\b/.test(q)) return null;
+    // Entity dimension named in the request (the thing to rank).
+    const entityMap: Array<[RegExp, string]> = [
+      [/\bclients?\b/, 'client'],
+      [/\bvendors?\b/, 'vendor'],
+      [/\bbusiness\s+units?\b/, 'business_unit'],
+      [/\bindustr(?:y|ies)\b/, 'industry'],
+      [/\bdepartments?\b/, 'department'],
+      [/\bcountr(?:y|ies)\b/, 'country'],
+      [/\bregions?\b/, 'region'],
+      [/\bdelivery\s+cent(?:er|re)s?\b/, 'delivery_center'],
+      [/\basset\s+types?\b/, 'asset_type'],
+      [/\baccounts?\b/, 'account'],
+    ];
+    const entity = entityMap.find(([re]) => re.test(q))?.[1];
+    if (!entity) return null;
+    const measure = this.detectEbpoMeasureMentions(editRequest)[0];
+    if (!measure) return null;
+    const runRows = (sql: string) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
+    for (const t of targets) {
+      if (!t.spec) continue;
+      const newSpec: ChartSpec = {
+        ...t.spec,
+        measure,
+        measures: undefined,
+        dimension: entity as ChartSpec['dimension'],
+        breakdown: undefined,
+        sort: 'value_desc',
+        // A ranking reads best as a bar unless the current chart is already categorical.
+        chartType: 'bar',
+      };
+      const compiled = await compileEbpoSpec(newSpec, this.analyticsDb, runRows);
+      if (!compiled.ok) continue;
+      const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+        chartType: 'bar',
+      }).catch(() => null);
+      if (!check || check.error || check.rows.length === 0) continue;
+      if (this.detectBadChartShape(check.rows, 'bar')) continue;
+      const title = this.ebpoSpecTitle(newSpec);
+      const mLabel = EBPO_MEASURES[measure]?.label ?? measure;
+      const dLabel = EBPO_DIMENSIONS[entity]?.label ?? entity;
+      this.logger.log(
+        `[SpecEdit:EBPO-regroup] ${measure} by ${entity} for: "${editRequest.slice(0, 50)}"`,
+      );
+      return {
+        summary: `Ranked ${dLabel.toLowerCase()} by ${mLabel.toLowerCase()}.`,
+        add: [],
+        remove_indices: [],
+        modify: [
+          {
+            index: t.index,
+            type: 'bar' as ChartType,
+            title,
+            dynamicSql: compiled.sql,
+            spec: newSpec,
+            display: {
+              valueFormat: (compiled as { outputPercent?: boolean }).outputPercent
+                ? 'percent'
+                : compiled.measure.format,
+            },
+          },
+        ],
+      };
+    }
+    return null;
   }
 
   // Highlighting the largest balance mover is a presentation edit on the existing
@@ -17672,6 +19016,257 @@ export class AgentService {
     };
   }
 
+  /**
+   * Deterministic "highlight <X>" follow-up for bar/line/area/scatter/combo charts:
+   * emphasize specific points/categories by their `name` (display.highlightNames),
+   * preserving every existing series. Computes WHICH names to highlight from the
+   * chart's live data — "the largest client" (ranked, not just the top point in the
+   * window), "negative-margin months", "highest/lowest", or a named entity. When
+   * nothing matches (e.g. no month has a negative margin), returns an HONEST refusal
+   * that says so and leaves the chart unchanged — never the old "flagged them" claim
+   * that highlighted nothing. Returns null to defer when this isn't a highlight edit.
+   */
+  private async buildNamedHighlightEditPlan(
+    targets: Array<{ w: any; index: number; spec?: ChartSpec }>,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = (editRequest ?? '').toLowerCase();
+    if (!/\b(highlight|flag|mark|emphasi[sz]e|call\s+out|show\s+which)\b/.test(q))
+      return null;
+    // Matrix/heatmap highlighting is handled by detectMatrixDisplayEdit.
+    const highlightTypes = ['bar', 'line', 'area', 'scatter', 'bubble', 'combo', 'stacked_bar', 'stacked_area'];
+    const usable = targets.filter((t) =>
+      highlightTypes.includes(String(t.w?.chartType ?? '').toLowerCase()),
+    );
+    if (usable.length === 0) return null;
+
+    const wantsNegMargin =
+      /\bnegative\b/.test(q) && /\bmargin|profit\b/.test(q);
+    const wantsHighest = /\b(highest|largest|biggest|top|max(?:imum)?|peak|best)\b/.test(q);
+    const wantsLowest = /\b(lowest|smallest|min(?:imum)?|bottom|worst|least)\b/.test(q);
+    const aboutClient = /\bclients?\b/.test(q) || /\bcustomers?\b/.test(q);
+
+    const modify: DashboardEditPlan['modify'] = [];
+    let summary = '';
+    let emptyReason = '';
+
+    for (const t of usable) {
+      const sql = String((t.w.queryConfig as any)?.dynamicSql ?? '').trim();
+      if (!sql) continue;
+      const chartType = t.w.chartType as ChartType;
+      const probe = await this.executeDynamicSqlChecked(sql, scope, { chartType }).catch(
+        () => null,
+      );
+      if (!probe || probe.error || probe.rows.length === 0) continue;
+      const rows = probe.rows as Record<string, unknown>[];
+      const cols = Object.keys(rows[0] ?? {});
+      if (!cols.includes('name')) continue;
+      const names = rows.map((r) => String((r as any).name ?? ''));
+      const numAt = (r: Record<string, unknown>, c: string) => {
+        const v = Number((r as any)[c]);
+        return Number.isFinite(v) ? v : null;
+      };
+      const findCol = (re: RegExp) => cols.find((c) => re.test(c.toLowerCase())) ?? null;
+
+      // Primary numeric column (value, else first numeric / x|y) for ranking.
+      const primaryCol =
+        findCol(/^value$/) ??
+        cols.find((c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null)) ??
+        null;
+
+      let matched: string[] = [];
+      const topNMatch = q.match(/\btop\s+(\d+)\b/);
+      if (topNMatch && primaryCol) {
+        // "highlight the top N <entities>" → the N highest by the primary value.
+        const n = Math.max(1, parseInt(topNMatch[1]!, 10));
+        matched = rows
+          .map((r) => ({ name: String((r as any).name ?? ''), v: numAt(r, primaryCol) ?? -Infinity }))
+          .sort((a, b) => b.v - a.v)
+          .slice(0, n)
+          .map((p) => p.name);
+      } else if (wantsNegMargin) {
+        // Use an explicit margin column if present; else revenue − cost per row.
+        const marginCol = findCol(/margin|profit/);
+        const revCol = findCol(/revenue|sales/);
+        const costCol = findCol(/cost|expense/);
+        matched = rows
+          .filter((r) => {
+            if (marginCol) return (numAt(r, marginCol) ?? 0) < 0;
+            if (revCol && costCol)
+              return (numAt(r, revCol) ?? 0) - (numAt(r, costCol) ?? 0) < 0;
+            return false;
+          })
+          .map((r) => String((r as any).name ?? ''));
+        if (matched.length === 0)
+          emptyReason =
+            'every month in this period has a positive gross margin, so there are no negative-margin months to highlight';
+      } else if (aboutClient && (wantsHighest || /\bthe\s+(?:largest|biggest|top)\b/.test(q))) {
+        // "the largest client" is the dataset's #1 client by revenue (ranked) — not
+        // merely the top point in this window. Resolve via the canonical ranking.
+        const ranked = await this.listTopClientsForScope(scope, 50).catch(() => []);
+        const target = ranked[0];
+        if (target && names.includes(target)) matched = [target];
+        else if (target)
+          emptyReason = `the largest client (${target}) isn't present in this chart`;
+      } else if (wantsHighest || wantsLowest) {
+        // Highest/lowest by the primary numeric column (value, else first numeric / x/y).
+        const valCol =
+          findCol(/^value$/) ??
+          cols.find((c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null)) ??
+          null;
+        if (valCol) {
+          const pairs = rows
+            .map((r) => ({ name: String((r as any).name ?? ''), v: numAt(r, valCol) }))
+            .filter((p) => p.v !== null) as { name: string; v: number }[];
+          if (pairs.length) {
+            if (wantsHighest)
+              matched.push(pairs.reduce((a, b) => (b.v > a.v ? b : a)).name);
+            if (wantsLowest)
+              matched.push(pairs.reduce((a, b) => (b.v < a.v ? b : a)).name);
+          }
+        }
+      } else {
+        // Named entity: any data `name` literally mentioned in the request.
+        matched = names.filter((n) => n && q.includes(n.toLowerCase()));
+      }
+
+      matched = Array.from(new Set(matched.filter(Boolean)));
+      if (matched.length === 0) continue;
+
+      const priorDisplay = ((t.w.queryConfig as any)?.display ?? {}) as DisplayHints;
+      modify.push({
+        index: t.index,
+        dynamicSql: sql,
+        display: { ...priorDisplay, highlightNames: matched },
+      } as any);
+      if (!summary)
+        summary = `Highlighted ${matched.slice(0, 4).join(', ')}${matched.length > 4 ? ` and ${matched.length - 4} more` : ''} in the chart.`;
+    }
+
+    if (modify.length === 0) {
+      // Honest: nothing matched. Prefer the specific reason (no negative margins) over
+      // silently claiming success.
+      if (emptyReason)
+        return {
+          summary: '',
+          add: [],
+          remove_indices: [],
+          modify: [],
+          refusal: `I checked, but ${emptyReason} — I left the chart unchanged.`,
+        };
+      return null;
+    }
+    return { summary, add: [], remove_indices: [], modify };
+  }
+
+  /**
+   * "show cumulative expenses" (or any cumulative <other measure>) on an existing
+   * cumulative chart → ADD that measure as a SECOND cumulative series, instead of the
+   * old guard refusing ("already shows cumulative revenue") or re-cumulating the same
+   * series. Rebuilds the spec with measures=[existing, new] + a cumulative transform so
+   * the compiler cumsums BOTH over the same window/filters. Returns null to defer.
+   */
+  private async buildEbpoCumulativeAddSeriesPlan(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = (editRequest ?? '').toLowerCase();
+    if (!/\bcumulative\b|\brunning\s+total\b/.test(q)) return null;
+    if (/\bytd\b|year[\s-]?to[\s-]?date/.test(q)) return null;
+    const newMeasure = /\b(expense|expenses|cost|costs|spend)\b/.test(q)
+      ? 'total_cost'
+      : /\bpayroll\b/.test(q)
+        ? 'total_payroll'
+        : /\bgross\s+(?:profit|margin)\b/.test(q)
+          ? 'gross_margin'
+          : /\brevenue|sales\b/.test(q)
+            ? 'total_revenue'
+            : null;
+    if (!newMeasure) return null;
+    const baseOf = (m: string): string =>
+      m === 'revenue_ytd' || m === 'revenue_yoy_pct' || m === 'revenue_ly'
+        ? 'total_revenue'
+        : m;
+    const runRows = (sql: string) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
+    for (let i = 0; i < activeDashboard.widgets.length; i++) {
+      const w = activeDashboard.widgets[i]!;
+      const cfg = (w.queryConfig as any) ?? {};
+      const sqlText = String(cfg.dynamicSql ?? '');
+      const spec = cfg.spec as ChartSpec | undefined;
+      // The base chart must be cumulative (its SQL is a running total, or its spec/title
+      // says so) — otherwise "show cumulative X" isn't an ADD-second-series request.
+      const baseIsCumulative =
+        (spec?.transforms ?? []).some(
+          (tr) => (typeof tr === 'string' ? tr : (tr as any)?.kind) === 'cumulative',
+        ) ||
+        /ROWS UNBOUNDED PRECEDING/i.test(sqlText) ||
+        /cumulative/i.test(String(w.title ?? ''));
+      if (!baseIsCumulative) continue;
+
+      // Existing base measure: from the spec if present, else inferred from the SQL.
+      const existingBase = spec
+        ? baseOf(String((spec.measures?.length ? spec.measures[0] : spec.measure) ?? 'total_revenue'))
+        : /total_cost_usd/.test(sqlText) && !/total_revenue_usd/.test(sqlText)
+          ? 'total_cost'
+          : 'total_revenue';
+      if (existingBase === newMeasure) continue;
+      // Preserve the window + client filter even when there's no spec, by reading them
+      // back off the existing SQL.
+      const recentMonths =
+        spec?.recentMonths ??
+        (sqlText.match(/addMonths\([^,]+,\s*-\s*(\d+)\s*\)/)?.[1]
+          ? Number(sqlText.match(/addMonths\([^,]+,\s*-\s*(\d+)\s*\)/)![1]) + 1
+          : null);
+      const clientMatch = sqlText.match(/client_name\s+IN\s+\(([^)]+)\)/i);
+      const clientValues = clientMatch
+        ? clientMatch[1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)
+        : [];
+      const filters = spec?.filters?.length
+        ? spec.filters
+        : clientValues.length
+          ? [{ dimension: 'client', op: 'in' as const, values: clientValues }]
+          : [];
+      const newSpec: ChartSpec = {
+        measure: existingBase,
+        measures: [existingBase, newMeasure],
+        dimension: 'month',
+        chartType: (spec?.chartType ?? (w.chartType as string) ?? 'area') as ChartType,
+        filters,
+        recentMonths,
+        transforms: [{ kind: 'cumulative' }],
+      };
+      const compiled = await compileEbpoSpec(newSpec, this.analyticsDb, runRows);
+      if (!compiled.ok) continue;
+      const chartType = (newSpec.chartType ?? 'area') as ChartType;
+      const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+        chartType,
+      }).catch(() => null);
+      if (!check || check.error || check.rows.length === 0) continue;
+      const label = EBPO_MEASURES[newMeasure]?.label ?? newMeasure;
+      return {
+        summary: `Added cumulative ${label} as a second series.`,
+        add: [],
+        remove_indices: [],
+        modify: [
+          {
+            index: i,
+            type: chartType,
+            dynamicSql: compiled.sql,
+            spec: newSpec,
+            display: { valueFormat: 'currency' },
+          } as any,
+        ],
+      };
+    }
+    return null;
+  }
+
   private async generateSpecEditPlan(
     activeDashboard: ActiveDashboard,
     editRequest: string,
@@ -17698,6 +19293,14 @@ export class AgentService {
           scope,
         );
         if (movementHighlight) return movementHighlight;
+        const namedHighlight = await this.buildNamedHighlightEditPlan(
+          targets,
+          editRequest,
+          scope,
+        );
+        if (namedHighlight) return namedHighlight;
+        const regroupPlan = await this.buildEbpoRegroupEditPlan(targets, editRequest, scope);
+        if (regroupPlan) return regroupPlan;
         const comboPlan = await this.buildEbpoComboEditPlan(targets, editRequest, scope);
         if (comboPlan) return comboPlan;
       }
@@ -17781,6 +19384,18 @@ export class AgentService {
         const newSpec = parsed?.spec as ChartSpec | undefined;
         if (!newSpec || typeof newSpec !== 'object') continue;
         if (!this.specCanModelChart(newSpec)) continue;
+        // "Highlight the highest/largest …" or "highlight negative periods" is a
+        // PRESENTATION intent (emphasize datapoints), NOT a structural change. The LLM
+        // tends to read "highest" as topN:1 (collapsing to one bar) or "highlight
+        // negative" as adding an average reference line. When a highlight is detected,
+        // keep the original topN and drop any transforms the model bolted on, so the
+        // edit is purely the highlight overlay.
+        if (matrixHints?.highlightExtremes || matrixHints?.highlightNegative) {
+          (newSpec as { topN?: number | null }).topN =
+            (t.spec as { topN?: number | null })?.topN ?? null;
+          (newSpec as { transforms?: unknown }).transforms =
+            (t.spec as { transforms?: unknown })?.transforms ?? [];
+        }
 
         // Did the spec actually change? If the model echoed the same spec with no
         // presentation delta either, it couldn't model the edit → defer to legacy
@@ -17797,7 +19412,7 @@ export class AgentService {
           ? await compileEbpoSpec(newSpec, this.analyticsDb, editRunRows)
           : await compileSpec(newSpec, this.analyticsDb, editRunRows);
         if (!compiled.ok) continue;
-        const nextType = (newSpec.chartType ?? t.w.chartType) as ChartType;
+        let nextType = (newSpec.chartType ?? t.w.chartType) as ChartType;
         // NO-OP GUARD: if the recompiled SQL is identical to what's already on the
         // chart and there's no type/label change, the "edit" changed nothing —
         // defer to legacy instead of claiming success ("Refreshed the chart").
@@ -17809,35 +19424,96 @@ export class AgentService {
           chartType: nextType,
         }).catch(() => null);
         if (!check || check.error || check.rows.length === 0) continue;
+        // Pie/donut can't show negatives → coerce to bar (same general rule as the
+        // create paths) so an edit like "show them as a pie" on signed cash-flow
+        // components never renders an impossible/messy pie.
+        if (nextType === 'pie' || nextType === 'donut') {
+          const hasNegative = check.rows.some((row) =>
+            Object.entries(row).some(
+              ([k, v]) =>
+                k !== 'name' && k !== '__ord' && typeof v === 'number' && (v as number) < 0,
+            ),
+          );
+          if (hasNegative) {
+            nextType = 'bar' as ChartType;
+            newSpec.chartType = 'bar';
+          }
+        }
         if (this.detectBadChartShape(check.rows, nextType)) continue;
 
-        const ct = String(nextType).toLowerCase();
-        const baseDisplay: DisplayHints | undefined =
-          labelMode && (ct === 'pie' || ct === 'donut')
+      const ct = String(nextType).toLowerCase();
+      const barFamilyCt = [
+        'bar', 'column', 'horizontal_bar', 'waterfall', 'line', 'area',
+        'stacked_bar', 'pareto', 'pie', 'donut', 'treemap',
+      ].includes(ct);
+      const baseDisplay: DisplayHints | undefined =
+          labelMode && (ct === 'pie' || ct === 'donut' || ct === 'treemap')
             ? { labelMode }
             : matrixHints && (ct === 'matrix' || ct === 'heatmap')
               ? matrixHints
-              : undefined;
+              // "highlight the largest/smallest" or "highlight negative periods" on a
+              // bar/waterfall/line: carry just that hint so the renderer rings the
+              // extreme bar / marks negatives (the rest of the matrix hints are matrix-only).
+              : (matrixHints?.highlightExtremes || matrixHints?.highlightNegative) && barFamilyCt
+                ? {
+                    ...(matrixHints.highlightExtremes
+                      ? { highlightExtremes: matrixHints.highlightExtremes }
+                      : {}),
+                    ...(matrixHints.highlightNegative ? { highlightNegative: true } : {}),
+                  }
+                : undefined;
         // EBPO: carry the (possibly changed) measure's unit so a percent measure
         // formats as % not $ after an edit like "replace revenue with gross margin %".
         const editMeasureDecimals = (compiled.measure as { decimals?: number }).decimals;
+        const editTransformKinds = (newSpec.transforms ?? []).map((t) =>
+          typeof t === 'string' ? t : (t as { kind?: string }).kind,
+        );
+        // Transforms that turn the output into a percentage override the measure's
+        // native unit (e.g. company_share/normalize/growth_pct on a $ measure → %).
+        // Trust the compiler's authoritative outputPercent flag — NOT the requested
+        // transforms — so a transform the compiler couldn't actually apply (e.g.
+        // company_share with no entity dimension) never leaves a $-valued chart
+        // formatted as "%" (the "2500000.0%" blindspot).
+        const editIsPercent =
+          (compiled as { outputPercent?: boolean }).outputPercent === true;
         const display: DisplayHints | undefined = useEbpo
           ? {
               ...(baseDisplay ?? {}),
-              valueFormat: compiled.measure.format,
+              valueFormat: editIsPercent ? 'percent' : compiled.measure.format,
               ...(typeof editMeasureDecimals === 'number'
                 ? { valueDecimals: editMeasureDecimals }
+                : {}),
+              // A reference_line adds a flat "company_average" column — render it as a
+              // dashed reference line, not a plotted series (unless peer_average, a real
+              // per-period comparison line, is present).
+              ...(editTransformKinds.includes('reference_line') &&
+              !editTransformKinds.includes('peer_average')
+                ? { referenceSeries: 'company_average' }
                 : {}),
             }
           : baseDisplay;
         if (!changeSummary) changeSummary = this.describeSpecChange(t.spec!, newSpec, labelMode);
-        modify.push({
+        // When a follow-up changes the MEASURE or DIMENSION materially (e.g. AP-trend →
+        // "rank clients by receivables" becomes ar_outstanding by client), the old title
+        // ("AP Trend") is now wrong. Regenerate it from the new spec so the heading
+        // matches the data instead of lying. Leave the title alone for cosmetic edits.
+        const measureChanged = newSpec.measure && newSpec.measure !== t.spec!.measure;
+        const dimChanged = (newSpec.dimension ?? null) !== (t.spec!.dimension ?? null);
+        const regenTitle =
+          measureChanged || dimChanged
+            ? this.ebpoSpecTitle(newSpec)
+            : null;
+        const nextMod: DashboardEditPlan['modify'][number] = {
           index: t.index,
           type: nextType,
           dynamicSql: compiled.sql,
           spec: newSpec,
+          ...(regenTitle ? { title: regenTitle } : {}),
           ...(display ? { display } : {}),
-        });
+        };
+        if (this.widgetEditHasMaterialChange(t.w as ActiveDashboard['widgets'][number], nextMod)) {
+          modify.push(nextMod);
+        }
       }
 
       if (modify.length > 0) {
@@ -18058,6 +19734,20 @@ export class AgentService {
         remove_indices: [],
         modify: [],
         refusal: deleteTarget.refusal,
+      };
+    }
+
+    const sameChartAxisConflict = this.sameChartAxisConflict(
+      activeDashboard,
+      editRequest,
+    );
+    if (sameChartAxisConflict) {
+      return {
+        summary: '',
+        add: [],
+        remove_indices: [],
+        modify: [],
+        refusal: sameChartAxisConflict,
       };
     }
 
@@ -18339,6 +20029,60 @@ export class AgentService {
       return plan;
     };
 
+    // "Highlight the largest/smallest balances/values/bars" on a NON-matrix chart
+    // (bar, column, horizontal bar, waterfall, line, area) — color the extreme
+    // datapoint(s) instead of doing nothing. Matrix/heatmap keep their own injector.
+    const injectExtremesHighlight = (
+      plan: DashboardEditPlan,
+    ): DashboardEditPlan => {
+      const extremes = matrixDisplayHints?.highlightExtremes;
+      const negative = matrixDisplayHints?.highlightNegative;
+      if ((!extremes && !negative) || activeDashboard.widgets.length === 0)
+        return plan;
+      const barFamily = new Set([
+        'bar', 'column', 'horizontal_bar', 'waterfall', 'line', 'area',
+        'stacked_bar', 'pareto', 'pie', 'donut', 'treemap',
+      ]);
+      const targets = activeDashboard.widgets
+        .map((widget, index) => ({ widget, index }))
+        .filter(({ widget }) =>
+          barFamily.has(String(widget.chartType ?? '').toLowerCase()),
+        );
+      if (targets.length === 0) return plan;
+      const label = negative
+        ? 'Highlighted the periods with negative values.'
+        : extremes === 'both'
+          ? 'Highlighted the largest and smallest bars.'
+          : extremes === 'max'
+            ? 'Highlighted the largest bar(s).'
+            : 'Highlighted the smallest bar(s).';
+      plan.summary = plan.summary ? `${plan.summary} ${label}` : label;
+      for (const { widget, index } of targets) {
+        const existingModify = plan.modify.find((e) => e.index === index);
+        const existingDisplay =
+          existingModify?.display ?? (widget.queryConfig as any)?.display ?? null;
+        const mergedDisplay = {
+          ...(existingDisplay && typeof existingDisplay === 'object' ? existingDisplay : {}),
+          ...(extremes ? { highlightExtremes: extremes } : {}),
+          ...(negative ? { highlightNegative: true } : {}),
+        };
+        if (existingModify) existingModify.display = mergedDisplay;
+        else
+          plan.modify.push({
+            index,
+            display: mergedDisplay,
+          } as DashboardEditPlan['modify'][number]);
+      }
+      return plan;
+    };
+
+    const applyPresentationEditHints = (
+      plan: DashboardEditPlan,
+    ): DashboardEditPlan =>
+      injectExtremesHighlight(
+        injectMatrixDisplayHints(injectPieDonutLabelMode(plan)),
+      );
+
     if (scope && editHasEbpo && activeDashboard.widgets.length > 0) {
       const ebpoMetricEdit = await this.buildEbpoMetricEdit(
         activeDashboard,
@@ -18350,11 +20094,11 @@ export class AgentService {
         );
         return null;
       });
-      if (ebpoMetricEdit) return injectMatrixDisplayHints(ebpoMetricEdit);
+      if (ebpoMetricEdit) return applyPresentationEditHints(ebpoMetricEdit);
     }
 
     if (matrixDisplayHints && activeDashboard.widgets.length > 0) {
-      const matrixOnlyPlan = injectMatrixDisplayHints({
+      const matrixOnlyPlan = applyPresentationEditHints({
         summary: '',
         add: [],
         remove_indices: [],
@@ -18365,7 +20109,7 @@ export class AgentService {
 
     const explicitType = this.detectPureChartTypeEditRequest(editRequest);
     if (explicitType && activeDashboard.widgets.length > 0) {
-      return injectMatrixDisplayHints(injectPieDonutLabelMode({
+      return applyPresentationEditHints({
         summary: `Switched existing chart${activeDashboard.widgets.length > 1 ? 's' : ''} to ${this.humanizeChartType(explicitType)}.`,
         add: [],
         remove_indices: [],
@@ -18373,7 +20117,7 @@ export class AgentService {
           index,
           type: explicitType,
         })),
-      }));
+      });
     }
 
     // Pure "show/hide data labels" toggle — a presentation-only change the spec/SQL
@@ -18423,6 +20167,17 @@ export class AgentService {
     // reference/average line) we build the SQL deterministically from the
     // chart's existing SQL — no LLM SQL hallucination — and refuse clearly when
     // the data can't satisfy the ask (YoY/prior-year with a single year).
+    // "show cumulative <other measure>" on a cumulative chart → ADD it as a second
+    // cumulative series (before the generic cumulative transform, which would otherwise
+    // refuse "already shows cumulative revenue" or re-cumulate the same series).
+    if (scope && editHasEbpo && effectiveDashboard.widgets.length > 0) {
+      const cumAdd = await this.buildEbpoCumulativeAddSeriesPlan(
+        effectiveDashboard,
+        editRequest,
+        scope,
+      ).catch(() => null);
+      if (cumAdd) return applyPresentationEditHints(cumAdd);
+    }
     if (scope && effectiveDashboard.widgets.length > 0) {
       const transform = this.detectFollowUpTransform(editRequest);
       if (transform) {
@@ -18436,7 +20191,7 @@ export class AgentService {
           );
           return null;
         });
-        if (det) return injectMatrixDisplayHints(det); // a real transform plan OR a clear refusal
+        if (det) return applyPresentationEditHints(det); // a real transform plan OR a clear refusal
       }
     }
 
@@ -18451,7 +20206,7 @@ export class AgentService {
         );
         return null;
       });
-      if (ebpoMetricEdit) return injectMatrixDisplayHints(ebpoMetricEdit);
+      if (ebpoMetricEdit) return applyPresentationEditHints(ebpoMetricEdit);
     }
 
     // ── PRIMARY: SQL-first editor ─────────────────────────────────────────
@@ -18471,8 +20226,7 @@ export class AgentService {
         );
         return null;
       });
-      if (smartEdit)
-        return injectMatrixDisplayHints(injectPieDonutLabelMode(smartEdit));
+      if (smartEdit) return applyPresentationEditHints(smartEdit);
     }
 
     const widgetList = activeDashboard.widgets
@@ -18495,10 +20249,7 @@ export class AgentService {
     };
     // A plan that actually changes something has at least one of these.
     const planHasRealChange = (p: DashboardEditPlan): boolean =>
-      (Array.isArray(p.modify) && p.modify.length > 0) ||
-      (Array.isArray(p.add) && p.add.length > 0) ||
-      (Array.isArray(p.remove_indices) && p.remove_indices.length > 0) ||
-      Boolean(p.refusal);
+      this.planHasMaterialEffect(activeDashboard, p);
 
     try {
       const controller = new AbortController();
@@ -18568,9 +20319,11 @@ export class AgentService {
       parsed.remove_indices = (parsed.remove_indices ?? []).filter(
         (i) => i >= 0 && i < activeDashboard.widgets.length,
       );
-      parsed.modify = (parsed.modify ?? []).filter(
-        (m) => m.index >= 0 && m.index < activeDashboard.widgets.length,
-      );
+      parsed.modify = (parsed.modify ?? [])
+        .filter((m) => m.index >= 0 && m.index < activeDashboard.widgets.length)
+        .filter((m) =>
+          this.widgetEditHasMaterialChange(activeDashboard.widgets[m.index]!, m),
+        );
 
       // Honesty guard: if the vocabulary editor produced nothing actionable,
       // refuse clearly instead of silently reporting "Applied requested changes".
@@ -18602,29 +20355,6 @@ export class AgentService {
         where: { dashboardId },
         orderBy: { displayOrder: 'asc' },
       });
-      const resolveWidgetType = (
-        metric: string,
-        grouping: string,
-        preferredType?: string,
-      ): ChartType => {
-        const normalizedMetric = String(metric ?? '').trim();
-        const normalizedGrouping = String(grouping ?? '').trim();
-        const validMatch = VALID_WIDGETS.find(
-          (widget) =>
-            widget.metric === normalizedMetric && widget.grouping === normalizedGrouping,
-        );
-        if (preferredType) {
-          const preferredMatch = VALID_WIDGETS.find(
-            (widget) =>
-              widget.type === preferredType &&
-              widget.metric === normalizedMetric &&
-              widget.grouping === normalizedGrouping,
-          );
-          if (preferredMatch) return preferredMatch.type;
-        }
-        if (validMatch) return validMatch.type;
-        return (preferredType ?? 'bar') as ChartType;
-      };
       const existingRange =
         (currentWidgets[0]?.queryConfig as any)?.timeRange ?? null;
       const existingProviderHint =
@@ -18686,7 +20416,7 @@ export class AgentService {
           typeof mod.dynamicSql === 'string' && mod.dynamicSql.trim().length > 0;
         const nextType = hasNewSql
           ? (preferredType ?? (widget.chartType as ChartType))
-          : resolveWidgetType(nextMetric, nextGrouping, preferredType);
+          : this.resolveWidgetTypeForEdit(nextMetric, nextGrouping, preferredType);
         if (nextType !== widget.chartType) changes.chartType = nextType;
         if (hasNewSql) {
           nextConfig.dynamicSql = mod.dynamicSql!.trim();
@@ -18840,6 +20570,19 @@ export class AgentService {
       'client_financial_profile',
     ];
     const toRun = [...new Set(tools.filter((t) => validTools.includes(t)))];
+
+    // GROUNDING FIREWALL: every tool here (revenue_trend, client_breakdown, …) reads GL
+    // fact/dim tables. EBPO charts come from the spec compiler (no tools), so an EBPO org
+    // must never run GL tools — that would surface GL demo clients/numbers. Skip cleanly.
+    if (toRun.length > 0) {
+      const profile = await this.getDatasetProfile(scope);
+      if (profile.kind === 'ebpo') {
+        this.logger.warn(
+          `[grounding] GL tools skipped for EBPO org: ${toRun.join(', ')}`,
+        );
+        return [];
+      }
+    }
 
     const results = await Promise.allSettled(
       toRun.map((tool) => this.runTool(tool, scope, spec)),
@@ -20381,6 +22124,28 @@ Output SQL ONLY — no explanation, no markdown.`;
     try {
       const normalized = this.validateAndScopeDynamicSql(sql, scope, opts);
 
+      // ── Grounding guard ──────────────────────────────────────────────────────
+      // Block a chart query that references tables outside the org's dataset (e.g.
+      // an EBPO chart touching the GL demo `dim_clients`/`sample_gl_dump`). This is
+      // the structural fix that makes the "wrong client universe" class of bug
+      // impossible to ship: it THROWS in dev/test (so a leak fails loudly the moment
+      // it is written) and returns an HONEST refusal in prod (never silently serves
+      // another dataset's numbers).
+      const profile = await this.getDatasetProfile(scope);
+      const grounding = checkGrounding(normalized, profile);
+      if (!grounding.ok) {
+        const msg = groundingMessage(grounding);
+        if (process.env.NODE_ENV !== 'production') {
+          throw new Error(msg);
+        }
+        this.logger.error(msg);
+        return {
+          rows: [],
+          error:
+            'This request was blocked by a data-grounding check (it tried to read another dataset). I left the chart unchanged.',
+        };
+      }
+
       const tryQuery = async (q: string, asOfIso: string | null) => {
         const params: Record<string, unknown> = {
           tenantId: scope.tenantId,
@@ -20698,6 +22463,58 @@ Output SQL ONLY — no explanation, no markdown.`;
             );
           }
         }
+      }
+    }
+
+    // A composition chart shows additive PARTS OF A WHOLE, so a part can't be negative.
+    // A negative segment means the SQL fabricated a "part" by subtracting unrelated
+    // measures — the recurring example is "non-payroll = total_cost − total_payroll",
+    // which goes negative in this dataset because payroll ($112M) isn't a subset of
+    // cost-of-revenue ($87.6M). Reject so the caller reports honest no-data instead of a
+    // stacked bar with segments below zero. (Waterfall/line/combo/bar keep negatives.)
+    if (t === 'stacked_bar' || t === 'stacked_area') {
+      const seriesKeys = keys.filter((k) => k !== 'name');
+      const negSeries = seriesKeys.find((k) =>
+        rows.some((r) => {
+          const v = Number((r as any)[k]);
+          return Number.isFinite(v) && v < 0;
+        }),
+      );
+      if (negSeries) {
+        return (
+          `Stacked composition has negative values in series "${negSeries}" — a stacked ` +
+          `bar/area shows additive parts of a whole and can't go below zero. This means a ` +
+          `"part" was fabricated by subtracting unrelated measures (e.g. cost − payroll, ` +
+          `invalid when payroll isn't a subset of cost). Use real, separately-measured ` +
+          `components or a non-stacked chart.`
+        );
+      }
+      // A part that is entirely zero is a fabricated/empty component — e.g. the model
+      // clamps an invalid "non-payroll = cost − payroll" with greatest(…, 0), leaving a
+      // flat-zero series. A composition with an empty part is meaningless; reject so the
+      // caller reports honest no-data rather than a chart with a phantom segment.
+      if (seriesKeys.length >= 2) {
+        const zeroSeries = seriesKeys.find((k) =>
+          rows.every((r) => {
+            const v = (r as any)[k];
+            return v === null || v === '' || Number(v) === 0;
+          }),
+        );
+        if (zeroSeries) {
+          return (
+            `Stacked composition has an all-zero series "${zeroSeries}" — that component ` +
+            `has no real data (often a measure clamped to 0 to hide an invalid subtraction). ` +
+            `Don't fabricate the part; if it can't be measured, this breakdown has no data.`
+          );
+        }
+      }
+    }
+    if ((t === 'pie' || t === 'donut' || t === 'treemap') && keys.includes('value')) {
+      if (rows.some((r) => Number((r as any).value) < 0)) {
+        return (
+          `A ${t} chart shows shares of a whole, so no slice can be negative. The data has ` +
+          `negative values — use a chart type that supports negatives (bar/line/waterfall).`
+        );
       }
     }
 

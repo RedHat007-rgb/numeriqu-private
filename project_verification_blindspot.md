@@ -244,6 +244,12 @@ must not be described as completely fixed.
   edit that preserves the original SQL, spec, type, and all quartile fields.
 - The frontend now hides numeric median labels initially and reveals them when the
   follow-up sets `showDataLabels=true`; the median line remains part of the box plot.
+- Bar-chart label overlays no longer participate in y-axis domain calculation. This
+  fixes the browser issue where adding average-salary labels to an employee-count
+  chart crushed the actual bars to the baseline.
+- Sparse breakdown bar charts, such as Country x Delivery Center, render as stacked
+  breakdown columns so the visible bars keep usable width instead of becoming
+  grouped 1-2px slivers.
 - The spec compiler now supports single-measure waterfall charts over a dimension,
   while multi-measure financial bridges remain on their subtotal-aware path.
 
@@ -251,6 +257,17 @@ must not be described as completely fixed.
 
 1. Run browser visual checks for Q24, Q35, Q75, Q99, and Q100.
 2. Compare values, units, labels, axes, and series roles directly with Power BI.
+
+### Continuation Log - 2026-06-22 09:14 IST
+
+#### Overtime / Payroll Ratio Fix
+
+- Root cause: the overtime follow-up was being routed through the generic combo-measure path, which treated "as a percentage of total payroll" like a raw comparison series and substituted `Total Payroll` instead of creating a derived percentage.
+- Fix: added a derived EBPO measure for `overtime_to_payroll_pct`, exposed it in the payroll catalog, and taught both the spec-combo planner and the legacy edit planner to prefer `Overtime / Payroll %` over raw payroll when the follow-up asks for a percentage.
+- Verification:
+  - Focused regression tests now cover the new ratio measure and the follow-up selection.
+  - Live targeted harness for EBPO question `id=53` (`Create a column chart showing overtime cost by department.` / `In the same chart, add overtime as a percentage of total payroll.`) returned `CREATE=OK/catalog/bar/10r` and `FU=OK/catalog/10r`.
+- Remaining work: Power BI visual parity still needs browser-by-browser confirmation for the flagged charts, but this specific overtime follow-up is now routing to the correct ratio instead of payroll.
 
 ## Full Regression - 2026-06-22
 
@@ -287,3 +304,64 @@ Additional live proof:
 - Q99 returns 6 cards on create and 10 cards after the partial-fulfillment edit.
 - Q100 creates 4 widgets and its follow-up modifies all 4 widgets; the first chart
   preserves all four liquidity series and adds four monthly-average series.
+
+## Continuation Log - 2026-06-22 10:24 IST
+
+### Asset Share and Treemap Color Root Fixes
+
+- Checked the screenshots for `Asset Cost Share by Asset Type` and confirmed the
+  follow-up `add net book value share by asset type` was wrong: it rendered raw
+  currency bars (`$339.3K`, `$243.4K`, etc.) instead of comparing share
+  percentages. The deterministic edit path now computes each measure as its own
+  percentage of total using `sum(...) OVER ()`, labels the y-axis `% share`, and
+  formats both `Asset Cost` and `Net Book Value` as percent series.
+- Fixed the compiler break at `agent.service.ts:17251`. Root cause was a stale
+  half-removed legacy asset branch that opened an `if` block and never closed it
+  after the new normalized-share branch was moved earlier in the method.
+- Checked the screenshots for `Net Book Value by Delivery Center and Asset Type`
+  with follow-up `color the treemap by depreciation percentage`. The planner text
+  claimed the color metric was added, but the frontend treemap had no color-metric
+  contract and still used rotating category colors. The edit path now emits
+  `value = net_book_value` for rectangle size and `depreciation_pct` for color;
+  the renderer now uses `display.colorMetric` with a low-to-high legend and
+  percent tooltip values.
+- Added regression coverage for both exact failure families in
+  `explicit-charts.spec.ts`: asset share follow-ups must be percent-normalized,
+  and fixed-asset treemap color follow-ups must preserve net-book-value sizing
+  while adding `depreciation_pct` only as the color channel.
+- Verification run:
+  - `pnpm --dir apps/api test -- chart-spec-ebpo.spec.ts explicit-charts.spec.ts --runInBand` -> 77/77 passing.
+  - API source-only TypeScript diagnostics -> 0.
+  - `pnpm --dir apps/web exec tsc --noEmit` -> passed.
+
+Remaining caveat: these two root fixes are regression-verified in code, but the
+final Power BI pixel/value parity still needs browser comparison against the
+published Power BI report before the whole EBPO suite can be called fully closed.
+
+## Continuation Log - 2026-06-22 10:35 IST
+
+### Depreciation Bar Label Overlay Fix
+
+- Checked the screenshot for `Delivery Centers by Depreciation %` with follow-up
+  `add net book value labels`. The V2 card claimed labels were added, but the
+  rendered bar chart still showed only depreciation-percent bars and no visible
+  net-book-value labels.
+- Root cause: the edit planner did create a label-only SQL column, but the simple
+  bar-label display contract did not persist the label unit, and the frontend
+  custom `LabelList` renderer assumed Recharts would always pass `payload`.
+  In this chart path, that assumption can produce a silent no-label render even
+  though the backend says the edit succeeded.
+- Fix: simple EBPO bar label overlays now persist `labelFormat` from the requested
+  metric, so `Net Book Value Label` renders as currency while the main
+  depreciation bars remain percent values. The frontend label renderer now falls
+  back to the row index when `payload` is missing and positions labels from the
+  actual bar geometry for both vertical and horizontal bars.
+- Regression coverage added for the exact family:
+  `Delivery Centers by Depreciation %` + `add net book value labels` must keep
+  chart type `bar`, keep `valueFormat: percent`, add
+  `labelSeries: Net Book Value Label`, and set `labelFormat: currency`.
+- Verification run:
+  - `pnpm --dir apps/api test -- explicit-charts.spec.ts --runInBand` -> 39/39 passing.
+  - `pnpm --dir apps/api test -- chart-spec-ebpo.spec.ts explicit-charts.spec.ts --runInBand` -> 78/78 passing.
+  - API source-only TypeScript diagnostics -> 0.
+  - `pnpm --dir apps/web exec tsc --noEmit` -> passed.

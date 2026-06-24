@@ -1,0 +1,127 @@
+[
+ {
+  "id": "1.0",
+  "main": "Generate a pie chart showing AP outstanding by vendor",
+  "followup": "In the same chart, highlight overdue balances."
+ },
+ {
+  "id": "2.0",
+  "main": "Give a line chart showing cash balance trend",
+  "followup": "In the same chart, display percentage contribution."
+ },
+ {
+  "id": "3.0",
+  "main": "Create a stacked column chart showing assets by country",
+  "followup": "In the same chart, compare AR and AP."
+ },
+ {
+  "id": "4.0",
+  "main": "Generate a donut chart showing net book value by country",
+  "followup": "In the same chart, add average outstanding balance."
+ },
+ {
+  "id": "5.0",
+  "main": "Create an area chart showing AR trend",
+  "followup": "In the same chart, show cumulative balances."
+ },
+ {
+  "id": "6.0",
+  "main": "Generate a clustered bar chart showing AP trend",
+  "followup": "In the same chart, rank clients by receivables."
+ },
+ {
+  "id": "7.0",
+  "main": "Create a waterfall chart showing changes in assets",
+  "followup": "In the same chart, highlight the largest balances."
+ },
+ {
+  "id": "8.0",
+  "main": "Generate a scatter chart showing DSO by client",
+  "followup": "In the same chart, compare countries."
+ },
+ {
+  "id": "9.0",
+  "main": "Create a combo chart showing DPO and AP outstanding",
+  "followup": "In the same chart, add DSO values."
+ },
+ {
+  "id": "10.0",
+  "main": "Generate a bar chart showing operating cash flow",
+  "followup": "In the same chart, add cash balance for comparison."
+ },
+ {
+  "id": "11.0",
+  "main": "Generate a pie chart showing cash flow components",
+  "followup": "In the same chart, show operating, investing, and financing cash flows together."
+ },
+ {
+  "id": "12.0",
+  "main": "Give a line chart showing free cash flow trend",
+  "followup": "In the same chart, highlight periods with negative cash flow."
+ },
+ {
+  "id": "13.0",
+  "main": "Create a stacked column chart showing financing cash flow",
+  "followup": "In the same chart, display contribution percentages of each cash flow component."
+ },
+ {
+  "id": "14.0",
+  "main": "Generate a donut chart showing investing cash flow",
+  "followup": "In the same chart, add free cash flow as a secondary measure."
+ },
+ {
+  "id": "15.0",
+  "main": "Create an area chart showing operating cash flow trend",
+  "followup": "In the same chart, compare with year 2023 and 2025"
+ },
+ {
+  "id": "16.0",
+  "main": "Generate a clustered bar chart showing free cash flow by year",
+  "followup": "In the same chart, add an average cash flow line."
+ },
+ {
+  "id": "17.0",
+  "main": "Create a waterfall chart showing cash flow movement",
+  "followup": "In the same chart, highlight the highest cash inflow period."
+ },
+ {
+  "id": "18.0",
+  "main": "Generate a scatter chart comparing operating and investing cash flow",
+  "followup": "In the same chart, highlight the largest cash outflow period."
+ },
+ {
+  "id": "19.0",
+  "main": "Create a combo chart showing operating and financing cash flow",
+  "followup": "In the same chart, show cumulative cash flow."
+ },
+ {
+  "id": "20.0",
+  "main": "Generate a bar chart showing gross margin by client",
+  "followup": "In the same chart, add gross margin percentage."
+ },
+ {
+  "id": "21.0",
+  "main": "Generate a pie chart showing revenue versus cost",
+  "followup": "In the same chart, compare revenue and total cost."
+ },
+ {
+  "id": "22.0",
+  "main": "Give a line chart showing gross margin trend",
+  "followup": "In the same chart, display contribution percentages."
+ },
+ {
+  "id": "23.0",
+  "main": "Create a stacked column chart showing gross margin by industry",
+  "followup": "In the same chart, add revenue YoY growth."
+ },
+ {
+  "id": "24.0",
+  "main": "Generate a donut chart showing gross margin contribution",
+  "followup": "In the same chart, highlight the highest gross margin."
+ },
+ {
+  "id": "25.0",
+  "main": "Generate a clustered bar chart showing revenue by geography",
+  "followup": "In the same chart, add an average gross margin line."
+ }
+]

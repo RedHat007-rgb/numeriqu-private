@@ -1,0 +1,127 @@
+[
+ {
+  "id": "1.0",
+  "main": "Generate a bar chart showing total revenue by client",
+  "followup": "In the same chart, add gross margin for comparison."
+ },
+ {
+  "id": "2.0",
+  "main": "Generate a pie chart showing revenue contribution by business unit",
+  "followup": "In the same chart, show actual revenue contribution values."
+ },
+ {
+  "id": "3.0",
+  "main": "Give a line chart showing monthly revenue trend",
+  "followup": "In the same chart, highlight the highest and lowest points."
+ },
+ {
+  "id": "4.0",
+  "main": "Create a stacked column chart showing revenue by country",
+  "followup": "In the same chart, add last year's revenue."
+ },
+ {
+  "id": "5.0",
+  "main": "Generate a donut chart showing revenue by industry",
+  "followup": "In the same chart, display data labels with actual values."
+ },
+ {
+  "id": "6.0",
+  "main": "Create an area chart showing revenue YTD trend",
+  "followup": "In the same chart, show cumulative revenue."
+ },
+ {
+  "id": "7.0",
+  "main": "Generate a clustered bar chart showing revenue by city",
+  "followup": "In the same chart, rank clients by revenue."
+ },
+ {
+  "id": "8.0",
+  "main": "Create a waterfall chart showing revenue growth by year",
+  "followup": "In the same chart, add average revenue as a reference line."
+ },
+ {
+  "id": "9.0",
+  "main": "Generate a scatter chart showing revenue versus cost by client",
+  "followup": "In the same chart, size each bubble by cost."
+ },
+ {
+  "id": "10.0",
+  "main": "Create a combo chart showing monthly revenue and gross margin",
+  "followup": "In the same chart, show YoY growth percentage."
+ },
+ {
+  "id": "11.0",
+  "main": "Create a treemap showing revenue by top clients",
+  "followup": "In the same chart, show contribution percentages."
+ },
+ {
+  "id": "12.0",
+  "main": "Create a bar chart showing client rank changes by revenue",
+  "followup": "In the same chart, highlight the top 3 clients."
+ },
+ {
+  "id": "13.0",
+  "main": "Generate a bar chart showing revenue by region",
+  "followup": "In the same chart, size bubbles based on revenue."
+ },
+ {
+  "id": "14.0",
+  "main": "Generate a Pareto chart showing cumulative revenue contribution",
+  "followup": "In the same chart, identify the 80/20 threshold."
+ },
+ {
+  "id": "15.0",
+  "main": "Generate a bar chart showing total cost by client",
+  "followup": "In the same chart, show base salary, benefits and bonus."
+ },
+ {
+  "id": "16.0",
+  "main": "Generate a pie chart showing payroll distribution by department",
+  "followup": "In the same chart, display data labels with actual values."
+ },
+ {
+  "id": "17.0",
+  "main": "Give a line chart showing monthly cost trend",
+  "followup": "In the same chart, add average cost line."
+ },
+ {
+  "id": "18.0",
+  "main": "Create a stacked column chart showing bonus by department",
+  "followup": "In the same chart, compare cost with revenue."
+ },
+ {
+  "id": "19.0",
+  "main": "Generate a donut chart showing benefits by department",
+  "followup": "In the same chart, display data labels with actual values."
+ },
+ {
+  "id": "20.0",
+  "main": "Create an area chart showing overtime trend",
+  "followup": "In the same chart, add average cost line."
+ },
+ {
+  "id": "21.0",
+  "main": "Generate a clustered bar chart showing payroll by country",
+  "followup": "In the same chart, show top 3 countries."
+ },
+ {
+  "id": "22.0",
+  "main": "Create a waterfall chart showing gross margin movement",
+  "followup": "In the same chart, show gross margin percentage."
+ },
+ {
+  "id": "23.0",
+  "main": "Generate a scatter chart showing payroll versus revenue",
+  "followup": "In the same chart, size each bubble by cost."
+ },
+ {
+  "id": "24.0",
+  "main": "Create a combo chart showing cost and payroll",
+  "followup": "In the same chart, add average cost line."
+ },
+ {
+  "id": "25.0",
+  "main": "Generate a bar chart showing AR outstanding by client",
+  "followup": "In the same chart, add DSO as a line for comparison."
+ }
+]

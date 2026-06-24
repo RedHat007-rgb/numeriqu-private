@@ -17,7 +17,11 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "qa:grounding": "jest dataset-profile.spec.ts chart-spec-ebpo.spec.ts explicit-charts.spec.ts --runInBand",
+    "qa:parity": "tsx scripts/powerbi-parity.ts",
+    "qa:browser": "tsx scripts/ebpo-browser-run.ts",
+    "qa": "npm run qa:grounding && npm run qa:parity"
   },
   "dependencies": {
     "@clickhouse/client": "^1.18.2",

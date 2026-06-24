@@ -186,6 +186,49 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(refusal).toBeNull();
   });
 
+  test('detects EBPO data when the revenue monthly probe is empty but another EBPO view has rows', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const probedViews: string[] = [];
+    svc.queryRows = async (sql: string) => {
+      probedViews.push(sql);
+      if (sql.includes('v_ebpo_revenue_monthly')) return [{ n: 0 }];
+      if (sql.includes('v_ebpo_operations_monthly')) return [{ n: 9 }];
+      return [{ n: 0 }];
+    };
+
+    await expect(
+      svc.orgHasEbpoData({ tenantId: 'tenant-1', externalOrgIds: ['org-1'] }),
+    ).resolves.toBe(true);
+    expect(probedViews.some((sql) => sql.includes('v_ebpo_operations_monthly'))).toBe(true);
+  });
+
+  test('prefers overtime percentage over raw payroll for overtime-per-payroll follow-ups', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const parser = AgentService.prototype as any;
+    const next = parser.buildEbpoComboEditSpec(
+      {
+        measure: 'total_overtime',
+        measures: null,
+        dimension: 'department',
+        chartType: 'bar',
+      },
+      'In the same chart, add overtime as a percentage of total payroll.',
+    );
+
+    expect(next?.chartType).toBe('combo');
+    expect(next?.measures).toContain('overtime_to_payroll_pct');
+    expect(next?.measures).not.toContain('total_payroll');
+  });
+
   test('highlights the largest account mover without replacing opening/closing lines', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -453,6 +496,18 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(spec?.measures).not.toContain('gross_margin_pct');
   });
 
+  test('treats treemap contribution follow-ups as percent label edits', () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const parser = AgentService.prototype as any;
+    expect(parser.detectLabelModeEdit('In the same chart, show contribution percentages.')).toBe(
+      'percent',
+    );
+  });
+
   test('adds only gross margin percentage when the follow-up explicitly asks for the percentage', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -493,6 +548,135 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(spec?.measures).toEqual(['cost_to_income_pct', 'payroll_to_revenue_pct']);
     expect(spec?.measures).not.toContain('total_payroll');
     expect(spec?.measures).not.toContain('total_revenue');
+  });
+
+  test('combo follow-ups reuse semantic ratio-of-sums math for payroll-to-revenue', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2024', total_revenue: 1000, payroll_to_revenue_pct: 85.1 }],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Total Revenue by Month',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'total_revenue', dimension: 'month', chartType: 'bar' },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add payroll-to-revenue ratio as a second line.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('combo');
+    expect(plan.modify[0]?.dynamicSql).toContain(
+      'sum(total_payroll_usd) / nullIf(sum(total_revenue_usd), 0) * 100',
+    );
+    expect(plan.modify[0]?.dynamicSql).not.toContain('avg(payroll_to_revenue_pct)');
+  });
+
+  test('combo follow-ups reuse semantic ratio-of-sums math for collection rate', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Client A', total_revenue: 1000, collection_rate_pct: 84.3 }],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Total Revenue by Client',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'total_revenue', dimension: 'client', chartType: 'bar' },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add collection rate as a second line.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('combo');
+    expect(plan.modify[0]?.dynamicSql).toContain(
+      'sum(collected_amount_usd) / nullIf(sum(invoice_amount_usd), 0) * 100',
+    );
+    expect(plan.modify[0]?.dynamicSql).not.toContain('avg(collection_rate_pct)');
+  });
+
+  test('combo follow-ups reuse semantic ratio-of-sums math for DSO', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2024', total_revenue: 1000, dso_days: 37.0 }],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Total Revenue by Month',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'total_revenue', dimension: 'month', chartType: 'bar' },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add DSO as a second line.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('combo');
+    expect(plan.modify[0]?.dynamicSql).toContain(
+      'sum(ar_outstanding_usd) / nullIf(sum(total_revenue_usd), 0) * 365',
+    );
+    expect(plan.modify[0]?.dynamicSql).not.toContain('avg(dso_days)');
   });
 
   test('adds label-only revenue overlays on single-series EBPO bars', async () => {
@@ -635,6 +819,307 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify).toHaveLength(1);
     expect(plan.modify[0]?.type).toBe('combo');
     expect(plan.modify[0]?.display?.secondaryLabel).toBe('Average monthly salary');
+    expect(plan.modify[0]?.dynamicSql).toContain(
+      'sum(total_monthly_salary_usd) / nullIf(sum(employee_count), 0)',
+    );
+    expect(plan.modify[0]?.dynamicSql).not.toContain('avg(avg_monthly_salary_usd)');
+  });
+
+  test("adds last year's revenue as a second series on allocated revenue by country", async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.dataYearCount = async () => 2;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'USA', 'Revenue (allocated)': 39.1, 'Revenue (Last Year)': 8.7 },
+        { name: 'India', 'Revenue (allocated)': 26.3, 'Revenue (Last Year)': 6.7 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Allocated Revenue by Country',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'allocated_revenue', dimension: 'country', chartType: 'bar' },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      "In the same chart, add last year's revenue.",
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('bar');
+    expect(plan.modify[0]?.dynamicSql).toContain('Revenue (Last Year)');
+    expect(plan.modify[0]?.spec?.measures).toEqual(['allocated_revenue', 'revenue_ly']);
+    expect(plan.modify[0]?.display?.series).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'Revenue (allocated)', role: 'bar' }),
+        expect.objectContaining({ key: 'Revenue (Last Year)', role: 'bar' }),
+      ]),
+    );
+  });
+
+  test('refuses named average reference lines when the requested measure is unavailable at the current grouping', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Revenue by Geography',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'total_revenue', dimension: 'country', chartType: 'bar' },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add an average gross margin line.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.modify ?? []).toHaveLength(0);
+    expect(plan?.refusal).toMatch(/gross margin/i);
+  });
+
+  test('normalizes asset-type share follow-ups instead of plotting raw currency bars', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'Server', 'Asset Cost': 29.1, 'Net Book Value': 24.6 },
+        { name: 'Laptop', 'Asset Cost': 18.5, 'Net Book Value': 15.0 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Asset Cost Share by Asset Type',
+            chartType: 'donut',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'asset_cost', dimension: 'asset_type', chartType: 'donut' },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add net book value share by asset type.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('combo');
+    expect(plan.modify[0]?.dynamicSql).toContain('sum(asset_cost) OVER ()');
+    expect(plan.modify[0]?.dynamicSql).toContain('sum(net_book_value) OVER ()');
+    expect(plan.modify[0]?.yAxisLabel).toBe('% share');
+    expect(plan.modify[0]?.display?.valueFormat).toBe('percent');
+    expect(plan.modify[0]?.display?.series).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'Asset Cost', format: 'percent' }),
+        expect.objectContaining({ key: 'Net Book Value', format: 'percent' }),
+      ]),
+    );
+  });
+
+  test('preserves pie or donut label-mode follow-ups across deterministic edit paths', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    svc.buildEbpoMetricEdit = async () => ({
+      summary: 'Updated the donut chart.',
+      add: [],
+      remove_indices: [],
+      modify: [
+        {
+          index: 0,
+          dynamicSql: 'SELECT category AS name, amount AS value FROM some_view',
+          type: 'donut',
+          display: { valueFormat: 'currency' },
+        },
+      ],
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Asset Mix',
+            chartType: 'donut',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'query',
+              dynamicSql: 'SELECT category AS name, amount AS value FROM some_view',
+              display: { labelMode: 'percent', valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'show values instead of percentages',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.display).toEqual(
+      expect.objectContaining({
+        valueFormat: 'currency',
+        labelMode: 'value',
+      }),
+    );
+  });
+
+  test('colors fixed-asset treemaps by depreciation percentage without changing size metric', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'Mumbai Delivery Center / Server', value: 35800, depreciation_pct: 52.4 },
+        { name: 'Warsaw SSC / Laptop', value: 32100, depreciation_pct: 34.1 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Net Book Value by Delivery Center and Asset Type',
+            chartType: 'treemap',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: {
+                measure: 'net_book_value',
+                dimension: 'delivery_center',
+                breakdown: 'asset_type',
+                chartType: 'treemap',
+              },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, color the treemap by depreciation percentage.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('treemap');
+    expect(plan.modify[0]?.dynamicSql).toContain('AS value');
+    expect(plan.modify[0]?.dynamicSql).toContain('AS depreciation_pct');
+    expect(plan.modify[0]?.dynamicSql).toContain('GROUP BY delivery_center, asset_type');
+    expect(plan.modify[0]?.display).toMatchObject({
+      valueFormat: 'currency',
+      colorMetric: 'depreciation_pct',
+      colorMetricLabel: 'Depreciation %',
+      colorMetricFormat: 'percent',
+    });
+  });
+
+  test('adds net book value labels to depreciation bars without replacing the percent bars', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async (_sql: string, _scope: unknown, expectedType: string) => ({
+      rows: [
+        { name: 'NY HQ', value: 31.8, 'Net Book Value Label': 24300 },
+        { name: 'LA Delivery Center', value: 29.5, 'Net Book Value Label': 24700 },
+      ],
+      error: null,
+      expectedType,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Delivery Centers by Depreciation %',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'depreciation_pct', dimension: 'delivery_center', chartType: 'bar' },
+              display: { valueFormat: 'percent', valueDecimals: 1 },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add net book value labels.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('bar');
+    expect(plan.modify[0]?.dynamicSql).toContain('_labels.value AS "Net Book Value Label"');
+    expect(plan.modify[0]?.display).toMatchObject({
+      valueFormat: 'percent',
+      labelSeries: 'Net Book Value Label',
+      labelFormat: 'currency',
+    });
   });
 
   test('forces operations scatters to delivery center instead of a stray client grain', async () => {
@@ -667,6 +1152,199 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       expect(plan.plan.dashboard.widgets[0]?._spec?.dimension).toBe('delivery_center');
       expect(plan.plan.dashboard.widgets[0]?.type).toBe('scatter');
     }
+  });
+
+  test('routes EBPO geographic revenue asks to allocated revenue by region or country', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const parser = AgentService.prototype as any;
+    const regionWidgets = parser.selectWidgetsForQuery(
+      'Generate a stacked column chart showing revenue by region',
+    );
+    const countryWidgets = parser.selectWidgetsForQuery(
+      'Generate a stacked column chart showing revenue by country',
+    );
+
+    expect(regionWidgets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: 'allocated_revenue',
+          grouping: 'region',
+        }),
+      ]),
+    );
+    expect(countryWidgets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: 'allocated_revenue',
+          grouping: 'country',
+        }),
+      ]),
+    );
+  });
+
+  test('detects geographic revenue as allocated revenue only', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    expect(
+      svc.detectEbpoMeasureMentions('Create a stacked column chart showing revenue by country'),
+    ).toEqual(['allocated_revenue']);
+    expect(
+      svc.detectEbpoMeasureMentions('Generate a bar chart showing revenue by region'),
+    ).toEqual(['allocated_revenue']);
+  });
+
+  test('detects cumulative revenue follow-ups as the YTD overlay series', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    expect(
+      svc.detectEbpoMeasureMentions('In the same chart, show cumulative revenue.'),
+    ).toContain('revenue_ytd');
+  });
+
+  test('treats same-chart show follow-ups as additive combo edits', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    expect(
+      svc.buildEbpoComboEditSpec(
+        {
+          measure: 'total_revenue',
+          dimension: 'month',
+          chartType: 'area',
+        },
+        'In the same chart, show cumulative revenue.',
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        measure: 'total_revenue',
+        measures: expect.arrayContaining(['total_revenue', 'revenue_ytd']),
+      }),
+    );
+
+    expect(
+      svc.buildEbpoComboEditSpec(
+        {
+          measure: 'total_revenue',
+          measures: ['total_revenue', 'gross_margin'],
+          dimension: 'month',
+          chartType: 'combo',
+        },
+        'In the same chart, show YoY growth percentage.',
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        measure: 'total_revenue',
+        measures: expect.arrayContaining([
+          'total_revenue',
+          'gross_margin',
+          'revenue_yoy_pct',
+        ]),
+      }),
+    );
+  });
+
+  test('does not add cumulative revenue when the chart already uses revenue YTD', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    expect(
+      svc.buildEbpoComboEditSpec(
+        {
+          measure: 'revenue_ytd',
+          dimension: 'month',
+          chartType: 'area',
+        },
+        'In the same chart, show cumulative revenue.',
+      ),
+    ).toBeNull();
+  });
+
+  test('flags incompatible same-chart axis swaps like city to client', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    expect(
+      svc.sameChartAxisConflict(
+        {
+          id: 'dash',
+          title: 'Revenue by city',
+          widgets: [
+            {
+              id: 'w1',
+              title: 'Revenue by city',
+              chartType: 'bar',
+              queryConfig: {
+                spec: {
+                  measure: 'total_revenue',
+                  dimension: 'city',
+                  chartType: 'bar',
+                },
+              },
+              displayOrder: 0,
+            },
+          ],
+        },
+        'In the same chart, rank clients by revenue.',
+      ),
+    ).toContain('change the grouping from city to client');
+  });
+
+  test('allows same-chart breakdown additions on a time-series chart', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    expect(
+      svc.sameChartAxisConflict(
+        {
+          id: 'dash',
+          title: 'Monthly revenue trend',
+          widgets: [
+            {
+              id: 'w1',
+              title: 'Monthly revenue trend',
+              chartType: 'line',
+              queryConfig: {
+                spec: {
+                  measure: 'total_revenue',
+                  dimension: 'month',
+                  chartType: 'line',
+                },
+              },
+              displayOrder: 0,
+            },
+          ],
+        },
+        'In the same chart, show vendor breakdown.',
+      ),
+    ).toBeNull();
   });
 
   test('forces utilization vs SLA scatters to both measures on delivery center grain', async () => {
@@ -1000,6 +1678,91 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.display?.secondaryAxisFormat).toBe('percent');
   });
 
+  test('leaves an existing revenue YTD chart unchanged for cumulative follow-ups', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    svc.executeDynamicSqlChecked = async (sql: string) => ({
+      rows: sql.includes('cumulative_value')
+        ? [
+            { name: 'Jul 2025', value: 18.0, cumulative_value: 118.0 },
+            { name: 'Aug 2025', value: 20.3, cumulative_value: 120.3 },
+          ]
+        : [
+            { name: 'Jul 2025', value: 18.0 },
+            { name: 'Aug 2025', value: 20.3 },
+          ],
+      error: null,
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Revenue YTD Trend',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Revenue YTD Trend',
+            chartType: 'area',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'query',
+              dynamicSql:
+                "SELECT formatDateTime(period_date, '%b %Y') AS name, round(sum(total_revenue_usd), 2) AS value FROM analytics.v_ebpo_revenue_monthly GROUP BY period_date ORDER BY period_date ASC",
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, show cumulative revenue.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(0);
+    expect(plan.refusal).toContain('already shows revenue YTD');
+  });
+
+  test('refuses same-chart client ranking on a city chart instead of swapping the axis', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Revenue by city',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Revenue by city',
+            chartType: 'bar',
+            queryConfig: {
+              spec: {
+                measure: 'total_revenue',
+                dimension: 'city',
+                chartType: 'bar',
+              },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, rank clients by revenue.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(0);
+    expect(plan.refusal).toContain('change the grouping from city to client');
+  });
+
   test('builds Q75 asset intensity and adds CSAT at delivery-center grain', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -1200,5 +1963,71 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.refusal).toContain('There are no active charts to delete');
     expect(plan.refusal).toContain('history only');
+  });
+
+  test('treats unchanged follow-up edits as no-ops instead of successful updates', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const widget = {
+      id: 'w1',
+      title: 'Monthly Revenue',
+      chartType: 'bar',
+      queryConfig: {
+        metric: 'dynamic',
+        grouping: 'query',
+        dynamicSql: 'SELECT month AS name, revenue AS value FROM revenue_view',
+        display: { valueFormat: 'currency' },
+      },
+      displayOrder: 0,
+    };
+
+    expect(
+      svc.widgetEditHasMaterialChange(widget, {
+        index: 0,
+        title: 'Monthly Revenue',
+        type: 'bar',
+        dynamicSql: 'SELECT month AS name, revenue AS value FROM revenue_view',
+        display: { valueFormat: 'currency' },
+      }),
+    ).toBe(false);
+
+    expect(
+      svc.widgetEditHasMaterialChange(widget, {
+        index: 0,
+        dynamicSql: 'SELECT month AS name, revenue AS value FROM revenue_view ORDER BY month ASC',
+      }),
+    ).toBe(true);
+  });
+
+  test('detects display-format changes as material follow-up edits', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const widget = {
+      id: 'w1',
+      title: 'Collection Rate',
+      chartType: 'line',
+      queryConfig: {
+        metric: 'dynamic',
+        grouping: 'query',
+        dynamicSql: 'SELECT month AS name, collection_rate_pct AS value FROM rates_view',
+        display: { valueFormat: 'percent', valueDecimals: 1 },
+      },
+      displayOrder: 0,
+    };
+
+    expect(
+      svc.widgetEditHasMaterialChange(widget, {
+        index: 0,
+        display: { valueFormat: 'number', valueDecimals: 0 },
+      }),
+    ).toBe(true);
   });
 });

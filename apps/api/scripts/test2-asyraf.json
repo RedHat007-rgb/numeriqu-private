@@ -1,0 +1,127 @@
+[
+ {
+  "id": "1.0",
+  "main": "Create a waterfall chart showing revenue and cost movement",
+  "followup": "In the same chart, show cumulative revenue."
+ },
+ {
+  "id": "2.0",
+  "main": "Generate a scatter chart showing gross margin percentage by client",
+  "followup": "In the same chart, display cumulative gross margin."
+ },
+ {
+  "id": "3.0",
+  "main": "Create a combo chart showing revenue and gross margin percentage",
+  "followup": "In the same chart, compare years side by side."
+ },
+ {
+  "id": "4.0",
+  "main": "Generate a bar chart showing EBITDA by business unit",
+  "followup": "In the same chart, add EBITDA margin percentage."
+ },
+ {
+  "id": "5.0",
+  "main": "Create a waterfall chart showing movement from revenue to net profit",
+  "followup": "In the same chart, highlight major cost drivers."
+ },
+ {
+  "id": "6.0",
+  "main": "Generate a stacked column chart showing expense composition by account type",
+  "followup": "In the same chart, show expense percentages."
+ },
+ {
+  "id": "7.0",
+  "main": "Create a line chart showing operating profit trend",
+  "followup": "In the same chart, compare with gross profit trend."
+ },
+ {
+  "id": "8.0",
+  "main": "Generate a donut chart showing SG&A expense distribution",
+  "followup": "In the same chart, display contribution percentages."
+ },
+ {
+  "id": "9.0",
+  "main": "Create a bar chart showing payroll cost by department",
+  "followup": "In the same chart, compare with department revenue."
+ },
+ {
+  "id": "10.0",
+  "main": "Generate a heatmap showing monthly expense trends by account category",
+  "followup": "In the same chart, highlight abnormal periods."
+ },
+ {
+  "id": "11.0",
+  "main": "Create a line chart showing net profit margin trend",
+  "followup": "In the same chart, add rolling averages."
+ },
+ {
+  "id": "12.0",
+  "main": "Generate a bar chart showing SLA compliance by department",
+  "followup": "In the same chart, compare CSAT and SLA compliance."
+ },
+ {
+  "id": "13.0",
+  "main": "Generate a pie chart showing CSAT by country",
+  "followup": "In the same chart, add utilization percentage."
+ },
+ {
+  "id": "14.0",
+  "main": "Give a line chart showing SLA trend",
+  "followup": "In the same chart, highlight departments below target."
+ },
+ {
+  "id": "15.0",
+  "main": "Create a stacked column chart showing utilization by department",
+  "followup": "In the same chart, display contribution percentages."
+ },
+ {
+  "id": "16.0",
+  "main": "Generate a donut chart showing CSAT distribution",
+  "followup": "In the same chart, add average SLA as a benchmark line."
+ },
+ {
+  "id": "17.0",
+  "main": "Create an area chart showing utilization trend",
+  "followup": "In the same chart, compare countries."
+ },
+ {
+  "id": "18.0",
+  "main": "Generate a clustered bar chart showing SLA by geography",
+  "followup": "In the same chart, highlight the best-performing department."
+ },
+ {
+  "id": "19.0",
+  "main": "Create a waterfall chart showing CSAT movement",
+  "followup": "In the same chart, highlight the lowest-performing department."
+ },
+ {
+  "id": "20.0",
+  "main": "Generate a scatter chart comparing SLA and CSAT",
+  "followup": "In the same chart, show monthly trends."
+ },
+ {
+  "id": "21.0",
+  "main": "Create a combo chart showing utilization and SLA",
+  "followup": "In the same chart, compare current year with last year."
+ },
+ {
+  "id": "22.0",
+  "main": "Generate a line chart showing revenue trend for the last 8 months by client",
+  "followup": "In the same chart, highlight the client with the highest cumulative revenue."
+ },
+ {
+  "id": "23.0",
+  "main": "Based on the revenue trend for the last 8 months, identify the largest client \nand generate a bar chart showing their expenses by account category",
+  "followup": "In the same chart, show expense contribution percentages."
+ },
+ {
+  "id": "24.0",
+  "main": "Generate a clustered column chart comparing revenue and expenses for the top 10 clients over the last 8 months",
+  "followup": "In the same chart, highlight the largest client."
+ },
+ {
+  "id": "25.0",
+  "main": "Create a combo chart showing monthly revenue and gross margin for the largest client during the last 8 months",
+  "followup": "In the same chart, add gross margin percentage."
+ }
+]

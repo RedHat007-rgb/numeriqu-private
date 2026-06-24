@@ -240,7 +240,36 @@ export type ChartConfig = {
   display?: {
     donut?: boolean | null;
     highlightMaxMin?: boolean | null;
+    showAllSeries?: boolean | null;
+    highlightSeries?: string[] | null;
+    highlightNames?: string[] | null;
+    labelSeries?: string | null;
     labelMode?: "percent" | "value" | null;
+    labelFormat?: "currency" | "number" | "percent" | null;
+    showDataLabels?: boolean | null;
+    normalized?: boolean | null;
+    referenceSeries?: string | null;
+    movingAverageSuffix?: string | null;
+    secondaryAxisFormat?: "number" | "currency" | "percent" | null;
+    secondaryLabel?: string | null;
+    series?: Array<{
+      key: string;
+      role: "bar" | "line";
+      axis: "left" | "right";
+      format: "currency" | "number" | "percent";
+      decimals?: number | null;
+    }> | null;
+    valueFormat?: "currency" | "number" | "percent" | null;
+    valueDecimals?: number | null;
+    colorMetric?: string | null;
+    colorMetricLabel?: string | null;
+    colorMetricFormat?: "currency" | "number" | "percent" | null;
+    showTotals?: boolean | null;
+    conditionalThreshold?: number | null;
+    conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null;
+    conditionalColor?: "green" | null;
+    highlightExtremes?: "max" | "min" | "both" | null;
+    highlightNegative?: boolean;
   } | null;
   /** Axis titles describing what X and Y actually represent (with units). */
   xAxisLabel?: string | null;

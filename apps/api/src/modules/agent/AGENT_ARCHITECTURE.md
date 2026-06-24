@@ -94,6 +94,25 @@ features — a separate, test-gated task, not a delete.
 > which the test harness does NOT exercise (it tests `generateEditPlan` in isolation). The
 > edit *diff* is verified; the edit *brief's data* is not. Run one real edit in staging to confirm.
 
+## Dataset grounding boundary (2026-06 — the robustness fix)
+
+`dataset-profile.ts` is the single boundary between "which org" and "which data". Every
+request resolves a `DatasetProfile` (EBPO vs GL) via `getDatasetProfile(scope)`; that profile
+owns where clients/years come from and which tables are legal. Three layers stop GL/demo data
+(`dim_clients`, `sample_gl_dump`, GL invoices) from ever reaching an EBPO answer — the root of
+the "Apex Ventures / BlueOak shown for EBPO" class of bug:
+
+1. **Runtime guard** in `executeDynamicSqlChecked`: a chart query referencing a table outside
+   its profile THROWS in dev/test and returns an honest refusal in prod (`checkGrounding`).
+2. **Profile-routed resolvers**: `resolveClientFilter`, `listTopClientsForScope` (the one
+   client-list source), and `dataYearCount` read their table from the profile, not a hardcode.
+3. **GL-pipeline firewalls**: the GL `metricData` builder, `executeTools` (GL tools), and
+   `getDataContext` early-return for EBPO — EBPO is served only by the spec compiler.
+
+QA gates: `npm run qa` (grounding tests + PowerBI value parity). Full e2e: `npm run qa:browser`
+(drives the real /agent/query endpoint per question). See `dataset-profile.spec.ts`,
+`scripts/powerbi-parity.ts`, `scripts/ebpo-browser-run.ts`.
+
 ## Prioritized roadmap
 
 1. **Grow catalog coverage** (`chart-spec*.ts`) — every added measure/dimension shrinks

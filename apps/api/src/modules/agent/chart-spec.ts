@@ -162,8 +162,24 @@ const UNAVAILABLE: Record<string, string> = {
 export type SpecTransform =
   | { kind: 'normalize' }
   | { kind: 'growth_pct' }
+  // Absolute period-over-period change: first row keeps its level, each later row
+  // becomes (value − previous). Feeds a "month-over-month changes" waterfall.
+  | { kind: 'difference' }
+  // Running total over the (time-ordered) series — continuous, NOT year-reset like YTD.
+  // "cumulative revenue over the last 8 months" → cumsum of those 8 months.
+  | { kind: 'cumulative' }
   | { kind: 'moving_average'; window: number }
-  | { kind: 'reference_line' };
+  | { kind: 'reference_line' }
+  // Company/peer comparison: add a per-period line equal to the company-wide average
+  // of the measure across ALL entities (clients/vendors), ignoring the entity filter
+  // on the displayed series. Distinct from reference_line (a FLAT average of the
+  // displayed series). "compare the largest client with the company average" → this.
+  | { kind: 'peer_average' }
+  // Share of company total: replace the entity-filtered value with its percentage of
+  // the company-wide total of the measure for that SAME period (value ÷ Σ over all
+  // entities × 100). "revenue concentration as a % of total company revenue" → this.
+  // Distinct from normalize (% of the displayed series' OWN total across periods).
+  | { kind: 'company_share' };
 
 export interface SpecFilter {
   dimension: string;
@@ -193,6 +209,17 @@ export interface ChartSpec {
   topN?: number | null;
   chartType: string;
   transforms?: SpecTransform[];
+  // Relative time WINDOW (in months) anchored to the dataset's latest period — e.g.
+  // "over the last 8 months" → recentMonths: 8. Unlike a time DIMENSION (which plots
+  // each period), this restricts ANY chart (including categorical ones like a client
+  // scatter) to the most-recent N months of data. The EBPO compiler routes to a
+  // time-bearing view and adds `period_date >= addMonths(max_period, -(N-1))`.
+  recentMonths?: number | null;
+  // "AVERAGE MONTHLY <flow measure>" — average of the per-month totals, i.e.
+  // sum(measure) / count(distinct month), instead of the plain period sum. Only
+  // meaningful for a flow measure on a time-bearing view (e.g. ranking clients by
+  // average monthly revenue). The EBPO compiler divides the sum by the month count.
+  avgMonthly?: boolean | null;
 }
 
 export interface CompileResult {

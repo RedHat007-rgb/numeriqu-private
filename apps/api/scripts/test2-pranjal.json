@@ -1,0 +1,127 @@
+[
+ {
+  "id": "1.0",
+  "main": "Generate a waterfall chart showing month-over-month revenue changes for the largest client over the last 8 months",
+  "followup": "In the same chart, display cumulative revenue."
+ },
+ {
+  "id": "2.0",
+  "main": "Create a stacked bar chart showing expense breakdown for the largest client by department",
+  "followup": "In the same chart, compare payroll and non-payroll expenses."
+ },
+ {
+  "id": "3.0",
+  "main": "Generate a line chart showing revenue and cost trend for the largest client over the last 8 months",
+  "followup": "In the same chart, highlight months with negative margins."
+ },
+ {
+  "id": "4.0",
+  "main": "Create a donut chart showing expense distribution for the largest client",
+  "followup": "In the same chart, display percentage contribution of each expense category."
+ },
+ {
+  "id": "5.0",
+  "main": "Generate a scatter chart showing revenue versus expenses for all clients over the last 8 months",
+  "followup": "In the same chart, highlight the largest client."
+ },
+ {
+  "id": "6.0",
+  "main": "Create a bar chart ranking clients based on average monthly revenue during the last 8 months",
+  "followup": "In the same chart, highlight the top 5 clients."
+ },
+ {
+  "id": "7.0",
+  "main": "Generate a line chart showing monthly revenue growth percentage for the largest client",
+  "followup": "In the same chart, highlight the highest and lowest growth months."
+ },
+ {
+  "id": "8.0",
+  "main": "Create a stacked column chart showing monthly revenue and expenses for the largest client",
+  "followup": "In the same chart, add gross profit values."
+ },
+ {
+  "id": "9.0",
+  "main": "Generate an area chart showing cumulative revenue for the largest client over the last 8 months",
+  "followup": "In the same chart, show cumulative expenses."
+ },
+ {
+  "id": "10.0",
+  "main": "Create a clustered bar chart showing expense categories for the largest client",
+  "followup": "In the same chart, rank expense categories by value."
+ },
+ {
+  "id": "11.0",
+  "main": "Generate a combo chart showing revenue, expenses, and gross margin for the largest client",
+  "followup": "In the same chart, add average revenue as a reference line."
+ },
+ {
+  "id": "12.0",
+  "main": "Create a waterfall chart showing movement from revenue to gross profit for the largest client",
+  "followup": "In the same chart, highlight major cost drivers."
+ },
+ {
+  "id": "13.0",
+  "main": "Generate a bar chart showing top expense accounts for the largest client",
+  "followup": "In the same chart, display contribution percentages."
+ },
+ {
+  "id": "14.0",
+  "main": "Create a line chart comparing the revenue trend of the largest client with the company average over the last 8 months",
+  "followup": "In the same chart, highlight variance from the average."
+ },
+ {
+  "id": "15.0",
+  "main": "Generate a stacked area chart showing direct and indirect costs for the largest client",
+  "followup": "In the same chart, add total expenses."
+ },
+ {
+  "id": "16.0",
+  "main": "Create a matrix showing monthly revenue, expenses, and gross profit for the largest client over the last 8 months",
+  "followup": "In the same chart, display row totals and grand totals."
+ },
+ {
+  "id": "17.0",
+  "main": "Generate a bar chart showing gross profit by month for the largest client",
+  "followup": "In the same chart, compare with monthly expenses."
+ },
+ {
+  "id": "18.0",
+  "main": "Create a line chart showing revenue concentration of the largest client as a percentage of total company revenue over the last 8 months",
+  "followup": "In the same chart, add average contribution percentage."
+ },
+ {
+  "id": "19.0",
+  "main": "Generate a treemap showing expense contribution by account for the largest client",
+  "followup": "In the same chart, highlight the top expense category."
+ },
+ {
+  "id": "20.0",
+  "main": "Create a ribbon chart showing rank changes of clients by revenue during the last 8 months",
+  "followup": "In the same chart, highlight the largest client."
+ },
+ {
+  "id": "21.0",
+  "main": "Generate a scatter chart showing gross margin percentage versus revenue for all clients",
+  "followup": "In the same chart, highlight the largest client."
+ },
+ {
+  "id": "22.0",
+  "main": "Create a decomposition tree for the largest client's expenses",
+  "followup": "In the same chart, drill down by department and account category."
+ },
+ {
+  "id": "23.0",
+  "main": "Generate a heatmap showing monthly expenses by account category for the largest client",
+  "followup": "In the same chart, highlight peak spending months."
+ },
+ {
+  "id": "24.0",
+  "main": "Create a line chart showing EBITDA trend for the largest client over the last 8 months",
+  "followup": "In the same chart, add EBITDA margin percentage."
+ },
+ {
+  "id": "25.0",
+  "main": "Generate a bar chart comparing the largest client's expenses with the second-largest client",
+  "followup": "In the same chart, show variance percentages."
+ }
+]

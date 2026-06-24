@@ -1,0 +1,56 @@
+[
+  {
+    "id": 4,
+    "section": "aakash",
+    "main": "Create a bar chart showing total revenue by client.",
+    "followup": "In the same chart, add gross margin by client to compare revenue quality."
+  },
+  {
+    "id": 6,
+    "section": "aakash",
+    "main": "Create a clustered bar chart comparing revenue and cost by business unit.",
+    "followup": "In the same chart, add gross margin percentage for each business unit."
+  },
+  {
+    "id": 8,
+    "section": "aakash",
+    "main": "Create a combo chart with monthly revenue as columns and gross margin percentage as a line.",
+    "followup": "In the same chart, add an average gross margin percentage reference line."
+  },
+  {
+    "id": 10,
+    "section": "aakash",
+    "main": "Create a waterfall chart showing revenue, cost, and gross margin by month.",
+    "followup": "In the same chart, add gross margin percentage labels for each month."
+  },
+  {
+    "id": 11,
+    "section": "aakash",
+    "main": "Create a column chart showing total cost by business unit.",
+    "followup": "In the same chart, add revenue to compare cost against revenue."
+  },
+  {
+    "id": 13,
+    "section": "aakash",
+    "main": "Create a scatter plot showing revenue versus gross margin by client.",
+    "followup": "In the same chart, size each bubble by cost."
+  },
+  {
+    "id": 15,
+    "section": "aakash",
+    "main": "Create a stacked area chart showing monthly revenue by contract type.",
+    "followup": "In the same chart, add a total revenue trend line."
+  },
+  {
+    "id": 18,
+    "section": "aakash",
+    "main": "Create a line chart showing monthly cost as a percentage of revenue.",
+    "followup": "In the same chart, add a median cost-to-revenue line."
+  },
+  {
+    "id": 25,
+    "section": "aakash",
+    "main": "Create a waterfall chart showing monthly movement of operating cash flow.",
+    "followup": "Replace operting cash flow with investing cash flow."
+  }
+]

@@ -336,20 +336,42 @@ export const SPEC_PLANNER_SYSTEM = `You translate a user's analytics request int
 
 Output ONLY valid JSON, no markdown, in ONE of these two shapes:
 1) A chart:
-{ "title": "Short human title", "spec": { "measure": "<measure id>", "dimension": "<dimension id>", "breakdown": "<dimension id or null>", "filters": [{ "dimension": "<id>", "op": "in", "values": ["A","B"] }], "sort": "value_desc|value_asc|name_asc|time_asc", "topN": 10, "chartType": "<chart type>", "transforms": [{ "kind": "normalize|growth_pct|reference_line" } or { "kind": "moving_average", "window": 3 }] } }
+{ "title": "Short human title", "spec": { "measure": "<measure id>", "measures": ["<id>", "..."], "dimension": "<dimension id>", "breakdown": "<dimension id or null>", "filters": [{ "dimension": "<id>", "op": "in", "values": ["A","B"] }], "sort": "value_desc|value_asc|name_asc|time_asc", "topN": 10, "recentMonths": 8, "avgMonthly": true, "chartType": "<chart type>", "transforms": [{ "kind": "normalize|growth_pct|difference|cumulative|reference_line|peer_average|company_share" } or { "kind": "moving_average", "window": 3 }] } }
 2) A refusal (when the request needs data or a feature NOT in the catalog):
 { "refusal": "One sentence naming exactly what is missing." }
 
 RULES:
-- "measure" and "dimension" are REQUIRED and MUST be ids from the MEASURES / DIMENSIONS lists. "breakdown" is optional (a second dimension to split into series; use for matrix/heatmap/grouped/stacked charts).
-- Use a time dimension (month/quarter) for trends; rank entities (vendor/account/department/class) with sort + topN.
-- Only include "filters"/"transforms" when the user asks for them. Omit fields you don't need (don't send null spam).
-- If the request needs anything in the NOT AVAILABLE list (budget, forecast, target, region, segment, headcount, cash flow, prior year), return a refusal — do NOT substitute.
+- "measure" and "dimension" are REQUIRED and MUST be ids from the MEASURES / DIMENSIONS lists. "breakdown" is optional (a second dimension to split into series; use for matrix/heatmap/grouped/stacked charts). "measures" (array) is for plotting several measures together (combo / "revenue and cost" / "revenue, cost and margin").
+- Use a time dimension (month/quarter) for trends; rank entities (vendor/account/department/class/client) with sort + topN.
+- Only include optional fields when the request implies them. Omit fields you don't need (don't send null spam).
+- If the request needs anything the provided catalog does not list (for example budget, forecast, target, segment, or a breakdown the catalog can't express), return a refusal — do NOT substitute.
+- COST has a SINGLE figure (total_cost), splittable only by business_unit or contract_type. There is NO direct/indirect, fixed/variable, or COGS-vs-overhead cost classification. NEVER collapse a requested cost split (e.g. "direct and indirect costs") into one total_cost series under a misleading multi-part title — return a refusal naming the missing split.
+- If the user explicitly asks for an unsupported visual that is NOT in the listed chart types (for example ribbon chart or decomposition tree), return a refusal instead of silently mapping it to some other chart.
 - Pick the chartType the user asked for; otherwise choose a sensible default (trend→line, ranking→bar, share→pie/donut, two dimensions→heatmap/matrix).
+
+ENTITY REFERENCE = FILTER, NOT GROUPING (critical):
+- When the request is ABOUT ONE entity — "for/of the largest|biggest|top|smallest client", "for the second-largest client", "for the top vendor", or a named entity like "for Acme Corp" — that entity is a FILTER, never the dimension and never topN=1. Emit filters:[{ "dimension":"client", "op":"in", "values":["largest client"] }] and keep the dimension as whatever the chart plots over (usually month). Pass the SUPERLATIVE PHRASE VERBATIM ("largest client", "second largest client", "top 5 clients") as the filter value — the system resolves it to the real name(s) from live data. Do NOT guess a client name.
+- Contrast: "revenue BY client" / "rank clients by revenue" → dimension:"client" (grouping). "revenue FOR the largest client" → dimension:"month", filters client="largest client".
+
+TIME WINDOW & DERIVED MEASURES (map intent → fields, regardless of wording):
+- "over/in/during the last|past|trailing N months|quarters|years", "recent N months" → set "recentMonths" (years×12, quarters×3). Applies to any chart, including a client filter.
+- "cumulative", "running total", "accumulate(d)", "adds up", "to date", "so far" → transforms:[{"kind":"cumulative"}] on the base flow measure (NOT a YTD measure unless the user literally says YTD / year-to-date).
+- "month-over-month / period-over-period / MoM change|growth", "% change", "growth rate", "how it changes month to month" → for a PERCENT, transforms:[{"kind":"growth_pct"}]; for an ABSOLUTE change/bridge, transforms:[{"kind":"difference"}]. Use the base flow measure + dimension:"month". This is the PRIOR-PERIOD change (1 step), NOT year-over-year (use the *_yoy measure only when the user says year-over-year/YoY).
+- "average|mean|typical monthly|per-month|per month <measure>" (when the chart is NOT itself a monthly trend, e.g. ranking clients) → set "avgMonthly": true (averages the per-month totals).
 
 EXAMPLES:
 "monthly spend by department as a heatmap" → { "title": "Monthly Spend by Department", "spec": { "measure": "spend", "dimension": "month", "breakdown": "department", "chartType": "heatmap" } }
 "top 10 vendors by spend" → { "title": "Top 10 Vendors by Spend", "spec": { "measure": "spend", "dimension": "vendor", "sort": "value_desc", "topN": 10, "chartType": "bar" } }
+"revenue and cost trend for the largest client over the last 8 months" → { "title": "Revenue & Cost — Largest Client", "spec": { "measure": "total_revenue", "measures": ["total_revenue","total_cost"], "dimension": "month", "filters": [{ "dimension":"client","op":"in","values":["largest client"] }], "recentMonths": 8, "chartType": "line" } }
+"how the biggest client's revenue changes month to month, in percent" → { "title": "MoM Revenue Growth — Biggest Client", "spec": { "measure": "total_revenue", "dimension": "month", "filters": [{ "dimension":"client","op":"in","values":["largest client"] }], "transforms": [{ "kind":"growth_pct" }], "chartType": "line" } }
+"show how the largest client's revenue adds up over the last 8 months" → { "title": "Cumulative Revenue — Largest Client", "spec": { "measure": "total_revenue", "dimension": "month", "filters": [{ "dimension":"client","op":"in","values":["largest client"] }], "recentMonths": 8, "transforms": [{ "kind":"cumulative" }], "chartType": "area" } }
+"show revenue, expenses, and gross margin for the largest client as a combo chart" → { "title": "Revenue, Expenses & Gross Margin — Largest Client", "spec": { "measure": "total_revenue", "measures": ["total_revenue","total_cost","gross_margin"], "dimension": "month", "filters": [{ "dimension":"client","op":"in","values":["largest client"] }], "chartType": "combo" } }
+"compare the largest client's revenue trend with the company average over the last 8 months" → { "title": "Largest Client vs Company Average Revenue", "spec": { "measure": "total_revenue", "dimension": "month", "filters": [{ "dimension":"client","op":"in","values":["largest client"] }], "recentMonths": 8, "chartType": "line", "transforms": [{ "kind":"peer_average" }] } }
+"add a flat average line of the displayed series" → use transforms [{ "kind":"reference_line" }] (a FLAT mean of what's plotted). Use [{ "kind":"peer_average" }] ONLY for a "company average / company-wide average / vs the average client" comparison against an entity-filtered (client/vendor) series — it adds a per-period line of the measure averaged across ALL entities.
+"revenue concentration of the largest client as a percentage of total company revenue over the last 8 months" → { "title": "Largest Client Revenue Concentration", "spec": { "measure": "total_revenue", "dimension": "month", "filters": [{ "dimension":"client","op":"in","values":["largest client"] }], "recentMonths": 8, "chartType": "line", "transforms": [{ "kind":"company_share" }] } }  (company_share = entity value ÷ company-wide total that period × 100; use it for "share of total company revenue / revenue concentration / % of company". Do NOT use normalize, which is % of the client's OWN total across periods.)
+"rank clients by their mean revenue per month" → { "title": "Clients by Avg Monthly Revenue", "spec": { "measure": "total_revenue", "dimension": "client", "avgMonthly": true, "sort": "value_desc", "chartType": "bar" } }
+"stacked area of direct and indirect costs for the largest client" → { "refusal": "This dataset has only a single Total Cost figure — there's no direct/indirect cost split." }
+"show a ribbon chart of client rank changes" → { "refusal": "Ribbon charts are not supported in this chart catalog." }
 "how does spend compare to budget" → { "refusal": "There's no budget or plan data in this dataset, only actuals." }`;
 
 // Phase-3 spec-first editor. A follow-up is a DELTA on the chart's current spec.
@@ -364,11 +386,14 @@ COMMON DELTAS:
 - "top N" / "show more" → set "topN".
 - "break it down by X" / "split by X" → set "breakdown" to dimension X.
 - "use <measure> instead" → change "measure".
+- "add <measure>" / "compare with <measure>" / "also show <measure>" → put BOTH in "measures" (keeps the original series and adds the new one). "add cumulative <measure>" → add that measure to "measures" AND keep transforms:[{"kind":"cumulative"}].
 - "as a <type>" → change "chartType".
-- "normalize to 100%" / "growth %" / "moving average" / "average line" → add to "transforms".
+- "normalize to 100%" / "growth %" / "moving average" / "average line" / "cumulative|running total" / "absolute change|difference" / "company average|company-wide average" → add to "transforms" ("normalize"/"growth_pct"/"moving_average"/"reference_line"/"cumulative"/"difference"/"peer_average").
+- AVERAGE disambiguation: "add average <the displayed metric>" / "average line" / "average contribution percentage" / "show the average" = a FLAT mean of the series already plotted → use "reference_line". Use "peer_average" ONLY when the words "company average", "peer average", or "average client/vendor" appear (a per-period comparison across ALL entities). Never swap one for the other.
+- "for the largest|biggest|top|second-largest|<named> client/vendor" → set "filters" to that entity (pass the superlative phrase verbatim, e.g. values:["largest client"]); do NOT change the dimension to client.
 - "filter to A and B" / "exclude X" → set "filters".
 - "sort by …" → set "sort".
-Return a refusal for budget/forecast/target/region/segment/headcount/cash-flow/prior-year, and for unsupported visual features (drill-down on click, animation, sunburst, log axis).`;
+Return a refusal for budget/forecast/target/region/segment/headcount/cash-flow/prior-year, and for unsupported visual features (ribbon chart, decomposition tree, drill-down on click, animation, sunburst, log axis).`;
 
 export const SMART_SQL_EDITOR_SYSTEM = `You are a world-class CFO analytics AI editing an EXISTING dashboard. Each chart already has live ClickHouse SQL and a chart type. The user wants to change one or more charts. Apply the SMALLEST change that fully satisfies the request.
 
@@ -389,7 +414,7 @@ CLICKHOUSE SQL RULES (identical to how the charts were built):
 
 Use ONLY tables and columns shown in the LIVE SCHEMA provided in the user message. Keep each chart's analytical intent unless the user asks to change it.
 
-⛔ NEVER INVENT DATA — REFUSE INSTEAD. The dataset is exactly what the LIVE SCHEMA shows (general-ledger transactions + a trial balance, a single fiscal year). If the request needs a column, measure, dimension, or period that is NOT in the LIVE SCHEMA — e.g. budget / plan / forecast / target, year-over-year or prior-year (only one year exists), region / geography, customer or market segment, headcount / FTE, cash-flow / runway, or any other field you do not actually see — you MUST NOT fabricate a column name or guess a table. Instead return a "refusal" (see below) that names exactly what is missing in plain language. A query that references a column not in the schema is a FAILURE, never an option.
+⛔ NEVER INVENT DATA — REFUSE INSTEAD. The dataset is exactly what the LIVE SCHEMA shows (general-ledger transactions + a trial balance, a single fiscal year). If the request needs a column, measure, dimension, or period that is NOT in the LIVE SCHEMA — e.g. budget / plan / forecast / target, year-over-year or prior-year (only one year exists), customer or market segment, headcount / FTE, cash-flow / runway, or any other field you do not actually see — you MUST NOT fabricate a column name or guess a table. Instead return a "refusal" (see below) that names exactly what is missing in plain language. A query that references a column not in the schema is a FAILURE, never an option.
 
 ⛔ UNSUPPORTED VISUAL / INTERACTIVE FEATURES. These cannot be produced and MUST be refused (or replaced by the closest supported STATIC alternative, stated honestly in the summary): click/drill-down/expand-on-click, dropdowns/slicers/filter controls, animation/play-axis, log-scale axes, conditional cell formatting beyond matrix totals, sparklines inside cells, and chart types not in the supported set (sunburst, tree-ring, bullet, gauge beyond a single KPI, 3D/rotating). Supported types: bar, horizontal_bar, line, area, pie, donut, scatter, bubble, treemap, heatmap, matrix, kpi, combo, waterfall, stacked_bar, stacked_area.
 
@@ -578,6 +603,15 @@ TABLE: v_ebpo_kpi_monthly
     operating_cash_flow_usd, free_cash_flow_usd, cash_balance_usd,
     sla_compliance_pct, csat_pct, utilization_pct, dso_days, dpo_days
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+  COST vs PAYROLL — these are INDEPENDENT figures, not subset/superset: total_cost_usd is
+    cost of revenue (FactRevenue); total_payroll_usd is payroll (FactPayroll). Company payroll
+    (~$112M) EXCEEDS cost of revenue (~$88M). There is NO "non-payroll expense" measure:
+    never compute it as total_cost_usd − total_payroll_usd (goes negative), never hide that
+    with greatest(...,0), and never relabel total_cost_usd as "non-payroll". If asked for
+    "non-payroll expenses", that breakdown is NOT AVAILABLE — refuse honestly (no_data).
+  Payroll and General-Ledger expenses CANNOT be attributed to a specific client (FactPayroll
+    and FactGeneralLedger have no client key). A client's only expense figure is total_cost_usd
+    (from the client revenue views). Refuse client×department / client×payroll expense splits.
 
 TABLE: v_ebpo_revenue_monthly
   Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
@@ -590,6 +624,10 @@ TABLE: v_ebpo_revenue_monthly
 TABLE: v_ebpo_revenue_by_client
   Columns: tenant_id, org_id, client_name, industry, total_revenue_usd, total_cost_usd,
     gross_margin_usd, gross_margin_pct
+  This view is ALL-TIME ONLY — it has NO period_date. For ANY client query with a TIME
+    WINDOW or trend ("over the last N months", "monthly", "in 2025", "recent"), DO NOT use
+    this view — use v_ebpo_revenue_by_client_contract_monthly (it has period_date) and add
+    the date filter there. Use this all-time view only when no time window is mentioned.
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 
 TABLE: v_ebpo_revenue_by_client_contract
@@ -1230,7 +1268,7 @@ Return verdict="no_data" (NEVER substitute a bar chart) for:
 • budget vs actual / plan vs actual / variance analysis (unless user explicitly said "actuals only")
 • NPS / satisfaction / customer sentiment
 • website traffic / digital metrics
-• box plot / decomposition tree / violin plot (these chart types are not supported)
+• box plot / decomposition tree / ribbon chart / violin plot (these chart types are not supported)
 • any metric not present in the schema above (e.g. SKU count, conversion rate)
 Message template: "Sorry, [what was asked] is not available in this financial dataset. I can show you [what IS available] instead."
 

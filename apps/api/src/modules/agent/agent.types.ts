@@ -30,6 +30,7 @@ export type ChartType =
   | 'treemap'
   | 'scatter'
   | 'stacked_bar'
+  | 'stacked_area'
   | 'waterfall'
   | 'histogram'
   | 'horizontal_bar'
@@ -68,6 +69,7 @@ export interface AgentPlan {
         donut?: boolean;
         highlightMaxMin?: boolean;
         labelMode?: 'percent' | 'value';
+        labelFormat?: 'currency' | 'number' | 'percent' | null;
       };
       display_order: number;
     }>;
@@ -143,8 +145,14 @@ export interface DisplayHints {
   showAllSeries?: boolean | null;
   // Exact WIDE data keys to emphasize while preserving the other chart series.
   highlightSeries?: string[] | null;
+  // Exact `name` values (categories/points) to emphasize on a bar/line/scatter — e.g.
+  // "highlight the largest client" → ['JP Morgan'], "highlight negative-margin months"
+  // → the matching month labels. The renderer rings/recolors only these.
+  highlightNames?: string[] | null;
   // Numeric data column rendered as labels only, not as another plotted series.
   labelSeries?: string | null;
+  // Unit for labelSeries when it differs from the plotted measure's unit.
+  labelFormat?: 'currency' | 'number' | 'percent' | null;
   referenceAxis?: 'left' | 'right' | null;
   labelMode?: 'percent' | 'value' | null;
   // Force per-point data labels on line/area/bar/combo charts even past the
@@ -176,6 +184,10 @@ export interface DisplayHints {
   // correctly — a percent measure must render as % not $ (Q37/Q72 fix).
   valueFormat?: 'currency' | 'number' | 'percent' | null;
   valueDecimals?: number | null;
+  // Treemap/chloropleth-style visuals: size remains `value`, color comes from this column.
+  colorMetric?: string | null;
+  colorMetricLabel?: string | null;
+  colorMetricFormat?: 'currency' | 'number' | 'percent' | null;
   // Matrix / heatmap formatting hints.
   showTotals?: boolean | null;
   conditionalThreshold?: number | null;
@@ -191,6 +203,9 @@ export interface DisplayHints {
   // the highest and lowest margin months"). 'max' rings the top cell, 'min' the
   // bottom, 'both' rings both — distinct from the threshold/average green fill.
   highlightExtremes?: 'max' | 'min' | 'both' | null;
+  // "highlight periods with negative cash flow / losses / below zero" → mark the
+  // negative datapoints (red markers on a line/area, red bars) and draw a zero baseline.
+  highlightNegative?: boolean;
 }
 
 // A second measure to plot on a combo chart's secondary axis. `expr` is the
@@ -209,9 +224,13 @@ export type FollowUpTransform =
       kind:
         | 'yoy'
         | 'prior_year'
+        | 'cumulative'
         | 'normalize'
         | 'reference_line'
+        | 'peer_average'
+        | 'company_share'
         | 'variance'
+        | 'difference'
         | 'growth_pct';
     }
   | { kind: 'moving_average'; window: number }

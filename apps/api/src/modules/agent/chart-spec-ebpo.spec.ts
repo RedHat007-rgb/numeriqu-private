@@ -215,10 +215,17 @@ describe('EBPO compiler — honest refusals', () => {
     expect(r?.ok).toBe(false);
   });
 
-  test('measure×dimension with no provider view is refused (no guessed join)', async () => {
+  test('measure×unrelated categorical dimension is allowed (PowerBI-parity replication)', async () => {
+    // cash_balance has no per-client view, but it resolves company-wide and `client`
+    // categories can be enumerated → the compiler replicates the company value across
+    // clients (the way PowerBI plots an unrelated-dimension measure) instead of refusing.
     const r = validateEbpoSpec({ measure: 'cash_balance', dimension: 'client', chartType: 'bar' } as ChartSpec);
+    expect(r).toBeNull();
+  });
+
+  test('a measure absent from the catalog is still refused (no fabrication)', async () => {
+    const r = validateEbpoSpec({ measure: 'headcount_forecast', dimension: 'client', chartType: 'bar' } as ChartSpec);
     expect(r?.ok).toBe(false);
-    if (r) expect(r.refusal).toMatch(/cash balance/i);
   });
 });
 

@@ -1734,6 +1734,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
     const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
 
     const plan = await svc.generateEditPlan(
       {
@@ -1761,6 +1762,42 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(0);
     expect(plan.refusal).toContain('change the grouping from city to client');
+  });
+
+  test('refuses same-chart client ranking on an AP monthly trend instead of replacing the chart', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'AP Trend',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'AP Trend',
+            chartType: 'bar',
+            queryConfig: {
+              spec: {
+                measure: 'ap_outstanding',
+                dimension: 'month',
+                chartType: 'bar',
+              },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, rank clients by receivables.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(0);
+    expect(plan.refusal).toBeTruthy();
   });
 
   test('builds Q75 asset intensity and adds CSAT at delivery-center grain', async () => {

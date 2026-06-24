@@ -937,11 +937,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     (String(chart.type).toLowerCase() === "pie" ||
       String(chart.type).toLowerCase() === "donut") &&
     Array.isArray(data) &&
-    (data.some((d) => Number((d as any)?.value) < 0) ||
-      // Editors sometimes wrap signed measures in abs() to force a pie — that hides
-      // outflows as positive slices (investing −$31M shown as a +$31M slice). Treat an
-      // abs()-wrapped pie as sign-hiding and render the honest bar instead.
-      /\babs\s*\(/i.test(String((chart.config as any)?.dynamicSql ?? "")))
+    data.some((d) => Number((d as any)?.value) < 0)
   ) {
     chart = { ...chart, type: "bar" } as Chart;
   }

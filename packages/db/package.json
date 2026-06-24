@@ -17,7 +17,7 @@
     "attach:demo-users": "tsx scripts/attach-demo-users-to-org.ts",
     "seed:demo-users-sample-org": "node scripts/seed-demo-users-sample-org.cjs --only-sample-org",
     "db:format": "prisma format",
-    "build": "tsc -b"
+    "build": "prisma generate && tsc -b"
   },
   "devDependencies": {
     "@types/node": "^25.0.9",

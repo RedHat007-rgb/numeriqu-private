@@ -3,6 +3,7 @@
   "ui": "tui",
   "globalEnv": [
     "DATABASE_URL",
+    "DIRECT_URL",
     "NODE_ENV",
     "API_PROXY_TARGET",
     "API_INTERNAL_URL",

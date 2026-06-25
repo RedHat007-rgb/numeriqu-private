@@ -1030,9 +1030,12 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     )
       return "number";
     if (
-      /\b(revenue|cost|expense|margin|balance|cash|asset|salary|payroll|amount|value|book)\b/.test(
+      /\b(revenue|cost|expense|margin|balance|cash|asset|salary|payroll|amount|book)\b/.test(
         text,
-      )
+      ) ||
+      // Match "value", "cumulative_value", "running_value" etc. — compound names where a
+      // strict \bvalue\b boundary would miss the underscore-joined token.
+      /(?:^|[_\s])value\b|value$/.test(text)
     )
       return "currency";
     return chart.config.display?.valueFormat ?? "number";
@@ -1291,6 +1294,17 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
   // Constant value of the reference column (it's the same on every row).
   const refValue =
     refSeriesKey && data.length > 0 ? Number((data[0] as any)[refSeriesKey]) : null;
+  // A reference line for a measure that is NOT plotted on the chart lives on its own
+  // secondary (right) axis — otherwise a metric on a different scale (e.g. an average-cost
+  // line of $1.8M over a $0–$100K overtime axis) is pushed off-screen. When the backend
+  // marks referenceAxis="right", draw a dedicated right axis for the reference line.
+  const refOnRightAxis = chart.config.display?.referenceAxis === "right";
+  const refAxisFmt = (v: number): string =>
+    chart.config.display?.secondaryAxisFormat === "percent"
+      ? `${(Number(v) || 0).toFixed(1)}%`
+      : chart.config.display?.secondaryAxisFormat === "number"
+        ? fmtNumber(Number(v) || 0)
+        : fmtCurrency(Number(v) || 0);
   // Color a moving-average series to match its parent series.
   const colorAt = (i: number): string =>
     PIE_COLORS[((i % PIE_COLORS.length) + PIE_COLORS.length) % PIE_COLORS.length] ?? PIE_COLORS[0]!;
@@ -1409,6 +1423,22 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               width={56}
               tickMargin={8}
             />
+            {refOnRightAxis && refValue != null && Number.isFinite(refValue) && (
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                // The reference value is the only thing on this axis (no plotted series), so
+                // an "auto" max would collapse to 0 and hide the line. Scale the axis to the
+                // reference value (with headroom) so the line sits visibly near the top.
+                domain={[0, Math.abs(refValue) * 1.15]}
+                tick={tickStyle}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v: number) => refAxisFmt(Number(v) || 0)}
+                width={56}
+                tickMargin={8}
+              />
+            )}
             <Tooltip
               content={
                 <CustomTooltip
@@ -1424,7 +1454,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 />
               }
             />
-            {refSeriesKey && refValue != null && Number.isFinite(refValue) && (
+            {refSeriesKey && refValue != null && Number.isFinite(refValue) && !refOnRightAxis && (
               <ReferenceLine
                 y={refValue}
                 stroke="rgb(var(--color-accent-cyan))"
@@ -1436,6 +1466,24 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   fill: "rgb(var(--color-accent-cyan))",
                   fontSize: 10,
                 }}
+              />
+            )}
+            {/* A reference for a DIFFERENT metric lives on the secondary axis. recharts
+                won't tick a y-axis that has no plotted series, so draw the (constant)
+                reference column as a flat dashed Line bound to the right axis — that both
+                anchors/scales the axis and renders the line visibly. */}
+            {refSeriesKey && refValue != null && Number.isFinite(refValue) && refOnRightAxis && (
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey={refSeriesKey}
+                name={prettySeriesName(refSeriesKey)}
+                stroke="rgb(var(--color-accent-cyan))"
+                strokeDasharray="6 3"
+                strokeWidth={1.6}
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
               />
             )}
             {!isMultiSeries && isExpanded && avg > 0 && refValue == null && (
@@ -1832,19 +1880,33 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
           series.push({ key: k, role: "line", axis: "right", format: "number" });
     } else {
       // Legacy heuristic fallback (non-EBPO combos without series metadata).
-      const barKey = orderedKeys.includes("value") ? "value" : orderedKeys[0];
-      const leftFmt = (chart.config.display?.valueFormat ?? "currency") as ComboFmt;
-      const inferComboFmt = (key: string | undefined | null, fallback: ComboFmt): ComboFmt =>
-        inferFormatFromKey(key ?? null, fallback) as ComboFmt;
-      series = orderedKeys.map((k) => ({
-        key: k,
-        role: k === barKey ? "bar" : "line",
-        format: k === barKey ? leftFmt : inferComboFmt(k, leftFmt),
-        axis:
-          k === barKey || inferComboFmt(k, leftFmt) === leftFmt
-            ? "left"
-            : "right",
-      }));
+      // Derive each column's unit from its NAME (revenue/cost/value→currency, pct/share/
+      // rate→percent, days/count→number). A chart-wide percent valueFormat describes a
+      // percentage OVERLAY (e.g. a cumulative-% line added to a revenue Pareto), so it must
+      // NOT be force-applied to the absolute bar measure — otherwise the $ bar axis renders
+      // as "%" (the "7000000.0%" corruption).
+      const inferComboFmt = (key: string | undefined | null): ComboFmt =>
+        inferFormatFromKey(key ?? null, null) as ComboFmt;
+      // `value` is the implicit PRIMARY measure: inferNumericSeriesKeys() excludes it, so
+      // orderedKeys holds only the overlay columns (e.g. cumulative_pct, threshold_pct).
+      // It must be the bar on the LEFT axis with its own ($/count) unit; same-unit overlays
+      // join it on the left, different-unit overlays (the %s) get the right axis.
+      const hasValue = data.some((r) => toFiniteNumber((r as any).value) != null);
+      const valueFmt = inferComboFmt("value");
+      series = [];
+      if (hasValue)
+        series.push({ key: "value", role: "bar", format: valueFmt, axis: "left" });
+      orderedKeys.forEach((k, i) => {
+        const fmt = inferComboFmt(k);
+        series.push({
+          key: k,
+          role: !hasValue && i === 0 ? "bar" : "line",
+          format: fmt,
+          axis: fmt === valueFmt ? "left" : "right",
+        });
+      });
+      // No absolute primary at all → the first overlay anchors the left axis.
+      if (!hasValue && series[0]) series[0] = { ...series[0], axis: "left" };
     }
 
     const barSeries = series.filter((s) => s.role === "bar");
@@ -2938,6 +3000,13 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 
   // ── pareto (bar + cumulative % line) ──────────────────────────────────────
   if (chart.type === "pareto") {
+    // A pareto's LEFT axis is structurally the ranked absolute measure (e.g. revenue $);
+    // the cumulative percentage always lives on the RIGHT axis. So the left axis must use
+    // the measure's natural $/count format and never "percent" — otherwise a follow-up that
+    // sets a chart-wide valueFormat="percent" (for the cumulative line) corrupts the $ axis
+    // into nonsense like "7000000.0%".
+    const fmtParetoLeft = (v: number): string =>
+      _vfmt === "number" ? fmtNumber(Number(v) || 0) : fmtCurrency(Number(v) || 0);
     const sorted = [...data].sort((a, b) => (Number((b as any).value) || 0) - (Number((a as any).value) || 0));
     const totalVal = sorted.reduce((s, d) => s + (Number((d as any).value) || 0), 0);
     let cumSum = 0;
@@ -2954,12 +3023,12 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               tickLine={false} axisLine={false} />
             <YAxis yAxisId="left" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
               tickLine={false} axisLine={false} width={56}
-              tickFormatter={(v: number) => fmtVal(v)} />
+              tickFormatter={(v: number) => fmtParetoLeft(v)} />
             <YAxis yAxisId="right" orientation="right" domain={[0, 100]}
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
               tickLine={false} axisLine={false} tickFormatter={(v: number) => `${v}%`} width={36} />
             <Tooltip formatter={(v, name) =>
-              name === "cumPct" ? [`${Number(v) || 0}%`, "Cumulative %"] : [fmtVal(Number(v) || 0), "Value"]} />
+              name === "cumPct" ? [`${Number(v) || 0}%`, "Cumulative %"] : [fmtParetoLeft(Number(v) || 0), "Value"]} />
             <Bar yAxisId="left" dataKey="value" fill="rgb(var(--color-accent-violet))" radius={[4, 4, 0, 0]} />
             <Line yAxisId="right" type="monotone" dataKey="cumPct"
               stroke="rgb(var(--color-accent-cyan))" strokeWidth={2} dot={false} />

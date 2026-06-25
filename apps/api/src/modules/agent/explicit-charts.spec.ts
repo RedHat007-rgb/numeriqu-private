@@ -825,57 +825,6 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.dynamicSql).not.toContain('avg(avg_monthly_salary_usd)');
   });
 
-  test("adds last year's revenue as a second series on allocated revenue by country", async () => {
-    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
-
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
-
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
-    svc.dataYearCount = async () => 2;
-    svc.executeDynamicSqlChecked = async () => ({
-      rows: [
-        { name: 'USA', 'Revenue (allocated)': 39.1, 'Revenue (Last Year)': 8.7 },
-        { name: 'India', 'Revenue (allocated)': 26.3, 'Revenue (Last Year)': 6.7 },
-      ],
-      error: null,
-    });
-
-    const plan = await svc.buildEbpoMetricEdit(
-      {
-        id: 'dash',
-        title: 'Dashboard',
-        widgets: [
-          {
-            id: 'w1',
-            title: 'Allocated Revenue by Country',
-            chartType: 'bar',
-            queryConfig: {
-              metric: 'dynamic',
-              grouping: 'dynamic',
-              spec: { measure: 'allocated_revenue', dimension: 'country', chartType: 'bar' },
-              display: { valueFormat: 'currency' },
-            },
-            displayOrder: 0,
-          },
-        ],
-      },
-      "In the same chart, add last year's revenue.",
-      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
-    );
-
-    expect(plan.modify).toHaveLength(1);
-    expect(plan.modify[0]?.type).toBe('bar');
-    expect(plan.modify[0]?.dynamicSql).toContain('Revenue (Last Year)');
-    expect(plan.modify[0]?.spec?.measures).toEqual(['allocated_revenue', 'revenue_ly']);
-    expect(plan.modify[0]?.display?.series).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: 'Revenue (allocated)', role: 'bar' }),
-        expect.objectContaining({ key: 'Revenue (Last Year)', role: 'bar' }),
-      ]),
-    );
-  });
-
   test('refuses named average reference lines when the requested measure is unavailable at the current grouping', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -891,13 +840,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         widgets: [
           {
             id: 'w1',
-            title: 'Revenue by Geography',
+            title: 'Calls Handled by Country',
             chartType: 'bar',
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'total_revenue', dimension: 'country', chartType: 'bar' },
-              display: { valueFormat: 'currency' },
+              // a genuinely valid operations-by-geography chart; gross margin is NOT
+              // available at this grouping (revenue/margin have no geography relationship)
+              spec: { measure: 'calls_handled', dimension: 'country', chartType: 'bar' },
+              display: { valueFormat: 'number' },
             },
             displayOrder: 0,
           },
@@ -1154,7 +1105,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     }
   });
 
-  test('routes EBPO geographic revenue asks to allocated revenue by region or country', async () => {
+  test('does NOT route revenue-by-geography anywhere (no geography relationship)', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1168,25 +1119,20 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       'Generate a stacked column chart showing revenue by country',
     );
 
-    expect(regionWidgets).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: 'allocated_revenue',
-          grouping: 'region',
-        }),
-      ]),
-    );
-    expect(countryWidgets).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: 'allocated_revenue',
-          grouping: 'country',
-        }),
-      ]),
-    );
+    // FactRevenue has no geography key. No widget may be a revenue (or fabricated
+    // allocated_revenue) measure grouped by a geography dimension.
+    const geoGroupings = ['region', 'country', 'city', 'delivery_center'];
+    const hasGeoRevenue = (widgets: any[]) =>
+      (widgets ?? []).some(
+        (w) =>
+          (w?.metric === 'allocated_revenue' ||
+            (w?.metric === 'revenue' && geoGroupings.includes(w?.grouping))) ,
+      );
+    expect(hasGeoRevenue(regionWidgets)).toBe(false);
+    expect(hasGeoRevenue(countryWidgets)).toBe(false);
   });
 
-  test('detects geographic revenue as allocated revenue only', async () => {
+  test('does not detect a revenue measure for revenue-by-geography (allocated_revenue removed)', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1195,10 +1141,10 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     const svc = new AgentService({} as any, {} as any, {} as any) as any;
     expect(
       svc.detectEbpoMeasureMentions('Create a stacked column chart showing revenue by country'),
-    ).toEqual(['allocated_revenue']);
+    ).not.toContain('allocated_revenue');
     expect(
       svc.detectEbpoMeasureMentions('Generate a bar chart showing revenue by region'),
-    ).toEqual(['allocated_revenue']);
+    ).not.toContain('allocated_revenue');
   });
 
   test('detects cumulative revenue follow-ups as the YTD overlay series', async () => {

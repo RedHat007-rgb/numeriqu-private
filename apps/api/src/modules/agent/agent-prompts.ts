@@ -692,12 +692,6 @@ TABLE: v_ebpo_salary_by_dept_grade
     name/grade/value long shape. avg_monthly_salary_usd is the per-employee average.
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 
-TABLE: v_ebpo_gl_monthly
-  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    account_number, account_name, department, business_unit, country,
-    total_debit_usd, total_credit_usd, net_movement_usd
-  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-
 TABLE: v_ebpo_trial_balance_monthly
   Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
     account_number, account_name, opening_balance_usd, debit_movement_usd,
@@ -768,9 +762,10 @@ TABLE: v_ebpo_business_unit_efficiency
 
 TABLE: v_ebpo_delivery_center_efficiency_monthly
   Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
-    delivery_center, region, country, calls_handled, utilization_pct,
-    employee_count, allocated_revenue_usd, revenue_per_employee_usd
-  Use for revenue per delivery center and utilization vs revenue-per-employee by delivery center.
+    delivery_center, region, country, calls_handled, utilization_pct, employee_count
+  OPERATIONS only by delivery center / region / country. This dataset has NO revenue by
+  geography (FactRevenue has no geography key) — do NOT compute revenue/revenue-per-employee
+  by delivery center, region, or country; there is no such column or relationship.
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 
 TABLE: v_fact_accounting_journal_lines_latest
@@ -947,11 +942,6 @@ TABLE analytics.v_ebpo_payroll_monthly
   total_base_salary_usd Float64  total_overtime_usd Float64  total_bonus_usd Float64
   total_benefits_usd Float64  total_payroll_usd Float64
   Use for payroll by department/country/month, salary mix, overtime, bonus, benefits, and headcount-style charts.
-
-TABLE analytics.v_ebpo_gl_monthly
-  period_date (Date)  account_number String  account_name String  department String
-  business_unit String  country String  total_debit_usd Float64  total_credit_usd Float64  net_movement_usd Float64
-  Use for GL account movement, department spend, country spend, and account-level debit/credit charts.
 
 TABLE analytics.v_ebpo_ar_aging
   period_date (Date)  client_name String  industry String  aging_bucket String
@@ -1280,7 +1270,7 @@ Return verdict="no_data" (NEVER substitute a bar chart) for:
 • website traffic / digital metrics
 • box plot / decomposition tree / ribbon chart / violin plot (these chart types are not supported)
 • any metric not present in the schema above (e.g. SKU count, conversion rate)
-Message template: "Sorry, [what was asked] is not available in this financial dataset. I can show you [what IS available] instead."
+Message template (polite, professional, and helpful — always offer an alternative): "I'm sorry, but [what was asked] isn't available in this dataset. I'd be glad to show you [what IS available] instead." Do NOT be terse or use internal jargon (no "no view exposes that", no table/column names); briefly say what the data does support and end courteously.
 
 SCATTER: use COUNT() for transaction count (never sum(id)). Output: name, x (spend), y (count).
   Example: SELECT dept AS name, round(sum(debit),0) AS x, count() AS y FROM sample_gl_dump WHERE ... GROUP BY dept LIMIT 20

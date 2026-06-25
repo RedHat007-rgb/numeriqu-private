@@ -37,7 +37,10 @@ import type {
 } from './chart-spec';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-export type EbpoAgg = 'sum' | 'avg' | 'max';
+// 'distinct' = DISTINCTCOUNT over the mapped column (uniqExact), for measures like
+// No. Clients = DISTINCTCOUNT(DimClient[ClientKey]). The view maps such a measure to the
+// identifying column (e.g. client_name); blanks are excluded so a missing key isn't counted.
+export type EbpoAgg = 'sum' | 'avg' | 'max' | 'distinct';
 export type EbpoKind = 'flow' | 'stock' | 'ratio' | 'count';
 
 export interface EbpoMeasureDef {
@@ -62,10 +65,11 @@ export interface EbpoMeasureDef {
   };
   // Windowed measure over the grain-aggregated `base`, only meaningful over a time axis
   // (month/quarter/year). Matches PowerBI time-intelligence:
-  //   yoy → DIVIDE([base]-[base LY],[base LY])  (year-over-year growth %)
-  //   ly  → CALCULATE([base], SAMEPERIODLASTYEAR)  (same period one year ago)
-  //   ytd → TOTALYTD([base])  (running total within the fiscal year)
-  window?: { base: string; kind: 'yoy' | 'ly' | 'ytd' };
+  //   yoy     → DIVIDE([base]-[base LY],[base LY])  (year-over-year growth %)
+  //   yoy_abs → [base]-[base LY]  (absolute year-over-year change, e.g. YoY Payroll Growth)
+  //   ly      → CALCULATE([base], SAMEPERIODLASTYEAR)  (same period one year ago)
+  //   ytd     → TOTALYTD([base])  (running total within the fiscal year)
+  window?: { base: string; kind: 'yoy' | 'yoy_abs' | 'ly' | 'ytd' };
   // Weighted average: when the view stores a PRE-AGGREGATED average (e.g.
   // avg_monthly_salary_usd per department×grade), a plain avg() of it is an
   // avg-of-averages that diverges from the DAX employee-level AVERAGE at any coarser
@@ -212,6 +216,39 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     ],
     window: { base: 'total_revenue', kind: 'ytd' },
   },
+  // Cost time-intelligence — mirror of the revenue window measures, over grain-aggregated
+  // total_cost. Cost LY = CALCULATE([Total Cost], SAMEPERIODLASTYEAR); Cost YoY Growth % =
+  // DIVIDE([Total Cost]-[Cost LY],[Cost LY]). Correct at month/quarter/year.
+  cost_ly: {
+    id: 'cost_ly',
+    label: 'Cost (Last Year)',
+    format: 'currency',
+    agg: 'sum',
+    kind: 'flow',
+    aliases: [
+      'cost last year',
+      'prior year cost',
+      'previous year cost',
+      'cost ly',
+    ],
+    window: { base: 'total_cost', kind: 'ly' },
+  },
+  cost_yoy_pct: {
+    id: 'cost_yoy_pct',
+    label: 'Cost YoY Growth %',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: [
+      'year over year cost growth',
+      'year-over-year cost growth',
+      'cost year over year growth',
+      'cost growth year over year',
+      'yoy cost growth',
+    ],
+    window: { base: 'total_cost', kind: 'yoy' },
+  },
   // Derived CFO ratios — precomputed in the canonical SUPERSET view
   // v_ebpo_cfo_ratios_monthly. Catalogued so create AND combo follow-ups
   // ("add X as a comparison line") are deterministic via multi-measure specs.
@@ -226,7 +263,13 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     agg: 'avg',
     kind: 'ratio',
     decimals: 1,
-    aliases: ['cost to income ratio'],
+    aliases: [
+      'cost to income ratio',
+      'cost to revenue',
+      'cost to revenue %',
+      'cost to revenue ratio',
+      'cost to revenue percentage',
+    ],
     derived: { num: 'total_cost', den: 'total_revenue', scale: 100 },
   },
   fcf_margin_pct: {
@@ -253,6 +296,10 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
       'cash conversion ratio',
       'operating cash flow divided by revenue',
       'operating cash flow / revenue',
+      'operating cf margin',
+      'operating cash flow margin',
+      'operating cash flow margin %',
+      'operating cf margin %',
     ],
     derived: { num: 'operating_cf', den: 'total_revenue', scale: 100 },
   },
@@ -304,6 +351,41 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     ],
     derived: {
       num: { add: ['total_revenue'], sub: ['total_cost', 'total_payroll'] },
+    },
+  },
+  // Total Expenses = [Total Cost] + [Total Payroll] (DAX). ABSOLUTE additive measure (no
+  // denominator) — resolves wherever cost AND payroll co-exist in one view (company /
+  // monthly). This is the dataset's expense measure (the GL expense-account view was
+  // removed with the General Ledger), used by the Expense-to-Revenue ratio below.
+  total_expenses: {
+    id: 'total_expenses',
+    label: 'Total Expenses',
+    format: 'currency',
+    agg: 'sum',
+    kind: 'flow',
+    decimals: 0,
+    aliases: ['total expense', 'cost plus payroll', 'cost and payroll'],
+    derived: { num: { add: ['total_cost', 'total_payroll'] } },
+  },
+  // Expense to Revenue % = DIVIDE([Total Expenses],[Total Revenue]) = (cost+payroll)/revenue.
+  // Composite-numerator ratio-of-sums, correct at any grain.
+  expense_to_revenue_pct: {
+    id: 'expense_to_revenue_pct',
+    label: 'Expense to Revenue %',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: [
+      'expenses to revenue',
+      'expense to revenue ratio',
+      'total expenses to revenue',
+      'expense to revenue percentage',
+    ],
+    derived: {
+      num: { add: ['total_cost', 'total_payroll'] },
+      den: 'total_revenue',
+      scale: 100,
     },
   },
   working_capital: M(
@@ -405,6 +487,109 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     kind: 'ratio',
     decimals: 1,
     derived: { num: 'total_benefits', den: 'total_base_salary', scale: 100 },
+  },
+  // Payroll-composition ratios = DIVIDE([Total <component>],[Total Payroll]) (DAX). Ratio-of-
+  // sums over v_ebpo_payroll_monthly, which carries every component + total payroll, so they
+  // stay correct at any grain — never an avg of per-row percentages.
+  base_salary_to_payroll_pct: {
+    id: 'base_salary_to_payroll_pct',
+    label: 'Base Salary % of Payroll',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: [
+      'base salary percentage',
+      'base salary % of payroll',
+      'base salary share of payroll',
+    ],
+    derived: { num: 'total_base_salary', den: 'total_payroll', scale: 100 },
+  },
+  benefits_to_payroll_pct: {
+    id: 'benefits_to_payroll_pct',
+    label: 'Benefits % of Payroll',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: ['benefits percentage of payroll', 'benefits share of payroll'],
+    derived: { num: 'total_benefits', den: 'total_payroll', scale: 100 },
+  },
+  bonus_to_payroll_pct: {
+    id: 'bonus_to_payroll_pct',
+    label: 'Bonus % of Payroll',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: ['bonus percentage of payroll', 'bonus share of payroll'],
+    derived: { num: 'total_bonus', den: 'total_payroll', scale: 100 },
+  },
+  // Payroll Per Employee = DIVIDE([Total Payroll], DISTINCTCOUNT(EmployeeID)). employee_count
+  // is the per-grain headcount here, so payroll/headcount is the DAX figure. (This shares its
+  // formula with the legacy cost_per_employee, which historically also = payroll/headcount.)
+  payroll_per_employee: {
+    id: 'payroll_per_employee',
+    label: 'Payroll per Employee',
+    aliases: ['payroll per fte', 'payroll cost per employee'],
+    format: 'currency',
+    agg: 'avg',
+    kind: 'ratio',
+    derived: { num: 'total_payroll', den: 'employee_count', scale: 1 },
+  },
+  // Payroll time-intelligence (DAX SAMEPERIODLASTYEAR / TOTALYTD / YoY) over total_payroll.
+  // Payroll PY = CALCULATE([Total Payroll], SAMEPERIODLASTYEAR); Payroll YTD = TOTALYTD;
+  // YoY Payroll Growth = [Total Payroll]-[Payroll PY] (absolute, yoy_abs); YoY Payroll
+  // Growth % = DIVIDE([Total Payroll]-[Payroll PY],[Payroll PY]).
+  payroll_py: {
+    id: 'payroll_py',
+    label: 'Payroll (Prior Year)',
+    format: 'currency',
+    agg: 'sum',
+    kind: 'flow',
+    aliases: [
+      'payroll prior year',
+      'payroll last year',
+      'previous year payroll',
+      'payroll py',
+    ],
+    window: { base: 'total_payroll', kind: 'ly' },
+  },
+  payroll_ytd: {
+    id: 'payroll_ytd',
+    label: 'Payroll YTD',
+    format: 'currency',
+    agg: 'sum',
+    kind: 'flow',
+    aliases: ['payroll year to date', 'year-to-date payroll', 'ytd payroll'],
+    window: { base: 'total_payroll', kind: 'ytd' },
+  },
+  payroll_yoy_growth: {
+    id: 'payroll_yoy_growth',
+    label: 'YoY Payroll Growth',
+    format: 'currency',
+    agg: 'sum',
+    kind: 'flow',
+    aliases: [
+      'payroll growth year over year',
+      'payroll year over year growth',
+      'change in payroll vs last year',
+    ],
+    window: { base: 'total_payroll', kind: 'yoy_abs' },
+  },
+  payroll_yoy_pct: {
+    id: 'payroll_yoy_pct',
+    label: 'YoY Payroll Growth %',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: [
+      'payroll growth percentage year over year',
+      'yoy payroll growth percent',
+      'year over year payroll growth',
+    ],
+    window: { base: 'total_payroll', kind: 'yoy' },
   },
   // Headcount-WEIGHTED average of the pre-aggregated avg_monthly_salary_usd column, so it
   // equals the DAX AVERAGE(DimEmployee[MonthlySalaryUSD]) at any grain (a plain avg() of
@@ -577,7 +762,13 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   payment_rate_pct: {
     id: 'payment_rate_pct',
     label: 'Payment Rate %',
-    aliases: ['payment rate percentage', 'paid rate'],
+    aliases: [
+      'payment rate percentage',
+      'paid rate',
+      'ap payment rate',
+      'ap payment rate %',
+      'ap payment rate percentage',
+    ],
     format: 'percent',
     agg: 'avg',
     kind: 'ratio',
@@ -614,6 +805,8 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     'number',
     'sum',
     'count',
+    undefined,
+    ['resolved tickets'],
   ),
   avg_aht_minutes: M(
     'avg_aht_minutes',
@@ -622,6 +815,7 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     'avg',
     'ratio',
     1,
+    ['average aht', 'aht', 'average handling time', 'avg aht'],
   ),
   // People / efficiency
   employee_count: M(
@@ -642,14 +836,19 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     undefined,
     ['revenue per fte'],
   ),
+  // Cost Per Employee = DIVIDE([Total Cost], DISTINCTCOUNT(EmployeeID)) (DAX). Total Cost is
+  // cost-of-revenue, booked by client/business unit — so this resolves where total_cost AND
+  // headcount co-exist (v_ebpo_business_unit_efficiency: real per-BU values + company grain).
+  // By department/country (where cost isn't booked) it follows PowerBI star-schema behaviour
+  // and replicates the company figure. NOTE: payroll-per-headcount is now `payroll_per_employee`.
   cost_per_employee: {
     id: 'cost_per_employee',
     label: 'Cost per Employee',
-    aliases: ['cost per fte', 'payroll cost per employee', 'cost per employee by country'],
+    aliases: ['cost per fte', 'cost per head', 'total cost per employee'],
     format: 'currency',
     agg: 'avg',
     kind: 'ratio',
-    derived: { num: 'total_payroll', den: 'employee_count', scale: 1 },
+    derived: { num: 'total_cost', den: 'employee_count', scale: 1 },
   },
   // Fixed assets (stocks). Bare "assets"/"asset value"/"fixed assets" mean the asset
   // VALUE (gross cost), never the asset COUNT — alias them here so a request like
@@ -696,35 +895,11 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     decimals: 1,
     derived: { num: 'net_book_value', den: 'asset_cost', scale: 100 },
   },
-  // GL / trial balance
-  total_debit: M('total_debit', 'Total Debit', 'currency', 'sum', 'flow'),
-  total_credit: M('total_credit', 'Total Credit', 'currency', 'sum', 'flow'),
-  net_movement: M('net_movement', 'Net Movement', 'currency', 'sum', 'flow'),
-  // Operating expense = GL spend on the expense accounts (Payroll, Recruitment, Rent,
-  // IT Infrastructure, Depreciation). Resolves from v_ebpo_expense_by_account (a GL
-  // view filtered to those accounts; net_movement is negative for expenses so it's
-  // abs()'d there). Lets "expense composition / expense by account type / SG&A / expense
-  // trends" group by account, department, business_unit, country, or month.
-  operating_expense: M(
-    'operating_expense',
-    'Operating Expense',
-    'currency',
-    'sum',
-    'flow',
-    undefined,
-    [
-      'expense',
-      'expenses',
-      'operating expenses',
-      'opex',
-      'overhead',
-      'expense composition',
-      'sg&a',
-      'sga',
-      'selling general and administrative',
-      'sg&a expense',
-    ],
-  ),
+  // Trial balance (stock balances). The General Ledger fact/table was removed from the
+  // dataset, so the GL-only measures (total_debit, total_credit, net_movement) and
+  // operating_expense (the GL expense-account view) are no longer catalogued. "Expense"
+  // requests now map to total_expenses (= Total Cost + Total Payroll). Closing/opening
+  // balance remain — they come from FactTrialBalance, which is still in the dataset.
   closing_balance: M(
     'closing_balance',
     'Closing Balance',
@@ -749,25 +924,46 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     undefined,
     ['paid', 'amount paid'],
   ),
-  allocated_revenue: M(
-    'allocated_revenue',
-    'Revenue (allocated)',
-    'currency',
-    'sum',
-    'flow',
-    undefined,
-    [
-      'revenue per delivery center',
-      'delivery center revenue',
-      'revenue by delivery center',
-      'revenue by country',
-      'country revenue',
-      'revenue by region',
-      'region revenue',
-      'allocated revenue by country',
-      'allocated revenue by region',
+  // NOTE: there is intentionally NO revenue-by-geography measure. FactRevenue (ebpo_fact_revenue)
+  // has NO geography key — revenue is booked only by client, business_unit, and contract_type.
+  // The old `allocated_revenue` measure fabricated a geography link by splitting company revenue
+  // across delivery centers by call volume; it has been removed so "revenue by country / region /
+  // delivery center" genuinely refuses (matching PowerBI, which has no such relationship).
+  // No. Clients = DISTINCTCOUNT(DimClient[ClientKey]) (DAX). Mapped to the client_name
+  // column in every client-bearing view; uniqExact gives the distinct client count at any
+  // grain (overall, by industry, etc.). kind=count so it isn't summed across snapshots.
+  no_clients: {
+    id: 'no_clients',
+    label: 'No. of Clients',
+    format: 'number',
+    agg: 'distinct',
+    kind: 'count',
+    decimals: 0,
+    aliases: [
+      'number of clients',
+      'client count',
+      'count of clients',
+      'distinct clients',
+      'no. clients',
+      'how many clients',
     ],
-  ),
+  },
+  // Avg Revenue per Client = DIVIDE([Total Revenue],[No. Clients]) (DAX). Ratio of the
+  // revenue SUM to the DISTINCTCOUNT of clients (the denominator uses no_clients' own
+  // uniqExact agg), so it's correct overall and per industry.
+  avg_revenue_per_client: {
+    id: 'avg_revenue_per_client',
+    label: 'Avg Revenue per Client',
+    format: 'currency',
+    agg: 'avg',
+    kind: 'ratio',
+    aliases: [
+      'average revenue per client',
+      'revenue per client',
+      'mean revenue per client',
+    ],
+    derived: { num: 'total_revenue', den: 'no_clients', scale: 1 },
+  },
 };
 
 // ─── Catalog: DIMENSIONS ──────────────────────────────────────────────────────
@@ -917,41 +1113,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     },
   },
   {
-    // Business-unit P&L: revenue/cost (from the revenue fact, attributable by BU) JOINed
-    // with payroll by BU sourced from the GL Payroll Expense account — the only place
-    // payroll is attributable to a business unit (FactPayroll has no business_unit). Lets
-    // `ebitda` (= revenue − cost − payroll) resolve BY business unit with REAL, varying
-    // values per BU (Telecom highest … Healthcare lowest), instead of a flat replicated
-    // company figure. NOTE: GL payroll (~$27M total) differs from FactPayroll ($112M), so
-    // BU-level EBITDA uses the GL payroll basis and won't tie to the company EBITDA total;
-    // it's the only per-BU payroll the data exposes. Both inner subqueries are tenant/org
-    // scoped (enforceEveryTableScoped). Deprioritised for non-payroll measures (see
-    // scoreEbpoView) so plain revenue-by-BU keeps using the simpler view above.
-    name: 'v_ebpo_business_unit_pnl',
-    hasTime: false,
-    from:
-      '(SELECT r.business_unit AS business_unit, r.tenant_id AS tenant_id, r.org_id AS org_id, ' +
-      'r.total_revenue_usd AS total_revenue_usd, r.total_cost_usd AS total_cost_usd, ' +
-      'r.gross_margin_usd AS gross_margin_usd, g.total_payroll_usd AS total_payroll_usd ' +
-      'FROM (SELECT business_unit, tenant_id, org_id, sum(total_revenue_usd) AS total_revenue_usd, ' +
-      'sum(total_cost_usd) AS total_cost_usd, sum(gross_margin_usd) AS gross_margin_usd ' +
-      'FROM {db}.v_ebpo_revenue_by_business_unit ' +
-      'WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) ' +
-      'GROUP BY business_unit, tenant_id, org_id) r ' +
-      "LEFT JOIN (SELECT business_unit, tenant_id, org_id, sumIf(abs(net_movement_usd), account_name = 'Payroll Expense') AS total_payroll_usd " +
-      'FROM {db}.v_ebpo_gl_monthly ' +
-      'WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) ' +
-      'GROUP BY business_unit, tenant_id, org_id) g ' +
-      'ON r.business_unit = g.business_unit AND r.tenant_id = g.tenant_id AND r.org_id = g.org_id) AS bu_pnl',
-    dims: ['business_unit'],
-    measures: {
-      total_revenue: 'total_revenue_usd',
-      total_cost: 'total_cost_usd',
-      gross_margin: 'gross_margin_usd',
-      total_payroll: 'total_payroll_usd',
-    },
-  },
-  {
     name: 'v_ebpo_revenue_by_client',
     hasTime: false,
     dims: ['client', 'industry'],
@@ -960,6 +1121,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
       gross_margin_pct: 'gross_margin_pct',
+      no_clients: 'client_name',
     },
   },
   {
@@ -971,6 +1133,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
       gross_margin_pct: 'gross_margin_pct',
+      no_clients: 'client_name',
     },
   },
   {
@@ -986,6 +1149,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       ar_outstanding: 'outstanding_balance_usd',
       invoice_amount: 'invoice_amount_usd',
       collected_amount: 'collected_amount_usd',
+      no_clients: 'client_name',
     },
   },
   {
@@ -1008,6 +1172,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
       gross_margin_pct: 'gross_margin_pct',
+      no_clients: 'client_name',
     },
   },
   {
@@ -1033,11 +1198,11 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
   {
     name: 'v_ebpo_delivery_center_efficiency_monthly',
     hasTime: true,
-    // CITY lives only in ebpo_dim_geography (keyed by delivery_center), so flatten it in
-    // via a subquery. allocated_revenue by city ties exactly to $131.6M Total Revenue.
-    // The inner geography subquery is scoped by tenant/org too — the dynamic-SQL
-    // validator (enforceEveryTableScoped) requires one org_id predicate per analytics
-    // table reference, and it's correct to tenant-isolate the dim join anyway.
+    // Operations by delivery center / geography (calls, utilization, headcount). Geography
+    // (region/country/city) lives only in ebpo_dim_geography keyed by delivery_center, so it
+    // is flattened in via a tenant/org-scoped join. This view exposes NO revenue measure:
+    // FactRevenue has no geography key, so revenue / revenue-per-employee are NOT available
+    // by delivery center / country / region — those requests refuse (no fabricated allocation).
     from:
       '(SELECT e.*, g.city AS city FROM {db}.v_ebpo_delivery_center_efficiency_monthly e ' +
       'ANY LEFT JOIN (SELECT DISTINCT delivery_center, city, tenant_id, org_id FROM {db}.ebpo_dim_geography ' +
@@ -1048,15 +1213,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       calls_handled: 'calls_handled',
       utilization_pct: 'utilization_pct',
       employee_count: 'employee_count',
-      revenue_per_employee: 'revenue_per_employee_usd',
-      allocated_revenue: 'allocated_revenue_usd',
-      // Revenue BY GEOGRAPHY: FactRevenue has no geography key, so total_revenue can only
-      // be shown by client/business-unit. But revenue allocated to delivery centers carries
-      // region/country and sums to the SAME $131.6M as Total Revenue. So "revenue by
-      // country/region/delivery center" resolves HERE (allocated_revenue_usd) instead of
-      // being refused. This view is ordered AFTER the client/BU revenue views, so
-      // non-geo "revenue by month/client/business unit" still uses the FactRevenue path.
-      total_revenue: 'allocated_revenue_usd',
     },
   },
   {
@@ -1112,39 +1268,14 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     },
   },
   {
-    name: 'v_ebpo_gl_monthly',
-    hasTime: true,
-    dims: ['account', 'department', 'business_unit', 'country'],
-    measures: {
-      total_debit: 'total_debit_usd',
-      total_credit: 'total_credit_usd',
-      net_movement: 'net_movement_usd',
-    },
-  },
-  {
-    // Operating-expense view: the GL expense accounts only, with net_movement abs()'d
-    // (expenses post as negative net_movement). Lets "expense composition / by account
-    // type / monthly expense / SG&A" resolve to a real measure. The inner subquery is
-    // tenant/org-scoped so enforceEveryTableScoped passes. account_name list = the data's
-    // expense accounts (a semantic definition of operating expense, like a PowerBI measure).
-    name: 'v_ebpo_expense_by_account',
-    hasTime: true,
-    from:
-      '(SELECT period_date, account_name, department, business_unit, country, tenant_id, org_id, ' +
-      'abs(net_movement_usd) AS operating_expense_usd FROM {db}.v_ebpo_gl_monthly ' +
-      "WHERE account_name IN ('Payroll Expense','Recruitment Expense','Rent Expense','IT Infrastructure','Depreciation') " +
-      'AND tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})) AS ex',
-    dims: ['account', 'department', 'business_unit', 'country'],
-    measures: {
-      operating_expense: 'operating_expense_usd',
-    },
-  },
-  {
+    // Trial balance (FactTrialBalance). The General Ledger fact was removed from the
+    // dataset, so v_ebpo_gl_monthly and v_ebpo_expense_by_account (and their measures
+    // total_debit/total_credit/net_movement/operating_expense) are gone. Closing/opening
+    // balance remain — they come from this trial-balance view.
     name: 'v_ebpo_trial_balance_monthly',
     hasTime: true,
     dims: ['account'],
     measures: {
-      net_movement: 'net_movement_usd',
       closing_balance: 'closing_balance_usd',
       opening_balance: 'opening_balance_usd',
     },
@@ -1252,11 +1383,15 @@ const dimSql = (
 const aggOf = (m: EbpoMeasureDef, col: string) =>
   m.weightBy
     ? `sum(${col} * ${m.weightBy}) / nullIf(sum(${m.weightBy}), 0)`
-    : `${m.agg}(${col})`;
+    : m.agg === 'distinct'
+      ? `uniqExactIf(${col}, ${col} != '')` // DISTINCTCOUNT, excluding blank keys
+      : `${m.agg}(${col})`;
 const aggIfOf = (m: EbpoMeasureDef, col: string, cond: string) =>
   m.weightBy
     ? `sumIf(${col} * ${m.weightBy}, ${cond}) / nullIf(sumIf(${m.weightBy}, ${cond}), 0)`
-    : `${m.agg}If(${col}, ${cond})`;
+    : m.agg === 'distinct'
+      ? `uniqExactIf(${col}, (${cond}) AND ${col} != '')`
+      : `${m.agg}If(${col}, ${cond})`;
 // Numerator terms of a derived measure, normalized to {add, sub} measure-id lists.
 const numTerms = (num: NonNullable<EbpoMeasureDef['derived']>['num']) =>
   typeof num === 'string'
@@ -1295,8 +1430,12 @@ const aggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef): string => {
   if (m.derived) {
     const n = numeratorExpr(m.derived.num, view, (c) => `sum(${c})`);
     if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
-    const d = view.measures[m.derived.den]!;
-    return `${n} / nullIf(sum(${d}), 0) * ${m.derived.scale ?? 100}`;
+    // The denominator uses the DEN MEASURE's own aggregate, not a hardcoded sum() — so a
+    // distinct-count denominator (e.g. Avg Revenue per Client = revenue / No. Clients)
+    // emits uniqExact. For every existing ratio the den is a flow → aggOf = sum(), unchanged.
+    const denM = EBPO_MEASURES[m.derived.den]!;
+    const denExpr = aggOf(denM, view.measures[m.derived.den]!);
+    return `${n} / nullIf(${denExpr}, 0) * ${m.derived.scale ?? 100}`;
   }
   return aggOf(m, view.measures[m.id]!);
 };
@@ -1308,8 +1447,9 @@ const condAggExprFor = (
   if (m.derived) {
     const n = numeratorExpr(m.derived.num, view, (c) => `sumIf(${c}, ${cond})`);
     if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
-    const d = view.measures[m.derived.den]!;
-    return `${n} / nullIf(sumIf(${d}, ${cond}), 0) * ${m.derived.scale ?? 100}`;
+    const denM = EBPO_MEASURES[m.derived.den]!;
+    const denExpr = aggIfOf(denM, view.measures[m.derived.den]!, cond);
+    return `${n} / nullIf(${denExpr}, 0) * ${m.derived.scale ?? 100}`;
   }
   return aggIfOf(m, view.measures[m.id]!, cond);
 };
@@ -1354,15 +1494,6 @@ const scoreEbpoView = (
     const bd = EBPO_DIMENSIONS[breakdownId];
     if (bd?.isTime && !view.hasTime) score += 100;
   }
-
-  // The business-unit P&L view exists to carry PAYROLL by BU (for EBITDA). For plain
-  // revenue/cost/margin by BU the simpler v_ebpo_revenue_by_business_unit is preferred,
-  // so deprioritise the JOIN view unless a payroll-dependent measure is requested.
-  if (
-    view.name === 'v_ebpo_business_unit_pnl' &&
-    !measures.some((m) => m.id === 'total_payroll' || m.id === 'ebitda')
-  )
-    score += 500;
 
   return score;
 };
@@ -1468,6 +1599,14 @@ const canReplicateAcrossDim = (
   if (!dimId) return false;
   const dim = EBPO_DIMENSIONS[dimId];
   if (!dim || dim.isTime) return false;
+  // ONLY a RATIO measure (an average %, e.g. SLA/CSAT/utilization/margin %) may replicate
+  // across an unrelated dimension: an average genuinely IS "the same everywhere", so a
+  // flat per-category value reads as a benchmark (this is the PowerBI parity the user
+  // approved). An ADDITIVE measure (flow $ like revenue/expense/cost, a stock balance, or
+  // a count) must NOT — replicating the company TOTAL onto every category implies each
+  // category equals the whole company (e.g. "expense by client" → $131.8M on EVERY
+  // client, which is nonsense). Those fall through to an honest refusal instead.
+  if (EBPO_MEASURES[measureId]?.kind !== 'ratio') return false;
   if (resolveEbpoView(measureId, dimId, null, filterDims)) return false; // real breakdown exists
   if (!resolveEbpoView(measureId, null, null, filterDims)) return false; // company grain missing
   return !!dimCategorySource(dimId);
@@ -1513,13 +1652,55 @@ const measureListOf = (spec: ChartSpec): string[] => {
   return Array.from(new Set(list));
 };
 
+// ─── Refusal copy helpers ─────────────────────────────────────────────────────
+// Courteous closing used on every refusal so the user knows nothing was changed.
+const REFUSAL_CLOSING = " I've left the chart unchanged.";
+
+// Join labels into a natural-language list: ["A"] → "A"; ["A","B"] → "A or B";
+// ["A","B","C"] → "A, B, or C".
+const naturalList = (items: string[]): string =>
+  items.length <= 1
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')}${items.length > 2 ? ',' : ''} or ${items[items.length - 1]}`;
+
+// The dimensions a measure CAN be grouped by, derived from the catalog (the views that
+// expose it). Deterministic — drives a helpful "I can show X by …" suggestion in refusals.
+export function ebpoSupportedGroupings(measureId: string): {
+  time: boolean;
+  dims: string[];
+} {
+  const views = EBPO_VIEWS.filter((v) => viewExposesMeasure(v, measureId));
+  const time = views.some((v) => v.hasTime);
+  const dimIds = new Set<string>();
+  for (const v of views) for (const d of v.dims) dimIds.add(d);
+  const dims = Array.from(dimIds)
+    .map((id) => EBPO_DIMENSIONS[id]?.label)
+    .filter((l): l is string => !!l);
+  return { time, dims };
+}
+
+// A polite "here's what I can show instead" clause for a measure, or '' if nothing applies.
+function ebpoAlternativeClause(measureId: string): string {
+  const m = EBPO_MEASURES[measureId];
+  if (!m) return '';
+  const { time, dims } = ebpoSupportedGroupings(measureId);
+  const options: string[] = [];
+  if (dims.length) options.push(`by ${naturalList(dims)}`);
+  if (time) options.push('over time (by month, quarter, or year)');
+  if (options.length === 0) return '';
+  return ` I can show ${m.label} ${options.join(', or ')} instead.`;
+}
+
 // ─── Validation ───────────────────────────────────────────────────────────────
 export function validateEbpoSpec(
   spec: ChartSpec,
   allowReplicate = true,
 ): CompileRefusal | null {
+  // Used when there's no specific alternative to suggest — a brief, professional note
+  // on what the dataset covers, plus the courteous closing.
   const tail =
-    ' This dataset covers Enterprise BPO financials (revenue, payroll, cash flow, AR/AP, operations) — I left the chart unchanged.';
+    ' This dataset covers Enterprise BPO financials — revenue, payroll, cash flow, receivables/payables, and operations.' +
+    REFUSAL_CLOSING;
   const measures = measureListOf(spec);
   const dimId = spec.dimension || null;
   const filterDims = (spec.filters ?? []).map((f) => f.dimension);
@@ -1529,28 +1710,31 @@ export function validateEbpoSpec(
     if (EBPO_UNAVAILABLE[mid])
       return {
         ok: false,
-        refusal: `I can't use ${EBPO_UNAVAILABLE[mid]} — it isn't in this dataset.${tail}`,
+        refusal: `I'm sorry, but ${EBPO_UNAVAILABLE[mid]} isn't part of this dataset, so I'm not able to chart it.${tail}`,
       };
     if (!EBPO_MEASURES[mid])
       return {
         ok: false,
-        refusal: `I don't have a "${mid}" measure to plot.${tail}`,
+        refusal: `I'm sorry, but I don't have a metric called "${mid}" available in this dataset to plot.${tail}`,
       };
   }
   if (measures.length === 0)
-    return { ok: false, refusal: `I need a measure to plot.${tail}` };
+    return {
+      ok: false,
+      refusal: `Could you let me know which metric you'd like to see? I need a measure to build the chart.`,
+    };
   if (
     EBPO_UNAVAILABLE[spec.dimension] ||
     (spec.breakdown && EBPO_UNAVAILABLE[spec.breakdown])
   )
     return {
       ok: false,
-      refusal: `That breakdown isn't in this dataset.${tail}`,
+      refusal: `I'm sorry, but that breakdown isn't available in this dataset.${tail}`,
     };
   if (dimId && !EBPO_DIMENSIONS[dimId])
     return {
       ok: false,
-      refusal: `I can't break data down by "${spec.dimension}".${tail}`,
+      refusal: `I'm sorry, but I can't group the data by "${spec.dimension}" — it isn't one of the dimensions available in this dataset.${tail}`,
     };
 
   // Multi-measure charts with a dimension need one shared view/grain. KPI cards
@@ -1564,11 +1748,11 @@ export function validateEbpoSpec(
       if (!missingProvider) return null;
     }
     if (!resolveEbpoViewMulti(measures, dimId, spec.breakdown, filterDims)) {
-      const labels = measures.map((m) => EBPO_MEASURES[m]!.label).join(', ');
+      const labels = naturalList(measures.map((m) => EBPO_MEASURES[m]!.label));
       const by = dimId ? ` by ${EBPO_DIMENSIONS[dimId]!.label}` : '';
       return {
         ok: false,
-        refusal: `I can't plot ${labels} together${by} — no single EBPO view exposes them at the same grain.${tail}`,
+        refusal: `I'm sorry, but I can't plot ${labels} together${by} — they aren't tracked at the same level of detail in this dataset, so they can't be combined in one chart.${tail}`,
       };
     }
     return null;
@@ -1578,7 +1762,7 @@ export function validateEbpoSpec(
   if (spec.breakdown && !EBPO_DIMENSIONS[spec.breakdown])
     return {
       ok: false,
-      refusal: `I can't break data down by "${spec.breakdown}".${tail}`,
+      refusal: `I'm sorry, but I can't break the data down by "${spec.breakdown}" — it isn't one of the dimensions available in this dataset.${tail}`,
     };
   const view = resolveEbpoView(measures[0]!, dimId, spec.breakdown, filterDims);
   if (!view) {
@@ -1592,10 +1776,18 @@ export function validateEbpoSpec(
     )
       return null;
     const m = EBPO_MEASURES[measures[0]!]!;
-    const by = [dimId, spec.breakdown].filter(Boolean).join(' and ');
+    const byLabel = naturalList(
+      [dimId, spec.breakdown]
+        .filter((d): d is string => !!d)
+        .map((d) => EBPO_DIMENSIONS[d]?.label ?? d),
+    );
+    // Suggest what the measure CAN be grouped by; fall back to the dataset-coverage note.
+    const alt = ebpoAlternativeClause(measures[0]!);
     return {
       ok: false,
-      refusal: `I can't break "${m.label}" down by ${by} — no EBPO view exposes that combination.${tail}`,
+      refusal:
+        `I'm sorry, but ${m.label} isn't available broken down by ${byLabel} in this dataset — it isn't tracked at that level.` +
+        (alt ? `${alt}${REFUSAL_CLOSING}` : tail),
     };
   }
   return null;
@@ -1892,10 +2084,13 @@ export async function compileEbpoSpec(
     const winExpr =
       measure.window.kind === 'yoy'
         ? `if(${priorExists} = 0, NULL, round((${agg} - ${lagOneYear}) / nullIf(${lagOneYear}, 0) * 100, ${dp}))`
-        : measure.window.kind === 'ly'
-          ? `if(${priorExists} = 0, NULL, round(${lagOneYear}, ${dp}))`
-          : // ytd: cumulative within the fiscal year (reset each year)
-            `round(sum(${agg}) OVER (PARTITION BY toYear(${wdim.group}) ORDER BY ${wdim.group} ROWS UNBOUNDED PRECEDING), ${dp})`;
+        : measure.window.kind === 'yoy_abs'
+          ? // absolute YoY change ([base] − [base LY]); blank in the first year (no prior period)
+            `if(${priorExists} = 0, NULL, round(${agg} - ${lagOneYear}, ${dp}))`
+          : measure.window.kind === 'ly'
+            ? `if(${priorExists} = 0, NULL, round(${lagOneYear}, ${dp}))`
+            : // ytd: cumulative within the fiscal year (reset each year)
+              `round(sum(${agg}) OVER (PARTITION BY toYear(${wdim.group}) ORDER BY ${wdim.group} ROWS UNBOUNDED PRECEDING), ${dp})`;
     const sql =
       `SELECT ${wdim.label} AS name, ${winExpr} AS value ` +
       `FROM ${tbl} WHERE ${where} GROUP BY ${wdim.group} ORDER BY ${wdim.group} ASC LIMIT ${topN}`;
@@ -2340,9 +2535,10 @@ export function ebpoCatalogPromptText(): string {
     'SCATTER / BUBBLE: for "X versus Y by <entity>" set dimension=<entity> and measures=[xId, yId] with chartType "scatter". For "size each bubble by W" add the size measure: measures=[xId, yId, sizeId] with chartType "bubble". All measures must come from one view that also has the entity dimension.',
     'DIMENSIONS (pick one as "dimension"; optionally one as "breakdown" for a single-measure series split; omit "dimension" for a single KPI value):',
     dims,
-    'NOTE: revenue and most financial measures CAN be grouped by GEOGRAPHY (country, region, delivery center, city) as well as by client, business unit, industry, department, etc. Do NOT pre-refuse a measure-by-dimension request because you suspect the combination is missing — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
+    'NOTE: REVENUE / COST / GROSS MARGIN have NO GEOGRAPHY relationship in this dataset — the revenue fact is booked only by client, business unit, and contract type (and month). There is NO "revenue by country / region / city / delivery center" — do NOT invent one; emit your best spec and the deterministic compiler will honestly refuse it. Only OPERATIONS metrics (calls_handled, tickets_resolved, SLA/CSAT/utilization, avg_aht_minutes) and FIXED ASSETS are available by delivery center / geography. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
     'PROFIT MEASURES: "operating profit", "operating income", "net profit", "net income", "EBITDA" → use measure "ebitda" (= revenue − cost − payroll, an absolute $; in this dataset it is negative because payroll is large). "operating profit margin", "net profit margin", "net margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct". These only resolve at the company/monthly grain (payroll is not available by business unit, client, or geography), so "EBITDA/operating profit BY business unit/client/country" has no view — emit the spec and let the compiler refuse honestly.',
-    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "expense composition/distribution/trends", "SG&A" → use measure "operating_expense" (the GL expense accounts: payroll, recruitment, rent, IT, depreciation — groupable by account, department, business_unit, country, or month). "total_cost" is specifically COST OF REVENUE, only for revenue-vs-cost / gross-margin asks — do NOT use it for a generic "expense" request.',
+    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses", "SG&A" → use measure "total_expenses" (= Total Cost + Total Payroll), available company-wide and by month. The General Ledger was removed from the dataset, so there is NO expense-by-account / expense-by-department breakdown anymore — an "expense composition by account" request has no data and should be refused. "total_cost" is specifically COST OF REVENUE, only for revenue-vs-cost / gross-margin asks — do NOT use it for a generic "expense" request.',
+    'CLIENTS: "number of clients / how many clients / client count" → measure "no_clients" (a DISTINCTCOUNT). "average/avg revenue per client" → measure "avg_revenue_per_client". "client RANK / rank clients / top N clients" is NOT a measure — plot the underlying measure (usually total_revenue) by dimension "client" with sort:"value_desc" (or "value_asc" for the bottom) and topN. "revenue contribution % / share of total company revenue / revenue concentration" is the company_share TRANSFORM on total_revenue by client, not a separate measure.',
     'FIXED ASSETS ARE POINT-IN-TIME: the fixed-asset measures (asset_cost, net_book_value, accumulated_depreciation, depreciation_pct, asset_count) have NO monthly/time series — there is no month/quarter/year dimension for them. Never give an asset measure a time dimension. A request about "changes in assets", "asset movement", or an asset waterfall/bar/breakdown means the COMPOSITION across a category: set dimension to asset_type (default), delivery_center, country, or region — e.g. "waterfall showing changes in assets" → {measure:"asset_cost", dimension:"asset_type", chartType:"waterfall"}.',
     `NOT AVAILABLE (if the request needs any of these, return a refusal): ${unavailable}.`,
     'THRESHOLD (optional): keep only rows whose measure passes a number ("clients above $1M", "departments under $100k") → having:{op:"gt"|"lt"|"gte"|"lte", value:<number>}.',

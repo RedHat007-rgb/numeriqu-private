@@ -9366,27 +9366,95 @@ export class AgentService {
     );
   }
 
+  // Fabrication guard: reject rewritten SQL that surfaces the SAME aggregate expression
+  // under two or more DIFFERENT business-measure aliases — e.g.
+  //   sumIf(total_payroll_usd,1) AS cost, sumIf(total_payroll_usd,1) AS revenue
+  // which the editor produced when asked for "cost vs revenue by department" even though
+  // neither measure exists at the department grain. Two distinct metrics can never be the
+  // identical column; this is definitionally fabricated. General — keys off identical
+  // aggregate expressions with distinct aliases, not any specific column name.
+  private hasFabricatedDuplicateMeasure(sql: string): boolean {
+    const m = /\bselect\b([\s\S]*?)\bfrom\b/i.exec(String(sql ?? ''));
+    if (!m?.[1]) return false;
+    const proj = m[1];
+    // Split the projection list on TOP-LEVEL commas (ignore commas inside parens).
+    const items: string[] = [];
+    let depth = 0;
+    let cur = '';
+    for (const ch of proj) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) {
+        items.push(cur);
+        cur = '';
+      } else cur += ch;
+    }
+    if (cur.trim()) items.push(cur);
+
+    const aliasesByExpr = new Map<string, Set<string>>();
+    for (const item of items) {
+      const am = /^([\s\S]+?)\s+as\s+["'`]?([A-Za-z0-9_ %().-]+?)["'`]?\s*$/i.exec(
+        item.trim(),
+      );
+      if (!am) continue;
+      const expr = am[1].replace(/\s+/g, ' ').trim().toLowerCase();
+      const alias = am[2].replace(/\s+/g, ' ').trim().toLowerCase();
+      // Only real aggregate measures matter; dimension/name columns may legitimately repeat.
+      if (!/\b(sum|sumif|avg|avgif|count|countif|max|min|median|quantile)\s*\(/.test(expr))
+        continue;
+      if (!aliasesByExpr.has(expr)) aliasesByExpr.set(expr, new Set());
+      aliasesByExpr.get(expr)!.add(alias);
+    }
+    for (const aliases of aliasesByExpr.values()) {
+      if (aliases.size >= 2) return true;
+    }
+    return false;
+  }
+
+  // Phrasing-robust intent: does the user want ABSOLUTE-VALUE data labels (vs % labels)?
+  // The older inline patterns required "show values" etc. to be contiguous, so requests
+  // with intervening words ("show actual revenue contribution values", "display data
+  // labels with actual values") slipped through to the LLM editor and silently no-op'd.
+  // General intent, no per-question strings.
+  private wantsValueLabelIntent(query: string): boolean {
+    const q = String(query ?? '').toLowerCase();
+    if (!q) return false;
+    if (/\b(?:values?|numbers?|amounts?)\s+instead\s+of\s+percent/.test(q)) return true;
+    if (/\b(?:remove|without|no|hide)\s+percent(?:age|ages)?/.test(q)) return true;
+    if (/\bpercent(?:age|ages)?\s+to\s+(?:values?|numbers?|amounts?)\b/.test(q)) return true;
+    // "actual / real / absolute / raw / exact / whole / dollar … value(s)" (allow words between).
+    if (/\b(?:actual|real|absolute|raw|exact|whole|dollar)\b[^.]*\bvalues?\b/.test(q)) return true;
+    // A show/display/add request that targets value(s)/number(s)/amount(s) and is NOT about percent.
+    if (
+      /\b(?:show|display|add|include|put|label|labelled|labeled)\b[^.]*\b(?:values?|numbers?|amounts?)\b/.test(
+        q,
+      ) &&
+      !/\bpercent(?:age|ages)?\b|%/.test(q)
+    )
+      return true;
+    return false;
+  }
+
+  // Phrasing-robust intent: does the user want PERCENTAGE data labels?
+  private wantsPercentLabelIntent(query: string): boolean {
+    const q = String(query ?? '').toLowerCase();
+    if (!q) return false;
+    if (/\bpercent(?:age|ages)?\s+labels?\b/.test(q)) return true;
+    if (/\bcontribution\s+percent(?:age|ages)?\b/.test(q)) return true;
+    if (
+      /\b(?:show|display|add|with|as)\b[^.]*\bpercent(?:age|ages)?\b/.test(q) &&
+      !this.wantsValueLabelIntent(q)
+    )
+      return true;
+    return false;
+  }
+
   private applyPieDonutLabelModeToWidgets(
     widgets: any[],
     query: string,
   ): any[] {
-    const wantsValueLabels =
-      /\b(whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?|remove\s+percent(?:age|ages)?|show\s+values?|raw\s+values?)\b/i.test(
-        query,
-      ) ||
-      /\bneed\s+values?\b/i.test(query) ||
-      /\babsolute\s+values?\b/i.test(query) ||
-      /\bnumbers?\s+instead\s+of\s+percent(?:age|ages)?\b/i.test(query) ||
-      /\bwithout\s+percent(?:age|ages)?\b/i.test(query) ||
-      /\bno\s+percent(?:age|ages)?\b/i.test(query) ||
-      /\bpercentage\s+to\s+values?\b/i.test(query) ||
-      /\bpercent(?:age|ages)?\s+to\s+values?\b/i.test(query);
-    const wantsPercentLabels =
-      /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(query) ||
-      /\bshow\s+percent(?:age|ages)?\b/i.test(query) ||
-      /\bpercent(?:age|ages)?\s+labels?\b/i.test(query) ||
-      /\bpercent(?:age|ages)?\s+values?\b/i.test(query) ||
-      /\bshow\s+percent(?:age|ages)?\s+in\s+the\s+chart\b/i.test(query);
+    const wantsValueLabels = this.wantsValueLabelIntent(query);
+    const wantsPercentLabels = this.wantsPercentLabelIntent(query);
 
     const labelMode = wantsValueLabels ? 'value' : wantsPercentLabels ? 'percent' : null;
     if (!labelMode) return widgets;
@@ -9760,23 +9828,8 @@ export class AgentService {
             return 'line';
           })();
 
-          const wantsValueLabels =
-            wants(/whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?/) ||
-            wants(/remove\s+percent(?:age|ages)?/) ||
-            wants(/show\s+values?/) ||
-            wants(/need\s+values?/) ||
-            wants(/absolute\s+values?/) ||
-            wants(/raw\s+values?/) ||
-            wants(/numbers?\s+instead\s+of\s+percent(?:age|ages)?/) ||
-            wants(/without\s+percent(?:age|ages)?/) ||
-            wants(/no\s+percent(?:age|ages)?/) ||
-            wants(/percentage\s+to\s+values?/) ||
-            wants(/percent(?:age|ages)?\s+to\s+values?/);
-          const wantsPercentLabels =
-            wants(/percent(?:age|ages)?\s+to\s+percent(?:age|ages)?/) ||
-            wants(/show\s+percent(?:age|ages)?/) ||
-            wants(/percent(?:age|ages)?\s+labels?/) ||
-            wants(/percent(?:age|ages)?\s+values?/);
+          const wantsValueLabels = this.wantsValueLabelIntent(lower);
+          const wantsPercentLabels = this.wantsPercentLabelIntent(lower);
           const display: W['display'] | undefined =
             wants(/donut/) ||
             wantsValueLabels ||
@@ -9827,17 +9880,9 @@ export class AgentService {
             )
               return { metric: 'revenue', grouping: 'month' };
 
-            // EBPO geographic revenue is allocated revenue, not total revenue.
-            // Country / region / delivery-center asks should resolve to the
-            // geography-bearing EBPO view instead of falling through to the
-            // non-geographic total-revenue catalog.
-            if (wants(/revenue/) && wants(/\bby\s+(country|countries|region|regions|cit(y|ies)|delivery\s+center|delivery\s+centers)\b/)) {
-              if (wants(/\bdelivery\s+center\b|\bdelivery\s+centers\b/))
-                return { metric: 'allocated_revenue', grouping: 'delivery_center' };
-              if (wants(/\bregion\b|\bregions\b/)) return { metric: 'allocated_revenue', grouping: 'region' };
-              if (wants(/\bcountry\b|\bcountries\b/)) return { metric: 'allocated_revenue', grouping: 'country' };
-              if (wants(/\bcity\b|\bcities\b/)) return { metric: 'allocated_revenue', grouping: 'city' };
-            }
+            // Revenue has NO geography relationship in this dataset (FactRevenue has no
+            // geography key), so "revenue by country/region/city/delivery center" is NOT
+            // routed anywhere — it falls through and the compiler refuses honestly.
 
             // Month-over-month revenue growth %
             if (
@@ -11126,7 +11171,7 @@ export class AgentService {
       distinct('aging_bucket', 'v_ebpo_ar_aging'),
       distinct('delivery_center', 'v_ebpo_operations_monthly'),
       distinct('region', 'v_ebpo_operations_monthly'),
-      distinct('account_name', 'v_ebpo_gl_monthly'),
+      distinct('account_name', 'v_ebpo_trial_balance_monthly'),
       this.queryRows<any>(
         `SELECT client_name, round(sum(total_revenue_usd), 0) AS rev
          FROM ${db}.v_ebpo_revenue_by_client WHERE ${orgWhere}
@@ -11208,10 +11253,10 @@ export class AgentService {
         'v_ebpo_employee_headcount (department + country + delivery_center + grade + employee_count — use for employee-count charts), ' +
         'v_ebpo_department_efficiency_monthly (department + month + revenue_per_employee_usd + cost_per_employee_usd), ' +
         'v_ebpo_business_unit_efficiency (business_unit + revenue_per_employee_usd), ' +
-        'v_ebpo_delivery_center_efficiency_monthly (delivery_center + allocated_revenue_usd + revenue_per_employee_usd + utilization_pct), ' +
+        'v_ebpo_delivery_center_efficiency_monthly (delivery_center + region + country + calls_handled + utilization_pct + employee_count — OPERATIONS only; this dataset has NO revenue by geography), ' +
         'v_ebpo_client_revenue_collection (client revenue/margin + collection_rate_pct), ' +
         'v_ebpo_salary_by_dept_grade (department + grade + avg_monthly_salary_usd + employee_count — use for avg-salary heatmap/matrix by department x grade), ' +
-        'v_ebpo_gl_monthly, v_ebpo_trial_balance_monthly (opening/closing/debit/credit/net movement by account and month), v_ebpo_ar_aging, v_ebpo_ap_aging, v_ebpo_operations_monthly (calls, tickets, avg_aht_minutes, SLA, CSAT, utilization), ' +
+        'v_ebpo_trial_balance_monthly (opening/closing balance, debit/credit/net movement by account and month), v_ebpo_ar_aging, v_ebpo_ap_aging, v_ebpo_operations_monthly (calls, tickets, avg_aht_minutes, SLA, CSAT, utilization), ' +
         'v_ebpo_cash_flow_monthly, v_ebpo_fixed_assets_by_center (asset_cost, accumulated_depreciation, net_book_value, depreciation_pct by delivery_center and asset_type). ' +
         'Group time series by period_date (already a Date). Output shape: x/category column AS name, metric AS value (or sumIf pivots for multi-series).',
     );
@@ -12099,12 +12144,15 @@ export class AgentService {
         const efficiency = await buildWidget(
           {
             measure: 'revenue_per_employee',
-            measures: ['revenue_per_employee', 'cost_per_employee'],
+            // Payroll per employee is the monthly-valid efficiency metric (payroll/headcount).
+            // cost_per_employee is DAX Total Cost/headcount — Total Cost isn't booked monthly
+            // per employee, so it only resolves by business unit / company, not by month.
+            measures: ['revenue_per_employee', 'payroll_per_employee'],
             dimension: 'month',
             chartType: 'line',
           },
           'Monthly Employee Efficiency',
-          'Monthly revenue per employee and cost per employee',
+          'Monthly revenue per employee and payroll per employee',
         );
         if (efficiency) widgets.push({ ...efficiency, display_order: widgets.length });
       }
@@ -12497,19 +12545,6 @@ export class AgentService {
         },
         'Monthly Working Capital',
         'Working capital by month',
-      );
-      if (built) return built;
-    }
-
-    if (/\brevenue\s+per\s+delivery\s+center\b/.test(qLow)) {
-      const built = await build(
-        {
-          measure: 'allocated_revenue',
-          dimension: 'delivery_center',
-          chartType: forcedChartType ?? 'bar',
-        },
-        'Revenue by Delivery Center',
-        'Allocated revenue by delivery center',
       );
       if (built) return built;
     }
@@ -13570,9 +13605,10 @@ export class AgentService {
       // Geography ("by country/region/city/delivery center"): the LLM planner is
       // UNRELIABLE about whether a measure can be grouped by geography (it pre-refuses
       // inconsistently), so route these through the deterministic measure×dimension
-      // resolver. It builds via the compiler when the combination exists (e.g. revenue
-      // by country → allocated_revenue, ties to $131.6M) and returns null (→ LLM →
-      // honest refusal) when it genuinely doesn't. General, not per-question.
+      // resolver. It builds via the compiler when the combination exists (e.g. OPERATIONS
+      // metrics by delivery center / country) and returns null (→ LLM → honest refusal)
+      // when it genuinely doesn't — e.g. revenue/cost/margin, which have NO geography key
+      // in this dataset. General, not per-question.
       /\bby\s+(?:countr(?:y|ies)|regions?|cit(?:y|ies)|delivery\s+centers?)\b/i.test(
         query,
       ) ||
@@ -14868,9 +14904,11 @@ export class AgentService {
 
     const q = editRequest.toLowerCase();
     const hasEditVerb =
-      /\b(switch|change|convert|replace|turn|make|set|update|transform|swap)\b/.test(
+      /\b(switch|change|convert|replace|turn|make|set|update|transform|swap|need|want|give|prefer|like)\b/.test(
         q,
-      );
+      ) ||
+      // a bare "as a pie chart" / "in a bar chart" type request with no verb
+      /\b(?:as|in(?:to)?)\s+(?:a\s+|an\s+)?[a-z ]*\bchart\b/.test(q);
     const hasBroadScopeHint =
       /\b(add|remove|delete|also|and|plus|another|new|additional|instead of|as well as)\b/.test(
         q,
@@ -15646,6 +15684,15 @@ export class AgentService {
         chartType: ChartType,
       ): Promise<string | null> => {
         let cleaned = String(rawSql).trim().replace(/;+$/, '');
+        // Reject fabricated comparisons where one aggregate column is surfaced under two
+        // distinct measure names (e.g. payroll aliased as both "cost" and "revenue" when
+        // neither exists at this grain). Better to honestly fail the edit than fabricate.
+        if (this.hasFabricatedDuplicateMeasure(cleaned)) {
+          this.logger.warn(
+            '[SmartEdit] rejected edit SQL — one aggregate aliased as multiple distinct measures (fabrication guard)',
+          );
+          return null;
+        }
         // A pie/donut editor sometimes wraps a signed measure in abs() to force the
         // chart (e.g. abs(sum(investing_cash_flow_usd))), which hides outflows as
         // positive slices. Strip that abs() so the real (possibly negative) values flow
@@ -16026,24 +16073,14 @@ export class AgentService {
 
   private detectLabelModeEdit(req: string): 'value' | 'percent' | null {
     const q = String(req ?? '');
-    const wantsValue =
-      /\b(whole\s+values?|values?\s+instead\s+of\s+percent(?:age|ages)?|remove\s+percent(?:age|ages)?|show\s+values?|raw\s+values?)\b/i.test(q) ||
-      /\bneed\s+values?\b/i.test(q) ||
-      /\babsolute\s+values?\b/i.test(q) ||
-      /\bnumbers?\s+instead\s+of\s+percent(?:age|ages)?\b/i.test(q) ||
-      /\bwithout\s+percent(?:age|ages)?\b/i.test(q) ||
-      /\bno\s+percent(?:age|ages)?\b/i.test(q) ||
-      /\bpercent(?:age|ages)?\s+to\s+values?\b/i.test(q);
-    if (wantsValue) return 'value';
-    const wantsPercent =
-      /\bpercent(?:age|ages)?\s+to\s+percent(?:age|ages)?\b/i.test(q) ||
-      /\bshow\s+percent(?:age|ages)?\b/i.test(q) ||
-      /\bpercent(?:age|ages)?\s+labels?\b/i.test(q) ||
-      /\bas\s+percent(?:age|ages)?\b/i.test(q) ||
-      /\bcontribution(?:s)?\b/i.test(q) ||
-      /\bshare\s+of\s+total\b/i.test(q) ||
-      /\bshare\s+of\s+the\s+total\b/i.test(q);
-    return wantsPercent ? 'percent' : null;
+    // Explicit value-label intent wins — including phrasings with intervening words like
+    // "show actual revenue contribution values", which previously fell through to the bare
+    // "contribution" → percent rule below and rendered % when the user asked for $ values.
+    if (this.wantsValueLabelIntent(q)) return 'value';
+    if (this.wantsPercentLabelIntent(q)) return 'percent';
+    // Bare "contribution" / "share of total" (no explicit value ask) implies % labels.
+    if (/\bcontribution(?:s)?\b|\bshare\s+of\s+(?:the\s+)?total\b/i.test(q)) return 'percent';
+    return null;
   }
 
   // Pure "show/hide data labels" toggle. Returns 'on'/'off' only when the request
@@ -16368,9 +16405,6 @@ export class AgentService {
       /\breceivables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/.test(text);
     const asksApToCost =
       /\bpayables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+(?:total\s+)?cost\b/.test(text);
-    const asksGeographicRevenue =
-      /\brevenue\b/.test(text) &&
-      /\bby\s+(?:countr(?:y|ies)|regions?|cit(?:y|ies)|delivery\s+centers?)\b/.test(text);
     const asksCumulativeRevenue =
       /\b(cumulative|running\s+total)\b/.test(text) &&
       /\b(revenue|sales|income)\b/.test(text);
@@ -16417,9 +16451,6 @@ export class AgentService {
       [/\baccumulated\s+depreciation\b|\bdepreciation\b/, 'accumulated_depreciation'],
       [/\bnet\s+book\s+value\b|\bnbv\b/, 'net_book_value'],
       [/\basset\s+count\b/, 'asset_count'],
-      [/\btotal\s+debit\b|\bdebits?\b|\bdebit\s+impact\b/, 'total_debit'],
-      [/\btotal\s+credit\b|\bcredits?\b|\bcredit\s+impact\b/, 'total_credit'],
-      [/\bnet\s+movement\b/, 'net_movement'],
       [/\bclosing\s+balance\b/, 'closing_balance'],
     ];
     for (const [pattern, id] of checks) if (pattern.test(text)) add(id);
@@ -16454,10 +16485,6 @@ export class AgentService {
       if (candidates.some((candidate) => haystack.includes(normalize(candidate)))) add(id);
     }
     dropGrossMarginDollarWhenPercentOnly();
-    if (asksGeographicRevenue && out.includes('allocated_revenue')) {
-      const totalRevenueIndex = out.indexOf('total_revenue');
-      if (totalRevenueIndex !== -1) out.splice(totalRevenueIndex, 1);
-    }
     return out.filter(
       (id) =>
         !(asksArToRevenue && (id === 'ar_outstanding' || id === 'total_revenue')) &&
@@ -16489,8 +16516,6 @@ export class AgentService {
       add('overtime_to_payroll_pct');
     if (/\binvesting\s+cash\s+flow\b|\binvesting\s+cf\b/.test(text)) add('investing_cf');
     if (/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/.test(text)) add('financing_cf');
-    if (/\bdebits?\b|\bdebit\s+impact\b/.test(text)) add('total_debit');
-    if (/\bcredits?\b|\bcredit\s+impact\b/.test(text)) add('total_credit');
     if (/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(text)) add('ap_outstanding');
 
     for (const mid of this.detectEbpoMeasureMentions(text)) add(mid);
@@ -17090,89 +17115,6 @@ export class AgentService {
       }
 
       if (
-        spec?.measure === 'allocated_revenue' &&
-        ['country', 'region', 'city', 'delivery_center'].includes(String(spec.dimension ?? '')) &&
-        /\bprior[\s-]*year\b|\bprevious[\s-]*year\b|\blast[\s-]*year\b/.test(q)
-      ) {
-        const yearCount = await this.dataYearCount(scope).catch(() => 0);
-        if (yearCount < 2) {
-          return {
-            summary: '',
-            add: [],
-            remove_indices: [],
-            modify: [],
-            refusal:
-              "I can't add last year's revenue — this dataset does not have an earlier year for a prior-year comparison, so I left the chart unchanged.",
-          };
-        }
-
-        const dim = String(spec.dimension);
-        const sql = `
-          WITH yearly AS (
-            SELECT
-              ${dim} AS name,
-              toYear(period_date) AS year,
-              round(sum(allocated_revenue_usd), 2) AS allocated_revenue
-            FROM ${this.analyticsDb}.v_ebpo_delivery_center_efficiency_monthly
-            WHERE tenant_id = {tenantId:String}
-              AND org_id IN ({externalOrgIds:Array(String)})
-              AND ${dim} != ''
-            GROUP BY ${dim}, toYear(period_date)
-          ),
-          max_year AS (
-            SELECT max(year) AS current_year
-            FROM yearly
-          )
-          SELECT
-            y.name AS name,
-            round(maxIf(y.allocated_revenue, y.year = m.current_year), 2) AS "Revenue (allocated)",
-            round(maxIf(y.allocated_revenue, y.year = m.current_year - 1), 2) AS "Revenue (Last Year)"
-          FROM yearly y
-          CROSS JOIN max_year m
-          GROUP BY y.name
-          HAVING "Revenue (allocated)" IS NOT NULL
-          ORDER BY "Revenue (allocated)" DESC
-          LIMIT 50
-        `;
-        if (await verify(sql, 'bar')) {
-          return {
-            summary: "Added last year's revenue as a second series in the same country chart.",
-            add: [],
-            remove_indices: [],
-            modify: [
-              {
-                index: i,
-                type: 'bar',
-                dynamicSql: sql.trim(),
-                spec: {
-                  ...spec,
-                  measures: ['allocated_revenue', 'revenue_ly'],
-                  chartType: 'bar',
-                },
-                display: {
-                  valueFormat: 'currency',
-                  series: [
-                    {
-                      key: 'Revenue (allocated)',
-                      role: 'bar',
-                      axis: 'left',
-                      format: 'currency',
-                    },
-                    {
-                      key: 'Revenue (Last Year)',
-                      role: 'bar',
-                      axis: 'left',
-                      format: 'currency',
-                    },
-                  ],
-                },
-              },
-            ],
-          };
-        }
-      }
-
-      if (
         spec?.measure === 'asset_intensity' &&
         spec.dimension === 'delivery_center' &&
         /\bcsat\b|\bcustomer\s+satisfaction\b/.test(q)
@@ -17353,6 +17295,12 @@ export class AgentService {
                   FROM _base
                   LIMIT 1000
                 `;
+                // The reference measure is NOT one of the chart's plotted series, so it
+                // is a different metric living on a different scale (e.g. an average-cost
+                // line over an overtime chart, $1.8M vs a $0–$100K axis). Forcing it onto
+                // the primary (left) axis pushes it off-screen. Give it its own secondary
+                // (right) axis with the measure's native format so it is always visible.
+                referenceAxis = 'right';
               } else if (mentionedMeasures.includes(targetMeasure)) {
                 return {
                   summary: '',
@@ -17384,6 +17332,16 @@ export class AgentService {
 
             if (sql && (await verify(sql, w.chartType as ChartType))) {
               const priorDisplay = (cfg.display ?? {}) as DisplayHints;
+              // A reference line on the secondary axis carries a different metric than the
+              // primary series, so it needs its own axis format/label — otherwise the
+              // renderer would format it with the primary axis's units.
+              const secondaryHints: DisplayHints =
+                referenceAxis === 'right'
+                  ? {
+                      secondaryAxisFormat: def.format,
+                      secondaryLabel: referenceKey,
+                    }
+                  : {};
               return {
                 summary: `Added the average ${def.label.toLowerCase()} reference line.`,
                 add: [],
@@ -17396,6 +17354,7 @@ export class AgentService {
                     spec,
                     display: {
                       ...priorDisplay,
+                      ...secondaryHints,
                       referenceSeries: referenceKey,
                       referenceAxis,
                     },
@@ -18157,9 +18116,9 @@ export class AgentService {
           SELECT
             account_name AS name,
             round(sum(net_movement_usd), 2) AS net_movement,
-            round(sum(total_debit_usd), 2) AS total_debit,
-            round(sum(total_credit_usd), 2) AS total_credit
-          FROM ${this.analyticsDb}.v_ebpo_gl_monthly
+            round(sum(debit_movement_usd), 2) AS total_debit,
+            round(sum(credit_movement_usd), 2) AS total_credit
+          FROM ${this.analyticsDb}.v_ebpo_trial_balance_monthly
           WHERE tenant_id = {tenantId:String}
             AND org_id IN ({externalOrgIds:Array(String)})
             AND account_name != ''
@@ -18169,7 +18128,7 @@ export class AgentService {
         `;
         if (await verify(sql, 'waterfall')) {
           return {
-            summary: 'Added debit and credit impact labels from verified GL movement columns.',
+            summary: 'Added debit and credit impact labels from verified trial-balance movement columns.',
             add: [],
             remove_indices: [],
             modify: [
@@ -18914,6 +18873,22 @@ export class AgentService {
         .split(' ')
         .filter((w) => w.length >= 4 && !['of', 'the', 'per', 'and'].includes(w));
 
+    // The significant tokens must appear in the request IN ORDER (not necessarily
+    // contiguous) — "payroll to revenue" matches the "Payroll / Revenue %" tokens
+    // [payroll, revenue], but "by client … compare revenue" must NOT match the
+    // "Avg Revenue per Client" tokens [revenue, client] (they occur reversed). Without the
+    // ordering check, any measure whose label reduces to two common words (revenue+client)
+    // false-matches whenever both words happen to appear.
+    const tokensInOrder = (toks: string[]) => {
+      let from = 0;
+      for (const t of toks) {
+        const at = q.indexOf(` ${t} `, from);
+        if (at < 0) return false;
+        from = at + t.length; // overlap the shared space so adjacent tokens still match
+      }
+      return true;
+    };
+
     const matched: string[] = [...mentioned];
     const explicitPercentLike =
       /\bpercent(?:age)?\b|\bpct\b|%|\bratio\b|\brate\b/.test(req.toLowerCase());
@@ -18925,10 +18900,8 @@ export class AgentService {
       const matchedCandidate = candidates.some((candidate) => {
         const labelCore = norm(candidate);
         const tokens = sigTokens(candidate);
-        const allTokensPresent =
-          tokens.length >= 2 &&
-          tokens.every((t) => q.includes(` ${t} `) || q.includes(`${t} `));
-        return (labelCore.trim().length >= 2 && q.includes(labelCore)) || allTokensPresent;
+        const allTokensInOrder = tokens.length >= 2 && tokensInOrder(tokens);
+        return (labelCore.trim().length >= 2 && q.includes(labelCore)) || allTokensInOrder;
       });
       if (q.includes(idPhrase) || matchedCandidate) {
         matched.push(mid);
@@ -18977,7 +18950,13 @@ export class AgentService {
       ap_to_cost_pct: ['ap_outstanding', 'total_cost'],
       overtime_to_payroll_pct: ['total_payroll'],
       payment_rate_pct: ['paid_amount', 'invoice_amount'],
-      cost_per_employee: ['total_payroll', 'employee_count'],
+      cost_per_employee: ['total_cost', 'employee_count'],
+      payroll_per_employee: ['total_payroll', 'employee_count'],
+      avg_revenue_per_client: ['total_revenue', 'no_clients'],
+      // Composite-numerator ratios — the catalog `derived` check only excludes a STRING
+      // num/den, so list the composite parts here so they aren't dragged in as raw series.
+      expense_to_revenue_pct: ['total_cost', 'total_payroll', 'total_revenue'],
+      total_expenses: ['total_cost', 'total_payroll'],
       depreciation_pct_asset_cost: ['accumulated_depreciation', 'asset_cost'],
       net_book_value_pct: ['net_book_value', 'asset_cost'],
     };
@@ -20390,6 +20369,44 @@ export class AgentService {
 
     const explicitType = this.detectPureChartTypeEditRequest(editRequest);
     if (explicitType && activeDashboard.widgets.length > 0) {
+      // A pie/donut can only show NON-NEGATIVE parts of a whole. If a target chart has
+      // negative values (e.g. cash-flow components — investing/financing CF are negative),
+      // switching to a pie would silently coerce to a bar while the label still says
+      // "pie" (a lie). Refuse with a clear justification so the user knows WHY, instead of
+      // pretending it became a pie.
+      if ((explicitType === 'pie' || explicitType === 'donut') && scope) {
+        for (const w of activeDashboard.widgets) {
+          const sql = (w.queryConfig as any)?.dynamicSql;
+          if (!sql) continue;
+          const rows = await this.queryRows<Record<string, unknown>>(sql, {
+            tenantId: scope.tenantId,
+            externalOrgIds: scope.externalOrgIds,
+          }).catch(() => [] as Record<string, unknown>[]);
+          const negs = rows.filter((r) =>
+            Object.entries(r).some(
+              ([k, v]) =>
+                k !== 'name' && k !== '__ord' && typeof v === 'number' && (v as number) < 0,
+            ),
+          );
+          if (negs.length > 0) {
+            const negNames = negs
+              .map((r) => String((r as any).name ?? ''))
+              .filter(Boolean)
+              .slice(0, 3)
+              .join(', ');
+            return {
+              summary: '',
+              add: [],
+              remove_indices: [],
+              modify: [],
+              refusal:
+                `I can't show "${w.title}" as a ${this.humanizeChartType(explicitType)} — ` +
+                `${negNames ? `${negNames} ` : 'some values '}are negative, and a pie/donut can only ` +
+                `represent non-negative parts of a whole. I kept it as a ${this.humanizeChartType(String(w.chartType) as ChartType) ?? 'bar'} so the negatives stay visible.`,
+            };
+          }
+        }
+      }
       return applyPresentationEditHints({
         summary: `Switched existing chart${activeDashboard.widgets.length > 1 ? 's' : ''} to ${this.humanizeChartType(explicitType)}.`,
         add: [],

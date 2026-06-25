@@ -168,22 +168,9 @@ const tableSpecs: TableSpec[] = [
       col("GrossMarginUSD", "gross_margin_usd", "float", "Float64"),
     ],
   },
-  {
-    sheet: "FactGeneralLedger",
-    table: "ebpo_fact_general_ledger",
-    orderBy: "date_key, voucher_number, account_number",
-    columns: [
-      col("VoucherNumber", "voucher_number", "uint", "UInt64"),
-      col("DateKey", "date_key", "uint", "UInt32"),
-      col("AccountNumber", "account_number", "string", "String"),
-      col("AccountName", "account_name", "string", "String"),
-      col("Department", "department", "string", "LowCardinality(String)"),
-      col("BusinessUnit", "business_unit", "string", "LowCardinality(String)"),
-      col("Country", "country", "string", "LowCardinality(String)"),
-      col("DebitUSD", "debit_usd", "float", "Float64"),
-      col("CreditUSD", "credit_usd", "float", "Float64"),
-    ],
-  },
+  // FactGeneralLedger was removed from the dataset (2026-06-25). The GL fact table and
+  // v_ebpo_gl_monthly view are no longer seeded; expense reporting uses total_expenses
+  // (Total Cost + Total Payroll) and trial-balance accounts.
   {
     sheet: "FactTrialBalance",
     table: "ebpo_fact_trial_balance",
@@ -672,31 +659,6 @@ function semanticViewDdls(db: string) {
       GROUP BY emp.tenant_id, emp.org_id, emp.department, emp.country, emp.delivery_center, emp.grade
     `,
     `
-      CREATE VIEW ${db}.v_ebpo_gl_monthly AS
-      SELECT
-        ledger.tenant_id AS tenant_id,
-        ledger.org_id AS org_id,
-        any(ledger.org_name) AS org_name,
-        dates.date AS period_date,
-        dates.year,
-        dates.quarter,
-        dates.month,
-        dates.month_name,
-        ledger.account_number AS account_number,
-        ledger.account_name AS account_name,
-        ledger.department AS department,
-        ledger.business_unit AS business_unit,
-        ledger.country AS country,
-        round(sum(ledger.debit_usd), 2) AS total_debit_usd,
-        round(sum(ledger.credit_usd), 2) AS total_credit_usd,
-        round(sum(ledger.debit_usd - ledger.credit_usd), 2) AS net_movement_usd
-      FROM ${db}.ebpo_fact_general_ledger ledger
-      INNER JOIN ${db}.ebpo_dim_date dates
-        ON dates.tenant_id = ledger.tenant_id AND dates.org_id = ledger.org_id AND dates.date_key = ledger.date_key
-      GROUP BY ledger.tenant_id, ledger.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name,
-        ledger.account_number, ledger.account_name, ledger.department, ledger.business_unit, ledger.country
-    `,
-    `
       CREATE VIEW ${db}.v_ebpo_trial_balance_monthly AS
       SELECT
         trial.tenant_id AS tenant_id,
@@ -936,6 +898,10 @@ function semanticViewDdls(db: string) {
     `,
     `
       CREATE VIEW ${db}.v_ebpo_delivery_center_efficiency_monthly AS
+      -- OPERATIONS by delivery center / geography only. Revenue is intentionally NOT
+      -- included: FactRevenue has no geography key, so any revenue-by-geography figure
+      -- would be a fabricated allocation. "revenue by country/region/delivery center"
+      -- must refuse, matching the source model (PowerBI has no such relationship).
       SELECT
         operations.tenant_id AS tenant_id,
         operations.org_id AS org_id,
@@ -950,26 +916,12 @@ function semanticViewDdls(db: string) {
         any(geo.country) AS country,
         round(sum(operations.calls_handled), 2) AS calls_handled,
         round(avg(operations.utilization_pct), 2) AS utilization_pct,
-        any(headcount.employee_count) AS employee_count,
-        round(any(revenue.total_revenue_usd) * sum(operations.calls_handled) / nullIf(any(total_calls.calls_handled), 0), 2) AS allocated_revenue_usd,
-        round(any(revenue.total_revenue_usd) * sum(operations.calls_handled) / nullIf(any(total_calls.calls_handled), 0) / nullIf(any(headcount.employee_count), 0), 2) AS revenue_per_employee_usd
+        any(headcount.employee_count) AS employee_count
       FROM ${db}.ebpo_fact_operations operations
       INNER JOIN ${db}.ebpo_dim_date dates
         ON dates.tenant_id = operations.tenant_id AND dates.org_id = operations.org_id AND dates.date_key = operations.date_key
       LEFT JOIN ${db}.ebpo_dim_geography geo
         ON geo.tenant_id = operations.tenant_id AND geo.org_id = operations.org_id AND geo.delivery_center = operations.delivery_center
-      LEFT JOIN (
-        SELECT tenant_id, org_id, date_key, sum(calls_handled) AS calls_handled
-        FROM ${db}.ebpo_fact_operations
-        GROUP BY tenant_id, org_id, date_key
-      ) total_calls
-        ON total_calls.tenant_id = operations.tenant_id AND total_calls.org_id = operations.org_id AND total_calls.date_key = operations.date_key
-      LEFT JOIN (
-        SELECT tenant_id, org_id, date_key, sum(revenue_usd) AS total_revenue_usd
-        FROM ${db}.ebpo_fact_revenue
-        GROUP BY tenant_id, org_id, date_key
-      ) revenue
-        ON revenue.tenant_id = operations.tenant_id AND revenue.org_id = operations.org_id AND revenue.date_key = operations.date_key
       LEFT JOIN (
         SELECT tenant_id, org_id, delivery_center, count() AS employee_count
         FROM ${db}.ebpo_dim_employee
@@ -1096,7 +1048,6 @@ async function recreateSemanticViews(client: ReturnType<typeof createClickHouseC
     "v_ebpo_revenue_by_client_contract_monthly",
     "v_ebpo_payroll_monthly",
     "v_ebpo_employee_headcount",
-    "v_ebpo_gl_monthly",
     "v_ebpo_trial_balance_monthly",
     "v_ebpo_ar_aging",
     "v_ebpo_ap_aging",

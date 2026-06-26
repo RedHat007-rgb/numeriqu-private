@@ -1592,24 +1592,20 @@ export const ebpoCompanyValueSubquery = (
 // True when "measure BY dimId" has no real view but CAN be shown as the company value
 // replicated across dimId's categories (single categorical dim, no breakdown).
 const canReplicateAcrossDim = (
-  measureId: string,
-  dimId: string | null | undefined,
-  filterDims: string[],
+  _measureId: string,
+  _dimId: string | null | undefined,
+  _filterDims: string[],
 ): boolean => {
-  if (!dimId) return false;
-  const dim = EBPO_DIMENSIONS[dimId];
-  if (!dim || dim.isTime) return false;
-  // ONLY a RATIO measure (an average %, e.g. SLA/CSAT/utilization/margin %) may replicate
-  // across an unrelated dimension: an average genuinely IS "the same everywhere", so a
-  // flat per-category value reads as a benchmark (this is the PowerBI parity the user
-  // approved). An ADDITIVE measure (flow $ like revenue/expense/cost, a stock balance, or
-  // a count) must NOT — replicating the company TOTAL onto every category implies each
-  // category equals the whole company (e.g. "expense by client" → $131.8M on EVERY
-  // client, which is nonsense). Those fall through to an honest refusal instead.
-  if (EBPO_MEASURES[measureId]?.kind !== 'ratio') return false;
-  if (resolveEbpoView(measureId, dimId, null, filterDims)) return false; // real breakdown exists
-  if (!resolveEbpoView(measureId, null, null, filterDims)) return false; // company grain missing
-  return !!dimCategorySource(dimId);
+  // DISABLED — this only ever fired when the measure has NO real view for the dimension
+  // (line below guarded `resolveEbpoView(...) → return false` when a genuine breakdown
+  // exists), i.e. the dimension is ALWAYS unrelated to the measure's fact. Replicating the
+  // company-wide average onto every category of an unrelated dimension produces identical
+  // bars that READ as real per-category data but are fabricated — e.g. "SLA by department"
+  // → 92.4% on all 10 departments, "utilization by department" → 86.4% on all 10. The
+  // dataset genuinely has no operations-by-department grain, so the honest answer is to
+  // refuse and offer the real grains (delivery center / region / country). Returning false
+  // routes every such request to that honest refusal instead of a broadcast fabrication.
+  return false;
 };
 
 // Build the cross-join SQL: one row per category of dimId, all carrying the company
@@ -2537,7 +2533,7 @@ export function ebpoCatalogPromptText(): string {
     dims,
     'NOTE: REVENUE / COST / GROSS MARGIN have NO GEOGRAPHY relationship in this dataset — the revenue fact is booked only by client, business unit, and contract type (and month). There is NO "revenue by country / region / city / delivery center" — do NOT invent one; emit your best spec and the deterministic compiler will honestly refuse it. Only OPERATIONS metrics (calls_handled, tickets_resolved, SLA/CSAT/utilization, avg_aht_minutes) and FIXED ASSETS are available by delivery center / geography. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
     'PROFIT MEASURES: "operating profit", "operating income", "net profit", "net income", "EBITDA" → use measure "ebitda" (= revenue − cost − payroll, an absolute $; in this dataset it is negative because payroll is large). "operating profit margin", "net profit margin", "net margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct". These only resolve at the company/monthly grain (payroll is not available by business unit, client, or geography), so "EBITDA/operating profit BY business unit/client/country" has no view — emit the spec and let the compiler refuse honestly.',
-    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses", "SG&A" → use measure "total_expenses" (= Total Cost + Total Payroll), available company-wide and by month. The General Ledger was removed from the dataset, so there is NO expense-by-account / expense-by-department breakdown anymore — an "expense composition by account" request has no data and should be refused. "total_cost" is specifically COST OF REVENUE, only for revenue-vs-cost / gross-margin asks — do NOT use it for a generic "expense" request.',
+    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses" → use measure "total_expenses" (= Total Cost + Total Payroll), available company-wide and by month. IMPORTANT: the dataset still has trial-balance account data, so account/account-category/account-type expense asks are data-backed through the account views when they stay at the company/account grain. But there is NO client×account bridge, and no revenue-fact-by-department grain — refuse those impossible cross-grain joins honestly. "SG&A" is NOT a named measure or account classification in this dataset, so refuse SG&A-specific requests unless the user rephrases them to concrete expense accounts. "total_cost" is specifically COST OF REVENUE, only for revenue-vs-cost / gross-margin asks — do NOT use it for a generic "expense" request unless the user explicitly compares revenue vs expenses by a revenue-grained entity (client / business unit / contract type), where cost of revenue is the only attributable expense data.',
     'CLIENTS: "number of clients / how many clients / client count" → measure "no_clients" (a DISTINCTCOUNT). "average/avg revenue per client" → measure "avg_revenue_per_client". "client RANK / rank clients / top N clients" is NOT a measure — plot the underlying measure (usually total_revenue) by dimension "client" with sort:"value_desc" (or "value_asc" for the bottom) and topN. "revenue contribution % / share of total company revenue / revenue concentration" is the company_share TRANSFORM on total_revenue by client, not a separate measure.',
     'FIXED ASSETS ARE POINT-IN-TIME: the fixed-asset measures (asset_cost, net_book_value, accumulated_depreciation, depreciation_pct, asset_count) have NO monthly/time series — there is no month/quarter/year dimension for them. Never give an asset measure a time dimension. A request about "changes in assets", "asset movement", or an asset waterfall/bar/breakdown means the COMPOSITION across a category: set dimension to asset_type (default), delivery_center, country, or region — e.g. "waterfall showing changes in assets" → {measure:"asset_cost", dimension:"asset_type", chartType:"waterfall"}.',
     `NOT AVAILABLE (if the request needs any of these, return a refusal): ${unavailable}.`,

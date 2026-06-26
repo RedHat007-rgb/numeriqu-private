@@ -32,7 +32,9 @@ import {
   ebpoCatalogPromptText,
   ebpoComboChartType,
   ebpoComboSeriesRoles,
+  ebpoSupportedGroupings,
   effectiveEbpoChartType,
+  resolveEbpoView,
   resolveEbpoViewMulti,
   valueExprFor,
 } from './chart-spec-ebpo';
@@ -475,8 +477,14 @@ export class AgentService {
     const q = String(queryText ?? '').toLowerCase();
     if (!q.trim()) return null;
 
-    const tail =
-      ' This dataset has a single year of general-ledger transactions and a trial balance — I left the chart unchanged.';
+    // Dataset-accurate closing sentence. The GL sample IS a single fiscal year of
+    // general-ledger transactions; the EBPO dataset is multi-year revenue / payroll /
+    // operations / cash-flow data — so we must NOT describe it as a GL trial balance
+    // (that wrong-dataset description was leaking into EBPO refusals, e.g. the SLA-target
+    // follow-up). Keep the close neutral for EBPO.
+    const tail = hasEbpo
+      ? ' I left the chart unchanged.'
+      : ' This dataset has a single year of general-ledger transactions and a trial balance — I left the chart unchanged.';
 
     // Genuinely absent in BOTH datasets — budget/forecast/target are not recorded
     // anywhere (EBPO holds actuals only, no plan/target tables).
@@ -11326,15 +11334,26 @@ export class AgentService {
   private async listTopClientsForScope(
     scope: OrgScope,
     limit: number,
+    windowMonths?: number | null,
   ): Promise<string[]> {
     if (scope.externalOrgIds.length === 0) return [];
     const profile = await this.getDatasetProfile(scope);
+    // When the request scopes "largest client" to a recent window ("during the last 8
+    // months"), rank within that window using the time-aware client view. Otherwise
+    // (or when the dataset has no client time series) rank all-time.
+    const win = profile.client.windowedView;
+    const useWindow = !!win && !!windowMonths && windowMonths > 0;
+    const src = useWindow ? win! : profile.client;
+    const view = useWindow ? win!.view : profile.client.view;
+    const windowWhere = useWindow
+      ? ` AND ${win!.dateCol} >= addMonths(toStartOfMonth((SELECT max(${win!.dateCol}) FROM ${this.analyticsDb}.${win!.view} WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))), -${Math.floor(windowMonths!) - 1})`
+      : '';
     const rows = await this.queryRows<any>(
-      `SELECT coalesce(nullIf(${profile.client.nameCol}, ''), '') AS client_name,
-              ${profile.client.weightExpr} AS w
-       FROM ${this.analyticsDb}.${profile.client.view}
+      `SELECT coalesce(nullIf(${src.nameCol}, ''), '') AS client_name,
+              ${src.weightExpr} AS w
+       FROM ${this.analyticsDb}.${view}
        WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
-         AND ${profile.client.nameCol} != ''
+         AND ${src.nameCol} != ''${windowWhere}
        GROUP BY client_name
        ORDER BY w DESC
        LIMIT ${Math.max(1, Math.min(500, Math.floor(limit) || 1))}`,
@@ -11452,7 +11471,15 @@ export class AgentService {
           continue;
         }
         touched = true;
-        if (!ranked) ranked = await this.listTopClientsForScope(scope, 50);
+        // Rank within the query's recent-months window when one is set, so "largest
+        // client during the last 8 months" ranks on that window (AT&T) rather than the
+        // all-time leader (JP Morgan).
+        if (!ranked)
+          ranked = await this.listTopClientsForScope(
+            scope,
+            50,
+            spec.recentMonths ?? null,
+          );
         for (const r of ranks) {
           const name = ranked[r - 1];
           if (name) resolved.push(name);
@@ -13089,6 +13116,36 @@ export class AgentService {
         if (n > 0) spec = { ...spec, recentMonths: n * mult };
       }
     }
+    // EXPENSES BY ENTITY → COST-OF-REVENUE. "total_expenses" (= Cost + Payroll) only
+    // resolves company-wide/monthly because payroll has no client/business-unit grain. But
+    // a request like "revenue vs expenses for the top clients" IS answerable: the expense
+    // attributable to a client is its cost of revenue (total_cost), which IS booked by
+    // client / business unit / contract type. So when total_expenses is grouped by a
+    // categorical dimension it can't support but total_cost can, substitute total_cost
+    // (the compiler then uses the "Total Cost" label) instead of refusing. Calculate from
+    // the data that exists rather than refuse. Company/monthly expense charts are untouched.
+    if (useEbpo) {
+      const groupDims = [spec.dimension, spec.breakdown].filter(
+        (d): d is string => !!d && !EBPO_DIMENSIONS[d]?.isTime,
+      );
+      const expGroupings = ebpoSupportedGroupings('total_expenses').dims;
+      const costGroupings = ebpoSupportedGroupings('total_cost').dims;
+      const needsSwap = (dim: string) =>
+        !expGroupings.includes(EBPO_DIMENSIONS[dim]?.label ?? dim) &&
+        costGroupings.includes(EBPO_DIMENSIONS[dim]?.label ?? dim);
+      if (groupDims.some(needsSwap)) {
+        const swap = (m: string | undefined) =>
+          m === 'total_expenses' ? 'total_cost' : m;
+        if (spec.measure === 'total_expenses' || spec.measures?.includes('total_expenses'))
+          spec = {
+            ...spec,
+            ...(spec.measure ? { measure: swap(spec.measure) } : {}),
+            ...(spec.measures
+              ? { measures: spec.measures.map((m) => swap(m) as string) }
+              : {}),
+          };
+      }
+    }
     // SAFETY NET (general, not per-phrase): if the request is ABOUT one client by a
     // superlative ("for the largest/biggest/top/second-largest client") but the planner
     // forgot the filter, inject it so we don't silently chart all clients. The planner is
@@ -13406,6 +13463,42 @@ export class AgentService {
         'I can show total cost, or cost broken down by business unit or contract type.'
       );
     }
+    if (/\bsg\s*&?\s*a\b|\bselling,\s*general\s+and\s+administrative\b/.test(q)) {
+      return (
+        'This dataset does not contain a named SG&A measure or SG&A account classification, ' +
+        'so I can’t chart SG&A directly. Rephrase it to concrete expense accounts or to total expenses.'
+      );
+    }
+    if (
+      /\bdepartments?\b/.test(q) &&
+      /\b(revenue|sales|gross\s+(?:margin|profit)|total\s+cost|cost\s+of\s+revenue)\b/.test(q) &&
+      !/\bpayroll\b/.test(q) &&
+      !/\brevenue\s+per\s+employee\b|\bcost\s+per\s+employee\b/.test(q)
+    ) {
+      return (
+        'Revenue, cost, and gross margin are not available by department in this dataset. ' +
+        'I can show payroll by department, or revenue/cost/gross margin by client, business unit, contract type, or over time.'
+      );
+    }
+    if (
+      /\bdepartments?\b/.test(q) &&
+      /\b(sla|csat|customer\s+satisfaction|utili[sz]ation)\b/.test(q)
+    ) {
+      return (
+        'SLA, CSAT, and utilization are not available by department in this dataset. ' +
+        'I can show those metrics by delivery center, country, region, or over time.'
+      );
+    }
+    if (
+      /\b(?:largest|biggest|top|client)\b/.test(q) &&
+      /\baccount\s+(?:type|types|category|categories)\b/.test(q)
+    ) {
+      return (
+        'I can’t break expenses down by account for a specific client in this dataset — ' +
+        'the trial-balance accounts do not carry a client key. I can show account-category ' +
+        'expense trends for the company, or revenue/cost by client, but not a client-by-account chart.'
+      );
+    }
     // NOTE: "operating profit / operating income / net profit / EBITDA / EBIT" are no
     // longer refused here — the catalog now exposes an `ebitda` measure (= revenue −
     // cost − payroll, an absolute $ that collapses operating/net profit and EBITDA in
@@ -13414,6 +13507,25 @@ export class AgentService {
     // the requested GRAIN (e.g. by business unit, where payroll is unavailable) has no
     // view — so a plain "operating profit trend" now renders as a monthly $ line.
     return null;
+  }
+
+  private async latestTwoDataYears(scope: OrgScope): Promise<[number, number] | null> {
+    const profile = await this.getDatasetProfile(scope);
+    const rows = await this.queryRows<{ y: number }>(
+      `SELECT DISTINCT toYear(${profile.yearSource.dateCol}) AS y
+       FROM ${this.analyticsDb}.${profile.yearSource.view}
+       WHERE tenant_id = {tenantId:String}
+         AND org_id IN ({externalOrgIds:Array(String)})
+       ORDER BY y DESC
+       LIMIT 2`,
+      { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
+    );
+    const years = rows
+      .map((r) => Number(r.y))
+      .filter((y) => Number.isFinite(y))
+      .sort((a, b) => b - a);
+    if (years.length < 2) return null;
+    return [years[0]!, years[1]!];
   }
 
   private async generateSmartPlan(
@@ -15693,6 +15805,24 @@ export class AgentService {
           );
           return null;
         }
+        if (
+          /v_ebpo_department_efficiency_monthly/i.test(cleaned) &&
+          /\b(total_revenue_usd|total_cost_usd|gross_margin_usd)\b/i.test(cleaned)
+        ) {
+          this.logger.warn(
+            '[SmartEdit] rejected edit SQL — department_efficiency revenue/cost columns are replicated company totals',
+          );
+          return null;
+        }
+        if (
+          /v_ebpo_trial_balance_monthly/i.test(cleaned) &&
+          /\bclient_name\b/i.test(cleaned)
+        ) {
+          this.logger.warn(
+            '[SmartEdit] rejected edit SQL — trial-balance account data cannot be broken down by client',
+          );
+          return null;
+        }
         // A pie/donut editor sometimes wraps a signed measure in abs() to force the
         // chart (e.g. abs(sum(investing_cash_flow_usd))), which hides outflows as
         // positive slices. Strip that abs() so the real (possibly negative) values flow
@@ -16437,7 +16567,7 @@ export class AgentService {
       [/\bcollection\s+rate\b/, 'collection_rate_pct'],
       [/\bdso\b/, 'dso_days'],
       [/\bdpo\b/, 'dpo_days'],
-      [/\bsla\s+compliance\b|\bsla\s*(?:percentage|percent|%)\b/, 'sla_compliance_pct'],
+      [/\bsla\b/, 'sla_compliance_pct'],
       [/\bcsat\b|\bcustomer\s+satisfaction\b/, 'csat_pct'],
       [/\butilization\b|\butilisation\b/, 'utilization_pct'],
       [/\bcalls?\s+handled\b/, 'calls_handled'],
@@ -16736,6 +16866,15 @@ export class AgentService {
           `_lvl AS (SELECT *, sum(value) OVER (ROWS UNBOUNDED PRECEDING) AS _level FROM _base)\n` +
           `SELECT name, value, round(sum(_level) OVER (ROWS UNBOUNDED PRECEDING), 2) AS cumulative_value\n` +
           `FROM _lvl\nLIMIT 1000`;
+      } else if (numeric.length === 1 && /\bis_total\b/i.test(baseSql)) {
+        sql =
+          `WITH _base AS (\n${baseSql.replace(/;+\s*$/, '')}\n)\n` +
+          `SELECT\n` +
+          `  name,\n` +
+          `  value,\n` +
+          `  is_total,\n` +
+          `  round(if(coalesce(is_total, 0) = 1, value, sum(if(coalesce(is_total, 0) = 1, 0, value)) OVER (ROWS UNBOUNDED PRECEDING)), 2) AS cumulative_value\n` +
+          `FROM _base\nLIMIT 1000`;
       } else {
         sql = wrap(
           [
@@ -16828,6 +16967,129 @@ export class AgentService {
           modify: [],
           refusal: `I can't add ${label} — this dataset only covers a single year (2024), so there's no earlier period to compare against. I left the chart unchanged.`,
         };
+      }
+      if (transform.kind === 'prior_year') {
+        const latestYears = await this.latestTwoDataYears(scope).catch(() => null);
+        if (!latestYears) return null;
+        const [currentYear, previousYear] = latestYears;
+        for (let i = 0; i < activeDashboard.widgets.length; i++) {
+          const w = activeDashboard.widgets[i]!;
+          const cfg = (w.queryConfig as any) ?? {};
+          const spec = cfg.spec as ChartSpec | undefined;
+          if (!spec?.measure || spec.dimension !== 'month') continue;
+          const measures = (
+            spec.measures?.length ? spec.measures : [spec.measure]
+          ).filter((m): m is string => !!m);
+          if (measures.length === 0) continue;
+          const measureFormats = Array.from(
+            new Set(measures.map((m) => EBPO_MEASURES[m]?.format).filter(Boolean)),
+          );
+          if (measureFormats.length !== 1) continue;
+          const keepFilters = (spec.filters ?? []).filter(
+            (f) => String((f as any)?.dimension ?? '').toLowerCase() !== 'year',
+          );
+          const runRows = (sql: string) =>
+            this.queryRows<Record<string, unknown>>(sql, {
+              tenantId: scope.tenantId,
+              externalOrgIds: scope.externalOrgIds,
+            });
+          const mkYearSpec = (year: number): ChartSpec => ({
+            ...spec,
+            recentMonths: undefined,
+            filters: [
+              ...keepFilters,
+              { dimension: 'year', op: 'in', values: [String(year)] },
+            ],
+          });
+          const [cy, py] = await Promise.all([
+            compileEbpoSpec(mkYearSpec(currentYear), this.analyticsDb, runRows),
+            compileEbpoSpec(mkYearSpec(previousYear), this.analyticsDb, runRows),
+          ]);
+          if (!cy.ok || !py.ok) continue;
+          const cyCheck = await this.executeDynamicSqlChecked(cy.sql, scope, {
+            chartType: 'line',
+          }).catch(() => null);
+          if (!cyCheck || cyCheck.error || cyCheck.rows.length === 0) continue;
+          const cols = Object.keys(cyCheck.rows[0] ?? {}).filter((c) => c !== 'name');
+          if (cols.length === 0) continue;
+          const ident = (value: string) => `"${value.replace(/"/g, '""')}"`;
+          const currentKeys = cols.map((c) => `${EBPO_MEASURES[c]?.label ?? c} ${currentYear}`);
+          const priorKeys = cols.map((c) => `${EBPO_MEASURES[c]?.label ?? c} ${previousYear}`);
+          const projections = cols.flatMap((c, idx) => [
+            `_cy.${ident(c)} AS ${ident(currentKeys[idx]!)}`,
+            `_py.${ident(c)} AS ${ident(priorKeys[idx]!)}`,
+          ]);
+          const sql = `
+            WITH
+              _cy AS (${cy.sql}),
+              _py AS (${py.sql})
+            SELECT
+              coalesce(replaceRegexpAll(_cy.name, '\\\\s+\\\\d{4}$', ''), replaceRegexpAll(_py.name, '\\\\s+\\\\d{4}$', '')) AS name,
+              ${projections.join(',\n              ')}
+            FROM _cy
+            FULL OUTER JOIN _py
+              ON replaceRegexpAll(_cy.name, '\\\\s+\\\\d{4}$', '') = replaceRegexpAll(_py.name, '\\\\s+\\\\d{4}$', '')
+            ORDER BY
+              multiIf(
+                name = 'Jan', 1,
+                name = 'Feb', 2,
+                name = 'Mar', 3,
+                name = 'Apr', 4,
+                name = 'May', 5,
+                name = 'Jun', 6,
+                name = 'Jul', 7,
+                name = 'Aug', 8,
+                name = 'Sep', 9,
+                name = 'Oct', 10,
+                name = 'Nov', 11,
+                name = 'Dec', 12,
+                99
+              )
+            LIMIT 1000
+          `;
+          const check = await this.executeDynamicSqlChecked(sql, scope, {
+            chartType: 'line',
+          }).catch(() => null);
+          if (!check || check.error || check.rows.length === 0) continue;
+          const baseFormat = measureFormats[0] as NonNullable<DisplayHints['valueFormat']>;
+          const series = [
+            ...currentKeys.map((key) => ({
+              key,
+              role: 'line' as const,
+              axis: 'left' as const,
+              format: baseFormat,
+            })),
+            ...priorKeys.map((key) => ({
+              key,
+              role: 'line' as const,
+              axis: 'left' as const,
+              format: baseFormat,
+            })),
+          ];
+          return {
+            summary: `Compared ${currentYear} with ${previousYear} in the same chart.`,
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: 'line',
+                dynamicSql: sql.trim(),
+                spec: {
+                  ...spec,
+                  chartType: 'line',
+                  recentMonths: undefined,
+                  filters: keepFilters,
+                },
+                display: {
+                  ...((cfg.display ?? {}) as DisplayHints),
+                  valueFormat: baseFormat,
+                  series,
+                },
+              },
+            ],
+          };
+        }
       }
       return null; // multi-year data exists → let the SQL editor handle it
     }
@@ -17067,9 +17329,11 @@ export class AgentService {
       // is what "compare top 2 clients … for the last 6 months" means. Guarded so it does
       // NOT hijack edits that also name a new measure or a "by <dimension>" regroup.
       const winMonths = this.detectTimeWindowEdit(editRequest);
+      const followUpTransform = this.detectFollowUpTransform(editRequest);
       if (
         spec?.measure &&
         winMonths &&
+        !followUpTransform &&
         this.detectEbpoAdditionalMeasures(editRequest).length === 0 &&
         !/\bby\s+[a-z]/.test(q)
       ) {
@@ -19000,6 +19264,38 @@ export class AgentService {
     return { ...currentSpec, measures, chartType };
   }
 
+  private buildEbpoUnsupportedMeasureEditRefusal(
+    targets: Array<{ w: any; index: number; spec?: ChartSpec }>,
+    editRequest: string,
+  ): string | null {
+    if (!this.isAdditiveSameChartRequest(editRequest)) return null;
+    const q = editRequest.toLowerCase();
+    if (/\bcurrent\s+year\b/.test(q) && /\b(last|previous|prior)\s+year\b/.test(q))
+      return null;
+    for (const t of targets) {
+      const spec = t.spec;
+      if (!spec?.dimension) continue;
+      const current = (
+        spec.measures?.length ? spec.measures : spec.measure ? [spec.measure] : []
+      ).filter((m): m is string => !!m);
+      if (current.length === 0) continue;
+      const requested = this.detectEbpoMeasureMentions(editRequest).filter(
+        (m) => !current.includes(m),
+      );
+      if (requested.length === 0) continue;
+      const impossible = requested.find(
+        (m) => !resolveEbpoView(m, spec.dimension ?? null, spec.breakdown ?? null),
+      );
+      if (!impossible) continue;
+      const label = EBPO_MEASURES[impossible]?.label ?? impossible;
+      const dims = ebpoSupportedGroupings(impossible).dims;
+      const currentDimLabel = EBPO_DIMENSIONS[spec.dimension]?.label ?? spec.dimension;
+      const dimsText = dims.length ? ` It is available by ${dims.join(', ')}.` : '';
+      return `${label} isn't available at the chart's current grouping (${currentDimLabel}).${dimsText} I left the chart unchanged.`;
+    }
+    return null;
+  }
+
   // Compile EBPO combo spec(s) for "add a measure" follow-ups and return a modify
   // plan, or null to defer. Fully deterministic — no LLM.
   private async buildEbpoComboEditPlan(
@@ -19328,6 +19624,9 @@ export class AgentService {
         null;
 
       let matched: string[] = [];
+      // True when `matched` names are SERIES (wide-pivot columns, e.g. client lines) rather
+      // than row categories — those highlight via display.highlightSeries, not highlightNames.
+      let matchedAreSeries = false;
       const topNMatch = q.match(/\btop\s+(\d+)\b/);
       if (topNMatch && primaryCol) {
         // "highlight the top N <entities>" → the N highest by the primary value.
@@ -19353,14 +19652,45 @@ export class AgentService {
         if (matched.length === 0)
           emptyReason =
             'every month in this period has a positive gross margin, so there are no negative-margin months to highlight';
-      } else if (aboutClient && (wantsHighest || /\bthe\s+(?:largest|biggest|top)\b/.test(q))) {
-        // "the largest client" is the dataset's #1 client by revenue (ranked) — not
-        // merely the top point in this window. Resolve via the canonical ranking.
-        const ranked = await this.listTopClientsForScope(scope, 50).catch(() => []);
-        const target = ranked[0];
-        if (target && names.includes(target)) matched = [target];
-        else if (target)
-          emptyReason = `the largest client (${target}) isn't present in this chart`;
+      } else if (
+        aboutClient &&
+        (wantsHighest || wantsLowest || /\bthe\s+(?:largest|biggest|top)\b/.test(q))
+      ) {
+        // "the client with the highest [cumulative] revenue" / "the largest client" —
+        // rank clients by their TOTAL within THIS chart's data, so it (a) respects the
+        // chart's own window (e.g. last 8 months) instead of an all-time global ranking,
+        // and (b) finds clients whether they are SERIES (wide-pivot columns, as in a
+        // revenue-trend-by-client line chart) or rows (a by-client bar's `name` column).
+        // The old code ranked globally (→ JP Morgan) and only looked in the `name` column
+        // (which here holds MONTHS), so it falsely reported "isn't present in this chart".
+        const numericCols = cols.filter(
+          (c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null),
+        );
+        let ranking: { name: string; v: number }[] = [];
+        if (numericCols.length > 1) {
+          // Wide pivot: each non-name numeric column is a client series → sum the column.
+          ranking = numericCols.map((c) => ({
+            name: c,
+            v: rows.reduce((s, r) => s + (numAt(r, c) ?? 0), 0),
+          }));
+          matchedAreSeries = true;
+        } else if (numericCols.length === 1) {
+          // Long format: sum the value per client name.
+          const byName = new Map<string, number>();
+          for (const r of rows) {
+            const nm = String((r as any).name ?? '');
+            byName.set(nm, (byName.get(nm) ?? 0) + (numAt(r, numericCols[0]!) ?? 0));
+          }
+          ranking = Array.from(byName, ([name, v]) => ({ name, v }));
+        }
+        if (ranking.length) {
+          const pick = wantsLowest
+            ? ranking.reduce((a, b) => (b.v < a.v ? b : a))
+            : ranking.reduce((a, b) => (b.v > a.v ? b : a));
+          matched = [pick.name];
+        } else {
+          emptyReason = "I couldn't find a client series to rank in this chart";
+        }
       } else if (wantsHighest || wantsLowest) {
         // Highest/lowest by the primary numeric column (value, else first numeric / x/y).
         const valCol =
@@ -19387,10 +19717,16 @@ export class AgentService {
       if (matched.length === 0) continue;
 
       const priorDisplay = ((t.w.queryConfig as any)?.display ?? {}) as DisplayHints;
+      // Series matches (wide-pivot columns, e.g. a client line) highlight via
+      // highlightSeries; row-category matches (a bar's x-axis name) via highlightNames.
+      // The multi-series line/area renderer dims non-highlighted series only for the
+      // former, so routing to the right field is what makes the emphasis actually render.
       modify.push({
         index: t.index,
         dynamicSql: sql,
-        display: { ...priorDisplay, highlightNames: matched },
+        display: matchedAreSeries
+          ? { ...priorDisplay, highlightSeries: matched }
+          : { ...priorDisplay, highlightNames: matched },
       } as any);
       if (!summary)
         summary = `Highlighted ${matched.slice(0, 4).join(', ')}${matched.length > 4 ? ` and ${matched.length - 4} more` : ''} in the chart.`;
@@ -19553,6 +19889,19 @@ export class AgentService {
         if (namedHighlight) return namedHighlight;
         const regroupPlan = await this.buildEbpoRegroupEditPlan(targets, editRequest, scope);
         if (regroupPlan) return regroupPlan;
+        const impossibleMeasureRefusal = this.buildEbpoUnsupportedMeasureEditRefusal(
+          targets,
+          editRequest,
+        );
+        if (impossibleMeasureRefusal) {
+          return {
+            summary: '',
+            add: [],
+            remove_indices: [],
+            modify: [],
+            refusal: impossibleMeasureRefusal,
+          };
+        }
         const comboPlan = await this.buildEbpoComboEditPlan(targets, editRequest, scope);
         if (comboPlan) return comboPlan;
       }

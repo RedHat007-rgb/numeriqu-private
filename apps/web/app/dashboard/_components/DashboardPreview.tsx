@@ -2254,6 +2254,15 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   tickFormatter={yTick}
                   width={56}
                   tickMargin={8}
+                  {...(dispNormalized ||
+                  (shouldStackBreakdownBars &&
+                    chart.config.display?.valueFormat === "percent")
+                    ? // A 100%-stacked composition (each bar's segments sum to 100%) must
+                      // cap the axis at 100 — auto-scale otherwise sums the per-series maxima
+                      // (e.g. → 220%). Only stacked multi-series percent charts; a YoY/growth %
+                      // line is single-series and never hits this branch.
+                      { domain: [0, 100] as [number, number] }
+                    : {})}
                 />
               </>
             )}

@@ -28,6 +28,14 @@ export interface DatasetProfile {
     nameCol: string;
     /** Aggregate that ranks clients ("largest client") within this dataset. */
     weightExpr: string;
+    /**
+     * Time-aware ranking source. When a query scopes "largest client" to a window
+     * ("during the last 8 months"), rank within that window using this view + date
+     * column instead of the all-time `view` above — otherwise "largest client in the
+     * last 8 months" wrongly returns the all-time leader. Omit when the dataset has no
+     * client-grained time series (then ranking falls back to all-time).
+     */
+    windowedView?: { view: string; nameCol: string; weightExpr: string; dateCol: string };
   };
   /** Source for "how many distinct years of data exist" (prior-year/YoY availability). */
   yearSource: { view: string; dateCol: string };
@@ -50,6 +58,13 @@ export const EBPO_PROFILE: DatasetProfile = {
     view: 'v_ebpo_revenue_by_client',
     nameCol: 'client_name',
     weightExpr: 'sum(total_revenue_usd)',
+    // Monthly client revenue — used to rank "largest client" within a time window.
+    windowedView: {
+      view: 'v_ebpo_revenue_by_client_contract_monthly',
+      nameCol: 'client_name',
+      weightExpr: 'sum(total_revenue_usd)',
+      dateCol: 'period_date',
+    },
   },
   yearSource: { view: 'v_ebpo_revenue_monthly', dateCol: 'period_date' },
   isTableAllowed: (table) => isEbpoTable(table) || isNeutralTable(table),

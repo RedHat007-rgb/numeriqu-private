@@ -261,6 +261,7 @@ export type ChartConfig = {
     }> | null;
     valueFormat?: "currency" | "number" | "percent" | null;
     valueDecimals?: number | null;
+    requestedChartLabel?: string | null;
     colorMetric?: string | null;
     colorMetricLabel?: string | null;
     colorMetricFormat?: "currency" | "number" | "percent" | null;

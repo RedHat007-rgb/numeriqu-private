@@ -165,6 +165,7 @@ function SessionSidebar({
   onNewSession,
   isLoading,
   collapsed,
+  forceCollapsed,
   onToggleCollapse,
 }: {
   sessions: ChatSessionSummary[];
@@ -173,6 +174,7 @@ function SessionSidebar({
   onNewSession: () => void;
   isLoading: boolean;
   collapsed: boolean;
+  forceCollapsed: boolean;
   onToggleCollapse: () => void;
 }) {
   const [showAll, setShowAll] = useState(false);
@@ -204,13 +206,15 @@ function SessionSidebar({
             <Plus size={12} />
           </button>
         )}
-        <button
-          onClick={onToggleCollapse}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-default text-text-muted transition-colors hover:border-default hover:text-text-primary"
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
-        </button>
+        {!forceCollapsed && (
+          <button
+            onClick={onToggleCollapse}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-default text-text-muted transition-colors hover:border-default hover:text-text-primary"
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+          </button>
+        )}
       </div>
 
       {/* Session list */}
@@ -698,6 +702,7 @@ export function AgentWorkbench() {
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
 
   // Conversation state
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -926,6 +931,18 @@ export function AgentWorkbench() {
             setIsDashboardGenerating(false);
           }
 
+          if (msg.type === "message" && typeof msg.message === "string") {
+            setMessages((prev) => {
+              const copy = [...prev];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant") {
+                copy[copy.length - 1] = { ...last, content: msg.message as string };
+              }
+              return copy;
+            });
+            setIsDashboardGenerating(false);
+          }
+
           if (msg.type === "phase") {
             updatePhase(msg.phase, "running", msg.label);
             setPhases((prev) => {
@@ -1029,9 +1046,17 @@ export function AgentWorkbench() {
   }
 
   const hasConversation = messages.filter((m) => m.role !== "system").length > 0 || phases.length > 0;
+  const effectiveSidebarCollapsed = isCompactViewport || sidebarCollapsed;
+
+  useEffect(() => {
+    const syncViewport = () => setIsCompactViewport(window.innerWidth < 1200);
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
+  }, []);
 
   return (
-    <div className="surface-card flex h-full overflow-hidden p-0">
+    <div className="surface-card flex h-full min-w-0 overflow-hidden p-0">
       {/* ── Col 1: Session History ─── */}
       <SessionSidebar
         sessions={sessions}
@@ -1039,12 +1064,14 @@ export function AgentWorkbench() {
         onSelectSession={(id) => void handleSelectSession(id)}
         onNewSession={handleNewSession}
         isLoading={sessionsLoading}
-        collapsed={sidebarCollapsed}
+        collapsed={effectiveSidebarCollapsed}
+        forceCollapsed={isCompactViewport}
         onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
       />
 
-      {/* ── Col 2: Chat Panel ─── */}
-        <div className="flex w-[380px] shrink-0 flex-col border-r border-default">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
+        {/* ── Col 2: Chat Panel ─── */}
+        <div className="flex min-h-[320px] min-w-0 flex-col border-b border-default lg:w-[340px] lg:shrink-0 lg:border-b-0 lg:border-r xl:w-[380px]">
           {/* Chat header */}
           <div className="flex items-center justify-between border-b border-default px-4 py-3">
             <div className="flex items-center gap-2">
@@ -1207,106 +1234,107 @@ export function AgentWorkbench() {
             </button>
           </form>
         </div>
-      </div>
-
-      {/* ── Col 3: Dashboard Panel ─── */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Dashboard header */}
-        <div className="flex items-center justify-between border-b border-default px-4 py-3">
-          <div className="flex items-center gap-2">
-            <BarChart3 size={13} className="text-feedback-success" />
-            <span className="text-xs font-bold text-text-primary">
-              {!hasConversation ? "Dashboard" : isHistoricalSession ? "Latest Dashboard" : "Live Intelligence Dashboard"}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <AnimatePresence>
-              {isStreaming && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="flex items-center gap-1.5 rounded-full bg-accent-violet/12 px-2.5 py-1 ring-1 ring-accent-violet/20"
-                >
-                  <motion.span
-                    animate={{ opacity: [0.5, 1, 0.5] }}
-                    transition={{ duration: 1.2, repeat: Infinity }}
-                    className="h-1.5 w-1.5 rounded-full bg-accent-violet"
-                  />
-                  <span className="text-[10px] font-bold text-accent-violet">
-                    {isDashboardGenerating ? "building dashboard" : "analyzing"}
-                  </span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-            {activeDashboardTitle && !isDashboardGenerating && !isHistoricalSession && !isStreaming && (
-              <span className="max-w-[200px] truncate text-[10px] text-text-muted">
-                {activeDashboardTitle}
-              </span>
-            )}
-          </div>
         </div>
 
-        {/* Historical session notice — shown only when passively browsing, not while chatting */}
-        <AnimatePresence>
-          {isHistoricalSession && !isStreaming && !isDashboardGenerating && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden border-b border-default bg-bg-elevated/40 px-4 py-2.5"
-            >
-              <p className="text-[11px] text-text-muted">
-                <span className="font-semibold text-text-secondary">Viewing a past session.</span>
-                {" "}The dashboard below is the one generated for this session (if available).
-                Send a message to regenerate or refine it from this conversation.
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* ── Col 3: Dashboard Panel ─── */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* Dashboard header */}
+          <div className="flex items-center justify-between border-b border-default px-4 py-3">
+            <div className="flex items-center gap-2">
+              <BarChart3 size={13} className="text-feedback-success" />
+              <span className="text-xs font-bold text-text-primary">
+                {!hasConversation ? "Dashboard" : isHistoricalSession ? "Latest Dashboard" : "Live Intelligence Dashboard"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <AnimatePresence>
+                {isStreaming && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="flex items-center gap-1.5 rounded-full bg-accent-violet/12 px-2.5 py-1 ring-1 ring-accent-violet/20"
+                  >
+                    <motion.span
+                      animate={{ opacity: [0.5, 1, 0.5] }}
+                      transition={{ duration: 1.2, repeat: Infinity }}
+                      className="h-1.5 w-1.5 rounded-full bg-accent-violet"
+                    />
+                    <span className="text-[10px] font-bold text-accent-violet">
+                      {isDashboardGenerating ? "building dashboard" : "analyzing"}
+                    </span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              {activeDashboardTitle && !isDashboardGenerating && !isHistoricalSession && !isStreaming && (
+                <span className="max-w-[200px] truncate text-[10px] text-text-muted">
+                  {activeDashboardTitle}
+                </span>
+              )}
+            </div>
+          </div>
 
-        {/* Dashboard content */}
-        <div className="flex-1 overflow-y-auto p-4">
-          <AnimatePresence mode="wait">
-            {isDashboardGenerating && !activeDashboardTitle ? (
+          {/* Historical session notice — shown only when passively browsing, not while chatting */}
+          <AnimatePresence>
+            {isHistoricalSession && !isStreaming && !isDashboardGenerating && (
               <motion.div
-                key="generating"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden border-b border-default bg-bg-elevated/40 px-4 py-2.5"
               >
-                <DashboardGeneratingOverlay />
-              </motion.div>
-            ) : !hasConversation ? (
-              <motion.div
-                key="empty"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex h-full flex-col items-center justify-center py-24 text-center"
-              >
-                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-bg-elevated ring-1 ring-default">
-                  <BarChart3 size={22} className="text-text-muted opacity-40" />
-                </div>
-                <p className="text-sm font-medium text-text-secondary">No dashboard yet</p>
-                <p className="mt-1.5 max-w-[200px] text-xs text-text-muted">
-                  Send a message to generate your first intelligence dashboard.
+                <p className="text-[11px] text-text-muted">
+                  <span className="font-semibold text-text-secondary">Viewing a past session.</span>
+                  {" "}The dashboard below is the one generated for this session (if available).
+                  Send a message to regenerate or refine it from this conversation.
                 </p>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="dashboard"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-              >
-                <DashboardPreview
-                  triggerSync={syncTrigger}
-                  isGenerating={isDashboardGenerating}
-                  sessionId={sessionId}
-                  liveChartTurn={isHistoricalSession ? null : latestChartTurn}
-                />
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* Dashboard content */}
+          <div className="flex-1 overflow-y-auto p-4">
+            <AnimatePresence mode="wait">
+              {isDashboardGenerating && !activeDashboardTitle ? (
+                <motion.div
+                  key="generating"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <DashboardGeneratingOverlay />
+                </motion.div>
+              ) : !hasConversation ? (
+                <motion.div
+                  key="empty"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex h-full flex-col items-center justify-center py-24 text-center"
+                >
+                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-bg-elevated ring-1 ring-default">
+                    <BarChart3 size={22} className="text-text-muted opacity-40" />
+                  </div>
+                  <p className="text-sm font-medium text-text-secondary">No dashboard yet</p>
+                  <p className="mt-1.5 max-w-[200px] text-xs text-text-muted">
+                    Send a message to generate your first intelligence dashboard.
+                  </p>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="dashboard"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                >
+                  <DashboardPreview
+                    triggerSync={syncTrigger}
+                    isGenerating={isDashboardGenerating}
+                    sessionId={sessionId}
+                    liveChartTurn={isHistoricalSession ? null : latestChartTurn}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
     </div>

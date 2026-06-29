@@ -1,0 +1,7 @@
+[
+  {
+    "id": "BM",
+    "main": "Create a bar chart showing expenses for the largest client versus the second-largest client",
+    "followup": "In the same chart, show variance percentages."
+  }
+]

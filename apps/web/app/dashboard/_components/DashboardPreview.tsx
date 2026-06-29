@@ -38,6 +38,7 @@ import {
   Area,
   AreaChart,
   ReferenceLine,
+  ReferenceArea,
   ReferenceDot,
   Treemap,
   ScatterChart,
@@ -100,6 +101,7 @@ interface ChartConfig {
     }> | null;
     valueFormat?: "currency" | "number" | "percent" | null; // primary value unit (EBPO dynamic charts)
     valueDecimals?: number | null; // decimals for the primary value (e.g. 1 for %)
+    requestedChartLabel?: string | null;
     colorMetric?: string | null; // treemap color channel; size still comes from value
     colorMetricLabel?: string | null;
     colorMetricFormat?: "currency" | "number" | "percent" | null;
@@ -321,7 +323,17 @@ function buildChartVersionHistory(messages: ChatMessage[]): ChartVersionSnapshot
         ...(typeof chartConfigSource.description === "string"
           ? { description: chartConfigSource.description }
           : {}),
-        display: displayFromQuery ?? displayFromChart ?? null,
+        // Follow-up edits enrich chartConfig.display with render-only metadata
+        // (secondary axis formats, per-series units, requested chart label, etc.)
+        // while queryConfig.display often carries only the base metric format.
+        // Preserve both by layering query display under chart display.
+        display:
+          displayFromQuery || displayFromChart
+            ? {
+                ...(displayFromQuery ?? {}),
+                ...(displayFromChart ?? {}),
+              }
+            : null,
       } as unknown as ChartConfig;
       const chartDescription =
         typeof chartConfigSource.description === "string"
@@ -542,8 +554,14 @@ function clampMonthRange(
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
-function prettyChartType(type: string): string {
-  const t = String(type || "").toLowerCase();
+function prettyChartType(chart: Chart): string {
+  const requested = chart.config.display?.requestedChartLabel?.trim();
+  if (requested) return requested;
+  const descriptionText = `${chart.description ?? ""} ${chart.title ?? ""}`.toLowerCase();
+  if (/\bstacked\s+column\b/.test(descriptionText)) return "Stacked column";
+  if (/\bclustered\s+column\b/.test(descriptionText)) return "Clustered column";
+  if (/\bcolumn\s+chart\b|\bcolumn\b/.test(descriptionText)) return "Column chart";
+  const t = String(getEffectiveChartType(chart) || "").toLowerCase();
   if (t === "bar") return "Bar chart";
   if (t === "stacked_bar") return "Stacked bar";
   if (t === "horizontal_bar") return "Ranked bar";
@@ -1014,8 +1032,12 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       const labelFmt = chart.config.display?.labelFormat ?? null;
       if (labelFmt) return labelFmt;
     }
-    if (fallback) return fallback;
-    const text = raw.toLowerCase();
+    // Normalize underscores to spaces so \b word-boundaries match underscore-joined
+    // metric names. `_` is a regex word char, so \bpct\b/\brate\b NEVER matched
+    // "cumulative_pct", "collection_rate", "gross_margin_pct" etc. — LLM-SQL edits
+    // emit exactly those aliases with no display.series, so the % line fell through
+    // to the chart's currency valueFormat and rendered a "$" secondary axis.
+    const text = raw.toLowerCase().replace(/_+/g, " ");
     if (
       !/\busd\b|\$/.test(text) &&
       /%|\bpercent(age)?\b|\bpct\b|\bratio\b|\brate\b|\bshare\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(
@@ -1038,6 +1060,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       /(?:^|[_\s])value\b|value$/.test(text)
     )
       return "currency";
+    if (fallback) return fallback;
     return chart.config.display?.valueFormat ?? "number";
   };
   const inferFormatFromLabelText = (
@@ -1045,6 +1068,45 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     fallback: "currency" | "number" | "percent" | null = null,
   ): "currency" | "number" | "percent" =>
     inferFormatFromKey(String(label ?? "").replace(/\s+/g, "_"), fallback);
+  const normalizeMetricLabel = (value: string | null | undefined): string =>
+    String(value ?? "")
+      .toLowerCase()
+      .replace(/[%()]/g, " ")
+      .replace(/\busd\b/g, " ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const resolveAxisFormatFromMetadata = (
+    axisLabel: string | null | undefined,
+    axis: "x" | "y" | "z",
+    fallback: "currency" | "number" | "percent" | null = null,
+  ): "currency" | "number" | "percent" => {
+    const normalizedLabel = normalizeMetricLabel(axisLabel);
+    const matchedSeries = seriesMeta.find((series, idx) => {
+      const pretty = normalizeMetricLabel(prettySeriesName(series.key));
+      const raw = normalizeMetricLabel(series.key);
+      const ordinalMatch =
+        !normalizedLabel &&
+        ((axis === "x" && idx === 0) ||
+          (axis === "y" && idx === 1) ||
+          (axis === "z" && idx === 2));
+      return ordinalMatch || (!!normalizedLabel && (pretty === normalizedLabel || raw === normalizedLabel));
+    });
+    if (matchedSeries?.format) return matchedSeries.format;
+    if (axis === "y") {
+      const secondaryLabel = normalizeMetricLabel(chart.config.display?.secondaryLabel);
+      if (secondaryLabel && secondaryLabel === normalizedLabel) {
+        return chart.config.display?.secondaryAxisFormat ?? inferFormatFromLabelText(axisLabel, fallback);
+      }
+      if (!normalizedLabel && chart.config.display?.secondaryAxisFormat && seriesMeta.length > 1) {
+        return chart.config.display.secondaryAxisFormat;
+      }
+    }
+    if (axis === "x" && seriesMeta[0]?.format) return seriesMeta[0].format;
+    if (axis === "y" && seriesMeta[1]?.format) return seriesMeta[1].format;
+    if (axis === "z" && seriesMeta[2]?.format) return seriesMeta[2].format;
+    return inferFormatFromLabelText(axisLabel, fallback);
+  };
   const fmtByUnit = (
     value: number,
     unit: "currency" | "number" | "percent",
@@ -1074,6 +1136,9 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
   // smear. Show ~12 evenly-spaced labels instead. Stride 1 = every point.
   const labelStride = (count: number): number =>
     count <= 16 ? 1 : Math.max(2, Math.ceil(count / 12));
+  const chartTitleText = `${chart.title ?? ""} ${chart.description ?? ""}`.toLowerCase();
+  const shouldForceNegativeEmphasis =
+    /\b(?:cash\s+flow|cash\s+balance|free\s+cash\s+flow|net\s+cash)\b/.test(chartTitleText);
   // LabelList `content` renderer that skips off-stride points (formatter can't see the
   // index, so thinning must happen in a custom content renderer).
   const thinnedLabel =
@@ -1541,7 +1606,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 />
               );
             })}
-            {chart.config.display?.highlightNegative && (
+            {((chart.config.display?.highlightNegative || shouldForceNegativeEmphasis) &&
+              (areaData as any[]).some((d) => Number((d as any)?.value) < 0)) && (
               <ReferenceLine
                 y={0}
                 stroke="rgb(var(--color-danger))"
@@ -1549,7 +1615,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 strokeDasharray="4 3"
               />
             )}
-            {chart.config.display?.highlightNegative &&
+            {(chart.config.display?.highlightNegative || shouldForceNegativeEmphasis) &&
               !isMultiSeries &&
               (areaData as any[])
                 .filter((d) => Number((d as any)?.value) < 0)
@@ -1564,7 +1630,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     strokeWidth={2}
                   />
                 ))}
-	            {isMultiSeries ? (
+            {isMultiSeries ? (
               <>
                 {visibleSeriesKeys.map((k, idx) => {
                   const isMa = Boolean(maSuffix && k.endsWith(maSuffix));
@@ -1600,6 +1666,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                         strokeWidth: 2,
                         stroke: "rgb(var(--color-bg-card))",
                       }}
+                      isAnimationActive={false}
                     >
                       {!isMa && (_forceLabels || (areaData.length <= 12 && seriesKeys.length <= 4)) && (
                         <LabelList
@@ -1790,13 +1857,14 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 	                );
 	              }}
 	            />
-	            <Bar dataKey="base" stackId="wf" fill="transparent" />
+            <Bar dataKey="base" stackId="wf" fill="transparent" isAnimationActive={false} />
 	            <Bar
 	              dataKey="delta"
 	              stackId="wf"
 	              radius={[6, 6, 0, 0]}
 	              maxBarSize={64}
-	              fillOpacity={1}
+              fillOpacity={1}
+              isAnimationActive={false}
 	            >
 	              {wf.map((entry, idx) => {
 	                const ring = wfRing(idx);
@@ -1909,9 +1977,36 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       if (!hasValue && series[0]) series[0] = { ...series[0], axis: "left" };
     }
 
+    // Safety net for same-format combos whose metadata lost the secondary axis.
+    // If a line series is orders of magnitude away from the bar series, keep it on
+    // the right axis so the primary series does not collapse to the baseline.
+    if (!series.some((s) => s.axis === "right")) {
+      const maxFor = (key: string) =>
+        Math.max(
+          0,
+          ...data.map((r) => Math.abs(toFiniteNumber((r as Record<string, unknown>)[key]) ?? 0)),
+        );
+      const barMax = Math.max(
+        0,
+        ...series.filter((s) => s.role === "bar").map((s) => maxFor(s.key)),
+      );
+      series = series.map((s) => {
+        if (s.role !== "line") return s;
+        const lineMax = maxFor(s.key);
+        if (barMax > 0 && lineMax > 0) {
+          const ratio = Math.max(barMax, lineMax) / Math.max(1, Math.min(barMax, lineMax));
+          if (ratio >= 20) return { ...s, axis: "right" as const };
+        }
+        return s;
+      });
+    }
+
     const barSeries = series.filter((s) => s.role === "bar");
     const lineSeries = series.filter((s) => s.role === "line");
-    const usesRight = series.some((s) => s.axis === "right");
+    const usesRight =
+      series.some((s) => s.axis === "right") ||
+      chart.config.display?.referenceAxis === "right" ||
+      (!!chart.config.display?.secondaryAxisFormat && lineSeries.length > 0);
     const leftFmt: ComboFmt =
       series.find((s) => s.axis === "left")?.format ??
       (chart.config.display?.valueFormat as ComboFmt) ??
@@ -2306,6 +2401,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     radius={shouldStackBreakdownBars ? [0, 0, 0, 0] : [4, 4, 0, 0]}
                     maxBarSize={shouldStackBreakdownBars ? (isExpanded ? 48 : 36) : (isExpanded ? 20 : 16)}
                     stackId={shouldStackBreakdownBars ? "stack" : undefined}
+                    isAnimationActive={false}
                   >
                     {idx === 0 && labelSeriesKey && shouldStackBreakdownBars && (
                       <LabelList
@@ -2596,8 +2692,18 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     // small enough to stay legible; otherwise the legend + tooltip carry it.
     const xLabel = chart.config.xAxisLabel?.trim() || xKey.replaceAll("_", " ");
     const yLabel = chart.config.yAxisLabel?.trim() || yKey.replaceAll("_", " ");
-    const xFmt = inferFormatFromLabelText(xLabel, chart.config.display?.valueFormat ?? "number");
-    const yFmt = inferFormatFromLabelText(yLabel, chart.config.display?.valueFormat ?? "number");
+    const xFmt = resolveAxisFormatFromMetadata(
+      xLabel,
+      "x",
+      chart.config.display?.valueFormat ?? "number",
+    );
+    const yFmt = resolveAxisFormatFromMetadata(
+      yLabel,
+      "y",
+      chart.config.display?.secondaryAxisFormat ??
+        chart.config.display?.valueFormat ??
+        "number",
+    );
     const showInlineLabels = !!nameKey && data.length <= 18;
     // "highlight the largest client" → emphasize the named point(s), dim the rest.
     const scatterHighlight = new Set(
@@ -2647,7 +2753,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 );
               }}
             />
-            <Scatter data={points as any} fillOpacity={0.9}>
+            <Scatter data={points as any} fillOpacity={0.9} isAnimationActive={false}>
               {points.map((p, i) => {
                 const isHi =
                   hasScatterHighlight && scatterHighlight.has(String((p as any)[nameKey!]));
@@ -2753,7 +2859,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
           <PieChart>
             <Pie data={enriched} cx="45%" cy="50%" innerRadius={0}
               outerRadius={isExpanded ? "65%" : "58%"} paddingAngle={3}
-              dataKey="value" nameKey="name" labelLine={false} label={renderLabel}>
+              dataKey="value" nameKey="name" labelLine={false} label={renderLabel}
+              isAnimationActive={false}>
               {enriched.map((_, i) => {
                 const ring = pieRing(i);
                 return (
@@ -2928,7 +3035,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             )}
             <Pie data={donutDataWithTotal} dataKey="value" nameKey="name" cx="50%" cy={isExpanded ? "50%" : "44%"}
               innerRadius={isExpanded ? 70 : 52} outerRadius={isExpanded ? 120 : 88}
-              paddingAngle={2} labelLine={false} label={renderDonutLabel}>
+              paddingAngle={2} labelLine={false} label={renderDonutLabel}
+              isAnimationActive={false}>
               {donutDataWithTotal.map((_, i) => { const ring = donutRing(i); return <Cell key={i} fill={COLORS[i % COLORS.length]} stroke={ring ?? undefined} strokeWidth={ring ? 4 : undefined} />; })}
             </Pie>
             <Tooltip
@@ -3038,9 +3146,9 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               tickLine={false} axisLine={false} tickFormatter={(v: number) => `${v}%`} width={36} />
             <Tooltip formatter={(v, name) =>
               name === "cumPct" ? [`${Number(v) || 0}%`, "Cumulative %"] : [fmtParetoLeft(Number(v) || 0), "Value"]} />
-            <Bar yAxisId="left" dataKey="value" fill="rgb(var(--color-accent-violet))" radius={[4, 4, 0, 0]} />
+            <Bar yAxisId="left" dataKey="value" fill="rgb(var(--color-accent-violet))" radius={[4, 4, 0, 0]} isAnimationActive={false} />
             <Line yAxisId="right" type="monotone" dataKey="cumPct"
-              stroke="rgb(var(--color-accent-cyan))" strokeWidth={2} dot={false} />
+              stroke="rgb(var(--color-accent-cyan))" strokeWidth={2} dot={false} isAnimationActive={false} />
             <ReferenceLine yAxisId="right" y={80} stroke="rgb(var(--color-accent-cyan))"
               strokeDasharray="4 4" label={{ value: "80%", position: "right", fontSize: 9, fill: "rgb(var(--color-accent-cyan))" }} />
           </ComposedChart>
@@ -3105,9 +3213,13 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const showBubbleLabels = bubbleHasName && bubbleData.length <= 16;
     const xLabel = chart.config.xAxisLabel?.trim() || "x";
     const yLabel = chart.config.yAxisLabel?.trim() || "y";
-    const xFmt = inferFormatFromLabelText(xLabel, "number");
-    const yFmt = inferFormatFromLabelText(yLabel, "number");
-    const zFmt = chart.config.display?.valueFormat ?? "number";
+    const xFmt = resolveAxisFormatFromMetadata(xLabel, "x", "number");
+    const yFmt = resolveAxisFormatFromMetadata(yLabel, "y", "number");
+    const zFmt = resolveAxisFormatFromMetadata(
+      chart.config.display?.secondaryLabel ?? chart.config.display?.colorMetricLabel ?? "value",
+      "z",
+      chart.config.display?.valueFormat ?? "number",
+    );
     const hasSize = finiteZ.length > 0 && zSpan > 0;
     return (
       <div style={{ height: h, width: "100%" }} className="flex flex-col">
@@ -3446,6 +3558,16 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
           const isMultiSeries = !hasValueSeries && seriesKeys.length > 0;
 
           if (isMultiSeries) {
+            const negativeSeriesValues =
+              chart.config.display?.highlightNegative || shouldForceNegativeEmphasis
+              ? (data as any[]).flatMap((row) =>
+                  seriesKeys
+                    .map((key) => Number((row as any)?.[key]))
+                    .filter((value) => Number.isFinite(value) && value < 0),
+                )
+              : [];
+            const minNegativeSeriesValue =
+              negativeSeriesValues.length > 0 ? Math.min(...negativeSeriesValues) : null;
             return (
               <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
                 <CartesianGrid {...gridStyle} />
@@ -3478,17 +3600,52 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   height={24}
                   wrapperStyle={{ fontSize: 10, fontWeight: 600, color: "rgb(var(--color-text-muted))" }}
                 />
-                {seriesKeys.slice(0, 6).map((key, idx) => (
+                {((chart.config.display?.highlightNegative || shouldForceNegativeEmphasis) &&
+                  (data as any[]).some((row) =>
+                    seriesKeys.some((key) => Number((row as any)?.[key]) < 0),
+                  )) && (
+                  <ReferenceLine
+                    y={0}
+                    stroke="rgb(var(--color-danger))"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                  />
+                )}
+                {minNegativeSeriesValue != null && (
+                  <ReferenceArea
+                    y1={0}
+                    y2={minNegativeSeriesValue}
+                    fill="rgb(var(--color-danger))"
+                    fillOpacity={0.08}
+                  />
+                )}
+                {seriesKeys.slice(0, 6).flatMap((key, idx) => [
                   <Line
-                    key={key}
+                    key={`line-${key}`}
                     type="monotone"
                     dataKey={key}
                     name={prettySeriesName(key)}
                     stroke={PIE_COLORS[idx % PIE_COLORS.length]}
                     strokeWidth={2}
                     dot={false}
-                  />
-                ))}
+                    isAnimationActive={false}
+                  />,
+                  ...((chart.config.display?.highlightNegative || shouldForceNegativeEmphasis)
+                    ? (data as any[])
+                        .filter((d) => Number((d as any)?.[key]) < 0)
+                        .map((d) => (
+                          <ReferenceDot
+                            key={`neg-${key}-${String((d as any).name)}`}
+                            x={String((d as any).name)}
+                            y={Number((d as any)[key])}
+                            r={5}
+                            fill="rgb(var(--color-danger))"
+                            stroke="rgb(var(--color-bg-card))"
+                            strokeWidth={2}
+                          />
+                        ))
+                    : []),
+                ])}
               </LineChart>
             );
           }
@@ -3520,13 +3677,46 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   />
                 }
               />
+              {((chart.config.display?.highlightNegative || shouldForceNegativeEmphasis) &&
+                (data as any[]).some((d) => Number((d as any)?.value) < 0)) && (
+                <ReferenceLine
+                  y={0}
+                  stroke="rgb(var(--color-danger))"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
+              )}
+              {(chart.config.display?.highlightNegative || shouldForceNegativeEmphasis) &&
+                (data as any[]).some((d) => Number((d as any)?.value) < 0) && (
+                  <ReferenceArea
+                    y1={0}
+                    y2={Math.min(...(data as any[]).filter((d) => Number((d as any)?.value) < 0).map((d) => Number((d as any).value)))}
+                    fill="rgb(var(--color-danger))"
+                    fillOpacity={0.08}
+                  />
+                )}
               <Line
                 type="monotone"
                 dataKey="value"
                 stroke="rgb(var(--color-accent-blue))"
                 strokeWidth={2}
                 dot={false}
+                isAnimationActive={false}
               />
+              {(chart.config.display?.highlightNegative || shouldForceNegativeEmphasis) &&
+                (data as any[])
+                  .filter((d) => Number((d as any)?.value) < 0)
+                  .map((d) => (
+                    <ReferenceDot
+                      key={`neg-${String((d as any).name)}`}
+                      x={String((d as any).name)}
+                      y={Number((d as any).value)}
+                      r={5}
+                      fill="rgb(var(--color-danger))"
+                      stroke="rgb(var(--color-bg-card))"
+                      strokeWidth={2}
+                    />
+                  ))}
             </LineChart>
           );
         })()}
@@ -3952,7 +4142,7 @@ function ChartCard({
       {/* Footer: type badge + insight */}
       <div className="mt-3 flex min-w-0 items-center gap-2">
         <span className="shrink-0 rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted ring-1 ring-default">
-          {prettyChartType(getEffectiveChartType(chart))}
+          {prettyChartType(chart)}
         </span>
         <span className="shrink-0 rounded-full bg-bg-elevated px-2.5 py-0.5 text-[10px] font-semibold text-text-muted ring-1 ring-default">
           {describeScope(scopeSelection, data)}

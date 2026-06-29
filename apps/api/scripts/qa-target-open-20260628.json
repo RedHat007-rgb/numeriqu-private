@@ -1,0 +1,46 @@
+[
+  {
+    "id": "AP",
+    "main": "Create an area chart showing utilization trend",
+    "followup": "In the same chart, compare countries."
+  },
+  {
+    "id": "AQ",
+    "main": "Create a waterfall chart showing CSAT movement",
+    "followup": "In the same chart, highlight the lowest-performing department."
+  },
+  {
+    "id": "AV",
+    "main": "Create a line chart showing operating cash flow trend",
+    "followup": "In the same chart, compare with year 2023 and 2025."
+  },
+  {
+    "id": "AX",
+    "main": "Create a donut chart showing gross margin by industry",
+    "followup": "In the same chart, highlight the highest gross margin."
+  },
+  {
+    "id": "BA",
+    "main": "Create a line chart showing AR outstanding balance by month",
+    "followup": "In the same chart, add average outstanding balance."
+  },
+  {
+    "id": "BG",
+    "main": "Generate a line chart showing monthly revenue growth percentage for the largest client"
+  },
+  {
+    "id": "BH",
+    "main": "Create a stacked column chart showing monthly revenue and expenses for the largest client",
+    "followup": "In the same chart, add gross profit values."
+  },
+  {
+    "id": "BI",
+    "main": "Create a matrix showing revenue and expenses by client and month",
+    "followup": "In the same chart, display row totals and grand totals."
+  },
+  {
+    "id": "BK",
+    "main": "Create a bar chart comparing the largest client versus company average revenue",
+    "followup": "In the same chart, highlight variance from the average."
+  }
+]

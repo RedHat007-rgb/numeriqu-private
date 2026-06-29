@@ -367,6 +367,36 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     aliases: ['total expense', 'cost plus payroll', 'cost and payroll'],
     derived: { num: { add: ['total_cost', 'total_payroll'] } },
   },
+  // Trial-balance expense movement at the account grain. The General Ledger fact is
+  // gone, but the monthly trial balance still carries account-level movement. The
+  // five expense accounts in DimAccount are the real categories available for
+  // "expense by account / account category / account type" asks, so expose a
+  // dedicated measure over that filtered account view instead of misrouting such asks
+  // to company-wide total_expenses.
+  account_expense: M(
+    'account_expense',
+    'Expense',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    [
+      'expense by account',
+      'account expense',
+      'expense account',
+      'expense category',
+      'expense categories',
+      'account category',
+      'account categories',
+      'account type',
+      'account types',
+      'sg&a',
+      'sga',
+      'selling general and administrative',
+      'selling, general and administrative',
+      'operating expense by account',
+    ],
+  ),
   // Expense to Revenue % = DIVIDE([Total Expenses],[Total Revenue]) = (cost+payroll)/revenue.
   // Composite-numerator ratio-of-sums, correct at any grain.
   expense_to_revenue_pct: {
@@ -1196,6 +1226,96 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     },
   },
   {
+    // Department-level operations bridge. FactOperations has no department key, but
+    // employees do carry both department and delivery_center. Weight each monthly
+    // delivery-center operations KPI by that month’s department headcount at the
+    // same center, yielding a real department-level SLA / CSAT / utilization view
+    // without broadcasting one company average across every department.
+    name: 'v_ebpo_department_operations_monthly',
+    hasTime: true,
+    from:
+      `(
+        WITH
+          ops AS (
+            SELECT
+              o.tenant_id AS tenant_id,
+              o.org_id AS org_id,
+              d.date AS period_date,
+              d.year AS year,
+              d.quarter AS quarter,
+              d.month AS month,
+              d.month_name AS month_name,
+              o.delivery_center AS delivery_center,
+              round(avg(o.sla_compliance_pct), 2) AS sla_compliance_pct,
+              round(avg(o.csat_pct), 2) AS csat_pct,
+              round(avg(o.utilization_pct), 2) AS utilization_pct
+            FROM {db}.ebpo_fact_operations o
+            INNER JOIN {db}.ebpo_dim_date d
+              ON d.tenant_id = o.tenant_id
+             AND d.org_id = o.org_id
+             AND d.date_key = o.date_key
+             AND d.tenant_id = {tenantId:String}
+             AND d.org_id IN ({externalOrgIds:Array(String)})
+            WHERE o.tenant_id = {tenantId:String}
+              AND o.org_id IN ({externalOrgIds:Array(String)})
+            GROUP BY o.tenant_id, o.org_id, d.date, d.year, d.quarter, d.month, d.month_name, o.delivery_center
+          ),
+          dept_center_hc AS (
+            SELECT
+              p.tenant_id AS tenant_id,
+              p.org_id AS org_id,
+              d.date AS period_date,
+              e.department AS department,
+              e.delivery_center AS delivery_center,
+              uniqExact(p.employee_key) AS employee_count
+            FROM {db}.ebpo_fact_payroll p
+            INNER JOIN {db}.ebpo_dim_date d
+              ON d.tenant_id = p.tenant_id
+             AND d.org_id = p.org_id
+             AND d.date_key = p.date_key
+             AND d.tenant_id = {tenantId:String}
+             AND d.org_id IN ({externalOrgIds:Array(String)})
+            INNER JOIN {db}.ebpo_dim_employee e
+              ON e.tenant_id = p.tenant_id
+             AND e.org_id = p.org_id
+             AND e.employee_key = p.employee_key
+             AND e.tenant_id = {tenantId:String}
+             AND e.org_id IN ({externalOrgIds:Array(String)})
+            WHERE p.tenant_id = {tenantId:String}
+              AND p.org_id IN ({externalOrgIds:Array(String)})
+              AND e.department != '' AND e.delivery_center != ''
+            GROUP BY p.tenant_id, p.org_id, d.date, e.department, e.delivery_center
+          )
+        SELECT
+          hc.tenant_id AS tenant_id,
+          hc.org_id AS org_id,
+          hc.period_date AS period_date,
+          any(ops.year) AS year,
+          any(ops.quarter) AS quarter,
+          any(ops.month) AS month,
+          any(ops.month_name) AS month_name,
+          hc.department AS department,
+          round(sum(ops.sla_compliance_pct * hc.employee_count) / nullIf(sum(hc.employee_count), 0), 2) AS sla_compliance_pct,
+          round(sum(ops.csat_pct * hc.employee_count) / nullIf(sum(hc.employee_count), 0), 2) AS csat_pct,
+          round(sum(ops.utilization_pct * hc.employee_count) / nullIf(sum(hc.employee_count), 0), 2) AS utilization_pct,
+          sum(hc.employee_count) AS employee_count
+        FROM dept_center_hc hc
+        INNER JOIN ops
+          ON ops.tenant_id = hc.tenant_id
+         AND ops.org_id = hc.org_id
+         AND ops.period_date = hc.period_date
+         AND ops.delivery_center = hc.delivery_center
+        GROUP BY hc.tenant_id, hc.org_id, hc.period_date, hc.department
+      ) AS edo`,
+    dims: ['department'],
+    measures: {
+      sla_compliance_pct: 'sla_compliance_pct',
+      csat_pct: 'csat_pct',
+      utilization_pct: 'utilization_pct',
+      employee_count: 'employee_count',
+    },
+  },
+  {
     name: 'v_ebpo_delivery_center_efficiency_monthly',
     hasTime: true,
     // Operations by delivery center / geography (calls, utilization, headcount). Geography
@@ -1278,6 +1398,21 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     measures: {
       closing_balance: 'closing_balance_usd',
       opening_balance: 'opening_balance_usd',
+    },
+  },
+  {
+    // Expense-account movement from trial balance. This is the genuine company-level
+    // account/category grain behind workbook asks like "monthly expense trends by
+    // account category". Filter to the real expense accounts in DimAccount; there is
+    // still no client bridge, so client×account asks remain unavailable.
+    name: 'v_ebpo_expense_accounts_monthly',
+    hasTime: true,
+    from:
+      "(SELECT * FROM {db}.v_ebpo_trial_balance_monthly " +
+      "WHERE account_name IN ('Payroll Expense', 'Rent Expense', 'IT Infrastructure', 'Recruitment Expense', 'Depreciation')) AS ebe",
+    dims: ['account'],
+    measures: {
+      account_expense: 'credit_movement_usd',
     },
   },
   {
@@ -1420,13 +1555,15 @@ const numeratorExpr = (
 const viewExposesMeasure = (view: EbpoViewDef, mid: string): boolean => {
   const m = EBPO_MEASURES[mid];
   if (!m) return false;
+  if (mid in view.measures) return true;
   if (m.window) return view.hasTime && m.window.base in view.measures;
   if (m.derived) return derivedRefs(m.derived).every((id) => id in view.measures);
-  return mid in view.measures;
+  return false;
 };
 // View-aware aggregate: derived measures compute num/den (ratio-of-sums) from the
 // view's columns; everything else uses the measure's own column + agg.
 const aggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef): string => {
+  if (view.measures[m.id]) return aggOf(m, view.measures[m.id]!);
   if (m.derived) {
     const n = numeratorExpr(m.derived.num, view, (c) => `sum(${c})`);
     if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
@@ -1444,6 +1581,7 @@ const condAggExprFor = (
   view: EbpoViewDef,
   cond: string,
 ): string => {
+  if (view.measures[m.id]) return aggIfOf(m, view.measures[m.id]!, cond);
   if (m.derived) {
     const n = numeratorExpr(m.derived.num, view, (c) => `sumIf(${c}, ${cond})`);
     if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
@@ -1457,6 +1595,29 @@ export const valueExprFor = (m: EbpoMeasureDef, view: EbpoViewDef) =>
   `round(${aggExprFor(m, view)}, ${decimalsFor(m)})`;
 const condValueExprFor = (m: EbpoMeasureDef, view: EbpoViewDef, cond: string) =>
   `round(${condAggExprFor(m, view, cond)}, ${decimalsFor(m)})`;
+
+const windowExprFor = (
+  measure: EbpoMeasureDef,
+  view: EbpoViewDef,
+  dimId: string | null | undefined,
+): string | null => {
+  if (!measure.window || !dimId) return null;
+  const ppy = periodsPerYear(dimId);
+  if (ppy === null) return null;
+  const wdim = dimSql(dimId);
+  const agg = `sum(${view.measures[measure.window.base]!})`;
+  const yearFrame = `OVER (ORDER BY ${wdim.group} ROWS BETWEEN ${ppy} PRECEDING AND ${ppy} PRECEDING)`;
+  const lagOneYear = `any(${agg}) ${yearFrame}`;
+  const priorExists = `count(${agg}) ${yearFrame}`;
+  const dp = decimalsFor(measure);
+  return measure.window.kind === 'yoy'
+    ? `if(${priorExists} = 0, NULL, round((${agg} - ${lagOneYear}) / nullIf(${lagOneYear}, 0) * 100, ${dp}))`
+    : measure.window.kind === 'yoy_abs'
+      ? `if(${priorExists} = 0, NULL, round(${agg} - ${lagOneYear}, ${dp}))`
+      : measure.window.kind === 'ly'
+        ? `if(${priorExists} = 0, NULL, round(${lagOneYear}, ${dp}))`
+        : `round(sum(${agg}) OVER (PARTITION BY toYear(${wdim.group}) ORDER BY ${wdim.group} ROWS UNBOUNDED PRECEDING), ${dp})`;
+};
 
 // ─── View resolution ──────────────────────────────────────────────────────────
 const viewSupportsDim = (
@@ -1822,7 +1983,56 @@ const buildWhere = (
   }
   for (const f of filters ?? []) {
     const dim = EBPO_DIMENSIONS[f.dimension];
-    if (!dim || !dim.column || dim.isTime || f.values.length === 0) continue;
+    if (!dim || f.values.length === 0) continue;
+    if (dim.isTime) {
+      if (!view.hasTime) continue;
+      const values = f.values.map((v) => String(v).trim()).filter(Boolean);
+      if (values.length === 0) continue;
+      const op = f.op === 'not_in' ? 'NOT IN' : 'IN';
+      if (f.dimension === 'year') {
+        const years = values
+          .map((v) => Number(v))
+          .filter((v) => Number.isInteger(v) && v >= 1900 && v <= 2100);
+        if (years.length) parts.push(`toYear(period_date) ${op} (${years.join(', ')})`);
+        continue;
+      }
+      if (f.dimension === 'quarter') {
+        const quarters = values
+          .map((v) => {
+            const m = v.match(/(?:q)?([1-4])(?:\s+|-)?(20\d{2})?/i);
+            return m ? { quarter: Number(m[1]), year: m[2] ? Number(m[2]) : null } : null;
+          })
+          .filter((v): v is { quarter: number; year: number | null } => !!v);
+        const yearScoped = quarters.filter((v) => v.year);
+        if (yearScoped.length === quarters.length && quarters.length > 0) {
+          parts.push(
+            `(${yearScoped
+              .map((v) => `(toQuarter(period_date) = ${v.quarter} AND toYear(period_date) = ${v.year})`)
+              .join(' OR ')})`,
+          );
+        } else {
+          const qs = Array.from(new Set(quarters.map((v) => v.quarter))).filter((v) => v >= 1 && v <= 4);
+          if (qs.length) parts.push(`toQuarter(period_date) ${op} (${qs.join(', ')})`);
+        }
+        continue;
+      }
+      if (f.dimension === 'month') {
+        const monthNums = values
+          .map((v) => {
+            const direct = Number(v);
+            if (Number.isInteger(direct) && direct >= 1 && direct <= 12) return direct;
+            const parsed = Date.parse(`${v} 1, 2000`);
+            return Number.isNaN(parsed) ? null : new Date(parsed).getUTCMonth() + 1;
+          })
+          .filter((v): v is number => Number.isInteger(v as number) && (v as number) >= 1 && (v as number) <= 12);
+        if (monthNums.length) {
+          parts.push(`toMonth(period_date) ${op} (${Array.from(new Set(monthNums)).join(', ')})`);
+        }
+        continue;
+      }
+      continue;
+    }
+    if (!dim.column) continue;
     if (!view.dims.includes(f.dimension)) continue;
     const list = f.values.map(quoteLit).join(', ');
     parts.push(
@@ -1842,15 +2052,6 @@ const opSql = (op: SpecThreshold['op']) =>
 // pies are kept. General — used by both the compiler and specToPlan so the widget TYPE and
 // the SQL agree.
 export function effectiveEbpoChartType(spec: ChartSpec): string {
-  const ct = String(spec.chartType ?? 'bar').toLowerCase();
-  const mlist = measureListOf(spec);
-  if (
-    (ct === 'pie' || ct === 'donut') &&
-    spec.dimension &&
-    mlist.length === 1 &&
-    EBPO_MEASURES[mlist[0]!]?.kind === 'ratio'
-  )
-    return 'bar';
   return spec.chartType ?? 'bar';
 }
 
@@ -1910,6 +2111,12 @@ export async function compileEbpoSpec(
     const bdId = spec.breakdown || null;
 
     if (!dimId) {
+      if (measures.some((mid) => !!EBPO_MEASURES[mid]!.window))
+        return {
+          ok: false,
+          refusal:
+            'Windowed measures like YTD, last year, or YoY growth need a time axis (by month, quarter, or year).',
+        };
       // Scorecard: each card can resolve from its own semantic provider. Requiring
       // one physical view for unrelated KPIs (for example margin + people
       // efficiency) incorrectly rejects valid executive scorecards.
@@ -1951,6 +2158,12 @@ export async function compileEbpoSpec(
       recentMonths,
     );
     const ct = String(spec.chartType ?? '').toLowerCase();
+    if (measures.some((mid) => !!EBPO_MEASURES[mid]!.window) && !mdim.isTime)
+      return {
+        ok: false,
+        refusal:
+          'Windowed measures like YTD, last year, or YoY growth need a time axis (by month, quarter, or year).',
+      };
     // Scatter/bubble are measure-vs-measure per point: emit the x/y/z(/w) column
     // convention the frontend expects (name=point label, x=1st measure, y=2nd, z=size).
     const isScatter = ct === 'scatter' || ct === 'bubble';
@@ -1998,7 +2211,8 @@ export async function compileEbpoSpec(
       .map((mid, i) => {
         const m = EBPO_MEASURES[mid]!;
         const alias = isScatter ? (xyz[i] ?? `m${i + 1}`) : quoteIdent(m.label);
-        return `${valueExprFor(m, mview)} AS ${alias}`;
+        const expr = m.window ? windowExprFor(m, mview, dimId) : null;
+        return `${expr ? expr : valueExprFor(m, mview)} AS ${alias}`;
       })
       .join(', ');
     let sql: string;
@@ -2062,31 +2276,15 @@ export async function compileEbpoSpec(
   //   ytd = running total from the start of the fiscal year to this period
   // Correct at any time grain (month/quarter/year), unlike avg(precomputed pct).
   if (measure.window) {
-    const ppy = dimId ? periodsPerYear(dimId) : null;
-    if (!dimId || ppy === null)
+    const winExpr = windowExprFor(measure, view, dimId);
+    if (!winExpr)
       return {
         ok: false,
         refusal: `${measure.label} needs a time axis (by month, quarter, or year).`,
       };
-    const wdim = dimSql(dimId);
-    const where = buildWhere(view, [dimId], spec.filters, db, false);
-    const agg = `sum(${view.measures[measure.window.base]!})`;
-    const yearFrame = `OVER (ORDER BY ${wdim.group} ROWS BETWEEN ${ppy} PRECEDING AND ${ppy} PRECEDING)`;
-    const lagOneYear = `any(${agg}) ${yearFrame}`;
-    // 0 when the same period one year earlier doesn't exist (empty frame) → blank, so the
-    // first year of a yoy/ly series is null (matches PowerBI), not a misleading 0.
-    const priorExists = `count(${agg}) ${yearFrame}`;
-    const dp = decimalsFor(measure);
-    const winExpr =
-      measure.window.kind === 'yoy'
-        ? `if(${priorExists} = 0, NULL, round((${agg} - ${lagOneYear}) / nullIf(${lagOneYear}, 0) * 100, ${dp}))`
-        : measure.window.kind === 'yoy_abs'
-          ? // absolute YoY change ([base] − [base LY]); blank in the first year (no prior period)
-            `if(${priorExists} = 0, NULL, round(${agg} - ${lagOneYear}, ${dp}))`
-          : measure.window.kind === 'ly'
-            ? `if(${priorExists} = 0, NULL, round(${lagOneYear}, ${dp}))`
-            : // ytd: cumulative within the fiscal year (reset each year)
-              `round(sum(${agg}) OVER (PARTITION BY toYear(${wdim.group}) ORDER BY ${wdim.group} ROWS UNBOUNDED PRECEDING), ${dp})`;
+    const timeDim = dimId as string;
+    const wdim = dimSql(timeDim);
+    const where = buildWhere(view, [timeDim], spec.filters, db, false);
     const sql =
       `SELECT ${wdim.label} AS name, ${winExpr} AS value ` +
       `FROM ${tbl} WHERE ${where} GROUP BY ${wdim.group} ORDER BY ${wdim.group} ASC LIMIT ${topN}`;
@@ -2208,6 +2406,21 @@ export async function compileEbpoSpec(
   }
 
   const allTransforms = normalizeTransforms(spec.transforms);
+  // A single-measure MONTHLY waterfall for a ratio/average metric (CSAT, SLA,
+  // utilization, etc.) is only meaningful as month-over-month MOVEMENT. Plotting
+  // raw 80%-level monthly values in the cumulative waterfall renderer explodes the
+  // axis into thousands of percent. When no explicit transform is provided, default
+  // these ratio/avg time waterfalls to period-over-period difference bars.
+  const measureKind = String((measure as any)?.kind ?? '');
+  if (
+    spec.chartType === 'waterfall' &&
+    dim.isTime &&
+    !bdId &&
+    allTransforms.length === 0 &&
+    (measureKind === 'ratio' || measureKind === 'avg')
+  ) {
+    allTransforms.push({ kind: 'difference' });
+  }
   // peer_average / company_share are COMPANY-WIDE calculations, not row-wise transforms:
   // both must re-aggregate the measure across ALL entities (dropping the client/vendor
   // filter), so they can't be built from the already-filtered base SQL inside
@@ -2237,7 +2450,18 @@ export async function compileEbpoSpec(
     ),
     !bdId,
   );
-  if ((wantsPeerAvg || wantsShare) && dim.isTime && !bdId) {
+  if (wantsShare && !dim.isTime && !bdId) {
+    // Categorical share-of-total ("contribution % by department/client/account"):
+    // replace each row's value with its share of the chart total. This is valid for
+    // single-measure by-dimension charts and is the expected non-time reading of
+    // "contribution percentages".
+    sql =
+      `WITH _main AS (\n${sql}\n)\n` +
+      `SELECT name, round(value / nullIf(sum(value) OVER (), 0) * 100, 1) AS value FROM _main LIMIT 1000`;
+    if (deferRefLine)
+      sql = applyTransforms(sql, [{ kind: 'reference_line' }], true);
+    outputPercent = true;
+  } else if ((wantsPeerAvg || wantsShare) && dim.isTime && !bdId) {
     const entityFilter = (spec.filters ?? []).find(
       (f) => f.dimension === 'client' || f.dimension === 'vendor',
     );
@@ -2282,14 +2506,11 @@ export async function compileEbpoSpec(
         sql = applyTransforms(sql, [{ kind: 'reference_line' }], true);
       if (wantsShare) outputPercent = true;
     } else if (wantsShare && rawCol) {
-      // company_share was asked for but there's no client/vendor dimension to share
-      // against (e.g. "cash balance trend → percentage contribution"). Sharing each
-      // period's company total by itself is degenerate (always 100%); the sensible
-      // reading of "% contribution" for a single series is each period's share of the
-      // series total — exactly the normalize transform. Realize it so the values become
-      // real percentages instead of being silently dropped (and then mis-formatted).
-      sql = applyTransforms(sql, [{ kind: 'normalize' }], !bdId);
-      outputPercent = true;
+      return {
+        ok: false,
+        refusal:
+          'I can only calculate share of company total when the chart is split by a client or vendor. This chart has no entity dimension to share against.',
+      };
     }
   }
   return { ok: true, sql, measure, view: view.name, outputPercent };
@@ -2339,7 +2560,16 @@ function applyTransforms(
             .map((m) => m[1] ?? m[2] ?? m[3]!)
             // Exclude the label column and the internal `__ord` ordering helper, which
             // the recent-N wrap drops via `* EXCEPT (__ord)` (so _b has no __ord column).
-            .filter((a) => a && a.toLowerCase() !== 'name' && a !== '__ord'),
+            // Also exclude waterfall helper columns such as `is_total`; they are control
+            // flags, not data series, and including them in a running sum double-counts
+            // the bridge total.
+            .filter(
+              (a) =>
+                a &&
+                a.toLowerCase() !== 'name' &&
+                a !== '__ord' &&
+                a.toLowerCase() !== 'is_total',
+            ),
         ),
       );
 
@@ -2470,7 +2700,14 @@ export function ebpoComboSeriesRoles(
     // margin chart) must get its own right axis too, otherwise it lands on the primary
     // %-axis and renders nonsense like "900000.0%". Series sharing the primary unit stay
     // on the left so magnitudes are comparable.
-    const axis: 'left' | 'right' = def.format !== leftFormat ? 'right' : 'left';
+    const axis: 'left' | 'right' =
+      def.format !== leftFormat
+        ? 'right'
+        : role === 'line' &&
+            def.id !== defs[0]!.id &&
+            def.kind !== defs[0]!.kind
+          ? 'right'
+          : 'left';
     return {
       key: def.label,
       role,
@@ -2531,9 +2768,9 @@ export function ebpoCatalogPromptText(): string {
     'SCATTER / BUBBLE: for "X versus Y by <entity>" set dimension=<entity> and measures=[xId, yId] with chartType "scatter". For "size each bubble by W" add the size measure: measures=[xId, yId, sizeId] with chartType "bubble". All measures must come from one view that also has the entity dimension.',
     'DIMENSIONS (pick one as "dimension"; optionally one as "breakdown" for a single-measure series split; omit "dimension" for a single KPI value):',
     dims,
-    'NOTE: REVENUE / COST / GROSS MARGIN have NO GEOGRAPHY relationship in this dataset — the revenue fact is booked only by client, business unit, and contract type (and month). There is NO "revenue by country / region / city / delivery center" — do NOT invent one; emit your best spec and the deterministic compiler will honestly refuse it. Only OPERATIONS metrics (calls_handled, tickets_resolved, SLA/CSAT/utilization, avg_aht_minutes) and FIXED ASSETS are available by delivery center / geography. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
-    'PROFIT MEASURES: "operating profit", "operating income", "net profit", "net income", "EBITDA" → use measure "ebitda" (= revenue − cost − payroll, an absolute $; in this dataset it is negative because payroll is large). "operating profit margin", "net profit margin", "net margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct". These only resolve at the company/monthly grain (payroll is not available by business unit, client, or geography), so "EBITDA/operating profit BY business unit/client/country" has no view — emit the spec and let the compiler refuse honestly.',
-    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses" → use measure "total_expenses" (= Total Cost + Total Payroll), available company-wide and by month. IMPORTANT: the dataset still has trial-balance account data, so account/account-category/account-type expense asks are data-backed through the account views when they stay at the company/account grain. But there is NO client×account bridge, and no revenue-fact-by-department grain — refuse those impossible cross-grain joins honestly. "SG&A" is NOT a named measure or account classification in this dataset, so refuse SG&A-specific requests unless the user rephrases them to concrete expense accounts. "total_cost" is specifically COST OF REVENUE, only for revenue-vs-cost / gross-margin asks — do NOT use it for a generic "expense" request unless the user explicitly compares revenue vs expenses by a revenue-grained entity (client / business unit / contract type), where cost of revenue is the only attributable expense data.',
+    'NOTE: REVENUE / COST / GROSS MARGIN have NO GEOGRAPHY relationship in this dataset — the revenue fact is booked only by client, business unit, and contract type (and month). There is NO "revenue by country / region / city / delivery center" — do NOT invent one; emit your best spec and the deterministic compiler will honestly refuse it. OPERATIONS metrics (SLA/CSAT/utilization, calls, tickets, AHT) are available by delivery center / geography, and SLA/CSAT/utilization are also available by department through a weighted delivery-center headcount bridge. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
+    'PROFIT MEASURES: "operating profit", "operating income", "net profit", "net income", "EBITDA" → use measure "ebitda" (= revenue − cost − payroll, an absolute $; in this dataset it is negative because payroll is large). "operating profit margin", "net profit margin", "net margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct". The full rev−cost−payroll figure only resolves where revenue, cost, and payroll coexist in the same verified grain: company/month. Payroll is NOT booked by business unit, client, contract type, industry, or revenue geography, so EBITDA by those dimensions must refuse honestly instead of substituting gross margin.',
+    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses" → use measure "total_expenses" (= Total Cost + Total Payroll), available company-wide and by month. IMPORTANT: the dataset still has trial-balance account data, so account/account-category/account-type expense asks are data-backed through the account views when they stay at the company/account grain. "SG&A" maps to that same real expense-account grain (the trial-balance expense accounts), not to a separate named measure. But there is NO client×account bridge, and no revenue-fact-by-department grain — refuse those impossible cross-grain joins honestly. "total_cost" is specifically COST OF REVENUE, only for revenue-vs-cost / gross-margin asks — do NOT use it for a generic "expense" request unless the user explicitly compares revenue vs expenses by a revenue-grained entity (client / business unit / contract type), where cost of revenue is the only attributable expense data.',
     'CLIENTS: "number of clients / how many clients / client count" → measure "no_clients" (a DISTINCTCOUNT). "average/avg revenue per client" → measure "avg_revenue_per_client". "client RANK / rank clients / top N clients" is NOT a measure — plot the underlying measure (usually total_revenue) by dimension "client" with sort:"value_desc" (or "value_asc" for the bottom) and topN. "revenue contribution % / share of total company revenue / revenue concentration" is the company_share TRANSFORM on total_revenue by client, not a separate measure.',
     'FIXED ASSETS ARE POINT-IN-TIME: the fixed-asset measures (asset_cost, net_book_value, accumulated_depreciation, depreciation_pct, asset_count) have NO monthly/time series — there is no month/quarter/year dimension for them. Never give an asset measure a time dimension. A request about "changes in assets", "asset movement", or an asset waterfall/bar/breakdown means the COMPOSITION across a category: set dimension to asset_type (default), delivery_center, country, or region — e.g. "waterfall showing changes in assets" → {measure:"asset_cost", dimension:"asset_type", chartType:"waterfall"}.',
     `NOT AVAILABLE (if the request needs any of these, return a refusal): ${unavailable}.`,

@@ -4,6 +4,7 @@ import {
   resolveEbpoView,
   ebpoComboSeriesRoles,
   EBPO_MEASURES,
+  effectiveEbpoChartType,
 } from './chart-spec-ebpo';
 import type { ChartSpec } from './chart-spec';
 
@@ -62,6 +63,12 @@ describe('EBPO catalog — view resolution', () => {
     );
   });
 
+  test('cost per employee by month can use a view that exposes the precomputed monthly metric directly', () => {
+    expect(resolveEbpoView('cost_per_employee', 'month', null)?.name).toBe(
+      'v_ebpo_department_efficiency_monthly',
+    );
+  });
+
   test('derived overtime to payroll percentage resolves to the payroll view', () => {
     expect(resolveEbpoView('overtime_to_payroll_pct', 'department', null)?.name).toBe(
       'v_ebpo_payroll_monthly',
@@ -100,6 +107,23 @@ describe('EBPO catalog — view resolution', () => {
 });
 
 describe('EBPO compiler — aggregation correctness', () => {
+  test('preserves an explicitly requested pie or donut for ratio measures', () => {
+    expect(
+      effectiveEbpoChartType({
+        measure: 'csat_pct',
+        dimension: 'country',
+        chartType: 'pie',
+      }),
+    ).toBe('pie');
+    expect(
+      effectiveEbpoChartType({
+        measure: 'sla_compliance_pct',
+        dimension: 'region',
+        chartType: 'donut',
+      }),
+    ).toBe('donut');
+  });
+
   test('flow measure uses SUM', async () => {
     const sql = await sqlFor(base({ measure: 'total_revenue', dimension: 'business_unit', chartType: 'bar' }));
     expect(sql).toMatch(/sum\(total_revenue_usd\)/);
@@ -145,6 +169,26 @@ describe('EBPO compiler — aggregation correctness', () => {
   test('stock measure over time shows the monthly balance (no latest-period filter)', async () => {
     const sql = await sqlFor(base({ measure: 'closing_balance', dimension: 'month', chartType: 'line' }));
     expect(sql).not.toContain('period_date = (SELECT max(period_date)');
+  });
+
+  test('account-level expense trends compile against the filtered trial-balance expense view', async () => {
+    const runRows = async () => [
+      { v: 'Payroll Expense', m: 100 },
+      { v: 'Rent Expense', m: 50 },
+    ];
+    const sql = await sqlFor(
+      base({
+        measure: 'account_expense',
+        dimension: 'month',
+        breakdown: 'account',
+        chartType: 'heatmap',
+      }),
+      runRows,
+    );
+    expect(sql).toContain('v_ebpo_trial_balance_monthly');
+    expect(sql).toContain("'Payroll Expense'");
+    expect(sql).toContain("'Rent Expense'");
+    expect(sql).toMatch(/sumIf\(credit_movement_usd, .*Payroll Expense/);
   });
 
   // AR/AP Outstanding match PowerBI: SUM over the snapshot/date context, NOT latest-month
@@ -344,6 +388,19 @@ describe('EBPO catalog — derived CFO ratios', () => {
   });
 });
 
+describe('EBPO catalog — time filters', () => {
+  test('year filters are applied to monthly charts', async () => {
+    const sql = await sqlFor(
+      base({
+        measure: 'operating_cf',
+        filters: [{ dimension: 'year', op: 'in', values: ['2025'] }],
+      }),
+    );
+
+    expect(sql).toContain('toYear(period_date) IN (2025)');
+  });
+});
+
 describe('EBPO catalog — windowed YoY measure', () => {
   // Revenue YoY = window over grain-aggregated revenue vs one year prior (DAX YoY),
   // correct at any time grain — NOT avg of the precomputed monthly pct column.
@@ -379,6 +436,35 @@ describe('EBPO catalog — windowed YoY measure', () => {
     const sql = await sqlFor(base({ measure: 'revenue_ytd', dimension: 'month', chartType: 'line' }));
     expect(sql).toContain('PARTITION BY toYear(');
     expect(sql).toContain('ROWS UNBOUNDED PRECEDING');
+  });
+
+  test('revenue_ytd can be combined with total_revenue on a monthly chart', async () => {
+    const sql = await sqlFor(
+      base({
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'revenue_ytd'],
+        dimension: 'month',
+        chartType: 'combo',
+      }),
+    );
+    expect(sql).toContain('AS "Total Revenue"');
+    expect(sql).toContain('AS "Revenue YTD"');
+    expect(sql).toContain('PARTITION BY toYear(');
+    expect(sql).not.toContain('sum(undefined)');
+  });
+
+  test('windowed measures are refused in KPI/no-axis multi-measure charts', async () => {
+    const r = await compileEbpoSpec(
+      {
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'revenue_ytd'],
+        chartType: 'kpi',
+      } as ChartSpec,
+      DB,
+      noRows,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.refusal).toMatch(/time axis/i);
   });
 });
 
@@ -560,6 +646,18 @@ describe('EBPO combo series roles — dual-axis by unit', () => {
     });
     expect(roles.every((r) => r.axis === 'left')).toBe(true);
   });
+
+  test('a same-format per-employee metric stays readable against a total by using the right axis', () => {
+    const roles = ebpoComboSeriesRoles(['cost_per_employee', 'total_payroll'], {
+      baseType: 'bar',
+      forceLine: ['total_payroll'],
+    });
+    const costPerEmployee = roles.find((r) => r.key === EBPO_MEASURES['cost_per_employee']!.label)!;
+    const payroll = roles.find((r) => r.key === EBPO_MEASURES['total_payroll']!.label)!;
+    expect(costPerEmployee.axis).toBe('left');
+    expect(payroll.role).toBe('line');
+    expect(payroll.axis).toBe('right');
+  });
 });
 
 describe('EBPO catalog — extended DAX measures (added, old ones preserved)', () => {
@@ -601,6 +699,13 @@ describe('EBPO catalog — extended DAX measures (added, old ones preserved)', (
     expect(sql).toContain('analytics.v_ebpo_business_unit_efficiency');
     // legacy payroll-based formula must no longer be used for cost_per_employee
     expect(sql).not.toContain('total_payroll_usd');
+  });
+
+  test('cost_per_employee by month uses the precomputed monthly column when that is what the view exposes', async () => {
+    const sql = await sqlFor(base({ measure: 'cost_per_employee', dimension: 'month', chartType: 'bar' }));
+    expect(sql).toContain('analytics.v_ebpo_department_efficiency_monthly');
+    expect(sql).toContain('avg(cost_per_employee_usd)');
+    expect(sql).not.toContain('sum(undefined)');
   });
 
   // No. Clients = DISTINCTCOUNT(DimClient[ClientKey]) → uniqExact over client_name.

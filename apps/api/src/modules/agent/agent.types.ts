@@ -184,6 +184,9 @@ export interface DisplayHints {
   // correctly — a percent measure must render as % not $ (Q37/Q72 fix).
   valueFormat?: 'currency' | 'number' | 'percent' | null;
   valueDecimals?: number | null;
+  // Preserve whether the user asked for a bar-vs-column label when both map to the
+  // same renderer geometry.
+  requestedChartLabel?: string | null;
   // Treemap/chloropleth-style visuals: size remains `value`, color comes from this column.
   colorMetric?: string | null;
   colorMetricLabel?: string | null;
@@ -226,6 +229,7 @@ export type FollowUpTransform =
         | 'prior_year'
         | 'cumulative'
         | 'normalize'
+        | 'index'
         | 'reference_line'
         | 'peer_average'
         | 'company_share'

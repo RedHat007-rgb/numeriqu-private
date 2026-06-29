@@ -179,7 +179,15 @@ export function createRequester(getToken: TokenProvider) {
     }
 
     if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
+    // A 200 with an empty body is a legitimate "no content" response — e.g. an
+    // endpoint typed `T | null` (dashboardForSession / latestDashboard) returns
+    // null, which NestJS serializes as an empty body, not the string "null".
+    // Calling response.json() on that throws SyntaxError, which previously
+    // surfaced as a red "Could not load" error (e.g. on an honest agent refusal
+    // that produced no dashboard). Treat an empty body as null.
+    const text = await response.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text) as T;
   };
 }
 

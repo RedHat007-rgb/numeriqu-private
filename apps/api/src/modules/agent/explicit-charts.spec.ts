@@ -586,7 +586,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan.modify).toHaveLength(1);
-    expect(plan.modify[0]?.type).toBe('combo');
+    expect(plan.modify[0]?.type).toBe('line');
     expect(plan.modify[0]?.dynamicSql).toContain(
       'sum(total_payroll_usd) / nullIf(sum(total_revenue_usd), 0) * 100',
     );
@@ -629,7 +629,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan.modify).toHaveLength(1);
-    expect(plan.modify[0]?.type).toBe('combo');
+    expect(plan.modify[0]?.type).toBe('line');
     expect(plan.modify[0]?.dynamicSql).toContain(
       'sum(collected_amount_usd) / nullIf(sum(invoice_amount_usd), 0) * 100',
     );
@@ -672,7 +672,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan.modify).toHaveLength(1);
-    expect(plan.modify[0]?.type).toBe('combo');
+    expect(plan.modify[0]?.type).toBe('line');
     expect(plan.modify[0]?.dynamicSql).toContain(
       'sum(ar_outstanding_usd) / nullIf(sum(total_revenue_usd), 0) * 365',
     );
@@ -760,6 +760,185 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.type).toBe('bar');
     expect(plan.modify[0]?.display?.referenceSeries).toBe('Gross Margin % Average');
   });
+
+  test('prefers the existing percent series for payroll percentage reference-line follow-ups', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        {
+          name: 'Jan 2025',
+          'Total Revenue': 1000,
+          'Payroll / Revenue %': 84.1,
+          'Payroll / Revenue % Average': 82.7,
+        },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Monthly Revenue and Payroll % of Revenue',
+            chartType: 'combo',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: {
+                measure: 'total_revenue',
+                measures: ['total_revenue', 'payroll_to_revenue_pct'],
+                dimension: 'month',
+                chartType: 'combo',
+              },
+              display: {
+                valueFormat: 'currency',
+                series: [
+                  { key: 'Total Revenue', role: 'bar', axis: 'left', format: 'currency' },
+                  { key: 'Payroll / Revenue %', role: 'line', axis: 'right', format: 'percent' },
+                ],
+                secondaryAxisFormat: 'percent',
+                secondaryLabel: 'Payroll / Revenue %',
+              },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add an average payroll percentage reference line.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.summary).toContain('average payroll / revenue %');
+    expect(plan.modify[0]?.display?.referenceSeries).toBe('Payroll / Revenue % Average');
+    expect(plan.modify[0]?.dynamicSql).toContain('Payroll / Revenue % Average');
+    expect(plan.modify[0]?.dynamicSql).toContain('avg(_base."Payroll / Revenue %")');
+  });
+
+  test('falls back to display series when a combo chart spec only stores the primary measure', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        {
+          name: 'Jan 2025',
+          'Total Revenue': 1000,
+          'Payroll / Revenue %': 84.1,
+          'Payroll / Revenue % Average': 82.7,
+        },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Monthly Revenue and Payroll % of Revenue',
+            chartType: 'combo',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: {
+                measure: 'total_revenue',
+                dimension: 'month',
+                chartType: 'combo',
+              },
+              display: {
+                valueFormat: 'currency',
+                series: [
+                  { key: 'Total Revenue', role: 'bar', axis: 'left', format: 'currency' },
+                  { key: 'Payroll / Revenue %', role: 'line', axis: 'right', format: 'percent' },
+                ],
+                secondaryAxisFormat: 'percent',
+                secondaryLabel: 'Payroll / Revenue %',
+              },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add an average payroll percentage reference line.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.summary).toContain('average payroll / revenue %');
+    expect(plan.modify[0]?.display?.referenceSeries).toBe('Payroll / Revenue % Average');
+  });
+
+  test('breaks department payroll into payroll components instead of a fake month regroup', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    svc.specToPlan = async (_spec: any) => ({
+      kind: 'build',
+      plan: {
+        dashboard: {
+          widgets: [
+            {
+              type: 'stacked_bar',
+              _sql: 'SELECT name, `Base Salary`, `Overtime`, `Bonus`, `Benefits` FROM payroll_breakdown',
+            },
+          ],
+        },
+      },
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Total Payroll Cost by Department',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'total_payroll', dimension: 'department', chartType: 'bar' },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'Can you break down each department’s payroll cost',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.summary).toContain('base salary, overtime, bonus, and benefits');
+    expect(plan.modify[0]?.type).toBe('stacked_bar');
+    expect(plan.modify[0]?.spec?.measures).toEqual([
+      'total_base_salary',
+      'total_overtime',
+      'total_bonus',
+      'total_benefits',
+    ]);
+  }, 10000);
 
   test('detects gross margin percentage without also adding gross margin dollars', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
@@ -911,6 +1090,109 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         expect.objectContaining({ key: 'Asset Cost', format: 'percent' }),
         expect.objectContaining({ key: 'Net Book Value', format: 'percent' }),
       ]),
+    );
+  });
+
+  test('rings the highest slice on donut highlight follow-ups instead of using a hidden name highlight', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'Telecom Support', value: 27.3 },
+        { name: 'IT Helpdesk', value: 19.5 },
+        { name: 'Banking BPO', value: 18.0 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildNamedHighlightEditPlan(
+      [
+        {
+          index: 0,
+          w: {
+            chartType: 'donut',
+            queryConfig: {
+              dynamicSql: 'SELECT name, value FROM t',
+              display: {},
+            },
+          },
+          spec: { dimension: 'business_unit', chartType: 'donut' },
+        },
+      ],
+      'In the same chart, highlight the highest gross margin.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.modify).toHaveLength(1);
+    expect(plan?.modify[0]?.display).toEqual(
+      expect.objectContaining({ highlightExtremes: 'max' }),
+    );
+  });
+
+  test('rebuilds same-chart country comparisons as a monthly country trend', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    let capturedSpec: any = null;
+    svc.specToPlan = async (spec: any) => {
+      capturedSpec = spec;
+      return {
+        kind: 'build',
+        plan: {
+          dashboard: {
+            widgets: [
+              {
+                type: 'line',
+                _sql: 'SELECT 1 AS name, 1 AS value',
+                display: {},
+              },
+            ],
+          },
+        },
+      };
+    };
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Utilization by Delivery Center',
+            chartType: 'line',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: {
+                measure: 'utilization_pct',
+                dimension: 'delivery_center',
+                chartType: 'line',
+              },
+              display: { valueFormat: 'percent' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, compare countries.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.modify).toHaveLength(1);
+    expect(capturedSpec).toEqual(
+      expect.objectContaining({
+        dimension: 'month',
+        breakdown: 'country',
+        recentMonths: 8,
+      }),
     );
   });
 
@@ -1222,6 +1504,137 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         },
         'In the same chart, show cumulative revenue.',
       ),
+    ).toBeNull();
+  });
+
+  test('builds a real cumulative trend for a non-cumulative chart follow-up', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'Client A', gross_margin: 100 },
+        { name: 'Client B', gross_margin: 200 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoMetricEdit(
+      {
+        id: 'dash',
+        title: 'Gross Margin by Client',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Gross Margin by Client',
+            chartType: 'scatter',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: { measure: 'gross_margin_pct', dimension: 'client', chartType: 'scatter' },
+              display: { valueFormat: 'percent' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, display cumulative gross margin.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('line');
+    expect(plan.modify[0]?.dynamicSql).toContain('sum(_b.`value`) OVER');
+    expect(plan.modify[0]?.title).toContain('Cumulative Gross Margin');
+  });
+
+  test('recognizes same-chart follow-ups that require an existing live chart', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    expect(
+      svc.referencesExistingChart('In the same chart, add average SLA as a benchmark line.'),
+    ).toBe(true);
+    expect(
+      svc.referencesExistingChart('Generate a bar chart showing SLA by country.'),
+    ).toBe(false);
+  });
+
+  test('refuses EBITDA by business unit because payroll has no business-unit grain', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    const plan = await svc.generateSmartPlan(
+      'Generate a bar chart showing EBITDA by business unit',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('no_data');
+    expect((plan as any)?.message ?? '').toContain('payroll is not booked by business unit');
+  });
+
+  test('still allows EBITDA trend over time at company grain', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', value: -1200000 }],
+      error: null,
+    });
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Create a line chart showing operating profit trend',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget._spec?.measure).toBe('ebitda');
+    expect(widget._spec?.dimension).toBe('month');
+    expect(widget.title).toBe('Operating Profit (EBITDA-style) Trend');
+  });
+
+  test('reports explicit pie/donut refusal when negatives are present', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+
+    const message = svc.negativePieDonutMessage('pie', [
+      { name: 'Operating Cash Flow', value: 83500000 },
+      { name: 'Investing Cash Flow', value: -31000000 },
+      { name: 'Financing Cash Flow', value: -3800000 },
+    ]);
+
+    expect(message).toContain("can't build this as a pie chart");
+    expect(message).toContain('Investing Cash Flow');
+    expect(
+      svc.negativePieDonutMessage('bar', [
+        { name: 'Operating Cash Flow', value: 83500000 },
+        { name: 'Investing Cash Flow', value: -31000000 },
+      ]),
+    ).toBeNull();
+    expect(
+      svc.negativePieDonutMessage('donut', [
+        { name: 'Operating Cash Flow', value: 83500000 },
+        { name: 'Financing Cash Flow', value: 3800000 },
+      ]),
     ).toBeNull();
   });
 
@@ -1538,6 +1951,259 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     }
   });
 
+  test('resolves SLA by geography to a real geography-grained chart', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'USA', value: 92.7 }],
+      error: null,
+    });
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Generate a clustered bar chart showing SLA by geography',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget.type).toBe('bar');
+    expect(widget._spec?.measure).toBe('sla_compliance_pct');
+    expect(widget._spec?.dimension).toBe('country');
+  });
+
+  test('treats CSAT movement asks as a monthly waterfall instead of refusing on a stray dimension', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', value: 82.1 }],
+      error: null,
+    });
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Create a waterfall chart showing CSAT movement',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget.type).toBe('waterfall');
+    expect(widget._spec?.measure).toBe('csat_pct');
+    expect(widget._spec?.dimension).toBe('month');
+  });
+
+  test('routes monthly expense-by-account heatmaps to the real trial-balance expense view', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', 'Payroll Expense': 586052 }],
+      error: null,
+    });
+    svc.queryRows = async () => [
+      { v: 'Payroll Expense', m: 586052 },
+      { v: 'Rent Expense', m: 352658 },
+    ];
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Generate a heatmap showing monthly expense trends by account category',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget.type).toBe('heatmap');
+    expect(widget._spec?.measure).toBe('account_expense');
+    expect(widget._spec?.dimension).toBe('month');
+    expect(widget._spec?.breakdown).toBe('account');
+  });
+
+  test('defaults SLA vs CSAT scatter comparisons to delivery center when no entity is named', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'LA Delivery Center', x: 92.7, y: 84.1 }],
+      error: null,
+    });
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Generate a scatter chart comparing SLA and CSAT',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget.type).toBe('scatter');
+    expect(widget._spec?.measure).toBe('sla_compliance_pct');
+    expect(widget._spec?.measures).toEqual(['sla_compliance_pct', 'csat_pct']);
+    expect(widget._spec?.dimension).toBe('delivery_center');
+  });
+
+  test('refuses CSAT distribution donuts because ratio averages are not pie slices', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Generate a donut chart showing CSAT distribution',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('no_data');
+    expect((plan as any)?.message ?? '').toContain('not additive parts of a whole');
+  });
+
+  test('builds SLA by department from the department operations bridge', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Operations', value: 92.7 }],
+      error: null,
+    });
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Generate a bar chart showing SLA compliance by department',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget._spec?.measure).toBe('sla_compliance_pct');
+    expect(widget._spec?.dimension).toBe('department');
+    expect(widget._sql).toContain('department');
+    expect(widget._sql).toContain('delivery_center');
+  });
+
+  test('builds SG&A distribution from real expense accounts at account grain', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Payroll Expense', value: 1200 }],
+      error: null,
+    });
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Generate a donut chart showing SG&A expense distribution',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget.type).toBe('donut');
+    expect(widget._spec?.measure).toBe('account_expense');
+    expect(widget._spec?.dimension).toBe('account');
+  });
+
+  test('rebuilds same-chart SLA vs CSAT follow-ups as monthly trends instead of refusing on axis change', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    svc.specToPlan = async (spec: any) => ({
+      kind: 'build',
+      plan: {
+        dashboard: {
+          widgets: [
+            {
+              title: 'Monthly SLA Compliance % and CSAT %',
+              type: 'line',
+              _sql: 'SELECT name, "SLA Compliance %", "CSAT %" FROM monthly_ops',
+              _spec: spec,
+              display: {
+                valueFormat: 'percent',
+                series: [
+                  { key: 'SLA Compliance %', role: 'line', axis: 'left', format: 'percent' },
+                  { key: 'CSAT %', role: 'line', axis: 'left', format: 'percent' },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'SLA Compliance % vs CSAT % by Delivery Center',
+            chartType: 'scatter',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              spec: {
+                measure: 'sla_compliance_pct',
+                measures: ['sla_compliance_pct', 'csat_pct'],
+                dimension: 'delivery_center',
+                chartType: 'scatter',
+              },
+              display: { valueFormat: 'percent' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, show monthly trends.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.refusal).toBeUndefined();
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.summary).toContain('monthly trend');
+    expect(plan.modify[0]?.type).toBe('line');
+    expect(plan.modify[0]?.spec?.dimension).toBe('month');
+    expect(plan.modify[0]?.dynamicSql).toContain('monthly_ops');
+  });
+
+  test('normalizes EBPO operations SQL that uses stale sla_pct aliases', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const fixed = svc.repairClickHouseSql(`
+      SELECT
+        formatDateTime(period_date, '%b %Y') AS name,
+        round(sla_pct, 1) AS sla_pct,
+        round(csat_pct, 1) AS csat_pct
+      FROM analytics.v_ebpo_operations_monthly
+    `);
+
+    expect(fixed).toContain('sla_compliance_pct');
+    expect(fixed).not.toContain('sla_pct');
+  });
+
   test('adds per-series monthly averages to every Q100 dashboard widget atomically', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -1671,6 +2337,55 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(0);
     expect(plan.refusal).toContain('already shows revenue YTD');
+  });
+
+  test('labels cumulative cash-flow follow-ups with the requested metric instead of revenue', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    svc.executeDynamicSqlChecked = async (sql: string) => ({
+      rows: sql.includes('Cumulative Cash Flow')
+        ? [{ name: 'Jan 2025', value: 12.5, 'Cumulative Cash Flow': 12.5 }]
+        : [{ name: 'Jan 2025', value: 12.5 }],
+      error: null,
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Monthly Net Cash Flow Trend',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Monthly Net Cash Flow Trend',
+            chartType: 'line',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              dynamicSql:
+                "SELECT formatDateTime(period_date, '%b %Y') AS name, round(sum(free_cash_flow_usd), 2) AS value FROM analytics.v_ebpo_cashflow_monthly GROUP BY period_date ORDER BY period_date ASC",
+              spec: {
+                measure: 'free_cash_flow',
+                dimension: 'month',
+                chartType: 'line',
+              },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, add cumulative cash flow as another line.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.summary).toContain('cumulative cash flow');
+    expect(plan.modify[0]?.dynamicSql).toContain('AS "Cumulative Cash Flow"');
   });
 
   test('refuses same-chart client ranking on a city chart instead of swapping the axis', async () => {

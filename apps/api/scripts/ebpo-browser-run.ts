@@ -51,6 +51,26 @@ async function login(): Promise<void> {
 
 type AskResult = { sessionId: string | null; needsInput: boolean; chunks: any[] };
 
+function isTimeWindowClarification(chunks: any[]): boolean {
+  const clarify = [...chunks].reverse().find((c) => c?.type === 'clarify');
+  if (!clarify) return false;
+  const question = String(clarify.question ?? '').toLowerCase();
+  const options = Array.isArray(clarify.options) ? clarify.options : [];
+  if (
+    /\b(time\s+window|time\s+period|date\s+range|which\s+period|which\s+range|last\s+\d+\s+months?|ytd|mtd|qtd)\b/.test(
+      question,
+    )
+  ) {
+    return true;
+  }
+  if (options.length === 0) return false;
+  return options.every((opt: any) =>
+    /\b(last\s+\d+\s+months?|ytd|mtd|qtd|this\s+year|this\s+month|this\s+quarter|year\s+to\s+date)\b/i.test(
+      String(opt?.label ?? '') + ' ' + String(opt?.value ?? ''),
+    ),
+  );
+}
+
 async function ask(query: string, sessionId?: string | null): Promise<AskResult> {
   const res = await fetch(`${API}/agent/query`, {
     method: 'POST',
@@ -130,11 +150,17 @@ function typeMatches(asked: string, got: string | null): boolean {
 function summarize(chart: any, chunks: any[]): any {
   const cfg = chart?.config ?? {};
   const sql = String(cfg.dynamicSql ?? '');
+  const streamedText = chunks
+    .filter((c) => typeof c?.content === 'string')
+    .map((c) => String(c.content))
+    .join('');
   const assistant =
-    [...chunks].reverse().find((c) => typeof c.message === 'string')?.message ??
-    [...chunks].reverse().find((c) => typeof c.text === 'string')?.text ??
-    '';
-  const refusalish = /can'?t|cannot|unavailable|no data|not available|couldn'?t|rephrase/i;
+    streamedText ||
+    ([...chunks].reverse().find((c) => typeof c.message === 'string')?.message ??
+      [...chunks].reverse().find((c) => typeof c.text === 'string')?.text ??
+      '');
+  const refusalish =
+    /can['’]?t|cannot|unavailable|no data|not available|couldn['’]?t|rephrase|there is no|can’t|couldn’t/i;
   const glLeak = GL_DEMO_CLIENTS.filter(
     (n) => sql.includes(n) || String(assistant).includes(n),
   );
@@ -176,13 +202,15 @@ async function run() {
       // CREATE (auto-answer time-window clarification)
       let r = await ask(q.main);
       const sid = r.sessionId;
-      if (r.needsInput && sid) r = await ask('Last 12 months', sid);
+      if (r.needsInput && sid && isTimeWindowClarification(r.chunks))
+        r = await ask('Last 12 months', sid);
       row.create = sid ? summarize(await getChart(sid), r.chunks) : { flags: { noChart: true } };
 
       // FOLLOW-UP on the same session
       if (sid && q.followup) {
         let rf = await ask(q.followup, sid);
-        if (rf.needsInput) rf = await ask('Last 12 months', sid);
+        if (rf.needsInput && isTimeWindowClarification(rf.chunks))
+          rf = await ask('Last 12 months', sid);
         row.followup_result = summarize(await getChart(sid), rf.chunks);
       }
     } catch (e: any) {

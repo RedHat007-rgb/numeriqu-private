@@ -734,6 +734,21 @@ const PieTooltip = ({ active, payload, metric, grouping, labelMode }: any) => {
 
 // ─── Per-Chart Insight Bar ────────────────────────────────────────────────────
 
+// Does the chart's x-axis (the `name` column) read as a chronological time axis?
+// Months ("Jan", "Jan 2022"), quarters ("Q1 2022"), bare years ("2022"), or ISO
+// dates count as time; client/account/country labels do not. Used to gate the
+// "growth over period" line caption so it never fires on a categorical line.
+function isTimeAxisLabels(data: DataRow[]): boolean {
+  const names = data
+    .map((d) => (d as { name?: unknown }).name)
+    .filter((n): n is string => typeof n === "string");
+  if (names.length < 2) return false;
+  const timeRe =
+    /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(\s+\d{2,4})?$|^q[1-4](\s+\d{2,4})?$|^(19|20)\d{2}$|^\d{4}-\d{2}(-\d{2})?$/i;
+  const matches = names.filter((n) => timeRe.test(n.trim())).length;
+  return matches >= Math.ceil(names.length / 2);
+}
+
 function ChartInsight({
   type,
   data,
@@ -754,6 +769,12 @@ function ChartInsight({
         : fmtCurrency(n);
 
   if (type === "line") {
+    // "X% growth over period" only makes sense when the x-axis is actually a time
+    // period. A line drawn over a CATEGORICAL axis (e.g. cumulative gross margin by
+    // client) has no chronology, so a period-over-period delta is meaningless — it
+    // produced bogus captions like "381.2% growth over period" on a by-client
+    // cumulative line. Only show the caption when the axis labels read as time.
+    if (!isTimeAxisLabels(data)) return null;
     const first = Number(data[0]?.value) || 0;
     const last = Number(data[data.length - 1]?.value) || 0;
     if (first === 0 || data.length < 2) return null;
@@ -3490,7 +3511,18 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const colKeys =
       inferNumericSeriesKeys(rows).filter((k) => k !== "total") ||
       [];
-    const rowAxis = String(chart.config.grouping ?? "").split("_")[0] || "row";
+    // Row-axis label for the corner header. `grouping` is often a placeholder for
+    // dynamic EBPO charts ("dynamic"/"query"), which would mislabel the month/category
+    // column as "Query". Prefer the real spec dimension, then xAxisLabel, and only fall
+    // back to grouping when it's a meaningful token.
+    const specDim = (chart.config as { spec?: { dimension?: string } }).spec?.dimension;
+    const groupingToken = String(chart.config.grouping ?? "").split("_")[0];
+    const placeholder = /^(dynamic|query|row|name|)$/i;
+    const rowAxis =
+      (specDim && !placeholder.test(specDim) && specDim) ||
+      (chart.config.xAxisLabel && String(chart.config.xAxisLabel)) ||
+      (!placeholder.test(groupingToken) && groupingToken) ||
+      "Category";
     const prettyAxis = (value: string) =>
       value
         .split("_")

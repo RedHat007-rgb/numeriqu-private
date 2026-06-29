@@ -1814,6 +1814,38 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(svc.generateSpecPlan).not.toHaveBeenCalled();
   });
 
+  test('routes client finance scatter comparisons through the EBPO semantic extension', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const semanticResult = {
+      kind: 'build',
+      plan: {
+        tools_to_execute: [],
+        should_generate_dashboard: true,
+        dashboard: { title: 'Gross Margin % vs Revenue by Client', description: '', widgets: [] },
+        analysis_focus: 'scatter',
+      },
+    };
+    svc.orgHasEbpoData = async () => true;
+    svc.buildEbpoSemanticPlan = jest.fn(async () => semanticResult);
+    svc.generateSpecPlan = jest.fn(async () => {
+      throw new Error('generic spec planner should not run');
+    });
+
+    const result = await svc.generateSmartPlan(
+      'Create a scatter chart showing gross margin percentage versus revenue by client',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(result).toBe(semanticResult);
+    expect(svc.buildEbpoSemanticPlan).toHaveBeenCalledTimes(1);
+    expect(svc.generateSpecPlan).not.toHaveBeenCalled();
+  });
+
   test('adds box-plot median markers without replacing quartile SQL', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 

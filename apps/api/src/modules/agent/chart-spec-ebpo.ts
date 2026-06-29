@@ -2089,6 +2089,15 @@ export async function compileEbpoSpec(
 
   spec = { ...spec, chartType: effectiveEbpoChartType(spec) };
 
+  // A breakdown identical to the primary dimension is degenerate: grouping by account
+  // AND pivoting by account produces a diagonal matrix (each category non-zero only in
+  // its own column), which renders as N self-series and breaks share-of-total (every
+  // category becomes 100% of its own row). Drop it so a single measure by one category
+  // stays a single series — e.g. "stacked column of expense composition by account".
+  if (spec.breakdown && spec.breakdown === spec.dimension) {
+    spec = { ...spec, breakdown: undefined };
+  }
+
   const measures = measureListOf(spec);
   const dimId = spec.dimension || null;
   const filterDims = (spec.filters ?? []).map((f) => f.dimension);

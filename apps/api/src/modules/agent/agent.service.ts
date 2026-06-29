@@ -12175,10 +12175,37 @@ export class AgentService {
       let chartType = effectiveEbpoChartType(spec) as ChartType;
       // Single-measure scatter/bubble has no second axis → coerce to a bar (see
       // specToPlan for the same general rule) so it never plots index positions.
-      const specMeasureCount =
-        (spec.measures?.filter(Boolean).length || 0) || (spec.measure ? 1 : 0);
-      if ((chartType === 'scatter' || chartType === 'bubble') && specMeasureCount < 2)
+      // EXCEPTION: when the user EXPLICITLY asked for a scatter ("scatter chart
+      // showing gross margin % by client"), honor it as a categorical dot plot —
+      // category on x, the measure on y — instead of overriding their choice. Mirrors
+      // the same rule in specToPlan so both planning paths agree on explicit scatters.
+      const specMeasures =
+        (spec.measures?.filter(Boolean) as string[] | undefined) ||
+        (spec.measure ? [spec.measure] : []);
+      const specMeasureCount = specMeasures.length;
+      const explicitScatter = /\bscatter\b/.test(qLow);
+      if (
+        (chartType === 'scatter' || chartType === 'bubble') &&
+        specMeasureCount < 2 &&
+        !(explicitScatter && chartType === 'scatter')
+      )
         chartType = 'bar' as ChartType;
+      // Scatter axis labels: name the real dimension/measure so the plot doesn't fall
+      // back to "x"/"value". Two-measure scatters label x/y from each measure; a
+      // single-measure categorical scatter puts the dimension on x and the measure on y.
+      const scatterAxis: { xAxisLabel?: string; yAxisLabel?: string } =
+        chartType === 'scatter' || chartType === 'bubble'
+          ? specMeasureCount >= 2
+            ? {
+                xAxisLabel: EBPO_MEASURES[specMeasures[0]!]?.label ?? undefined,
+                yAxisLabel: EBPO_MEASURES[specMeasures[1]!]?.label ?? undefined,
+              }
+            : {
+                xAxisLabel:
+                  (spec.dimension && EBPO_DIMENSIONS[spec.dimension]?.label) || undefined,
+                yAxisLabel: EBPO_MEASURES[specMeasures[0]!]?.label ?? undefined,
+              }
+          : {};
       const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
         chartType,
       }).catch(() => null);
@@ -12207,8 +12234,9 @@ export class AgentService {
                 metric: 'dynamic',
                 grouping: 'dynamic',
                 display_order: 0,
+                ...scatterAxis,
                 _sql: compiled.sql,
-                _spec: spec,
+                _spec: { ...spec, chartType: chartType as ChartSpec['chartType'] },
                 display: {
                   // Percent format follows what the compiler actually produced.
                   valueFormat: (compiled as { outputPercent?: boolean }).outputPercent
@@ -14099,6 +14127,17 @@ export class AgentService {
       ((/\bscatter\b|\bbubble\b|\bcompare|comparison|versus|\bvs\b/i.test(query)) &&
         /\bsla\b/i.test(query) &&
         /\bcsat\b|\bcustomer\s+satisfaction\b/i.test(query)) ||
+      // Client-scoped finance scatters like "gross margin % versus revenue by client"
+      // are valid EBPO semantic asks, but the generic planner can still misclassify
+      // them as no-data when it under-specifies the shared client-grain view. Route
+      // these through the deterministic resolver first so the chart compiler derives
+      // the correct x/y pair from the catalog instead of falling through to a false
+      // refusal.
+      ((/\bscatter\b|\bbubble\b|\bcompare|comparison|versus|\bvs\b/i.test(query)) &&
+        /\bclient\b|\bcustomer\b/i.test(query) &&
+        /\b(?:revenue|cost|gross\s+margin|gross\s+profit|collection\s+rate|receivables?|a\/?r)\b/i.test(
+          query,
+        )) ||
       ((/\bpie\b|\bdonut\b|\bdoughnut\b/i.test(query)) &&
         /\bdistribution\b/i.test(query) &&
         /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/i.test(query)) ||
@@ -16502,7 +16541,19 @@ export class AgentService {
     if (
       /\bnormali[sz]e\b|\b100\s*%|\bas a (?:percentage|percent|%)\s+of\s+(?:the\s+)?(?:company\s+|grand\s+)?total\b|\b%\s*of\s*(?:the\s+)?(?:company\s+)?total\b|\bshare of (?:the\s+)?total\b|\bpercentage of (?:the\s+)?(?:company\s+)?total\b|\bproportion of (?:the\s+)?total\b|\bcontribution(?:s)?\b[^.]*\b(?:%|percent(?:age)?s?)\b|\b(?:%|percent(?:age)?)\s+contribution\b/.test(
         q,
-      )
+      ) ||
+      // Bare "show <X> percentages" / "as percentages" / "percentage breakdown" on a
+      // categorical composition chart means: convert the existing values to their share
+      // of the total (e.g. "show expense percentages" on expense-by-account). Plural
+      // "percentages" reads as composition; exclude measure-specific percentage phrases
+      // (growth/margin/change/YoY/variance/rate) so those still resolve as their measure.
+      ((/\b(?:show|display|view|express|present|see)\b[^.]*\bpercentages?\b/.test(q) ||
+        /\bas\s+(?:a\s+)?percentages?\b/.test(q) ||
+        /\bin\s+percentages?\b/.test(q) ||
+        /\bpercentage\s+breakdown\b/.test(q)) &&
+        !/\b(growth|margin|change|yoy|year[\s-]?over[\s-]?year|net\s+profit|operating\s+profit|return|utili[sz]ation|\bsla\b|\bcsat\b|variance|moving\s+average|rolling|rate)\b/.test(
+          q,
+        ))
     )
       return { kind: 'normalize' };
     // A flat company/overall average is a SINGLE reference line. But "average <measure>
@@ -17745,10 +17796,22 @@ export class AgentService {
           }),
       );
       if (numeric.length === 0) continue;
+      // Contribution % over a company-wide TIME trend (single series, x = month/
+      // quarter/year) has no entity share to compute — refuse. But a CATEGORICAL
+      // breakdown (utilization by department, expense by account, revenue by country)
+      // DOES have a per-category share, so share-of-total is valid there. Gate on the
+      // chart's PRIMARY dimension, not on baseIsTimeSeries(sql): a weighted-bridge SQL
+      // can reference period_date internally while still being grouped by a category.
+      const normalizeSpecDim = String(
+        (cfg.spec as ChartSpec | undefined)?.dimension ?? '',
+      ).toLowerCase();
+      const primaryDimIsTime =
+        !normalizeSpecDim || /\b(month|quarter|year|date|period)\b/.test(normalizeSpecDim);
       if (
         transform.kind === 'normalize' &&
         numeric.length === 1 &&
         baseIsTimeSeries(sql) &&
+        primaryDimIsTime &&
         !/client_name\s+IN|vendor_name\s+IN/i.test(sql)
       ) {
         return {
@@ -20246,6 +20309,12 @@ export class AgentService {
     editRequest: string,
   ): string | null {
     if (!this.isAdditiveSameChartRequest(editRequest)) return null;
+    // A percentage / share-of-total / transform ask ("show expense percentages",
+    // "as a percentage of total") is NOT a request to ADD a new measure — it converts
+    // the chart's EXISTING values. Without this guard, the measure detector reads a word
+    // like "expense" as a new measure (total_cost), finds it unavailable at the current
+    // grain, and wrongly refuses instead of letting the transform path apply the share.
+    if (this.detectFollowUpTransform(editRequest)) return null;
     const q = editRequest.toLowerCase();
     if (/\bcurrent\s+year\b/.test(q) && /\b(last|previous|prior)\s+year\b/.test(q))
       return null;
@@ -20981,11 +21050,19 @@ export class AgentService {
       const spec = cfg.spec as ChartSpec | undefined;
       const chosenMeasure = chooseMeasure(spec);
       if (!spec || !chosenMeasure || !spec.dimension) continue;
+      // "In the same chart, display cumulative ..." must PRESERVE the chart the user is
+      // looking at. When the base chart is a scatter/bubble (an explicit chart-type
+      // request the user insisted on), keep that type — only fall back to a line when
+      // the base is itself a line/bar/area trend, where a running-total line is natural.
+      const baseType: ChartType =
+        spec.chartType === 'scatter' || spec.chartType === 'bubble'
+          ? (spec.chartType as ChartType)
+          : ('line' as ChartType);
       const selectedSpec: ChartSpec = {
         ...spec,
         measure: chosenMeasure,
         measures: undefined,
-        chartType: 'line',
+        chartType: baseType as ChartSpec['chartType'],
         breakdown: undefined,
         recentMonths: spec.recentMonths,
         transforms: [{ kind: 'cumulative' }],
@@ -20993,26 +21070,33 @@ export class AgentService {
       const compiled = await compileEbpoSpec(selectedSpec, this.analyticsDb, runRows);
       if (!compiled.ok) continue;
       const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
-        chartType: 'line',
+        chartType: baseType,
       }).catch(() => null);
       if (!check || check.error || check.rows.length === 0) continue;
-      if (this.detectBadChartShape(check.rows, 'line')) continue;
+      if (this.detectBadChartShape(check.rows, baseType)) continue;
 
       const label = EBPO_MEASURES[chosenMeasure]?.label ?? chosenMeasure;
       const dimLabel = EBPO_DIMENSIONS[String(spec.dimension)]?.label ?? spec.dimension;
+      const isScatterBase = baseType === 'scatter' || baseType === 'bubble';
       return {
-        summary: `Added cumulative ${label} as a line.`,
+        summary: `Added cumulative ${label}${isScatterBase ? '' : ' as a line'}.`,
         add: [],
         remove_indices: [],
         modify: [
           {
             index: i,
-            type: 'line',
+            type: baseType,
             dynamicSql: compiled.sql,
             title: this.prettifyChartTitle(
               `Cumulative ${label}${dimLabel ? ` by ${dimLabel}` : ''}`,
             ),
             spec: selectedSpec,
+            // Refresh the axis caption: the source chart may have been a scatter whose
+            // y-axis label was the percent/ratio measure (e.g. "Gross Margin %"). The
+            // cumulative line now plots a running total in the measure's own unit, so a
+            // stale percent label would mislabel a dollar axis. Set both axes to match.
+            xAxisLabel: dimLabel ? String(dimLabel) : undefined,
+            yAxisLabel: `Cumulative ${label}`,
             display: {
               ...(cfg.display ?? {}),
               valueFormat: EBPO_MEASURES[chosenMeasure]?.format ?? 'currency',

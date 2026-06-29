@@ -27,7 +27,7 @@ export function SystemSnapshot({
   return (
     <section
       aria-label="Workspace status"
-      className="surface-card flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between"
+      className="dashboard-surface dashboard-surface-muted flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between"
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-muted">
         <span>

@@ -60,20 +60,20 @@ export function CashflowCard({
   const computedAt = formatRelativeTime(dashboard.meta.computedAt);
 
   return (
-    <div className="surface-card p-6">
+    <div className="dashboard-surface h-full p-4">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-blue">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-blue">
             Cash flow
           </p>
-          <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
+          <h2 className="mt-1.5 font-display text-xl font-bold text-text-primary md:text-[1.45rem]">
             Spend, runway, and net position
           </h2>
         </div>
         <p className="text-xs text-text-muted">Last computed {computedAt}</p>
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-text-muted">
+      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
         <span className="inline-flex items-center gap-2">
           <span className="h-1.5 w-4 rounded bg-feedback-danger" /> Spend
         </span>
@@ -88,11 +88,11 @@ export function CashflowCard({
         </span>
       </div>
 
-      <div className="mt-5 h-64">
+      <div className="mt-4 h-52">
         {series.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-default text-sm text-text-muted">
-            <p className="font-medium text-text-secondary">No cash flow data yet</p>
-            <p>Connect a finance source and run a sync to see spend and net position.</p>
+          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-default px-5 text-center text-sm text-text-muted">
+            <p className="font-medium text-text-secondary">No cash flow history yet</p>
+            <p className="mt-1 max-w-md">Connect a source and sync at least one period to see spend, revenue, and net position move together.</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">

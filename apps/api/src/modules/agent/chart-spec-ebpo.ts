@@ -76,6 +76,10 @@ export interface EbpoMeasureDef {
   // grain. weightBy names a count column so the compiler emits a headcount-weighted
   // mean — sum(col*weight)/sum(weight) — matching AVERAGE(DimEmployee[MonthlySalaryUSD]).
   weightBy?: string;
+  // Internal helper measure: usable as a derived numerator/denominator term but NOT
+  // surfaced to the planner catalog (so the LLM can't pick it directly). Used for
+  // replicated company-level columns that must be aggregated non-additively.
+  internal?: boolean;
 }
 
 export interface EbpoDimDef {
@@ -857,15 +861,35 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     undefined,
     ['headcount', 'employees'],
   ),
-  revenue_per_employee: M(
-    'revenue_per_employee',
-    'Revenue per Employee',
-    'currency',
-    'avg',
-    'ratio',
-    undefined,
-    ['revenue per fte'],
-  ),
+  // Revenue per Employee = DIVIDE([Total Revenue], DISTINCTCOUNT(EmployeeID)) (DAX) —
+  // a COMPANY-LEVEL figure. Revenue is booked by client/business-unit (never by
+  // department), so in v_ebpo_department_efficiency_monthly total_revenue_usd is the
+  // company total REPLICATED on every department row. The old definition averaged the
+  // precomputed per-department revenue_per_employee_usd column (= company_rev / dept_hc)
+  // → an avg-of-ratios that over-inflated the figure ~10x (e.g. $102.7K vs the true
+  // $9.7K for Jan 2025: $2.91M / 300 FTE). Now a ratio-of-the-replicated-total over
+  // total headcount: max(company revenue) / sum(employee_count), via the internal
+  // `company_revenue_repl` numerator (agg='max' takes the replicated total once).
+  revenue_per_employee: {
+    id: 'revenue_per_employee',
+    label: 'Revenue per Employee',
+    aliases: ['revenue per fte'],
+    format: 'currency',
+    agg: 'avg',
+    kind: 'ratio',
+    derived: { num: 'company_revenue_repl', den: 'employee_count', scale: 1 },
+  },
+  // Internal numerator only (hidden from the planner): the company revenue total as it
+  // appears REPLICATED on each department row of v_ebpo_department_efficiency_monthly.
+  // agg='max' so the derived numerator takes it once rather than summing the duplicates.
+  company_revenue_repl: {
+    id: 'company_revenue_repl',
+    label: 'Company Revenue (replicated, internal)',
+    format: 'currency',
+    agg: 'max',
+    kind: 'stock',
+    internal: true,
+  },
   // Cost Per Employee = DIVIDE([Total Cost], DISTINCTCOUNT(EmployeeID)) (DAX). Total Cost is
   // cost-of-revenue, booked by client/business unit — so this resolves where total_cost AND
   // headcount co-exist (v_ebpo_business_unit_efficiency: real per-BU values + company grain).
@@ -1043,7 +1067,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
       revenue_yoy_pct: 'revenue_yoy_pct',
     },
   },
@@ -1055,9 +1078,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
       total_payroll: 'total_payroll_usd',
-      payroll_to_revenue_pct: 'payroll_to_revenue_pct',
       ar_outstanding: 'ar_outstanding_usd',
       ap_outstanding: 'ap_outstanding_usd',
       operating_cf: 'operating_cash_flow_usd',
@@ -1115,7 +1136,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     dims: ['client', 'industry', 'aging_bucket'],
     measures: {
       ar_outstanding: 'outstanding_balance_usd',
-      collection_rate_pct: 'collection_rate_pct',
       invoice_amount: 'invoice_amount_usd',
       collected_amount: 'collected_amount_usd',
     },
@@ -1128,7 +1148,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       ap_outstanding: 'outstanding_balance_usd',
       invoice_amount: 'invoice_amount_usd',
       paid_amount: 'paid_amount_usd',
-      payment_rate_pct: 'payment_rate_pct',
     },
   },
   {
@@ -1139,7 +1158,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
     },
   },
   {
@@ -1150,7 +1168,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
       no_clients: 'client_name',
     },
   },
@@ -1162,7 +1179,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
       no_clients: 'client_name',
     },
   },
@@ -1174,8 +1190,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
-      collection_rate_pct: 'collection_rate_pct',
       ar_outstanding: 'outstanding_balance_usd',
       invoice_amount: 'invoice_amount_usd',
       collected_amount: 'collected_amount_usd',
@@ -1190,7 +1204,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
     },
   },
   {
@@ -1201,7 +1214,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
       no_clients: 'client_name',
     },
   },
@@ -1221,7 +1233,10 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     measures: {
       employee_count: 'employee_count',
       total_payroll: 'total_payroll_usd',
-      revenue_per_employee: 'revenue_per_employee_usd',
+      // company revenue replicated per department row — internal numerator for the
+      // ratio-of-sums revenue_per_employee (max() takes it once); NOT exposed as a
+      // standalone measure, so "revenue by department" still honestly refuses.
+      company_revenue_repl: 'total_revenue_usd',
       cost_per_employee: 'cost_per_employee_usd',
     },
   },
@@ -1425,18 +1440,12 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     dims: [],
     measures: {
       // derived ratios (only here)
-      cost_to_income_pct: 'cost_to_income_pct',
-      fcf_margin_pct: 'fcf_margin_pct',
-      operating_cf_to_revenue_pct: 'operating_cf_to_revenue_pct',
-      ebitda_style_margin_pct: 'ebitda_style_margin_pct',
       working_capital: 'working_capital_usd',
       // base measures (also here, for combos that pair a ratio with these)
       total_revenue: 'total_revenue_usd',
       total_cost: 'total_cost_usd',
       gross_margin: 'gross_margin_usd',
-      gross_margin_pct: 'gross_margin_pct',
       total_payroll: 'total_payroll_usd',
-      payroll_to_revenue_pct: 'payroll_to_revenue_pct',
       overtime_to_payroll_pct: 'overtime_to_payroll_pct',
       ar_outstanding: 'ar_outstanding_usd',
       ap_outstanding: 'ap_outstanding_usd',
@@ -1543,11 +1552,20 @@ const derivedRefs = (d: NonNullable<EbpoMeasureDef['derived']>): string[] => {
 const numeratorExpr = (
   num: NonNullable<EbpoMeasureDef['derived']>['num'],
   view: EbpoViewDef,
-  wrap: (col: string) => string,
+  cond?: string,
 ): string => {
   const t = numTerms(num);
-  const add = t.add.map((id) => wrap(view.measures[id]!)).join(' + ');
-  const sub = t.sub.map((id) => ` - ${wrap(view.measures[id]!)}`).join('');
+  // Each numerator term aggregates with its OWN measure agg (symmetric with the
+  // denominator at aggExprFor). For every flow numerator (agg='sum') this is byte-
+  // identical to the old hardcoded sum(); a non-additive term (e.g. a replicated
+  // company-level column with agg='max') is taken once instead of summed across rows.
+  const aggTerm = (id: string) => {
+    const m = EBPO_MEASURES[id]!;
+    const col = view.measures[id]!;
+    return cond ? aggIfOf(m, col, cond) : aggOf(m, col);
+  };
+  const add = t.add.map(aggTerm).join(' + ');
+  const sub = t.sub.map((id) => ` - ${aggTerm(id)}`).join('');
   return t.add.length > 1 || t.sub.length ? `(${add}${sub})` : `${add}${sub}`;
 };
 // A view "exposes" a measure when it has the measure's column, OR (derived) every
@@ -1565,7 +1583,7 @@ const viewExposesMeasure = (view: EbpoViewDef, mid: string): boolean => {
 const aggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef): string => {
   if (view.measures[m.id]) return aggOf(m, view.measures[m.id]!);
   if (m.derived) {
-    const n = numeratorExpr(m.derived.num, view, (c) => `sum(${c})`);
+    const n = numeratorExpr(m.derived.num, view);
     if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
     // The denominator uses the DEN MEASURE's own aggregate, not a hardcoded sum() — so a
     // distinct-count denominator (e.g. Avg Revenue per Client = revenue / No. Clients)
@@ -1583,7 +1601,7 @@ const condAggExprFor = (
 ): string => {
   if (view.measures[m.id]) return aggIfOf(m, view.measures[m.id]!, cond);
   if (m.derived) {
-    const n = numeratorExpr(m.derived.num, view, (c) => `sumIf(${c}, ${cond})`);
+    const n = numeratorExpr(m.derived.num, view, cond);
     if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
     const denM = EBPO_MEASURES[m.derived.den]!;
     const denExpr = aggIfOf(denM, view.measures[m.derived.den]!, cond);
@@ -2747,6 +2765,7 @@ export const EBPO_CATALOG = {
 // it can never drift from what compileEbpoSpec actually supports.
 export function ebpoCatalogPromptText(): string {
   const measures = Object.values(EBPO_MEASURES)
+    .filter((m) => !m.internal)
     .map((m) => {
       const aliases = m.aliases?.length
         ? `; aliases: ${m.aliases.join(', ')}`

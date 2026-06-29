@@ -17,13 +17,14 @@ import {
   PanelsLeftBottom,
   ArrowLeft,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { cn } from "../../../components/ui/cn";
 import { Logo } from "../../../components/landing/logo";
 import { CommandPalette } from "./CommandPalette";
 import type { WorkspaceSummary } from "../../../lib/api/types";
 
-const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon: any }> = [
+const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon: LucideIcon }> = [
   { href: "/dashboard", label: "Overview", description: "What changed, at a glance", icon: LayoutDashboard },
   { href: "/dashboard/dashboards", label: "Dashboards", description: "Saved decision surfaces", icon: LineChart },
   { href: "/dashboard/rag", label: "Prism", description: "Evidence-first answers, cited", icon: Search },
@@ -45,14 +46,12 @@ function initials(value: string) {
 function NavLink({
   href,
   label,
-  description,
   icon: Icon,
   collapsed,
 }: {
   href: string;
   label: string;
-  description: string;
-  icon: any;
+  icon: LucideIcon;
   collapsed: boolean;
 }) {
   const pathname = usePathname();
@@ -65,7 +64,7 @@ function NavLink({
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
+        "group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
         collapsed && "justify-center px-2",
         active
           ? "bg-accent-blue/10 text-text-primary ring-1 ring-accent-blue/25"
@@ -73,7 +72,7 @@ function NavLink({
       )}
     >
       <div className={cn(
-        "flex size-9 items-center justify-center rounded-xl ring-1 transition-colors",
+        "flex size-8 items-center justify-center rounded-lg ring-1 transition-colors",
         active
           ? "bg-accent-blue/10 ring-accent-blue/25 text-accent-blue"
           : "bg-bg-surface ring-default text-text-muted group-hover:text-text-primary",
@@ -82,15 +81,7 @@ function NavLink({
       </div>
       {!collapsed ? (
         <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate font-semibold">{label}</span>
-            {active ? (
-              <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.18em] text-accent-blue">
-                Active
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-0.5 line-clamp-1 text-[11px] text-text-muted">{description}</p>
+          <span className="block truncate font-semibold">{label}</span>
         </div>
       ) : null}
     </Link>
@@ -187,7 +178,7 @@ export function DashboardShell({
             isImmersive ? "sticky top-0" : "sticky top-0",
           )}
         >
-          <div className="mx-auto flex max-w-7xl flex-col gap-3 px-6 py-4 md:flex-row md:items-center md:justify-between">
+          <div className="mx-auto flex max-w-[1760px] flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between xl:px-6">
             <div className="min-w-0">
               <div className="flex items-center gap-3">
                 {isImmersive ? (
@@ -324,22 +315,22 @@ export function DashboardShell({
 
         <div
           className={cn(
-            "mx-auto w-full max-w-7xl flex-1 min-h-0",
-            isImmersive ? "overflow-hidden px-6 py-4" : "px-6 py-8",
+            "mx-auto w-full max-w-[1760px] flex-1 min-h-0",
+            isImmersive ? "overflow-hidden px-4 py-4 xl:px-6" : "px-4 py-5 xl:px-6",
           )}
         >
           <div
             className={cn(
-              "grid h-full min-h-0 gap-6",
-              isImmersive ? "grid-cols-1" : navCollapsed ? "lg:grid-cols-[86px_1fr]" : "lg:grid-cols-[300px_1fr]",
+              "grid h-full min-h-0 gap-4",
+              isImmersive ? "grid-cols-1" : navCollapsed ? "lg:grid-cols-[74px_1fr]" : "lg:grid-cols-[224px_1fr]",
             )}
           >
             {!isImmersive ? (
-              <aside className="space-y-4">
+              <aside className="space-y-3">
                 <div className={cn("flex items-center justify-between", navCollapsed && "justify-center")}>
                   {!navCollapsed ? (
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-text-muted">
-                      Navigate
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-text-muted">
+                      Workspace
                     </p>
                   ) : null}
                   <button
@@ -354,7 +345,13 @@ export function DashboardShell({
 
                 <nav className="space-y-2" aria-label="Primary">
                   {visibleNavItems.map((item) => (
-                    <NavLink key={item.href} {...item} collapsed={navCollapsed} />
+                    <NavLink
+                      key={item.href}
+                      href={item.href}
+                      label={item.label}
+                      icon={item.icon}
+                      collapsed={navCollapsed}
+                    />
                   ))}
                 </nav>
               </aside>

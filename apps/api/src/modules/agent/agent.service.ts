@@ -17329,16 +17329,23 @@ export class AgentService {
       if (numeric.length === 1 && !/client_name\s+IN|vendor_name\s+IN/i.test(baseSql)) {
         return null;
       }
+      // CRITICAL: qualify source columns with `_base.`. The output alias reuses the
+      // same column name (… AS `FTE-Based`), and ClickHouse resolves a BARE reference
+      // that matches a SELECT alias to that (self-referential) alias, not the source
+      // column — so an unqualified `FTE-Based / (FTE-Based + …)` collapses to 100% on
+      // every series (sum 300%). `_base.col` forces the source column. (Windowed
+      // transforms are immune because refs sit inside an aggregate.)
+      const q = (c: string) => `_base.${id(c)}`;
       if (numeric.length >= 2) {
-        const total = numeric.map(id).join(' + ');
+        const total = numeric.map(q).join(' + ');
         const proj = [
           'name',
-          ...numeric.map((c) => `round(${id(c)} / nullIf(${total}, 0) * 100, 1) AS ${id(c)}`),
+          ...numeric.map((c) => `round(${q(c)} / nullIf(${total}, 0) * 100, 1) AS ${id(c)}`),
         ].join(', ');
         return { sql: wrap(proj), display: { normalized: true, valueFormat: 'percent' }, yAxisLabel: '% of total' };
       }
-      const v = id(numeric[0]!);
-      const proj = `name, round(${v} / nullIf(sum(${v}) OVER (), 0) * 100, 1) AS ${v}`;
+      const c0 = numeric[0]!;
+      const proj = `name, round(${q(c0)} / nullIf(sum(${q(c0)}) OVER (), 0) * 100, 1) AS ${id(c0)}`;
       return {
         sql: wrap(proj),
         display: { normalized: true, labelMode: 'percent', valueFormat: 'percent' },

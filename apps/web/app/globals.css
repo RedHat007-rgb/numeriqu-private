@@ -164,6 +164,36 @@ body.nq-app .glass-card {
   backdrop-filter: none;
 }
 
+body.nq-app .dashboard-surface {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgb(122 162 255 / 0.18);
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.035), transparent 34%),
+    linear-gradient(180deg, rgb(var(--color-bg-card) / 0.96), rgb(var(--color-bg-surface) / 0.98));
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.05) inset,
+    0 16px 32px -28px rgb(0 0 0 / 0.85);
+}
+
+body.nq-app .dashboard-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, rgb(var(--color-accent-blue)), rgb(var(--color-accent-cyan)), transparent 72%);
+  opacity: 0.68;
+}
+
+body.nq-app .dashboard-surface-muted::before {
+  opacity: 0.28;
+}
+
+body.nq-app .dashboard-metric-value {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Soft top sheen — visible on dark bg */
 body::before {
   content: "";
@@ -272,6 +302,21 @@ h3 {
     0 4px 24px rgb(0 0 0 / 0.4),
     inset 0 1px 0 rgb(255 255 255 / 0.06),
     0 0 24px rgb(var(--color-accent-violet) / 0.20);
+}
+
+@keyframes dashboard-card-jiggle {
+  0%,
+  100% {
+    transform: rotate(-0.55deg);
+  }
+  50% {
+    transform: rotate(0.55deg);
+  }
+}
+
+.dashboard-edit-card {
+  animation: dashboard-card-jiggle 190ms ease-in-out infinite alternate;
+  cursor: pointer;
 }
 
 /* ── Gradient Text ───────────────────────────────────────── */

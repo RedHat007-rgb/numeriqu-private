@@ -155,8 +155,9 @@ export interface DisplayHints {
   labelFormat?: 'currency' | 'number' | 'percent' | null;
   referenceAxis?: 'left' | 'right' | null;
   labelMode?: 'percent' | 'value' | null;
-  // Force per-point data labels on line/area/bar/combo charts even past the
-  // auto-label cap (set by a "show data labels" follow-up).
+  // Surface chart values when the user explicitly asks for labels. The frontend
+  // still applies density-aware rendering so multi-series charts degrade to
+  // sparse/latest-only labels instead of overlapping text.
   showDataLabels?: boolean | null;
   // Values are 0–100 percentages (normalize-to-100%): format axis/labels as %.
   normalized?: boolean | null;

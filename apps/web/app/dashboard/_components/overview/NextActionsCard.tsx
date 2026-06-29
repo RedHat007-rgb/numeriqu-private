@@ -77,26 +77,27 @@ export function NextActionsCard({
   const top = computed.slice(0, 5);
 
   return (
-    <div className="surface-card p-6">
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-violet">
+    <div className="dashboard-surface h-full p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-violet">
         Recommended next actions
       </p>
-      <h2 className="mt-2 font-display text-xl font-bold text-text-primary md:text-2xl">
+      <h2 className="mt-1.5 font-display text-xl font-bold text-text-primary md:text-[1.45rem]">
         What deserves attention
       </h2>
 
-      <div className="mt-6">
+      <div className="mt-4">
         {top.length === 0 ? (
           <EmptyState
             title="No outstanding actions"
             detail="When syncs complete and the advisor finds anomalies, they appear here."
+            className="p-5"
           />
         ) : (
-          <ul className="space-y-3">
-            {top.map((insight) => (
+          <ul className="space-y-2.5">
+            {top.slice(0, 3).map((insight) => (
               <li
                 key={insight.id}
-                className="flex items-start gap-4 rounded-2xl border border-default bg-surface-card/40 p-4"
+                className="flex items-start gap-3 rounded-lg border border-default bg-bg-elevated/25 p-3.5"
               >
                 <StatusPill tone={toneFromType(insight.type)} className="mt-0.5">
                   {insight.type}

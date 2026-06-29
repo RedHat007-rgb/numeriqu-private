@@ -80,9 +80,9 @@ interface ChartConfig {
     referenceAxis?: "left" | "right" | null;
     labelMode?: "percent" | "value" | null;
     labelFormat?: "currency" | "number" | "percent" | null;
-    // Force data labels on every point of line/area/bar/combo charts even when the
-    // point count exceeds the auto-label threshold. Set when the user explicitly
-    // asks to "show data labels" (the 48-month EBPO charts otherwise never label).
+    // Surface data labels on line/area/bar/combo charts when the user explicitly
+    // asks for them. Dense charts still degrade to sparse/latest-only labels so the
+    // frontend never renders unreadable overlaps.
     showDataLabels?: boolean | null;
     // Layer D follow-up render hints.
     normalized?: boolean | null; // values are 0–100 %, format axis as %
@@ -1132,10 +1132,60 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     return fmtSeriesValue(n, chart.config.display?.labelSeries);
   };
 
-  // Forced data labels on a long time series (48 months) overlap into an unreadable
-  // smear. Show ~12 evenly-spaced labels instead. Stride 1 = every point.
-  const labelStride = (count: number): number =>
-    count <= 16 ? 1 : Math.max(2, Math.ceil(count / 12));
+  type PointLabelMode = "none" | "full" | "sparse" | "latest";
+  // Forced labels still need to respect visual density. When multiple series share
+  // the same x-axis, "show labels" should degrade to sparse/latest labels instead
+  // of drawing unreadable overlapping text on every datapoint.
+  const pointLabelMode = (
+    pointCount: number,
+    seriesCount = 1,
+    forceLabels = false,
+    expanded = false,
+  ): PointLabelMode => {
+    const safeSeriesCount = Math.max(1, seriesCount);
+    const totalLabels = pointCount * safeSeriesCount;
+    // Expanded charts have materially more space, so evaluate density as if there
+    // were fewer effective collisions. Smaller effective counts = more labels shown.
+    const effectivePointCount = expanded ? Math.max(1, Math.ceil(pointCount * 0.72)) : pointCount;
+    const effectiveTotalLabels = expanded ? Math.max(1, Math.ceil(totalLabels * 0.68)) : totalLabels;
+
+    if (forceLabels) {
+      if (safeSeriesCount >= 3 && effectiveTotalLabels > 26) return "latest";
+      if (safeSeriesCount >= 2 && effectiveTotalLabels > 34) return "latest";
+      if (effectiveTotalLabels > 18) return "sparse";
+      return "full";
+    }
+
+    if (safeSeriesCount === 1) {
+      if (effectivePointCount <= 12) return "full";
+      if (effectivePointCount <= 24) return "sparse";
+      return "latest";
+    }
+
+    if (safeSeriesCount <= 3) {
+      if (effectivePointCount <= 5) return "full";
+      if (effectivePointCount <= 14) return "sparse";
+      return "latest";
+    }
+
+    if (effectivePointCount <= 6) return "sparse";
+    return "latest";
+  };
+  const labelStride = (count: number, targetVisibleLabels = 12): number =>
+    count <= targetVisibleLabels + 4
+      ? 1
+      : Math.max(2, Math.ceil(count / targetVisibleLabels));
+  const latestFiniteIndex = (rows: DataRow[], key: string): number => {
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const n = toFiniteNumber((rows[i] as any)?.[key]);
+      if (n !== null) return i;
+    }
+    return -1;
+  };
+  const latestLabelDy = (seriesIndex = 0): number => {
+    const offsets = [-12, 14, -26, 28, -40, 42];
+    return offsets[seriesIndex] ?? (seriesIndex % 2 === 0 ? -12 : 14);
+  };
   const chartTitleText = `${chart.title ?? ""} ${chart.description ?? ""}`.toLowerCase();
   const shouldForceNegativeEmphasis =
     /\b(?:cash\s+flow|cash\s+balance|free\s+cash\s+flow|net\s+cash)\b/.test(chartTitleText);
@@ -1158,6 +1208,43 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
           fontSize={isExpanded ? 10 : 9}
           fontWeight={600}
           fill="rgb(var(--color-text-secondary))"
+          stroke="rgb(var(--color-bg-card))"
+          strokeWidth={3}
+          strokeLinejoin="round"
+          paintOrder="stroke"
+        >
+          {fmt(n)}
+        </text>
+      );
+    };
+  const latestOnlyLabel =
+    (
+      rows: DataRow[],
+      key: string,
+      fmt: (n: number) => string,
+      seriesIndex = 0,
+      dx = -8,
+    ) =>
+    (props: any) => {
+      const { x, y, value, index } = props;
+      const latestIndex = latestFiniteIndex(rows, key);
+      if (latestIndex < 0 || index !== latestIndex) return null;
+      const n = Number(value);
+      if (!Number.isFinite(n)) return null;
+      return (
+        <text
+          x={x}
+          y={y}
+          dx={dx}
+          dy={latestLabelDy(seriesIndex)}
+          textAnchor="end"
+          fontSize={isExpanded ? 10 : 9}
+          fontWeight={700}
+          fill="rgb(var(--color-text-primary))"
+          stroke="rgb(var(--color-bg-card))"
+          strokeWidth={3}
+          strokeLinejoin="round"
+          paintOrder="stroke"
         >
           {fmt(n)}
         </text>
@@ -1408,6 +1495,13 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const visibleSeriesKeys = chart.config.display?.showAllSeries
       ? plottedSeriesKeys
       : plottedSeriesKeys.slice(0, isExpanded ? 12 : 8);
+    const multiSeriesLabelMode = pointLabelMode(
+      areaData.length,
+      visibleSeriesKeys.length,
+      _forceLabels,
+      isExpanded,
+    );
+    const singleSeriesLabelMode = pointLabelMode(areaData.length, 1, _forceLabels, isExpanded);
 
     const vals = isMultiSeries
       ? []
@@ -1668,19 +1762,38 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                       }}
                       isAnimationActive={false}
                     >
-                      {!isMa && (_forceLabels || (areaData.length <= 12 && seriesKeys.length <= 4)) && (
+                      {!isMa && multiSeriesLabelMode !== "none" && (
                         <LabelList
                           dataKey={k}
-                          content={thinnedLabel(
-                            labelStride(areaData.length),
-                            (n) =>
-                              fmtSeriesValue(
-                                n,
-                                k,
-                                chart.config.display?.valueFormat ?? null,
-                              ),
-                            -8,
-                          )}
+                          content={
+                            multiSeriesLabelMode === "latest"
+                              ? latestOnlyLabel(
+                                  areaData,
+                                  k,
+                                  (n) =>
+                                    fmtSeriesValue(
+                                      n,
+                                      k,
+                                      chart.config.display?.valueFormat ?? null,
+                                    ),
+                                  idx,
+                                )
+                              : thinnedLabel(
+                                  multiSeriesLabelMode === "full"
+                                    ? 1
+                                    : labelStride(
+                                        areaData.length,
+                                        Math.max(4, Math.floor(12 / Math.max(1, visibleSeriesKeys.length))),
+                                      ),
+                                  (n) =>
+                                    fmtSeriesValue(
+                                      n,
+                                      k,
+                                      chart.config.display?.valueFormat ?? null,
+                                    ),
+                                  -8,
+                                )
+                          }
                         />
                       )}
                     </Area>
@@ -1718,9 +1831,19 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   stroke: "rgb(var(--color-bg-card))",
                 }}
 	              >
-	                {(_forceLabels || areaData.length <= 12) && (
-	                  <LabelList dataKey="value"
-	                    content={thinnedLabel(labelStride(areaData.length), (n) => yTick(n), -8)} />
+	                {singleSeriesLabelMode !== "none" && (
+	                  <LabelList
+                      dataKey="value"
+	                    content={
+                        singleSeriesLabelMode === "latest"
+                          ? latestOnlyLabel(areaData, "value", (n) => yTick(n))
+                          : thinnedLabel(
+                              singleSeriesLabelMode === "full" ? 1 : labelStride(areaData.length),
+                              (n) => yTick(n),
+                              -8,
+                            )
+                      }
+                    />
 	                )}
 	              </Area>
 	            )}
@@ -2040,6 +2163,18 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       "rgb(var(--color-accent-blue))",
     ];
     const barSize = barSeries.length > 1 ? 28 : 56;
+    const comboBarLabelMode = pointLabelMode(
+      comboData.length,
+      Math.max(1, barSeries.length),
+      _forceLabels,
+      isExpanded,
+    );
+    const comboLineLabelMode = pointLabelMode(
+      comboData.length,
+      Math.max(1, lineSeries.length),
+      _forceLabels,
+      isExpanded,
+    );
 
     return (
       <div style={{ height: h, width: "100%" }}>
@@ -2117,10 +2252,24 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 radius={[6, 6, 0, 0]}
                 maxBarSize={barSize}
               >
-                {_forceLabels && (
+                {comboBarLabelMode !== "none" && (
                   <LabelList
                     dataKey={s.key}
-                    content={thinnedLabel(labelStride(comboData.length), (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n), -4)}
+                    content={
+                      comboBarLabelMode === "latest"
+                        ? latestOnlyLabel(
+                            comboData as DataRow[],
+                            s.key,
+                            (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n),
+                            i,
+                            0,
+                          )
+                        : thinnedLabel(
+                            comboBarLabelMode === "full" ? 1 : labelStride(comboData.length),
+                            (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n),
+                            -4,
+                          )
+                    }
                   />
                 )}
               </Bar>
@@ -2144,10 +2293,28 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     stroke: "rgb(var(--color-bg-card))",
                   }}
                 >
-                  {_forceLabels && (
+                  {comboLineLabelMode !== "none" && (
                     <LabelList
                       dataKey={s.key}
-                      content={thinnedLabel(labelStride(comboData.length), (n) => fmtFor(fmtMap.get(s.key) ?? rightFmt)(n), -8)}
+                      content={
+                        comboLineLabelMode === "latest"
+                          ? latestOnlyLabel(
+                              comboData as DataRow[],
+                              s.key,
+                              (n) => fmtFor(fmtMap.get(s.key) ?? rightFmt)(n),
+                              i,
+                            )
+                          : thinnedLabel(
+                              comboLineLabelMode === "full"
+                                ? 1
+                                : labelStride(
+                                    comboData.length,
+                                    Math.max(4, Math.floor(12 / Math.max(1, lineSeries.length))),
+                                  ),
+                              (n) => fmtFor(fmtMap.get(s.key) ?? rightFmt)(n),
+                              -8,
+                            )
+                      }
                     />
                   )}
                 </Line>
@@ -3558,6 +3725,13 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
           const isMultiSeries = !hasValueSeries && seriesKeys.length > 0;
 
           if (isMultiSeries) {
+            const visibleSeriesKeys = seriesKeys.slice(0, 6);
+            const multiSeriesLabelMode = pointLabelMode(
+              data.length,
+              visibleSeriesKeys.length,
+              _forceLabels,
+              isExpanded,
+            );
             const negativeSeriesValues =
               chart.config.display?.highlightNegative || shouldForceNegativeEmphasis
               ? (data as any[]).flatMap((row) =>
@@ -3619,7 +3793,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     fillOpacity={0.08}
                   />
                 )}
-                {seriesKeys.slice(0, 6).flatMap((key, idx) => [
+                {visibleSeriesKeys.flatMap((key, idx) => [
                   <Line
                     key={`line-${key}`}
                     type="monotone"
@@ -3629,7 +3803,42 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive={false}
-                  />,
+                  >
+                    {multiSeriesLabelMode !== "none" && (
+                      <LabelList
+                        dataKey={key}
+                        content={
+                          multiSeriesLabelMode === "latest"
+                            ? latestOnlyLabel(
+                                data,
+                                key,
+                                (n) =>
+                                  fmtSeriesValue(
+                                    n,
+                                    key,
+                                    chart.config.display?.valueFormat ?? null,
+                                  ),
+                                idx,
+                              )
+                            : thinnedLabel(
+                                multiSeriesLabelMode === "full"
+                                  ? 1
+                                  : labelStride(
+                                      data.length,
+                                      Math.max(4, Math.floor(12 / Math.max(1, visibleSeriesKeys.length))),
+                                    ),
+                                (n) =>
+                                  fmtSeriesValue(
+                                    n,
+                                    key,
+                                    chart.config.display?.valueFormat ?? null,
+                                  ),
+                                -8,
+                              )
+                        }
+                      />
+                    )}
+                  </Line>,
                   ...((chart.config.display?.highlightNegative || shouldForceNegativeEmphasis)
                     ? (data as any[])
                         .filter((d) => Number((d as any)?.[key]) < 0)
@@ -3650,6 +3859,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             );
           }
 
+          const singleSeriesLabelMode = pointLabelMode(data.length, 1, _forceLabels, isExpanded);
           return (
             <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
               <CartesianGrid {...gridStyle} />
@@ -3702,7 +3912,33 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 strokeWidth={2}
                 dot={false}
                 isAnimationActive={false}
-              />
+              >
+                {singleSeriesLabelMode !== "none" && (
+                  <LabelList
+                    dataKey="value"
+                    content={
+                      singleSeriesLabelMode === "latest"
+                        ? latestOnlyLabel(data, "value", (n) =>
+                            fmtSeriesValue(
+                              n,
+                              "value",
+                              chart.config.display?.valueFormat ?? null,
+                            ),
+                          )
+                        : thinnedLabel(
+                            singleSeriesLabelMode === "full" ? 1 : labelStride(data.length),
+                            (n) =>
+                              fmtSeriesValue(
+                                n,
+                                "value",
+                                chart.config.display?.valueFormat ?? null,
+                              ),
+                            -8,
+                          )
+                    }
+                  />
+                )}
+              </Line>
               {(chart.config.display?.highlightNegative || shouldForceNegativeEmphasis) &&
                 (data as any[])
                   .filter((d) => Number((d as any)?.value) < 0)

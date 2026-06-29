@@ -3516,7 +3516,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     // column as "Query". Prefer the real spec dimension, then xAxisLabel, and only fall
     // back to grouping when it's a meaningful token.
     const specDim = (chart.config as { spec?: { dimension?: string } }).spec?.dimension;
-    const groupingToken = String(chart.config.grouping ?? "").split("_")[0];
+    const groupingToken = String(chart.config.grouping ?? "").split("_")[0] ?? "";
     const placeholder = /^(dynamic|query|row|name|)$/i;
     const rowAxis =
       (specDim && !placeholder.test(specDim) && specDim) ||

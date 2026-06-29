@@ -11531,11 +11531,57 @@ export class AgentService {
         { dimension: 'client', op: 'in', values: [phrase] },
       ],
     };
-    // "for the largest client" is a filter + trend, not a group-by-client. If the planner
-    // grouped by client (which would yield a single degenerate bar once filtered), plot
-    // over month instead.
-    if (next.dimension === 'client') next.dimension = 'month';
+    // "for the largest client" is often a filter + trend, but not always. Only coerce a
+    // degenerate grouped-by-client spec onto month when the request actually implies a
+    // time axis; otherwise non-time charts like donuts get rewritten into accidental
+    // month distributions.
+    if (
+      next.dimension === 'client' &&
+      this.superlativeClientAskImpliesTimeAxis(queryLower, next.chartType, next.dimension)
+    )
+      next.dimension = 'month';
     return next;
+  }
+
+  private superlativeClientAskImpliesTimeAxis(
+    queryLower: string,
+    chartType?: string | null,
+    dimension?: string | null,
+  ): boolean {
+    if (/(?:^|\b)(month|monthly|trend|over\s+time|growth|ytd|mtd|qtd|yoy|mom|rolling|cumulative)(?:\b|$)/.test(queryLower))
+      return true;
+    const ct = String(chartType ?? '').toLowerCase();
+    if (['line', 'area', 'combo', 'waterfall'].includes(ct)) return true;
+    const dim = String(dimension ?? '').toLowerCase();
+    return ['month', 'quarter', 'year'].includes(dim);
+  }
+
+  private topNClientComparisonShouldStayCategorical(
+    queryLower: string,
+    spec: ChartSpec,
+  ): boolean {
+    if (!/\btop\s+\d+\s+clients?\b/.test(queryLower)) return false;
+    if (String(spec.breakdown ?? '').toLowerCase() !== 'client') return false;
+    if (String(spec.dimension ?? '').toLowerCase() !== 'month') return false;
+    const topN = Number((spec as { topN?: number | null }).topN ?? NaN);
+    if (!Number.isFinite(topN) || topN < 2) return false;
+    const measures = (spec.measures ?? (spec.measure ? [spec.measure] : [])).filter(
+      Boolean,
+    );
+    if (measures.length < 2) return false;
+    if (
+      /\b(month|monthly|trend|over\s+time|by\s+month|per\s+month|mom|yoy|rolling|cumulative)\b/.test(
+        queryLower,
+      )
+    )
+      return false;
+    const chartType = String(spec.chartType ?? '').toLowerCase();
+    if (['line', 'area', 'waterfall', 'scatter', 'bubble'].includes(chartType))
+      return false;
+    return (
+      /\bcompare|comparison|versus|\bvs\b/.test(queryLower) ||
+      /\brevenue\s+and\s+expenses?\b|\bexpenses?\s+and\s+revenue\b/.test(queryLower)
+    );
   }
 
   private async resolveSpecClientFilters(
@@ -13420,11 +13466,16 @@ export class AgentService {
     // period (NOT today). Lets categorical charts (e.g. a client scatter) restrict to the
     // last N months, and makes time-series windows robust even when topN was under-set.
     if (useEbpo && !spec.recentMonths) {
+      // Accept a digit ("2") or a spelled-out count ("two") — "over the past two years".
       const wm = queryLower.match(
-        /\b(?:over\s+)?(?:the\s+)?(?:last|past|trailing|previous|recent)\s+(\d{1,2})\s+(month|quarter|year)s?\b/,
+        /\b(?:over\s+)?(?:the\s+)?(?:last|past|trailing|previous|recent)\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(month|quarter|year)s?\b/,
       );
       if (wm) {
-        const n = parseInt(wm[1]!, 10);
+        const words: Record<string, number> = {
+          one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+          seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+        };
+        const n = words[wm[1]!] ?? parseInt(wm[1]!, 10);
         const mult = wm[2] === 'year' ? 12 : wm[2] === 'quarter' ? 3 : 1;
         if (n > 0) spec = { ...spec, recentMonths: n * mult };
       }
@@ -13472,6 +13523,41 @@ export class AgentService {
             : {}),
         };
       }
+      // GENERIC PROFITABILITY → GROSS MARGIN. A CFO's bare "which business unit is least
+      // profitable", "profitability by client", etc. means the headline profit concept,
+      // which in this dataset = GROSS MARGIN (available by business unit, client, contract
+      // type, industry). The LLM often resolves the bare word to the EBITDA-style margin
+      // (company/month only) and we'd then refuse an answerable question. When the query
+      // used ONLY generic profitability wording — NOT explicit "EBITDA"/"operating
+      // profit"/"net profit" (those still refuse at entity grain; we never fabricate
+      // EBITDA) — and the spec landed on an ebitda measure at a grain gross margin
+      // supports, swap to the gross-margin equivalent (% stays %, $ stays $).
+      const genericProfitOnly =
+        /\bprofitab/i.test(queryLower) &&
+        !/\bebitda\b|\boperating\s+(?:profit|income|margin)\b|\bnet\s+(?:profit|income|margin)\b/i.test(
+          queryLower,
+        );
+      if (genericProfitOnly) {
+        const GM_SWAP: Record<string, string> = {
+          ebitda_style_margin_pct: 'gross_margin_pct',
+          ebitda: 'gross_margin',
+        };
+        const swapGm = (m: string | undefined): string | undefined => {
+          if (!m) return m;
+          const fb = GM_SWAP[m];
+          return fb && fallbackResolvesBetter(m, fb) ? fb : m;
+        };
+        const ml = spec.measures ?? (spec.measure ? [spec.measure] : []);
+        if (ml.some((m) => GM_SWAP[m] && swapGm(m) !== m)) {
+          spec = {
+            ...spec,
+            ...(spec.measure ? { measure: swapGm(spec.measure) } : {}),
+            ...(spec.measures
+              ? { measures: spec.measures.map((m) => swapGm(m) as string) }
+              : {}),
+          };
+        }
+      }
     }
     // SAFETY NET (general, not per-phrase): if the request is ABOUT one client by a
     // superlative ("for the largest/biggest/top/second-largest client") but the planner
@@ -13503,11 +13589,21 @@ export class AgentService {
     }
     const wantsSuperlativeClientTrend =
       /\b(?:largest|biggest|top|second[-\s]?largest|2nd\s+largest)\s+client\b/.test(queryLower) &&
-      /\b(?:trend|monthly|month|growth|over\s+time|compare|revenue|expense|expenses?|cost|margin)\b/.test(queryLower) &&
+      this.superlativeClientAskImpliesTimeAxis(queryLower, spec.chartType, spec.dimension) &&
       !comparesRankedClients &&
       !spec.recentMonths;
     if (useEbpo && wantsSuperlativeClientTrend) {
       spec = { ...spec, recentMonths: 8 };
+    }
+    // "Compare revenue and expenses for the top 10 clients over the last 8 months"
+    // uses the time window as a FILTER, not as the chart axis. Keep this as a
+    // categorical client ranking instead of exploding it into monthly client pivots.
+    if (useEbpo && this.topNClientComparisonShouldStayCategorical(queryLower, spec)) {
+      spec = {
+        ...spec,
+        dimension: 'client',
+        breakdown: undefined,
+      };
     }
     // Resolve superlative client references ("largest client", "second-largest client",
     // "top 5 clients") in filters to the dataset's real top clients BEFORE compiling —
@@ -13935,6 +14031,45 @@ export class AgentService {
         `[planner] served=smart-cache source=memory query=${JSON.stringify(query.slice(0, 80))}`,
       );
       return cachedPlan;
+    }
+
+    // Some workbook prompts combine a real client-ranked entity ("largest client")
+    // with a department expense breakdown that the EBPO model cannot support
+    // honestly. Hard-refusing leaves the user at a dead end, while Power BI can
+    // misleadingly render a disconnected company-wide chart that looks scoped to the
+    // client. Intercept these asks early and offer truthful nearby alternatives
+    // instead of fabricating a client × department bridge that does not exist.
+    if (
+      /\b(?:largest|biggest|top|second[-\s]?largest)\s+client\b/i.test(query) &&
+      /\bdepartments?\b/i.test(query) &&
+      /\b(expense|expenses|cost|costs|spend)\b/i.test(query) &&
+      (await this.orgHasEbpoData(scope).catch(() => false))
+    ) {
+      const result: SmartPlanResult = {
+        kind: 'clarify',
+        clarification: {
+          reason: 'UNSUPPORTED_GRAIN_ALTERNATIVES',
+          question:
+            "This dataset can't scope department expenses to a specific client. What would you like to see instead?",
+          options: [
+            {
+              label: 'Company expenses by department',
+              value: 'Create a stacked bar chart showing company-wide expenses by department.',
+            },
+            {
+              label: 'Payroll by department',
+              value: 'Create a stacked bar chart showing payroll by department.',
+            },
+            {
+              label: 'Largest client revenue and cost',
+              value:
+                'Create a combo chart showing revenue and cost for the largest client over the last 8 months.',
+            },
+          ],
+        },
+      };
+      this.setCachedSmartPlan(cacheKey, result);
+      return result;
     }
 
     // Genuinely-unanswerable EBPO requests → honest no_data before any builder runs.
@@ -15829,6 +15964,7 @@ export class AgentService {
   private getClarificationPrompt(
     query: string,
     intent: QueryIntent,
+    hasEbpo = false,
   ): ClarificationPrompt | null {
     if (intent === 'EDIT_DASHBOARD') return null;
 
@@ -15886,11 +16022,16 @@ export class AgentService {
       };
     }
 
-    // "Top clients/customers" is ambiguous without a "by X" qualifier.
+    // "Top clients/customers" is ambiguous without a "by X" qualifier — but only in the
+    // GL/AR dataset, where "top" could mean collected vs invoiced vs outstanding vs
+    // overdue. In EBPO the only client metric is revenue, so "biggest/top client" is
+    // unambiguous (rank by revenue) and these AR-flavored options don't even apply —
+    // skip the clarification and let the planner rank by revenue. Also treat an analytical
+    // qualifier (profit/margin/profitability) as a clear intent, not an ambiguous ranking.
     const topClients = /(top|best|biggest)\s+(clients|customers|contacts)\b/i;
     const hasQualifier =
-      /\b(by|based on)\b|\brevenue\b|\bbilled\b|\bpaid\b|\boutstanding\b|\boverdue\b|\bcollection\b|\brate\b/i;
-    if (topClients.test(query) && !hasQualifier.test(query)) {
+      /\b(by|based on)\b|\brevenue\b|\bbilled\b|\bpaid\b|\boutstanding\b|\boverdue\b|\bcollection\b|\brate\b|\bprofit\b|\bprofitable\b|\bprofitability\b|\bmargin\b/i;
+    if (!hasEbpo && topClients.test(query) && !hasQualifier.test(query)) {
       return {
         reason: 'TOP_CLIENTS_AMBIGUOUS',
         question: 'When you say “top clients”, what should “top” mean?',
@@ -15952,8 +16093,14 @@ export class AgentService {
     // when the user already said "in the last year" / "last 6 months" is wrong.
     const impliesTime =
       /\b(last|past|recent|lately|this month|this quarter|this year|ytd|mtd|qtd|since)\b/i;
-    const concreteWindow =
-      /\b(?:last|past|previous|trailing|this|current)\s+(?:year|month|quarter|week|fortnight|half[\s-]*year|decade|\d+\s*(?:day|week|month|quarter|year)s?)\b|\b\d+\s*(?:day|week|month|quarter|year)s?\b|\b(?:ytd|mtd|qtd|year[\s-]*to[\s-]*date|month[\s-]*to[\s-]*date|quarter[\s-]*to[\s-]*date)\b|\bsince\s+\S/i;
+    // A duration count may be a digit ("2") OR a spelled-out word ("two") — CFOs say
+    // "over the past two years" as often as "last 2 years". Treat both as concrete so
+    // we don't ask "what time window?" when the window is already stated.
+    const COUNT = '(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+    const concreteWindow = new RegExp(
+      `\\b(?:last|past|previous|trailing|this|current)\\s+(?:year|month|quarter|week|fortnight|half[\\s-]*year|decade|${COUNT}\\s*(?:day|week|month|quarter|year)s?)\\b|\\b${COUNT}\\s*(?:day|week|month|quarter|year)s?\\b|\\b(?:ytd|mtd|qtd|year[\\s-]*to[\\s-]*date|month[\\s-]*to[\\s-]*date|quarter[\\s-]*to[\\s-]*date)\\b|\\bsince\\s+\\S`,
+      'i',
+    );
     if (impliesTime.test(query) && !concreteWindow.test(query) && !spec.timeRange) {
       return {
         reason: 'TIME_RANGE_AMBIGUOUS',
@@ -17566,7 +17713,12 @@ export class AgentService {
           const w = activeDashboard.widgets[i]!;
           const cfg = (w.queryConfig as any) ?? {};
           const spec = cfg.spec as ChartSpec | undefined;
-          if (!spec?.measure || spec.dimension !== 'month') continue;
+          // "Same period last year" works on any within-year grain whose period label
+          // is stable across years (month → Jan…Dec, quarter → Q1…Q4). Both strip a
+          // trailing year and join on the bare period, so support both grains; a
+          // year-grain chart has no within-year period to overlay, so skip it.
+          if (!spec?.measure || (spec.dimension !== 'month' && spec.dimension !== 'quarter'))
+            continue;
           const measures = (
             spec.measures?.length ? spec.measures : [spec.measure]
           ).filter((m): m is string => !!m);
@@ -17641,6 +17793,10 @@ export class AgentService {
                 name = 'Oct', 10,
                 name = 'Nov', 11,
                 name = 'Dec', 12,
+                name = 'Q1', 1,
+                name = 'Q2', 2,
+                name = 'Q3', 3,
+                name = 'Q4', 4,
                 99
               )
             LIMIT 1000
@@ -20816,6 +20972,15 @@ export class AgentService {
               grouped.get(pick.name)?.series.slice() ??
               [pick.name];
           }
+        } else if (numericCols.length > 1) {
+          // Grouped/clustered categorical bars: each row is already the entity and each
+          // numeric column is one measure (e.g. client rows with revenue + expense bars).
+          // Rank the entity by the combined row total so "highlight the largest client"
+          // can pick a row category even though there isn't a single `value` column.
+          ranking = rows.map((r) => ({
+            name: String((r as any).name ?? ''),
+            v: numericCols.reduce((sum, c) => sum + (numAt(r, c) ?? 0), 0),
+          }));
         } else if (numericCols.length === 1) {
           // Long format: sum the value per client name.
           const byName = new Map<string, number>();

@@ -67,6 +67,70 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(mixedEdit).toBeNull();
   });
 
+  test('does not treat non-time largest-client distribution asks as implicit 8-month trends', () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const parser = AgentService.prototype as any;
+
+    expect(
+      parser.superlativeClientAskImpliesTimeAxis(
+        'create a donut chart showing expense distribution for the largest client',
+        'donut',
+        'client',
+      ),
+    ).toBe(false);
+
+    expect(
+      parser.superlativeClientAskImpliesTimeAxis(
+        'create a line chart showing monthly revenue trend for the largest client',
+        'line',
+        'client',
+      ),
+    ).toBe(true);
+  });
+
+  test('keeps top-N client revenue-vs-expense comparisons categorical when the time window is only a filter', () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const parser = AgentService.prototype as any;
+
+    expect(
+      parser.topNClientComparisonShouldStayCategorical(
+        'generate a clustered column chart comparing revenue and expenses for the top 10 clients over the last 8 months',
+        {
+          measure: 'total_revenue',
+          measures: ['total_revenue', 'total_cost'],
+          dimension: 'month',
+          breakdown: 'client',
+          topN: 10,
+          chartType: 'bar',
+          recentMonths: 8,
+        },
+      ),
+    ).toBe(true);
+
+    expect(
+      parser.topNClientComparisonShouldStayCategorical(
+        'generate a line chart comparing revenue and expenses for the top 10 clients by month over the last 8 months',
+        {
+          measure: 'total_revenue',
+          measures: ['total_revenue', 'total_cost'],
+          dimension: 'month',
+          breakdown: 'client',
+          topN: 10,
+          chartType: 'line',
+          recentMonths: 8,
+        },
+      ),
+    ).toBe(false);
+  });
+
   test('treats chart refinements as edits when a dashboard already exists', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -276,6 +340,50 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       'Accounts Payable | Opening Balance',
       'Accounts Payable | Closing Balance',
     ]);
+  });
+
+  test('highlights the largest client on grouped revenue-vs-expense bars using row categories', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'AT&T', 'Total Revenue': 4843090, 'Total Cost': 3009796.24 },
+        { name: 'Dell', 'Total Revenue': 4473155, 'Total Cost': 2997605.14 },
+        { name: 'United Health Group', 'Total Revenue': 4285161, 'Total Cost': 2801613.21 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildNamedHighlightEditPlan(
+      [
+        {
+          index: 0,
+          w: {
+            chartType: 'bar',
+            queryConfig: {
+              dynamicSql: 'SELECT name, "Total Revenue", "Total Cost" FROM fake',
+              display: { valueFormat: 'currency' },
+            },
+          },
+          spec: {
+            measure: 'total_revenue',
+            measures: ['total_revenue', 'total_cost'],
+            dimension: 'client',
+            chartType: 'bar',
+          },
+        },
+      ],
+      'In the same chart, highlight the largest client.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.modify).toHaveLength(1);
+    expect(plan?.modify[0]?.display?.highlightNames).toEqual(['AT&T']);
+    expect(plan?.summary).toContain('AT&T');
   });
 
   test('builds a full CFO dashboard for financial position and operating performance', () => {
@@ -1582,6 +1690,29 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan?.kind).toBe('no_data');
     expect((plan as any)?.message ?? '').toContain('payroll is not booked by business unit');
+  });
+
+  test('offers truthful alternatives for largest-client department expense asks instead of a dead-end refusal', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+
+    const plan = await svc.generateSmartPlan(
+      'Create a stacked bar chart showing expense breakdown for the largest client by department',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('clarify');
+    expect(plan?.clarification?.question ?? '').toContain("can't scope department expenses");
+    expect(plan?.clarification?.options?.map((o: any) => o.label)).toEqual([
+      'Company expenses by department',
+      'Payroll by department',
+      'Largest client revenue and cost',
+    ]);
   });
 
   test('still allows EBITDA trend over time at company grain', async () => {

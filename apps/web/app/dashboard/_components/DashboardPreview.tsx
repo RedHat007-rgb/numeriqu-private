@@ -1072,6 +1072,18 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       )
     )
       return "number";
+    // Generic dynamic-series aliases like "value" / "Value MA3" carry no intrinsic
+    // unit. On percent charts (e.g. net profit margin + rolling average), prefer the
+    // chart-level fallback rather than the generic "value => currency" heuristic below,
+    // otherwise tooltips and labels render "$-48" against a -48.0% axis.
+    if (
+      fallback === "percent" &&
+      /(?:^|[\s_])value(?:[\s_]|$)|\bma\d+\b/.test(text) &&
+      !/\busd\b|\$|revenue|cost|expense|margin|balance|cash|asset|salary|payroll|amount|book/.test(
+        text,
+      )
+    )
+      return "percent";
     if (
       /\b(revenue|cost|expense|margin|balance|cash|asset|salary|payroll|amount|book)\b/.test(
         text,

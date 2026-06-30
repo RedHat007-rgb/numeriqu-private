@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import type { DashboardResponse } from "../../../../lib/api";
-import { formatMoneyWithCurrency, formatMoneyWithCurrencyFull, formatRelativeTime } from "./format";
+import { formatMoneyAxis, formatMoneyWithCurrency, formatMoneyWithCurrencyFull, formatRelativeTime } from "./format";
 
 function CashflowTooltip({
   active,
@@ -60,20 +60,20 @@ export function CashflowCard({
   const computedAt = formatRelativeTime(dashboard.meta.computedAt);
 
   return (
-    <div className="dashboard-surface h-full p-4">
+    <div className="dashboard-focus-card h-full p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-blue">
-            Cash flow
+          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#7ecaff]">
+            Capital bridge
           </p>
-          <h2 className="mt-1.5 font-display text-xl font-bold text-text-primary md:text-[1.45rem]">
-            Spend, runway, and net position
+          <h2 className="mt-2 font-display text-[1.45rem] font-bold text-white md:text-[1.55rem]">
+            How revenue survives cost and payroll
           </h2>
         </div>
-        <p className="text-xs text-text-muted">Last computed {computedAt}</p>
+        <p className="text-xs text-[#8ea9d0]">Updated {computedAt}</p>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
+      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-[#a8bfdf]">
         <span className="inline-flex items-center gap-2">
           <span className="h-1.5 w-4 rounded bg-feedback-danger" /> Spend
         </span>
@@ -81,27 +81,28 @@ export function CashflowCard({
           <span className="h-1.5 w-4 rounded bg-feedback-success" /> Revenue
         </span>
         <span>
-          Current spend: <span className="font-semibold text-text-primary">{formatMoneyWithCurrency(latestSpend, currency)}</span>
+          Current spend: <span className="font-semibold text-white">{formatMoneyWithCurrency(latestSpend, currency)}</span>
         </span>
         <span>
-          Overdue exposure: <span className="font-semibold text-text-primary">{formatMoneyWithCurrency(latestOverdue, currency)}</span>
+          Overdue exposure: <span className="font-semibold text-white">{formatMoneyWithCurrency(latestOverdue, currency)}</span>
         </span>
       </div>
 
       <div className="mt-4 h-52">
         {series.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-default px-5 text-center text-sm text-text-muted">
-            <p className="font-medium text-text-secondary">No cash flow history yet</p>
+          <div className="flex h-full flex-col items-center justify-center rounded-[1.1rem] border border-dashed border-white/10 px-5 text-center text-sm text-[#a8bfdf]">
+            <p className="font-medium text-white">No capital bridge yet</p>
             <p className="mt-1 max-w-md">Connect a source and sync at least one period to see spend, revenue, and net position move together.</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <BarChart data={series} margin={{ top: 8, right: 8, left: 12, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--color-text-muted) / 0.12)" />
               <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 11 }} />
               <YAxis
+                width={76}
                 tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 11 }}
-                tickFormatter={(value) => formatMoneyWithCurrencyFull(Number(value), currency)}
+                tickFormatter={(value) => formatMoneyAxis(Number(value), currency)}
               />
               <Tooltip content={<CashflowTooltip currency={currency} />} />
               <Bar dataKey="value" radius={[8, 8, 0, 0]}>

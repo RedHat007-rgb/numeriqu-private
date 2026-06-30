@@ -77,12 +77,12 @@ export function NextActionsCard({
   const top = computed.slice(0, 5);
 
   return (
-    <div className="dashboard-surface h-full p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-violet">
-        Recommended next actions
+    <div className="dashboard-focus-card h-full p-5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#91a2ff]">
+        CFO agenda
       </p>
-      <h2 className="mt-1.5 font-display text-xl font-bold text-text-primary md:text-[1.45rem]">
-        What deserves attention
+      <h2 className="mt-2 font-display text-[1.45rem] font-bold text-white md:text-[1.55rem]">
+        Decisions that deserve today
       </h2>
 
       <div className="mt-4">
@@ -97,19 +97,19 @@ export function NextActionsCard({
             {top.slice(0, 3).map((insight) => (
               <li
                 key={insight.id}
-                className="flex items-start gap-3 rounded-lg border border-default bg-bg-elevated/25 p-3.5"
+                className="flex items-start gap-3 rounded-[1rem] border border-white/10 bg-white/[0.04] p-4"
               >
                 <StatusPill tone={toneFromType(insight.type)} className="mt-0.5">
                   {insight.type}
                 </StatusPill>
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium text-text-primary">{insight.title}</p>
+                  <p className="font-medium text-white">{insight.title}</p>
                   {insight.description ? (
-                    <p className="mt-1 text-sm text-text-muted line-clamp-2">
+                    <p className="mt-1 text-sm text-[#bfd0eb] line-clamp-2">
                       {insight.description}
                     </p>
                   ) : null}
-                  <p className="mt-2 text-xs text-text-muted">
+                  <p className="mt-2 text-xs text-[#8ea9d0]">
                     {formatRelativeTime(insight.createdAt)}
                   </p>
                 </div>

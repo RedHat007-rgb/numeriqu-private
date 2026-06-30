@@ -129,6 +129,27 @@ export type DashboardResponse = {
     cashOnHand: number;
     efficiencyMultiplier: number;
   };
+  cfo?: {
+    mode: "generic" | "ebpo";
+    headline: string;
+    cashBalance: number;
+    workingCapital: number;
+    freeCashFlow: number;
+    operatingCashFlow: number;
+    grossMarginPct: number;
+    payrollToRevenuePct: number;
+    dsoDays: number;
+    dpoDays: number;
+    cashConversionDays: number;
+    slaCompliancePct: number;
+    utilizationPct: number;
+    csatPct: number;
+    topClientName?: string | null;
+    topClientRevenue?: number;
+    topClientConcentrationPct?: number;
+    topBusinessUnitName?: string | null;
+    topBusinessUnitMarginPct?: number;
+  };
   charts: {
     monthlyTrend: Array<{
       name: string;

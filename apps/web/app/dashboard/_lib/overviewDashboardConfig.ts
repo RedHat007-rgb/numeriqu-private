@@ -2,10 +2,16 @@ export type OverviewDashboardZone = "hero" | "primary" | "secondary";
 export type OverviewCardSize = "small" | "medium" | "wide";
 
 export type OverviewCardId =
+  | "executive-brief"
   | "revenue-command"
   | "margin-quality"
   | "open-invoices"
   | "cash-runway"
+  | "cash-discipline"
+  | "working-capital"
+  | "client-concentration"
+  | "service-levels"
+  | "payroll-discipline"
   | "cash-on-hand"
   | "overdue-exposure"
   | "invoice-volume"
@@ -20,8 +26,7 @@ export type OverviewCardId =
   | "cashflow"
   | "invoice-status"
   | "next-actions"
-  | "connected-entities"
-  | "system-snapshot";
+  | "connected-entities";
 
 export type OverviewCardDefinition = {
   id: OverviewCardId;
@@ -45,6 +50,17 @@ export type OverviewCardPlacement = {
 };
 
 export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
+  {
+    id: "executive-brief",
+    title: "Board Brief",
+    description: "A board-ready command strip showing where capital, risk, and delivery pressure are moving.",
+    zone: ["primary", "hero"],
+    defaultZone: "primary",
+    defaultSize: "wide",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: true,
+    priority: 220,
+  },
   {
     id: "revenue-command",
     title: "Revenue",
@@ -88,6 +104,61 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
     allowedSizes: ["small", "medium"],
     defaultVisible: true,
     priority: 184,
+  },
+  {
+    id: "cash-discipline",
+    title: "Treasury Radar",
+    description: "Free cash flow, operating cash flow, and cash-conversion pressure in one view.",
+    zone: ["primary", "secondary"],
+    defaultZone: "primary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: true,
+    priority: 182,
+  },
+  {
+    id: "working-capital",
+    title: "Working Capital",
+    description: "Cash, AR, AP, and liquidity pressure in one place.",
+    zone: ["hero", "primary"],
+    defaultZone: "hero",
+    defaultSize: "small",
+    allowedSizes: ["small", "medium"],
+    defaultVisible: true,
+    priority: 181,
+  },
+  {
+    id: "client-concentration",
+    title: "Concentration Risk",
+    description: "Shows whether revenue dependence is becoming a renewal or pricing risk.",
+    zone: ["primary", "secondary"],
+    defaultZone: "secondary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: false,
+    priority: 179,
+  },
+  {
+    id: "service-levels",
+    title: "Delivery Pulse",
+    description: "Operational reliability metrics that can silently erode margin quality.",
+    zone: ["primary", "secondary"],
+    defaultZone: "secondary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: false,
+    priority: 178,
+  },
+  {
+    id: "payroll-discipline",
+    title: "Labor Efficiency",
+    description: "Payroll absorption and labor efficiency pressure against revenue.",
+    zone: ["secondary", "primary"],
+    defaultZone: "secondary",
+    defaultSize: "small",
+    allowedSizes: ["small", "medium"],
+    defaultVisible: false,
+    priority: 177,
   },
   {
     id: "cash-on-hand",
@@ -212,8 +283,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "cashflow",
-    title: "Cash Flow",
-    description: "Spend, runway, and net position across the selected scope.",
+    title: "Capital Bridge",
+    description: "The movement from revenue to cost, payroll, and residual cash power.",
     zone: ["primary", "secondary"],
     defaultZone: "primary",
     defaultSize: "medium",
@@ -223,8 +294,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "invoice-status",
-    title: "Invoice Status",
-    description: "Open and overdue exposure by invoice bucket.",
+    title: "Receivables Exposure",
+    description: "Open, overdue, and payable exposure by amount and pressure level.",
     zone: ["primary", "secondary"],
     defaultZone: "primary",
     defaultSize: "medium",
@@ -234,8 +305,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "next-actions",
-    title: "Next Actions",
-    description: "Priority finance tasks and recommendations.",
+    title: "CFO Agenda",
+    description: "Priority finance actions that deserve executive attention next.",
     zone: ["primary", "secondary"],
     defaultZone: "secondary",
     defaultSize: "medium",
@@ -245,25 +316,14 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "connected-entities",
-    title: "Connected Providers",
-    description: "Connected accounting systems and entity coverage.",
+    title: "Data Command",
+    description: "Live finance feeds, entity coverage, and signal readiness.",
     zone: ["primary", "secondary"],
     defaultZone: "secondary",
     defaultSize: "medium",
     allowedSizes: ["medium", "wide"],
     defaultVisible: false,
     priority: 110,
-  },
-  {
-    id: "system-snapshot",
-    title: "System Snapshot",
-    description: "Freshness, scope, and status of the current overview.",
-    zone: ["secondary"],
-    defaultZone: "secondary",
-    defaultSize: "wide",
-    allowedSizes: ["wide"],
-    defaultVisible: false,
-    priority: 100,
   },
 ];
 
@@ -272,15 +332,44 @@ export function getOverviewCardDefinition(cardId: OverviewCardId) {
 }
 
 export function getRecommendedOverviewPlacements(showOnboardingGuide: boolean): OverviewCardPlacement[] {
-  let position = 0;
+  const recommended: OverviewCardPlacement[] = [
+    { cardId: "revenue-command", zone: "hero", position: 0, size: "small", visible: true },
+    { cardId: "margin-quality", zone: "hero", position: 1, size: "small", visible: true },
+    { cardId: "open-invoices", zone: "hero", position: 2, size: "small", visible: true },
+    { cardId: "cash-runway", zone: "hero", position: 3, size: "small", visible: true },
+    { cardId: "working-capital", zone: "hero", position: 4, size: "small", visible: true },
+    { cardId: "collection-risk", zone: "hero", position: 5, size: "small", visible: true },
+    { cardId: "executive-brief", zone: "primary", position: 6, size: "wide", visible: true },
+    { cardId: "cash-discipline", zone: "primary", position: 7, size: "medium", visible: true },
+    { cardId: "cashflow", zone: "primary", position: 8, size: "medium", visible: true },
+    { cardId: "invoice-status", zone: "primary", position: 9, size: "medium", visible: true },
+    { cardId: "client-concentration", zone: "primary", position: 10, size: "medium", visible: true },
+    { cardId: "service-levels", zone: "secondary", position: 11, size: "medium", visible: true },
+    { cardId: "next-actions", zone: "secondary", position: 12, size: "medium", visible: true },
+    { cardId: "connected-entities", zone: "secondary", position: 13, size: "medium", visible: true },
+    { cardId: "cash-on-hand", zone: "secondary", position: 14, size: "small", visible: false },
+    { cardId: "overdue-exposure", zone: "secondary", position: 15, size: "small", visible: false },
+    { cardId: "invoice-volume", zone: "secondary", position: 16, size: "small", visible: false },
+    { cardId: "avg-invoice", zone: "secondary", position: 17, size: "small", visible: false },
+    { cardId: "burn-rate", zone: "secondary", position: 18, size: "small", visible: false },
+    { cardId: "entity-count", zone: "secondary", position: 19, size: "small", visible: false },
+    { cardId: "provider-coverage", zone: "secondary", position: 20, size: "small", visible: false },
+    { cardId: "largest-entity", zone: "secondary", position: 21, size: "small", visible: false },
+    { cardId: "avg-entity-revenue", zone: "secondary", position: 22, size: "small", visible: false },
+    { cardId: "efficiency", zone: "secondary", position: 23, size: "small", visible: false },
+    { cardId: "payroll-discipline", zone: "secondary", position: 24, size: "small", visible: false },
+  ];
 
-  return OVERVIEW_CARD_DEFINITIONS
-    .filter((definition) => (definition.onboardingOnly ? showOnboardingGuide : true))
-    .map((definition) => ({
-      cardId: definition.id,
-      zone: definition.defaultZone,
-      position: position++,
-      size: definition.defaultSize,
-      visible: definition.onboardingOnly ? showOnboardingGuide : definition.defaultVisible,
-    }));
+  return recommended
+    .filter((placement) => {
+      const definition = getOverviewCardDefinition(placement.cardId);
+      return definition ? (definition.onboardingOnly ? showOnboardingGuide : true) : false;
+    })
+    .map((placement) => {
+      const definition = getOverviewCardDefinition(placement.cardId)!;
+      return {
+        ...placement,
+        visible: definition.onboardingOnly ? showOnboardingGuide : placement.visible,
+      };
+    });
 }

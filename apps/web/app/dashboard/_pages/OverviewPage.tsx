@@ -10,12 +10,18 @@ import { cn } from "../../../components/ui/cn";
 import { useDashboard } from "../_hooks/useDashboard";
 import { useDashboardPreferences } from "../_hooks/dashboardPreferences";
 import { useOverviewDashboardView } from "../_hooks/useOverviewDashboardView";
+import {
+  CfoFocusCard,
+  makeCashDisciplineItems,
+  makeClientConcentrationItems,
+  makeServiceLevelItems,
+} from "../_components/overview/CfoFocusCard";
 import { ConnectedEntitiesCard } from "../_components/overview/ConnectedEntitiesCard";
+import { ExecutiveBriefCard } from "../_components/overview/ExecutiveBriefCard";
 import { NextActionsCard } from "../_components/overview/NextActionsCard";
 import { OverviewDashboardEditor } from "../_components/overview/OverviewDashboardEditor";
 import { InvoiceStatusCard } from "../_components/overview/OrgBreakdownCard";
 import { CashflowCard } from "../_components/overview/RevenueTrendCard";
-import { SystemSnapshot } from "../_components/overview/SystemSnapshot";
 import { TimeRangeSelect } from "../_components/overview/TimeRangeSelect";
 import {
   formatMoneyWithCurrency,
@@ -30,6 +36,12 @@ function spanClass(size: OverviewCardPlacement["size"]) {
   if (size === "wide") return "lg:col-span-12";
   if (size === "medium") return "lg:col-span-6";
   return "lg:col-span-3";
+}
+
+function heroSpanClass(size: OverviewCardPlacement["size"]) {
+  if (size === "wide") return "col-span-12";
+  if (size === "medium") return "md:col-span-6 xl:col-span-4";
+  return "md:col-span-6 xl:col-span-2";
 }
 
 function toneFromDelta(value: number) {
@@ -175,19 +187,19 @@ function MetricTile({
   className?: string;
 }) {
   return (
-    <div className={cn("dashboard-surface h-full min-h-[132px] p-4", className)}>
+    <div className={cn("dashboard-metric-tile h-full min-h-[132px] p-4", className)}>
       <div className="flex h-full flex-col justify-between gap-4">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted">{eyebrow}</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">{eyebrow}</p>
           {delta ? (
             <span
               className={cn(
-                "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
                 delta.tone === "positive"
-                  ? "bg-feedback-success/10 text-feedback-success"
+                  ? "border-feedback-success/25 bg-feedback-success/10 text-feedback-success"
                   : delta.tone === "negative"
-                    ? "bg-feedback-danger/10 text-feedback-danger"
-                    : "bg-bg-elevated/70 text-text-muted",
+                    ? "border-feedback-danger/25 bg-feedback-danger/10 text-feedback-danger"
+                    : "border-white/10 bg-white/[0.04] text-[#9db4d8]",
               )}
             >
               {delta.value}
@@ -195,10 +207,10 @@ function MetricTile({
           ) : null}
         </div>
         <div>
-          <p className="dashboard-metric-value font-display text-[2.35rem] font-bold leading-none text-text-primary">
+          <p className="dashboard-metric-value font-display text-[2.2rem] font-bold leading-none tracking-[-0.04em] text-white">
             {value}
           </p>
-          <p className="mt-2 line-clamp-2 text-xs leading-5 text-text-muted">{detail}</p>
+          <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#b8c8e4]">{detail}</p>
         </div>
       </div>
     </div>
@@ -227,11 +239,11 @@ function CommandHeader({
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent-blue">Finance command</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-accent-blue">Boardroom command center</p>
             <span className="text-[11px] text-text-muted">Updated {formatRelativeTime(computedAt)}</span>
           </div>
           <h2 className="mt-1 font-display text-2xl font-bold leading-none text-text-primary md:text-[2rem]">
-            Executive overview
+            Financial command deck
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -255,37 +267,6 @@ function CommandHeader({
         </div>
       </div>
     </header>
-  );
-}
-
-function HiddenCardTray({
-  hiddenCards,
-  onShow,
-}: {
-  hiddenCards: Array<{ definition: { id: OverviewCardId; title: string } }>;
-  onShow: (cardId: OverviewCardId) => void;
-}) {
-  if (hiddenCards.length === 0) return null;
-
-  return (
-    <div className="dashboard-surface dashboard-surface-muted px-3 py-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-text-muted">
-          Add cards
-        </span>
-        {hiddenCards.map((entry) => (
-          <button
-            key={entry.definition.id}
-            type="button"
-            onClick={() => onShow(entry.definition.id)}
-            className="inline-flex items-center gap-2 rounded-full border border-default bg-bg-elevated/30 px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent-blue/35 hover:text-text-primary"
-          >
-            <Sparkles className="h-3.5 w-3.5 text-accent-cyan" />
-            {entry.definition.title}
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -396,6 +377,8 @@ export function OverviewPage() {
 
   const renderCard = (cardId: OverviewCardId) => {
     switch (cardId) {
+      case "executive-brief":
+        return <ExecutiveBriefCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
       case "revenue-command":
         return (
           <MetricTile
@@ -427,7 +410,47 @@ export function OverviewPage() {
           <MetricTile
             eyebrow="Cash Runway"
             value={`${dashboard.venture.runwayMonths.toFixed(1)} mo`}
-            detail={`${formatMoneyWithCurrency(dashboard.venture.burnRate, prefs.currencyDisplay)} monthly burn`}
+            detail={`${formatMoneyWithCurrency(dashboard.venture.burnRate, prefs.currencyDisplay)} monthly operating load`}
+          />
+        );
+      case "cash-discipline":
+        return (
+          <CfoFocusCard
+            eyebrow="Treasury radar"
+            title="How quickly revenue turns into usable cash"
+            items={makeCashDisciplineItems(dashboard, prefs.currencyDisplay)}
+          />
+        );
+      case "working-capital":
+        return (
+          <MetricTile
+            eyebrow="Working Capital"
+            value={formatMoneyWithCurrency(dashboard.cfo?.workingCapital ?? 0, prefs.currencyDisplay)}
+            detail={`${formatMoneyWithCurrency(dashboard.cfo?.cashBalance ?? 0, prefs.currencyDisplay)} cash balance`}
+          />
+        );
+      case "client-concentration":
+        return (
+          <CfoFocusCard
+            eyebrow="Concentration risk"
+            title="Where client dependence can blindside the board"
+            items={makeClientConcentrationItems(dashboard, prefs.currencyDisplay)}
+          />
+        );
+      case "service-levels":
+        return (
+          <CfoFocusCard
+            eyebrow="Delivery pulse"
+            title="Operational strain that can quietly destroy margin"
+            items={makeServiceLevelItems(dashboard)}
+          />
+        );
+      case "payroll-discipline":
+        return (
+          <MetricTile
+            eyebrow="Payroll / Revenue"
+            value={formatPercentDelta((dashboard.cfo?.payrollToRevenuePct ?? 0) / 100)}
+            detail="Labor absorption on the latest operating month"
           />
         );
       case "cash-on-hand":
@@ -535,14 +558,6 @@ export function OverviewPage() {
         return (
           <ConnectedEntitiesCard orgs={dashboard.connectedOrgs} currency={prefs.currencyDisplay} />
         );
-      case "system-snapshot":
-        return (
-          <SystemSnapshot
-            meta={dashboard.meta}
-            fiscalYearStart={prefs.fiscalYearStart}
-            timezone={prefs.timezone}
-          />
-        );
       default:
         return null;
     }
@@ -578,24 +593,27 @@ export function OverviewPage() {
   const renderHeroCards = (
     zoneCards: Array<{ definition: { id: OverviewCardId; title: string }; placement: OverviewCardPlacement }>,
   ) => (
-    <div
-      className={cn(
-        "grid gap-3 sm:grid-cols-2",
-        showOnboardingGuide ? "xl:col-span-8 xl:grid-cols-2" : "xl:col-span-12 xl:grid-cols-4",
-      )}
-    >
-      {zoneCards.map((entry) => (
-        <CanvasCard
-          key={entry.definition.id}
-          isEditing={isEditing}
-          isSelected={selectedCard?.definition.id === entry.definition.id}
-          entry={entry}
-          onSelect={() => setSelectedCardId(entry.definition.id)}
-          onHide={() => toggleVisibility(entry.definition.id, false)}
-        >
-          {renderCard(entry.definition.id)}
-        </CanvasCard>
-      ))}
+    <div className={cn("grid gap-3 lg:grid-cols-12", showOnboardingGuide ? "xl:col-span-10" : "xl:col-span-12")}>
+      {zoneCards.map((entry) => {
+        const size =
+          zoneCards.length === 1 && entry.placement.size === "medium"
+            ? "wide"
+            : entry.placement.size;
+
+        return (
+          <div key={entry.definition.id} className={heroSpanClass(size)}>
+            <CanvasCard
+              isEditing={isEditing}
+              isSelected={selectedCard?.definition.id === entry.definition.id}
+              entry={entry}
+              onSelect={() => setSelectedCardId(entry.definition.id)}
+              onHide={() => toggleVisibility(entry.definition.id, false)}
+            >
+              {renderCard(entry.definition.id)}
+            </CanvasCard>
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -644,7 +662,7 @@ export function OverviewPage() {
           <div className="grid gap-3 xl:grid-cols-12">
             {cardsByZone.hero.length > 0 ? renderHeroCards(cardsByZone.hero) : null}
             {showOnboardingGuide ? (
-              <div className="xl:col-span-4">
+              <div className="xl:col-span-2">
                 <SetupCard dashboard={dashboard} onOpenCustomize={() => setIsEditing(true)} />
               </div>
             ) : null}
@@ -661,16 +679,6 @@ export function OverviewPage() {
         )}
 
         {cardsByZone.secondary.length > 0 ? renderZone(cardsByZone.secondary) : null}
-
-        {isEditing ? (
-          <HiddenCardTray
-            hiddenCards={hiddenCards}
-            onShow={(cardId) => {
-              toggleVisibility(cardId, true);
-              setSelectedCardId(cardId);
-            }}
-          />
-        ) : null}
       </section>
     </div>
   );

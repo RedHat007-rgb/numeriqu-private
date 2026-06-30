@@ -42,6 +42,21 @@ export class FinancialDataService {
     );
   }
 
+  private isEbpoOrg(
+    activeConns: Array<{
+      externalOrganizationId: string;
+      metadata?: any;
+    }>,
+  ): boolean {
+    return activeConns.some((conn) => {
+      const metadata = (conn.metadata as Record<string, unknown>) || {};
+      const source = String(metadata.source ?? '').toLowerCase();
+      const orgName = String(metadata.orgName ?? '').toLowerCase();
+      const externalOrgId = String(conn.externalOrganizationId ?? '').toLowerCase();
+      return source.includes('ebpo') || orgName.includes('ebpo') || externalOrgId.includes('ebpo');
+    });
+  }
+
   /**
    * Get the organization-level financial profile for a tenant.
    * Routes to GL-based queries for sample orgs, invoice-based for real Xero/QB orgs.
@@ -583,17 +598,369 @@ export class FinancialDataService {
   /**
    * Revenue by month — time series per org for trend analysis (Gold Layer only)
    */
-  private timeWhere(range?: any): string {
+  private timeWhere(range: any, dateColumn: string): string {
     if (!range || range.kind === 'ALL_TIME') return '';
-    if (range.kind === 'MTD') return `AND issued_at >= toStartOfMonth(now())`;
-    if (range.kind === 'QTD') return `AND issued_at >= toStartOfQuarter(now())`;
-    if (range.kind === 'YTD') return `AND issued_at >= toStartOfYear(now())`;
-    if (range.kind === 'LAST_N_DAYS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days ?? 1))} DAY)`;
-    if (range.kind === 'LAST_N_WEEKS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks ?? 1))} WEEK)`;
-    if (range.kind === 'LAST_N_MONTHS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months ?? 1))} MONTH)`;
-    if (range.kind === 'LAST_N_QUARTERS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters ?? 1)) * 3} MONTH)`;
-    if (range.kind === 'LAST_N_YEARS') return `AND issued_at >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years ?? 1))} YEAR)`;
+    if (range.kind === 'MTD') return `AND ${dateColumn} >= toStartOfMonth(now())`;
+    if (range.kind === 'QTD') return `AND ${dateColumn} >= toStartOfQuarter(now())`;
+    if (range.kind === 'YTD') return `AND ${dateColumn} >= toStartOfYear(now())`;
+    if (range.kind === 'LAST_N_DAYS') {
+      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days ?? 1))} DAY)`;
+    }
+    if (range.kind === 'LAST_N_WEEKS') {
+      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks ?? 1))} WEEK)`;
+    }
+    if (range.kind === 'LAST_N_MONTHS') {
+      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months ?? 1))} MONTH)`;
+    }
+    if (range.kind === 'LAST_N_QUARTERS') {
+      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters ?? 1)) * 3} MONTH)`;
+    }
+    if (range.kind === 'LAST_N_YEARS') {
+      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years ?? 1))} YEAR)`;
+    }
     return '';
+  }
+
+  async getExecutiveSnapshot(tenantId: string, range?: any): Promise<ExecutiveSnapshot | null> {
+    const activeConns = await prisma.erpConnection.findMany({
+      where: { organizationId: tenantId, status: 'ACTIVE' },
+      select: { externalOrganizationId: true, provider: true, metadata: true },
+    });
+    if (activeConns.length === 0 || !this.isEbpoOrg(activeConns)) return null;
+
+    const orgId = activeConns[0]?.externalOrganizationId ?? '';
+    const orgName =
+      String((activeConns[0]?.metadata as Record<string, unknown>)?.orgName ?? '') ||
+      'EBPO Enterprise';
+    const rangeFilter = this.timeWhere(range, 'period_date');
+
+    try {
+      const [summaryResult, latestResult, arResult, apResult, clientResult, unitResult] =
+        await Promise.all([
+          this.clickhouse.query({
+            query: `
+              SELECT
+                round(sum(total_revenue_usd), 2) AS total_revenue_usd,
+                round(sum(total_cost_usd), 2) AS total_cost_usd,
+                round(sum(total_payroll_usd), 2) AS total_payroll_usd,
+                round(sum(gross_margin_usd), 2) AS gross_margin_usd,
+                round(sum(free_cash_flow_usd), 2) AS free_cash_flow_usd,
+                round(sum(operating_cash_flow_usd), 2) AS operating_cash_flow_usd
+              FROM (
+                SELECT
+                  total_revenue_usd,
+                  total_cost_usd,
+                  total_payroll_usd,
+                  gross_margin_usd,
+                  free_cash_flow_usd,
+                  operating_cash_flow_usd
+                FROM ${this.dbName}.v_ebpo_kpi_monthly
+                WHERE tenant_id = {tenantId:String}
+                  AND org_id = {orgId:String}
+                  ${rangeFilter}
+              ) k
+            `,
+            query_params: { tenantId, orgId },
+            format: 'JSONEachRow',
+            clickhouse_settings: SAFE_QUERY_SETTINGS,
+          }),
+          this.clickhouse.query({
+            query: `
+              SELECT
+                period_date,
+                cash_balance_usd,
+                gross_margin_pct,
+                payroll_to_revenue_pct,
+                dso_days,
+                dpo_days,
+                sla_compliance_pct,
+                utilization_pct,
+                csat_pct,
+                working_capital_usd,
+                operating_cf_to_revenue_pct,
+                fcf_margin_pct,
+                ebitda_style_margin_pct,
+                ar_outstanding_usd,
+                ap_outstanding_usd
+              FROM ${this.dbName}.v_ebpo_cfo_ratios_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id = {orgId:String}
+                ${rangeFilter}
+              ORDER BY period_date DESC
+              LIMIT 1
+            `,
+            query_params: { tenantId, orgId },
+            format: 'JSONEachRow',
+            clickhouse_settings: SAFE_QUERY_SETTINGS,
+          }),
+          this.clickhouse.query({
+            query: `
+              WITH latest_period AS (
+                SELECT max(period_date) AS period_date
+                FROM (
+                  SELECT period_date
+                  FROM ${this.dbName}.v_ebpo_ar_aging
+                  WHERE tenant_id = {tenantId:String}
+                    AND org_id = {orgId:String}
+                    ${rangeFilter}
+                ) ar_periods
+              )
+              SELECT
+                round(sum(outstanding_balance_usd), 2) AS outstanding_usd,
+                count() AS line_count,
+                round(sumIf(outstanding_balance_usd, lower(aging_bucket) NOT LIKE '%current%' AND lower(aging_bucket) NOT LIKE '%0-30%'), 2) AS overdue_usd,
+                countIf(lower(aging_bucket) NOT LIKE '%current%' AND lower(aging_bucket) NOT LIKE '%0-30%') AS overdue_count
+              FROM (
+                SELECT period_date, outstanding_balance_usd, aging_bucket
+                FROM ${this.dbName}.v_ebpo_ar_aging
+                WHERE tenant_id = {tenantId:String}
+                  AND org_id = {orgId:String}
+              ) ar_rows
+              WHERE period_date = (SELECT period_date FROM latest_period)
+            `,
+            query_params: { tenantId, orgId },
+            format: 'JSONEachRow',
+            clickhouse_settings: SAFE_QUERY_SETTINGS,
+          }),
+          this.clickhouse.query({
+            query: `
+              WITH latest_period AS (
+                SELECT max(period_date) AS period_date
+                FROM (
+                  SELECT period_date
+                  FROM ${this.dbName}.v_ebpo_ap_aging
+                  WHERE tenant_id = {tenantId:String}
+                    AND org_id = {orgId:String}
+                    ${rangeFilter}
+                ) ap_periods
+              )
+              SELECT
+                round(sum(outstanding_balance_usd), 2) AS outstanding_usd,
+                count() AS line_count
+              FROM (
+                SELECT period_date, outstanding_balance_usd
+                FROM ${this.dbName}.v_ebpo_ap_aging
+                WHERE tenant_id = {tenantId:String}
+                  AND org_id = {orgId:String}
+              ) ap_rows
+              WHERE period_date = (SELECT period_date FROM latest_period)
+            `,
+            query_params: { tenantId, orgId },
+            format: 'JSONEachRow',
+            clickhouse_settings: SAFE_QUERY_SETTINGS,
+          }),
+          this.clickhouse.query({
+            query: `
+              SELECT
+                coalesce(nullIf(client.client_name, ''), 'Unassigned') AS client_name,
+                round(sum(revenue.revenue_usd), 2) AS total_revenue_usd
+              FROM ${this.dbName}.ebpo_fact_revenue revenue
+              INNER JOIN ${this.dbName}.ebpo_dim_date dates
+                ON dates.tenant_id = revenue.tenant_id
+               AND dates.org_id = revenue.org_id
+               AND dates.date_key = revenue.date_key
+              LEFT JOIN ${this.dbName}.ebpo_dim_client client
+                ON client.tenant_id = revenue.tenant_id
+               AND client.org_id = revenue.org_id
+               AND client.client_key = revenue.client_key
+              WHERE revenue.tenant_id = {tenantId:String}
+                AND revenue.org_id = {orgId:String}
+                ${this.timeWhere(range, 'dates.date')}
+              GROUP BY client_name
+              ORDER BY total_revenue_usd DESC
+              LIMIT 1
+            `,
+            query_params: { tenantId, orgId },
+            format: 'JSONEachRow',
+            clickhouse_settings: SAFE_QUERY_SETTINGS,
+          }),
+          this.clickhouse.query({
+            query: `
+              SELECT
+                coalesce(nullIf(revenue.business_unit, ''), 'Unassigned') AS business_unit,
+                round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+                round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
+              FROM ${this.dbName}.ebpo_fact_revenue revenue
+              INNER JOIN ${this.dbName}.ebpo_dim_date dates
+                ON dates.tenant_id = revenue.tenant_id
+               AND dates.org_id = revenue.org_id
+               AND dates.date_key = revenue.date_key
+              WHERE revenue.tenant_id = {tenantId:String}
+                AND revenue.org_id = {orgId:String}
+                ${this.timeWhere(range, 'dates.date')}
+              GROUP BY business_unit
+              ORDER BY total_revenue_usd DESC
+              LIMIT 1
+            `,
+            query_params: { tenantId, orgId },
+            format: 'JSONEachRow',
+            clickhouse_settings: SAFE_QUERY_SETTINGS,
+          }),
+        ]);
+
+      const summary = ((await summaryResult.json()) as any[])[0] ?? {};
+      const latest = ((await latestResult.json()) as any[])[0] ?? {};
+      const ar = ((await arResult.json()) as any[])[0] ?? {};
+      const ap = ((await apResult.json()) as any[])[0] ?? {};
+      const topClient = ((await clientResult.json()) as any[])[0] ?? {};
+      const topBusinessUnit = ((await unitResult.json()) as any[])[0] ?? {};
+
+      const totalRevenue = parseFloat(summary.total_revenue_usd) || 0;
+      const totalCost = parseFloat(summary.total_cost_usd) || 0;
+      const totalPayroll = parseFloat(summary.total_payroll_usd) || 0;
+      const grossMargin = parseFloat(summary.gross_margin_usd) || 0;
+      const freeCashFlow = parseFloat(summary.free_cash_flow_usd) || 0;
+      const operatingCashFlow = parseFloat(summary.operating_cash_flow_usd) || 0;
+      const topClientRevenue = parseFloat(topClient.total_revenue_usd) || 0;
+      const topClientConcentrationPct =
+        totalRevenue > 0 ? Math.round((topClientRevenue / totalRevenue) * 10000) / 100 : 0;
+
+      const cashBalance = parseFloat(latest.cash_balance_usd) || 0;
+      const workingCapital = parseFloat(latest.working_capital_usd) || 0;
+      const dsoDays = parseFloat(latest.dso_days) || 0;
+      const dpoDays = parseFloat(latest.dpo_days) || 0;
+      const payrollToRevenuePct = parseFloat(latest.payroll_to_revenue_pct) || 0;
+      const grossMarginPct = parseFloat(latest.gross_margin_pct) || 0;
+      const slaCompliancePct = parseFloat(latest.sla_compliance_pct) || 0;
+      const utilizationPct = parseFloat(latest.utilization_pct) || 0;
+      const csatPct = parseFloat(latest.csat_pct) || 0;
+      const operatingCfToRevenuePct = parseFloat(latest.operating_cf_to_revenue_pct) || 0;
+      const fcfMarginPct = parseFloat(latest.fcf_margin_pct) || 0;
+      const ebitdaStyleMarginPct = parseFloat(latest.ebitda_style_margin_pct) || 0;
+      const arOutstanding = parseFloat(ar.outstanding_usd) || parseFloat(latest.ar_outstanding_usd) || 0;
+      const apOutstanding = parseFloat(ap.outstanding_usd) || parseFloat(latest.ap_outstanding_usd) || 0;
+      const overdueAmount = parseFloat(ar.overdue_usd) || 0;
+      const overdueCount = parseInt(ar.overdue_count) || 0;
+      const arLineCount = parseInt(ar.line_count) || 0;
+      const apLineCount = parseInt(ap.line_count) || 0;
+
+      const headline =
+        freeCashFlow >= 0
+          ? `Cash is compounding: free cash flow is ${Math.round(fcfMarginPct)}% of revenue while DSO is holding at ${Math.round(dsoDays)} days.`
+          : `Collections need attention: free cash flow is under pressure and ${Math.round(dsoDays)} days are locked in receivables.`;
+
+      const insights: ExecutiveInsight[] = [];
+      if (topClientConcentrationPct >= 25) {
+        insights.push({
+          id: 'nq:client-concentration',
+          title: 'Protect the biggest client concentration',
+          description: `${topClient.client_name || 'Top client'} contributes ${topClientConcentrationPct.toFixed(1)}% of scoped revenue. Review renewal and pricing risk now.`,
+          type: 'Warning',
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (dsoDays >= 45) {
+        insights.push({
+          id: 'nq:dso-pressure',
+          title: 'Release cash from receivables faster',
+          description: `DSO is ${Math.round(dsoDays)} days. Tighten collections on aged accounts before the next payroll cycle.`,
+          type: 'Warning',
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (payrollToRevenuePct >= 45) {
+        insights.push({
+          id: 'nq:payroll-discipline',
+          title: 'Payroll burden is climbing',
+          description: `Payroll is ${payrollToRevenuePct.toFixed(1)}% of revenue in the latest month. Recheck utilization and staffing mix by delivery center.`,
+          type: 'Info',
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (slaCompliancePct < 95) {
+        insights.push({
+          id: 'nq:service-risk',
+          title: 'Service execution is at risk',
+          description: `SLA is ${slaCompliancePct.toFixed(1)}% and utilization is ${utilizationPct.toFixed(1)}%. Finance should watch margin leakage from delivery stress.`,
+          type: 'Warning',
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      return {
+        mode: 'ebpo',
+        orgId,
+        orgName,
+        headline,
+        totalRevenue,
+        totalCost,
+        totalPayroll,
+        grossMargin,
+        cashBalance,
+        workingCapital,
+        freeCashFlow,
+        operatingCashFlow,
+        grossMarginPct,
+        payrollToRevenuePct,
+        dsoDays,
+        dpoDays,
+        operatingCfToRevenuePct,
+        fcfMarginPct,
+        ebitdaStyleMarginPct,
+        cashConversionDays: dsoDays - dpoDays,
+        slaCompliancePct,
+        utilizationPct,
+        csatPct,
+        arOutstanding,
+        arLineCount,
+        apOutstanding,
+        apLineCount,
+        overdueAmount,
+        overdueCount,
+        topClientName: String(topClient.client_name ?? '') || null,
+        topClientRevenue,
+        topClientConcentrationPct,
+        topBusinessUnitName: String(topBusinessUnit.business_unit ?? '') || null,
+        topBusinessUnitMarginPct: parseFloat(topBusinessUnit.gross_margin_pct) || 0,
+        cashflowWaterfall: [
+          { name: 'Revenue', value: totalRevenue, fill: '#00c7d2' },
+          { name: 'Delivery Cost', value: -totalCost, fill: '#ff8a4c' },
+          { name: 'Payroll', value: -totalPayroll, fill: '#ff5f7a' },
+          { name: 'Free Cash Flow', value: freeCashFlow, fill: freeCashFlow >= 0 ? '#37d67a' : '#ff5f7a' },
+          { name: 'Working Capital', value: workingCapital, fill: '#4f8cff' },
+        ],
+        insights,
+      };
+    } catch (error: any) {
+      this.logger.warn(`[FinancialData] EBPO executive snapshot failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async getEbpoMonthlyKpiTrend(tenantId: string, orgId: string, range?: any): Promise<any[]> {
+    const time = this.timeWhere(range, 'period_date');
+    const result = await this.clickhouse.query({
+      query: `
+        SELECT
+          toStartOfMonth(period_date) AS month,
+          'ebpo' AS provider,
+          org_id,
+          any(org_name) AS org_name,
+          round(sum(total_revenue_usd), 2) AS revenue,
+          round(sum(total_cost_usd + total_payroll_usd), 2) AS expenses,
+          0 AS invoice_count,
+          'USD' AS currency
+        FROM (
+          SELECT
+            period_date,
+            org_id,
+            org_name,
+            total_revenue_usd,
+            total_cost_usd,
+            total_payroll_usd
+          FROM ${this.dbName}.v_ebpo_kpi_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${time}
+        ) monthly_kpis
+        GROUP BY month, org_id
+        ORDER BY month ASC
+      `,
+      query_params: { tenantId, orgId },
+      format: 'JSONEachRow',
+      clickhouse_settings: SAFE_QUERY_SETTINGS,
+    });
+    return (await result.json()) as any[];
   }
 
   async getMonthlyRevenueTrend(tenantId: string, range?: any): Promise<any[]> {
@@ -610,7 +977,11 @@ export class FinancialDataService {
         return this.getSampleGLMonthlyRevenue(tenantId, activeOrgIds[0]);
       }
 
-      const time = this.timeWhere(range);
+      if (this.isEbpoOrg(activeConns)) {
+        return this.getEbpoMonthlyKpiTrend(tenantId, activeOrgIds[0], range);
+      }
+
+      const time = this.timeWhere(range, 'issued_at');
       const result = await this.clickhouse.query({
         query: `
           SELECT
@@ -1123,6 +1494,53 @@ export interface VentureMetrics {
   runwayMonths: number;
   cashOnHand: number;
   efficiencyMultiplier: number;
+}
+
+export interface ExecutiveInsight {
+  id: string;
+  title: string;
+  description?: string | null;
+  type: string;
+  createdAt: string;
+}
+
+export interface ExecutiveSnapshot {
+  mode: 'ebpo';
+  orgId: string;
+  orgName: string;
+  headline: string;
+  totalRevenue: number;
+  totalCost: number;
+  totalPayroll: number;
+  grossMargin: number;
+  cashBalance: number;
+  workingCapital: number;
+  freeCashFlow: number;
+  operatingCashFlow: number;
+  grossMarginPct: number;
+  payrollToRevenuePct: number;
+  dsoDays: number;
+  dpoDays: number;
+  operatingCfToRevenuePct: number;
+  fcfMarginPct: number;
+  ebitdaStyleMarginPct: number;
+  cashConversionDays: number;
+  slaCompliancePct: number;
+  utilizationPct: number;
+  csatPct: number;
+  arOutstanding: number;
+  arLineCount: number;
+  apOutstanding: number;
+  apLineCount: number;
+  overdueAmount: number;
+  overdueCount: number;
+  topClientName?: string | null;
+  topClientRevenue?: number;
+  topClientConcentrationPct?: number;
+  topBusinessUnitName?: string | null;
+  topBusinessUnitMarginPct?: number;
+  cashflowWaterfall: Array<{ name: string; value: number; fill?: string }>;
+  insights: ExecutiveInsight[];
 }
 
 export interface RevenueMetrics {

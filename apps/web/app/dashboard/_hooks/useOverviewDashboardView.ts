@@ -7,10 +7,11 @@ import {
   getRecommendedOverviewPlacements,
   type OverviewCardDefinition,
   type OverviewCardId,
+  type OverviewDashboardZone,
   type OverviewCardPlacement,
 } from "../_lib/overviewDashboardConfig";
 
-const STORAGE_KEY = "nq.dashboard.overview.view.v4";
+const STORAGE_KEY = "nq.dashboard.overview.view.v6";
 
 function normalizePlacements(input: unknown, showOnboardingGuide: boolean): OverviewCardPlacement[] {
   const defaults = getRecommendedOverviewPlacements(showOnboardingGuide);
@@ -56,6 +57,38 @@ function sortPlacements(placements: OverviewCardPlacement[]) {
     const rightPriority = getOverviewCardDefinition(right.cardId)?.priority ?? 0;
     return rightPriority - leftPriority;
   });
+}
+
+function preferredRevealZone(cardId: OverviewCardId): OverviewDashboardZone | null {
+  const definition = getOverviewCardDefinition(cardId);
+  if (!definition) return null;
+  if (definition.zone.includes("primary")) return "primary";
+  if (definition.zone.includes("hero")) return "hero";
+  if (definition.zone.includes("secondary")) return "secondary";
+  return null;
+}
+
+function revealPlacement(
+  placements: OverviewCardPlacement[],
+  cardId: OverviewCardId,
+): Pick<OverviewCardPlacement, "zone" | "position"> | null {
+  const definition = getOverviewCardDefinition(cardId);
+  const zone = preferredRevealZone(cardId);
+  if (!definition || !zone) return null;
+
+  const targetPlacements = placements.filter((placement) => placement.zone === zone);
+  const minPosition = targetPlacements.length > 0
+    ? Math.min(...targetPlacements.map((placement) => placement.position))
+    : 0;
+
+  if (zone === "primary") {
+    const brief = placements.find((placement) => placement.cardId === "executive-brief");
+    if (brief?.visible && brief.zone === "primary") {
+      return { zone, position: brief.position - 1 };
+    }
+  }
+
+  return { zone, position: minPosition - 1 };
 }
 
 export function useOverviewDashboardView(showOnboardingGuide: boolean) {
@@ -109,12 +142,22 @@ export function useOverviewDashboardView(showOnboardingGuide: boolean) {
 
   const toggleVisibility = useCallback(
     (cardId: OverviewCardId, force?: boolean) => {
+      const current = placements.find((placement) => placement.cardId === cardId);
+      if (!current) return;
+
+      const nextVisible = typeof force === "boolean" ? force : !current.visible;
+      const reveal = !current.visible && nextVisible ? revealPlacement(placements, cardId) : null;
+
       persist(
-        placements.map((placement) =>
-          placement.cardId === cardId
-            ? { ...placement, visible: typeof force === "boolean" ? force : !placement.visible }
-            : placement,
-        ),
+        placements.map((placement) => {
+          if (placement.cardId !== cardId) return placement;
+          return {
+            ...placement,
+            visible: nextVisible,
+            zone: reveal?.zone ?? placement.zone,
+            position: reveal?.position ?? placement.position,
+          };
+        }),
       );
     },
     [persist, placements],

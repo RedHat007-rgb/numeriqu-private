@@ -1,0 +1,4 @@
+[
+ {"id":"8.0","main":"Create a stacked column chart showing monthly revenue and expenses for the largest client","followup":"In the same chart, add gross profit values."},
+ {"id":"11.0","main":"Generate a combo chart showing revenue, expenses, and gross margin for the largest client","followup":"In the same chart, add average revenue as a reference line."}
+]

@@ -1,6 +1,7 @@
 "use client";
 
-import { EyeOff, MoveLeft, MoveRight, RotateCcw, Sparkles, X } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, EyeOff, MoveLeft, MoveRight, Plus, RotateCcw, X } from "lucide-react";
 import { Button } from "../../../../components/ui/Button";
 import { StatusPill } from "../../../../components/ui/StatusPill";
 import { cn } from "../../../../components/ui/cn";
@@ -36,6 +37,7 @@ export function OverviewDashboardEditor({
   onClose: () => void;
 }) {
   if (!selectedCard) return null;
+  const [showAddCards, setShowAddCards] = useState(false);
 
   return (
     <div className="fixed inset-0 z-40 bg-black/45 backdrop-blur-[2px]">
@@ -46,13 +48,23 @@ export function OverviewDashboardEditor({
         aria-label="Close dashboard customization"
       />
 
-      <section className="dashboard-surface absolute right-4 top-4 z-10 flex h-[calc(100dvh-2rem)] w-full max-w-[390px] flex-col overflow-hidden p-0">
-        <div className="flex items-center justify-between border-b border-default/70 px-4 py-3">
-          <div>
+      <section className="dashboard-surface absolute inset-x-6 top-6 bottom-6 z-10 flex w-auto flex-col overflow-hidden p-0 md:left-auto md:right-6 md:top-5 md:bottom-5 md:w-full md:max-w-[390px]">
+        <div className="flex flex-col gap-3 border-b border-default/70 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-violet">Customize</p>
-            <h3 className="mt-1 font-display text-lg font-bold text-text-primary">Dashboard cards</h3>
+            <h3 className="mt-1 font-display text-lg font-bold text-text-primary sm:text-[1.35rem]">Dashboard cards</h3>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-end gap-2 sm:shrink-0">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowAddCards((value) => !value)}
+              aria-expanded={showAddCards}
+            >
+              <Plus className="h-4 w-4" />
+              Add card
+              <ChevronDown className={cn("h-4 w-4 transition-transform", showAddCards && "rotate-180")} />
+            </Button>
             <Button variant="ghost" size="sm" onClick={onReset} aria-label="Reset recommended dashboard">
               <RotateCcw className="h-4 w-4" />
             </Button>
@@ -62,7 +74,45 @@ export function OverviewDashboardEditor({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
+        {showAddCards ? (
+          <div className="border-b border-default/70 px-5 py-3">
+            <div className="rounded-[1rem] border border-white/10 bg-white/[0.03] p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">Add cards</p>
+                  <p className="mt-1 text-sm text-text-secondary">Cards return near the top of the dashboard automatically.</p>
+                </div>
+                <StatusPill tone="neutral">{hiddenCards.length} hidden</StatusPill>
+              </div>
+
+              {hiddenCards.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-white/10 px-3 py-3 text-sm text-text-muted">
+                  Everything available is already on the dashboard.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {hiddenCards.map(({ definition }) => (
+                    <button
+                      key={definition.id}
+                      type="button"
+                      onClick={() => {
+                        onSelectCard(definition.id);
+                        onToggleCard(definition.id, true);
+                        setShowAddCards(false);
+                      }}
+                      className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-medium text-text-secondary transition-colors hover:border-accent-blue/30 hover:text-text-primary"
+                    >
+                      <Plus className="h-4 w-4 text-accent-cyan" />
+                      {definition.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
           <div className="space-y-4">
             <section>
               <div className="mb-2 flex items-center justify-between">
@@ -76,7 +126,7 @@ export function OverviewDashboardEditor({
                     type="button"
                     onClick={() => onSelectCard(definition.id)}
                     className={cn(
-                      "w-full rounded-lg border px-3 py-2.5 text-left transition-all duration-200",
+                      "w-full rounded-[1rem] border px-3 py-3 text-left transition-all duration-200",
                       selectedCard.definition.id === definition.id
                         ? "border-accent-blue/40 bg-accent-blue/10"
                         : "border-default bg-bg-elevated/25 hover:border-accent-blue/20",
@@ -97,35 +147,10 @@ export function OverviewDashboardEditor({
               </div>
             </section>
 
-            <section>
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">Add more finance cards</p>
-                <StatusPill tone="neutral">{hiddenCards.length} available</StatusPill>
-              </div>
-              <div className="space-y-2">
-                {hiddenCards.map(({ definition }) => (
-                  <button
-                    key={definition.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectCard(definition.id);
-                      onToggleCard(definition.id, true);
-                    }}
-                    className="w-full rounded-lg border border-default bg-bg-elevated/20 px-3 py-2.5 text-left transition-colors hover:border-accent-blue/20 hover:bg-bg-elevated/35"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-medium text-text-primary">{definition.title}</span>
-                      <Sparkles className="h-4 w-4 text-accent-cyan" />
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-default bg-bg-elevated/25 p-4">
+            <section className="rounded-[1rem] border border-default bg-bg-elevated/25 p-4">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">Selected</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">Selected card</p>
                   <p className="mt-1 font-semibold text-text-primary">{selectedCard.definition.title}</p>
                 </div>
                 <StatusPill tone={selectedCard.placement.visible ? "info" : "neutral"}>

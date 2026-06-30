@@ -11456,23 +11456,77 @@ export class AgentService {
    * list must use THIS — never a hardcoded GL table — so the EBPO org shows its real
    * clients (JP Morgan, AT&T, Dell …) instead of the GL demo universe.
    */
+  /**
+   * Build a date predicate (` AND …`) on `dateCol` from a spec's TIME-dimension filters
+   * (year / quarter / month), mirroring the EBPO chart compiler's buildWhere so the
+   * client ranking is scoped to the SAME window the chart plots. Without this, "largest
+   * client in 2022" ranks all-time (JP Morgan) while the chart shows 2022 (AT&T leads) —
+   * the two disagree. Returns '' when there are no time filters.
+   */
+  private clientRankTimeWhere(timeFilters: any[] | undefined, dateCol: string): string {
+    const parts: string[] = [];
+    for (const f of timeFilters ?? []) {
+      const dim = String((f as any)?.dimension ?? '');
+      const op = (f as any)?.op === 'not_in' ? 'NOT IN' : 'IN';
+      const values: string[] = Array.isArray((f as any)?.values)
+        ? (f as any).values.map((v: any) => String(v).trim()).filter(Boolean)
+        : [];
+      if (values.length === 0) continue;
+      if (dim === 'year') {
+        const years = values
+          .map((v) => Number(v))
+          .filter((v) => Number.isInteger(v) && v >= 1900 && v <= 2100);
+        if (years.length) parts.push(`toYear(${dateCol}) ${op} (${years.join(', ')})`);
+      } else if (dim === 'quarter') {
+        const qs = values
+          .map((v) => {
+            const m = v.match(/(?:q)?([1-4])/i);
+            return m ? Number(m[1]) : null;
+          })
+          .filter((v): v is number => v != null && v >= 1 && v <= 4);
+        if (qs.length) parts.push(`toQuarter(${dateCol}) ${op} (${Array.from(new Set(qs)).join(', ')})`);
+      } else if (dim === 'month') {
+        const months = values
+          .map((v) => {
+            const direct = Number(v);
+            if (Number.isInteger(direct) && direct >= 1 && direct <= 12) return direct;
+            const parsed = Date.parse(`${v} 1, 2000`);
+            return Number.isNaN(parsed) ? null : new Date(parsed).getUTCMonth() + 1;
+          })
+          .filter((v): v is number => v != null && v >= 1 && v <= 12);
+        if (months.length) parts.push(`toMonth(${dateCol}) ${op} (${Array.from(new Set(months)).join(', ')})`);
+      }
+    }
+    return parts.length ? ` AND ${parts.join(' AND ')}` : '';
+  }
+
   private async listTopClientsForScope(
     scope: OrgScope,
     limit: number,
     windowMonths?: number | null,
+    timeFilters?: any[] | null,
   ): Promise<string[]> {
     if (scope.externalOrgIds.length === 0) return [];
     const profile = await this.getDatasetProfile(scope);
-    // When the request scopes "largest client" to a recent window ("during the last 8
-    // months"), rank within that window using the time-aware client view. Otherwise
-    // (or when the dataset has no client time series) rank all-time.
+    // "Largest client" must rank within the SAME window the chart plots, so the picker
+    // tracks the period automatically: default = all-time (JP Morgan), but a recent-months
+    // window ("last 8 months") OR a calendar scope (year/quarter/month filter, e.g. 2022 →
+    // AT&T) narrows the ranking. Both use the time-aware client view.
     const win = profile.client.windowedView;
-    const useWindow = !!win && !!windowMonths && windowMonths > 0;
+    const calWhere = win ? this.clientRankTimeWhere(timeFilters ?? undefined, win.dateCol) : '';
+    // An explicit calendar scope (year/quarter/month, e.g. "in 2024") WINS over a
+    // recent-months window: applying both intersects "last N months" (anchored at the
+    // latest data, e.g. 2025) with the named year (2024) → empty → no clients → the
+    // superlative filter is silently dropped and the chart falls back company-wide. When a
+    // calendar scope is present, rank within it ONLY.
+    const useRecent = !!win && !!windowMonths && windowMonths > 0 && calWhere === '';
+    const useWindow = !!win && (useRecent || calWhere !== '');
     const src = useWindow ? win! : profile.client;
     const view = useWindow ? win!.view : profile.client.view;
-    const windowWhere = useWindow
+    const recentWhere = useRecent
       ? ` AND ${win!.dateCol} >= addMonths(toStartOfMonth((SELECT max(${win!.dateCol}) FROM ${this.analyticsDb}.${win!.view} WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}))), -${Math.floor(windowMonths!) - 1})`
       : '';
+    const windowWhere = useWindow ? `${recentWhere}${calWhere}` : '';
     const rows = await this.queryRows<any>(
       `SELECT coalesce(nullIf(${src.nameCol}, ''), '') AS client_name,
               ${src.weightExpr} AS w
@@ -11620,6 +11674,7 @@ export class AgentService {
   private async resolveSpecClientFilters(
     spec: ChartSpec,
     scope: OrgScope,
+    query?: string,
   ): Promise<ChartSpec> {
     const filters = spec.filters;
     if (!Array.isArray(filters) || filters.length === 0) return spec;
@@ -11642,15 +11697,39 @@ export class AgentService {
           continue;
         }
         touched = true;
-        // Rank within the query's recent-months window when one is set, so "largest
-        // client during the last 8 months" ranks on that window (AT&T) rather than the
-        // all-time leader (JP Morgan).
-        if (!ranked)
+        // Rank within the query's window so "largest client" tracks the period the chart
+        // plots: recent-months ("during the last 8 months") OR a calendar scope (a
+        // year/quarter/month filter, e.g. 2022 → AT&T) — defaulting to all-time
+        // (JP Morgan) when the request pins no period.
+        if (!ranked) {
+          const timeFilters = (spec.filters ?? []).filter((g) =>
+            /^(year|quarter|month)$/.test(String((g as any)?.dimension ?? '')),
+          ) as any[];
+          // A calendar scope is carried as a parsed timeRange, not a spec filter, so the
+          // year(s) named in the request ("...for the largest client in 2022") never reach
+          // the spec. Pull explicit years from the query text and rank within them, so the
+          // picker tracks the period (2022 → AT&T) while a no-period ask stays all-time.
+          const hasSpecYear = timeFilters.some(
+            (g) => String((g as any)?.dimension ?? '') === 'year',
+          );
+          if (!hasSpecYear && query) {
+            const years = Array.from(
+              new Set(
+                (String(query).match(/\b(20\d{2})\b/g) ?? [])
+                  .map((y) => Number(y))
+                  .filter((y) => y >= 2000 && y <= 2100),
+              ),
+            );
+            if (years.length)
+              timeFilters.push({ dimension: 'year', op: 'in', values: years.map(String) });
+          }
           ranked = await this.listTopClientsForScope(
             scope,
             50,
             spec.recentMonths ?? null,
+            timeFilters,
           );
+        }
         for (const r of ranks) {
           const name = ranked[r - 1];
           if (name) resolved.push(name);
@@ -13191,6 +13270,7 @@ export class AgentService {
         const filteredSpec = await this.resolveSpecClientFilters(
           this.repairMissingEntityFilter(spec, ql),
           scope,
+          ql,
         ).catch(() => spec);
         const clientFilterValues = (filteredSpec.filters ?? [])
           .filter((f) => String((f as any)?.dimension ?? '').toLowerCase() === 'client')
@@ -13519,6 +13599,35 @@ export class AgentService {
         if (n > 0) spec = { ...spec, recentMonths: n * mult };
       }
     }
+    // CONFLICT GUARD: an explicit calendar year in the ask ("…in 2024") must win over a
+    // recentMonths window the planner sometimes attaches to multi-measure combos. Left
+    // together, "last 12 months" (2025) and "year 2024" contradict — the client ranking
+    // returns nothing and the chart silently falls back to a company-wide view. Drop the
+    // window and scope BOTH the chart and the client picker to the named year(s).
+    if (useEbpo && spec.recentMonths) {
+      const yrs = Array.from(
+        new Set(
+          (queryLower.match(/\b(20\d{2})\b/g) ?? [])
+            .map((y) => Number(y))
+            .filter((y) => y >= 2000 && y <= 2100),
+        ),
+      );
+      const hasYearFilter = (spec.filters ?? []).some(
+        (f) => String((f as any)?.dimension ?? '') === 'year',
+      );
+      if (yrs.length) {
+        spec = {
+          ...spec,
+          recentMonths: null,
+          filters: hasYearFilter
+            ? spec.filters
+            : [
+                ...((spec.filters ?? []) as NonNullable<ChartSpec['filters']>),
+                { dimension: 'year', op: 'in', values: yrs.map(String) },
+              ],
+        };
+      }
+    }
     // DERIVE-BY-ENTITY: do NOT silently substitute a different measure when a composite
     // one is unavailable at the requested grain. In particular, `total_expenses =
     // total_cost + total_payroll` must never degrade to `total_cost`, because that drops
@@ -13635,7 +13744,7 @@ export class AgentService {
     // Resolve superlative client references ("largest client", "second-largest client",
     // "top 5 clients") in filters to the dataset's real top clients BEFORE compiling —
     // otherwise the SQL filters on the literal phrase and returns nothing.
-    spec = await this.resolveSpecClientFilters(spec, scope);
+    spec = await this.resolveSpecClientFilters(spec, scope, query);
     const compiled = useEbpo
       ? await compileEbpoSpec(spec, this.analyticsDb, runRows)
       : await compileSpec(spec, this.analyticsDb, runRows);
@@ -14082,6 +14191,88 @@ export class AgentService {
       /\b(expense|expenses|cost|costs|spend)\b/i.test(query) &&
       (await this.orgHasEbpoData(scope).catch(() => false))
     ) {
+      // PowerBI parity (user-confirmed): DRAW "expense breakdown for the <rank> client by
+      // department" the way the .pbix does. Total Expenses = Total Cost + Total Payroll.
+      // Payroll has a department relationship but NO client → company payroll PER department.
+      // Cost has a client relationship but NO department → the client's cost replicated on
+      // every department bar. So Total Expenses(dept) = company_payroll(dept) + client_cost.
+      // Verified to the dollar vs the .pbix (IT $32.5M … Operations $26.2M). Period-aware: a
+      // year or "last N months" in the ask scopes BOTH the payroll and the client cost.
+      const ql = query.toLowerCase();
+      const rank = /\bsecond[-\s]?largest\b|\b2nd\s+largest\b/.test(ql) ? 2 : 1;
+      const yrs = Array.from(
+        new Set(
+          (ql.match(/\b(20\d{2})\b/g) ?? [])
+            .map((y) => Number(y))
+            .filter((y) => y >= 2000 && y <= 2100),
+        ),
+      );
+      const timeFilters = yrs.length
+        ? [{ dimension: 'year', op: 'in' as const, values: yrs.map(String) }]
+        : [];
+      const recentMatch = ql.match(
+        /\b(?:last|past|trailing|previous|recent)\s+(\d{1,2})\s+months?\b/,
+      );
+      const recentM = recentMatch ? Number(recentMatch[1]) : null;
+      const ranked = await this.listTopClientsForScope(
+        scope,
+        Math.max(rank, 2),
+        recentM,
+        timeFilters,
+      ).catch(() => [] as string[]);
+      const client = ranked[rank - 1];
+      if (client) {
+        const sc =
+          'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+        const quoteLit = (v: string) => `'${v.replace(/'/g, "''")}'`;
+        const calWhere = this.clientRankTimeWhere(timeFilters, 'period_date');
+        const recentWhereFor = (view: string) =>
+          recentM && recentM > 0
+            ? ` AND period_date >= addMonths(toStartOfMonth((SELECT max(period_date) FROM ${this.analyticsDb}.${view} WHERE ${sc})), -${recentM - 1})`
+            : '';
+        const deptView = 'v_ebpo_department_efficiency_monthly';
+        const clientView = 'v_ebpo_revenue_expense_by_client_monthly';
+        const sql =
+          `SELECT department AS name, round(sum(total_payroll_usd) + (` +
+          `SELECT sum(total_cost_usd) FROM ${this.analyticsDb}.${clientView} ` +
+          `WHERE ${sc} AND client_name IN (${quoteLit(client)})${calWhere}${recentWhereFor(clientView)}), 0) AS value ` +
+          `FROM ${this.analyticsDb}.${deptView} ` +
+          `WHERE ${sc}${calWhere}${recentWhereFor(deptView)} ` +
+          `GROUP BY department ORDER BY value DESC LIMIT 50`;
+        const check = await this.executeDynamicSqlChecked(sql, scope, {
+          chartType: 'bar' as ChartType,
+        }).catch(() => null);
+        if (check && !check.error && check.rows.length > 0) {
+          const title = `Total Expenses by Department — ${client}`.slice(0, 80);
+          const built: SmartPlanResult = {
+            kind: 'build',
+            plan: {
+              tools_to_execute: [],
+              should_generate_dashboard: true,
+              dashboard: {
+                title,
+                description: '',
+                widgets: [
+                  {
+                    title,
+                    description: '',
+                    type: 'bar',
+                    metric: 'dynamic',
+                    grouping: 'dynamic',
+                    display_order: 0,
+                    _sql: sql,
+                    display: { valueFormat: 'currency' },
+                  } as any,
+                ],
+              },
+              analysis_focus: query,
+            },
+          };
+          this.setCachedSmartPlan(cacheKey, built);
+          return built;
+        }
+      }
+      // Couldn't resolve a client or run the parity SQL → fall back to the honest options.
       const result: SmartPlanResult = {
         kind: 'clarify',
         clarification: {
@@ -14155,6 +14346,7 @@ export class AgentService {
         const resolvedSpec = await this.resolveSpecClientFilters(
           baseSpec,
           scope,
+          query,
         ).catch(() => baseSpec);
         const clientFilterValues = (resolvedSpec.filters ?? [])
           .filter((f) => String((f as any)?.dimension ?? '').toLowerCase() === 'client')
@@ -18353,7 +18545,7 @@ export class AgentService {
         `round((sumIf(total_revenue_usd, year = ${cur}) - sumIf(total_revenue_usd, year = ${prev})) / ` +
         `nullIf(sumIf(total_revenue_usd, year = ${prev}), 0) * 100, 1) AS \`Revenue YoY Growth %\` ` +
         `FROM ${buView} WHERE ${tenantWhere} GROUP BY business_unit ` +
-        `HAVING sum(total_revenue_usd) > 0 ORDER BY \`Gross Margin %\` DESC`;
+        `HAVING sum(total_revenue_usd) > 0 ORDER BY \`Gross Margin %\` DESC LIMIT 50`;
 
       const check = await this.executeDynamicSqlChecked(sql, scope, {
         chartType: 'combo' as ChartType,

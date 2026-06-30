@@ -69,9 +69,10 @@ export class AnalyticsController {
       return null;
     })();
 
-    const [profile, monthlyTrend] = await Promise.all([
+    const [profile, monthlyTrend, executive] = await Promise.all([
       this.financialData.getFinancialProfile(organizationId),
       this.financialData.getMonthlyRevenueTrend(organizationId, range as any),
+      this.financialData.getExecutiveSnapshot(organizationId, range as any),
     ]);
 
     // Build Recharts-ready monthly trend (range-filtered server-side)
@@ -80,6 +81,7 @@ export class AnalyticsController {
       const month = (row.month ?? '').slice(0, 7);
       const existing = trendMap.get(month) || { revenue: 0, expenses: 0, invoices: 0 };
       existing.revenue += Math.abs(parseFloat(row.revenue) || 0);
+      existing.expenses += Math.abs(parseFloat(row.expenses ?? row.total_cost ?? 0) || 0);
       existing.invoices += parseInt(row.invoice_count) || 0;
       trendMap.set(month, existing);
     }
@@ -90,7 +92,7 @@ export class AnalyticsController {
         name: month.split('-')[1] + '/' + month.split('-')[0].slice(2),
         month,
         revenue: Math.round(data.revenue),
-        expenses: 0,
+        expenses: Math.round(data.expenses),
         invoices: data.invoices,
       }));
 
@@ -166,56 +168,136 @@ export class AnalyticsController {
         : (profile.connectedOrgs ?? []).length;
 
     const chartRevenue = monthlyChart.reduce((s, m) => s + (m.revenue || 0), 0);
-    // profile.revenue.totalRevenue is authoritative (from GL trial balance for sample orgs,
-    // from invoice aggregation for real orgs). Fall back to chart sum only if profile has none.
-    const totalRevenue = profile.revenue.totalRevenue > 0 ? profile.revenue.totalRevenue : chartRevenue;
+    const chartExpenses = monthlyChart.reduce((s, m) => s + (m.expenses || 0), 0);
+    const totalRevenue =
+      executive?.totalRevenue ??
+      (range && range.kind !== 'ALL_TIME'
+        ? chartRevenue
+        : profile.revenue.totalRevenue > 0
+          ? profile.revenue.totalRevenue
+          : chartRevenue);
     const chartInvoices = monthlyChart.reduce((s, m) => s + (m.invoices || 0), 0);
     const totalInvoices = profile.revenue.totalInvoices > 0 ? profile.revenue.totalInvoices : chartInvoices;
     const avgInvoiceValue = profile.revenue.avgInvoiceValue > 0
       ? profile.revenue.avgInvoiceValue
       : (totalInvoices > 0 ? totalRevenue / totalInvoices : 0);
 
-    // Note: This repo does not yet have a verified expense/bills gold model.
-    // We surface open invoice exposure separately so the UI can label it accurately.
-    const openInvoiceAmount = profile.expenses?.totalExpenses ?? 0;
-    const openInvoiceCount = profile.expenses?.totalBills ?? 0;
+    const totalExpenses = executive ? executive.totalCost + executive.totalPayroll : (chartExpenses || profile.expenses?.totalExpenses || 0);
+    const netProfit = executive
+      ? executive.totalRevenue - executive.totalCost - executive.totalPayroll
+      : profile.netProfit;
+    const profitMargin = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 10000) / 100 : 0;
 
-    const overdueAmount = profile.expenses?.overdueAmount ?? 0;
-    const overdueCount = profile.expenses?.overdueCount ?? 0;
+    const openInvoiceAmount = executive?.arOutstanding ?? profile.expenses?.totalExpenses ?? 0;
+    const openInvoiceCount = executive?.arLineCount ?? profile.expenses?.totalBills ?? 0;
+    const overdueAmount = executive?.overdueAmount ?? profile.expenses?.overdueAmount ?? 0;
+    const overdueCount = executive?.overdueCount ?? profile.expenses?.overdueCount ?? 0;
+    const connectedOrgsResolved =
+      executive
+        ? [{
+            orgName: executive.orgName,
+            provider: 'EBPO',
+            totalRevenue,
+            invoiceCount: openInvoiceCount,
+            currency: 'USD',
+          }]
+        : connectedOrgs;
+
+    const invoiceStatus =
+      executive
+        ? [
+            { name: 'AR Outstanding', count: openInvoiceCount, amount: openInvoiceAmount },
+            { name: 'Overdue AR', count: overdueCount, amount: overdueAmount },
+            { name: 'AP Outstanding', count: executive.apLineCount, amount: executive.apOutstanding },
+          ].filter((row) => row.amount > 0 || row.count > 0)
+        : (profile.invoiceStats?.byStatusAndOrg ?? []).map((row) => ({
+            name: row.status,
+            count: row.count,
+            amount: row.totalAmount,
+          }));
 
     return {
       kpis: {
         totalRevenue,
-        totalExpenses: openInvoiceAmount,
-        netProfit: 0,
-        profitMargin: 0,
+        totalExpenses,
+        netProfit,
+        profitMargin,
         totalInvoices,
         avgInvoiceValue,
         openInvoiceAmount,
         openInvoiceCount,
         overdueAmount,
         overdueCount,
-        orgCount,
-        providerCount,
+        orgCount: executive ? 1 : orgCount,
+        providerCount: executive ? 1 : providerCount,
       },
       venture: {
-        burnRate: profile.ventureMetrics?.burnRate ?? 0,
-        runwayMonths: profile.ventureMetrics?.runwayMonths ?? 0,
-        cashOnHand: profile.ventureMetrics?.cashOnHand ?? 0,
-        efficiencyMultiplier: profile.ventureMetrics?.efficiencyMultiplier ?? 0,
+        burnRate: executive
+          ? Math.round((executive.totalCost + executive.totalPayroll) / Math.max(1, monthlyChart.length || 1))
+          : profile.ventureMetrics?.burnRate ?? 0,
+        runwayMonths: executive
+          ? (executive.totalCost + executive.totalPayroll) > 0
+            ? Math.round((executive.cashBalance / ((executive.totalCost + executive.totalPayroll) / Math.max(1, monthlyChart.length || 1))) * 10) / 10
+            : 99
+          : profile.ventureMetrics?.runwayMonths ?? 0,
+        cashOnHand: executive?.cashBalance ?? profile.ventureMetrics?.cashOnHand ?? 0,
+        efficiencyMultiplier: executive
+          ? (executive.totalCost + executive.totalPayroll) > 0
+            ? Math.round((executive.totalRevenue / (executive.totalCost + executive.totalPayroll)) * 100) / 100
+            : 0
+          : profile.ventureMetrics?.efficiencyMultiplier ?? 0,
       },
+      cfo: executive
+        ? {
+            mode: 'ebpo',
+            headline: executive.headline,
+            cashBalance: executive.cashBalance,
+            workingCapital: executive.workingCapital,
+            freeCashFlow: executive.freeCashFlow,
+            operatingCashFlow: executive.operatingCashFlow,
+            grossMarginPct: executive.grossMarginPct,
+            payrollToRevenuePct: executive.payrollToRevenuePct,
+            dsoDays: executive.dsoDays,
+            dpoDays: executive.dpoDays,
+            cashConversionDays: executive.cashConversionDays,
+            slaCompliancePct: executive.slaCompliancePct,
+            utilizationPct: executive.utilizationPct,
+            csatPct: executive.csatPct,
+            topClientName: executive.topClientName,
+            topClientRevenue: executive.topClientRevenue,
+            topClientConcentrationPct: executive.topClientConcentrationPct,
+            topBusinessUnitName: executive.topBusinessUnitName,
+            topBusinessUnitMarginPct: executive.topBusinessUnitMarginPct,
+          }
+        : {
+            mode: 'generic',
+            headline: 'This view summarizes live financial coverage across your connected entities.',
+            cashBalance: profile.ventureMetrics?.cashOnHand ?? 0,
+            workingCapital: 0,
+            freeCashFlow: 0,
+            operatingCashFlow: 0,
+            grossMarginPct: profitMargin,
+            payrollToRevenuePct: 0,
+            dsoDays: 0,
+            dpoDays: 0,
+            cashConversionDays: 0,
+            slaCompliancePct: 0,
+            utilizationPct: 0,
+            csatPct: 0,
+            topClientName: null,
+            topClientRevenue: 0,
+            topClientConcentrationPct: 0,
+            topBusinessUnitName: null,
+            topBusinessUnitMarginPct: 0,
+          },
       charts: {
         monthlyTrend: monthlyChart,
         orgBreakdown,
-        invoiceStatus: (profile.invoiceStats?.byStatusAndOrg ?? []).map((row) => ({
-          name: row.status,
-          count: row.count,
-          amount: row.totalAmount,
-        })),
-        cashflowWaterfall: [],
+        invoiceStatus,
+        cashflowWaterfall: executive?.cashflowWaterfall ?? [],
       },
-      connectedOrgs,
-      insights: [],
+      connectedOrgs: connectedOrgsResolved,
+      insights: executive?.insights ?? [],
       meta: {
         computedAt: new Date().toISOString(),
         latencyMs: Date.now() - startedAt,

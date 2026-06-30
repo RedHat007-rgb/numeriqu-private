@@ -19,23 +19,23 @@ export function InvoiceStatusCard({
   const maxAmount = Math.max(...items.map((item) => Math.abs(item.amount)), 1);
 
   return (
-    <div className="dashboard-surface h-full p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-cyan">
-        Spend exposure
+    <div className="dashboard-focus-card h-full p-5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#7ecaff]">
+        Receivables exposure
       </p>
-      <h2 className="mt-1.5 font-display text-xl font-bold text-text-primary md:text-[1.45rem]">
-        Invoice status by amount
+      <h2 className="mt-2 font-display text-[1.45rem] font-bold text-white md:text-[1.55rem]">
+        Where open balances are aging
       </h2>
 
       <div className="mt-4">
         {items.length === 0 ? (
           <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-lg border border-default bg-bg-elevated/25 p-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">Open balance</p>
-              <p className="mt-2 text-2xl font-bold text-text-primary">{formatMoneyWithCurrency(dashboard.kpis.openInvoiceAmount, currency)}</p>
-              <p className="mt-1 text-sm text-text-muted">{formatNumber(dashboard.kpis.openInvoiceCount ?? 0)} invoices still open</p>
+            <div className="rounded-[1rem] border border-white/10 bg-white/[0.04] p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">Open balance</p>
+              <p className="mt-2 text-2xl font-bold text-white">{formatMoneyWithCurrency(dashboard.kpis.openInvoiceAmount, currency)}</p>
+              <p className="mt-1 text-sm text-[#b8c8e4]">{formatNumber(dashboard.kpis.openInvoiceCount ?? 0)} invoices still open</p>
             </div>
-            <div className="rounded-lg border border-dashed border-default px-4 py-5 text-sm text-text-muted">
+            <div className="rounded-[1rem] border border-dashed border-white/10 px-4 py-5 text-sm text-[#a8bfdf]">
               No status buckets yet. Once invoice aging is available, this card will split healthy receivables from overdue exposure.
             </div>
           </div>
@@ -45,14 +45,14 @@ export function InvoiceStatusCard({
               <div key={item.name}>
                 <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
                   <div className="min-w-0">
-                    <p className="truncate font-medium text-text-primary">{item.name}</p>
-                    <p className="text-text-muted">{formatNumber(item.count)} invoices</p>
+                    <p className="truncate font-medium text-white">{item.name}</p>
+                    <p className="text-[#9db4d8]">{formatNumber(item.count)} invoices</p>
                   </div>
-                  <span className="font-mono text-accent-cyan">{formatMoneyWithCurrency(item.amount, currency)}</span>
+                  <span className="font-mono text-[#8ad7ff]">{formatMoneyWithCurrency(item.amount, currency)}</span>
                 </div>
-                <div className="h-2 rounded-full bg-bg-elevated/60">
+                <div className="h-2 rounded-full bg-white/[0.06]">
                   <div
-                    className="h-2 rounded-full bg-gradient-to-r from-accent-cyan to-accent-blue"
+                    className="h-2 rounded-full bg-gradient-to-r from-[#00c7d2] to-[#4f8cff]"
                     style={{ width: `${Math.max(6, (Math.abs(item.amount) / maxAmount) * 100)}%` }}
                   />
                 </div>

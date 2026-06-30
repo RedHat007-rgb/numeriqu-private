@@ -783,7 +783,11 @@ function ChartInsight({
     if (!isTimeAxisLabels(data)) return null;
     const first = Number(data[0]?.value) || 0;
     const last = Number(data[data.length - 1]?.value) || 0;
-    if (first === 0 || data.length < 2) return null;
+    // A "% growth/decline over period" is only meaningful off a POSITIVE baseline with
+    // no sign flip. Measures that can go negative or cross zero (free cash flow,
+    // investing/financing CF, net change) produce nonsense like "-177.7% decline" when
+    // the series ends below zero — suppress the caption rather than show a misleading %.
+    if (data.length < 2 || first <= 0 || last < 0) return null;
     const pct = ((last - first) / first) * 100;
     const up = pct >= 0;
     return (

@@ -116,7 +116,8 @@ function requestedType(q: string): string | null {
     [/waterfall/, 'waterfall'],
     [/\bbubble\b/, 'bubble'],
     [/\bscatter\b/, 'scatter'],
-    [/\b(heat\s?map|heatmap|matrix)\b/, 'heatmap'],
+    [/\bmatrix\b/, 'matrix'],
+    [/\b(heat\s?map|heatmap)\b/, 'heatmap'],
     [/\btreemap\b/, 'treemap'],
     [/\bpareto\b/, 'pareto'],
     [/\b(donut|doughnut)\b/, 'donut'],
@@ -147,20 +148,34 @@ function typeMatches(asked: string, got: string | null): boolean {
 }
 
 /** Summarize one chart-config into the fields we compare, + auto-flags. */
-function summarize(chart: any, chunks: any[]): any {
+function summarize(chart: any, chunks: any[], needsInput = false): any {
   const cfg = chart?.config ?? {};
   const sql = String(cfg.dynamicSql ?? '');
   const streamedText = chunks
     .filter((c) => typeof c?.content === 'string')
     .map((c) => String(c.content))
     .join('');
+  const clarify = [...chunks].reverse().find((c) => c?.type === 'clarify');
+  const clarifyText = clarify
+    ? [
+        String(clarify.question ?? '').trim(),
+        ...(Array.isArray(clarify.options)
+          ? clarify.options
+              .map((opt: any) => String(opt?.label ?? '').trim())
+              .filter(Boolean)
+          : []),
+      ]
+        .filter(Boolean)
+        .join(' | ')
+    : '';
   const assistant =
     streamedText ||
     ([...chunks].reverse().find((c) => typeof c.message === 'string')?.message ??
       [...chunks].reverse().find((c) => typeof c.text === 'string')?.text ??
+      clarifyText ??
       '');
   const refusalish =
-    /can['’]?t|cannot|unavailable|no data|not available|couldn['’]?t|rephrase|there is no|can’t|couldn’t/i;
+    /can['’]?t|cannot|unavailable|no data|not available|isn['’]?t available|couldn['’]?t|rephrase|there is no|can’t|couldn’t|not supported|unsupported/i;
   const glLeak = GL_DEMO_CLIENTS.filter(
     (n) => sql.includes(n) || String(assistant).includes(n),
   );
@@ -175,6 +190,7 @@ function summarize(chart: any, chunks: any[]): any {
     flags: {
       noChart: !chart,
       refusal: !chart && refusalish.test(String(assistant)),
+      needsInput: !!needsInput,
       glClientLeak: glLeak.length ? glLeak : false,
     },
   };
@@ -204,14 +220,16 @@ async function run() {
       const sid = r.sessionId;
       if (r.needsInput && sid && isTimeWindowClarification(r.chunks))
         r = await ask('Last 12 months', sid);
-      row.create = sid ? summarize(await getChart(sid), r.chunks) : { flags: { noChart: true } };
+      row.create = sid
+        ? summarize(await getChart(sid), r.chunks, r.needsInput)
+        : { flags: { noChart: true } };
 
       // FOLLOW-UP on the same session
       if (sid && q.followup) {
         let rf = await ask(q.followup, sid);
         if (rf.needsInput && isTimeWindowClarification(rf.chunks))
           rf = await ask('Last 12 months', sid);
-        row.followup_result = summarize(await getChart(sid), rf.chunks);
+        row.followup_result = summarize(await getChart(sid), rf.chunks, rf.needsInput);
       }
     } catch (e: any) {
       row.error = String(e?.message ?? e);
@@ -223,6 +241,7 @@ async function run() {
         ? `TYPE_MISMATCH(asked ${askedType}, got ${row.create.type})`
         : null;
     const f = [
+      row.create?.flags?.needsInput && 'CREATE_NEEDS_INPUT',
       row.create?.flags?.refusal && 'CREATE_REFUSED',
       row.create?.flags?.noChart && 'CREATE_NOCHART',
       typeMismatch,

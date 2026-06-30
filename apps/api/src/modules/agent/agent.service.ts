@@ -13973,7 +13973,17 @@ export class AgentService {
       return (
         'I can’t break expenses down by account for a specific client in this dataset — ' +
         'the trial-balance accounts do not carry a client key. I can show account-category ' +
-        'expense trends for the company, or revenue/cost by client, but not a client-by-account chart.'
+        'expense trends for the company overall, or revenue/cost by client, but not a client-by-account chart.'
+      );
+    }
+    if (
+      /\b(?:largest|biggest|top|second[-\s]?largest)\s+client\b/i.test(q) &&
+      /\b(?:ebitda|ebit\b|operating\s+(?:profit|income)|net\s+(?:profit|income))\b/i.test(q)
+    ) {
+      return (
+        'I can’t calculate EBITDA for a specific client in this dataset because payroll is not ' +
+        'booked by client. Revenue and cost are available by client over time, but payroll only ' +
+        'exists at company / department grain, so a client-level EBITDA trend would be fabricated.'
       );
     }
     if (
@@ -16685,6 +16695,25 @@ export class AgentService {
       !/%|percent/.test(q)
     )
       return { kind: 'index' };
+    // "add/show/include the average <metric>" (optionally "… percentage") with no
+    // "of total" is a request to OVERLAY THE MEAN of the current series as a benchmark
+    // line — NOT to normalize the chart to share-of-total. Without this guard,
+    // "add average contribution percentage" matched the contribution+percent normalize
+    // rule below and silently rebased every point to % of the column sum (wrong values).
+    // The reference_line handler averages the existing series (avg(value)), which IS the
+    // requested average. Excludes "… by <dimension>" (a per-category series, not a flat
+    // line) and moving/rolling averages (handled above).
+    const asksAverageOverlay =
+      /\b(?:add|show|display|include|overlay|plot|draw|with|also)\b[^.]*\b(?:average|avg|mean)\b/.test(
+        q,
+      ) &&
+      !/\bof\s+(?:the\s+)?total\b/.test(q) &&
+      !/\bmoving\b|\brolling\b/.test(q) &&
+      !(
+        /\b(?:average|avg|mean)\b[^.]*\bby\s+[a-z]/i.test(q) &&
+        !/\b(company[\s-]*wide|overall|grand|across\s+all)\b/i.test(q)
+      );
+    if (asksAverageOverlay) return { kind: 'reference_line' };
     if (
       /\bnormali[sz]e\b|\b100\s*%|\bas a (?:percentage|percent|%)\s+of\s+(?:the\s+)?(?:company\s+|grand\s+)?total\b|\b%\s*of\s*(?:the\s+)?(?:company\s+)?total\b|\bshare of (?:the\s+)?total\b|\bpercentage of (?:the\s+)?(?:company\s+)?total\b|\bproportion of (?:the\s+)?total\b|\bcontribution(?:s)?\b[^.]*\b(?:%|percent(?:age)?s?)\b|\b(?:%|percent(?:age)?)\s+contribution\b/.test(
         q,
@@ -18995,7 +19024,26 @@ export class AgentService {
           const varianceExpr = wantsPercent
             ? `(_base.value - ${baseline}) / nullIf(${baseline}, 0) * 100`
             : `_base.value - ${baseline}`;
-          const sql = `
+          // "In the same chart, highlight variance from the average" on a chart that
+          // ALREADY plots the client line vs the company-average line means KEEP both
+          // lines and ADD the variance as a third (same $ unit) series — not collapse
+          // the comparison to a lone variance series. Only when the existing chart is a
+          // peer-average comparison and the ask isn't a %, so all series share one axis.
+          const preserveComparison = usesPeerAverage && !wantsPercent;
+          const sql = preserveComparison
+            ? `
+            WITH _base AS (
+              ${compiled.sql}
+            )
+            SELECT
+              _base.name AS name,
+              _base.value AS value,
+              _base.company_average AS company_average,
+              round(${varianceExpr}, 2) AS variance
+            FROM _base
+            LIMIT 1000
+          `
+            : `
             WITH _base AS (
               ${compiled.sql}
             )
@@ -19017,11 +19065,13 @@ export class AgentService {
               }`,
             );
             return {
-              summary: wantsPercent
-                ? mentionsAverage
-                  ? 'Shown variance from the average as percentages.'
-                  : 'Shown variance from the chart average as percentages.'
-                : 'Shown variance from the average.',
+              summary: preserveComparison
+                ? 'Highlighted the variance from the company average (kept both lines and added the variance series).'
+                : wantsPercent
+                  ? mentionsAverage
+                    ? 'Shown variance from the average as percentages.'
+                    : 'Shown variance from the chart average as percentages.'
+                  : 'Shown variance from the average.',
               add: [],
               remove_indices: [],
               modify: [
@@ -19030,18 +19080,29 @@ export class AgentService {
                   type: w.chartType as ChartType,
                   dynamicSql: sql.trim(),
                   spec,
-                  title: varianceTitle,
-                  ...(wantsPercent
+                  // Preserve-comparison keeps the original client-vs-average title; only
+                  // the collapse-to-variance path renames the chart.
+                  title: preserveComparison ? w.title : varianceTitle,
+                  ...(preserveComparison
                     ? {
-                        yAxisLabel: '% variance from average',
-                        display: { valueFormat: 'percent', valueDecimals: 1 },
-                      }
-                    : {
-                        yAxisLabel: 'Variance from average',
+                        yAxisLabel: 'Revenue vs company average',
                         display: {
-                          valueFormat: EBPO_MEASURES[String(spec.measure ?? '')]?.format ?? null,
+                          valueFormat:
+                            EBPO_MEASURES[String(spec.measure ?? '')]?.format ?? null,
+                          highlightNegative: true,
                         },
-                      }),
+                      }
+                    : wantsPercent
+                      ? {
+                          yAxisLabel: '% variance from average',
+                          display: { valueFormat: 'percent', valueDecimals: 1 },
+                        }
+                      : {
+                          yAxisLabel: 'Variance from average',
+                          display: {
+                            valueFormat: EBPO_MEASURES[String(spec.measure ?? '')]?.format ?? null,
+                          },
+                        }),
                 },
               ],
             };
@@ -20946,11 +21007,27 @@ export class AgentService {
             rows.some((r) => numAt(r, c) !== null),
         );
         let ranking: { name: string; v: number }[] = [];
-        if ((chartType === 'scatter' || chartType === 'bubble') && primaryCol) {
-          ranking = rows.map((r) => ({
-            name: String((r as any).name ?? ''),
-            v: numAt(r, primaryCol) ?? -Infinity,
-          }));
+        if (chartType === 'scatter' || chartType === 'bubble') {
+          // "Largest client" on a scatter = the client with the greatest SIZE — the
+          // dollar/volume measure, never a ratio axis. Rank by the numeric column with
+          // the largest magnitude (revenue ≫ gross-margin-%), so a "GM% vs revenue"
+          // scatter ranks by revenue, not by the percentage axis (which previously made
+          // "highlight the largest client" wrongly pick the highest-MARGIN client).
+          const scatterNumCols = cols.filter(
+            (c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null),
+          );
+          const sizeCol =
+            scatterNumCols
+              .map((c) => ({
+                c,
+                mag: Math.max(0, ...rows.map((r) => Math.abs(numAt(r, c) ?? 0))),
+              }))
+              .sort((a, b) => b.mag - a.mag)[0]?.c ?? primaryCol;
+          if (sizeCol)
+            ranking = rows.map((r) => ({
+              name: String((r as any).name ?? ''),
+              v: numAt(r, sizeCol) ?? -Infinity,
+            }));
         } else if (numericCols.length > 1 && namesLookTemporal) {
           // Wide pivot: each non-name numeric column is a client series → sum the column.
           const grouped = new Map<string, { name: string; v: number; series: string[] }>();

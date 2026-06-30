@@ -1912,6 +1912,34 @@ export function validateEbpoSpec(
       refusal: `I'm sorry, but I can't group the data by "${spec.dimension}" — it isn't one of the dimensions available in this dataset.${tail}`,
     };
 
+  // Part-to-whole charts (pie/donut) show how a total splits across CATEGORIES. A time
+  // axis rendered as pie slices is never a real distribution — e.g. "expense distribution
+  // for the largest client" coming back as one slice per month is meaningless and
+  // misrepresents the data. When the only grouping the planner could find for the measure
+  // is time (no categorical breakdown exists), refuse rather than fabricate a composition
+  // the dataset can't support. (Valid donuts use a categorical dimension or a set of
+  // component measures with no dimension, neither of which trips this guard.)
+  {
+    const ct = String(spec.chartType ?? '').toLowerCase();
+    if (
+      (ct === 'pie' || ct === 'donut') &&
+      dimId &&
+      EBPO_DIMENSIONS[dimId]?.isTime &&
+      !spec.breakdown
+    ) {
+      const m = EBPO_MEASURES[measures[0]!];
+      const alt = measures[0] ? ebpoAlternativeClause(measures[0]!) : '';
+      return {
+        ok: false,
+        refusal:
+          `A ${ct} chart shows how a total splits across categories, but ${
+            m?.label ?? 'that measure'
+          } isn't broken down by any category in this dataset — it's only tracked as a single total per period, so there's no distribution to show.` +
+          (alt ? `${alt}${REFUSAL_CLOSING}` : tail),
+      };
+    }
+  }
+
   // Multi-measure charts with a dimension need one shared view/grain. KPI cards
   // have no dimension, so each independently scoped card may use its own verified
   // provider view and the compiler safely UNIONs the results.

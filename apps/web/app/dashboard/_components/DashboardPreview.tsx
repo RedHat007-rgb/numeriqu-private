@@ -3528,6 +3528,14 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     // column as "Query". Prefer the real spec dimension, then xAxisLabel, and only fall
     // back to grouping when it's a meaningful token.
     const specDim = (chart.config as { spec?: { dimension?: string } }).spec?.dimension;
+    // When the columns are several DIFFERENT measures (e.g. Revenue, Cost, Gross Margin)
+    // rather than periods/categories of one measure, a per-row total across the columns is
+    // meaningless — summing revenue + cost + gross margin is nonsense (it equals 2× revenue
+    // since margin = revenue − cost). Suppress the row-total column and the corner grand
+    // total in that case; the column totals (each measure summed down its own column) stay
+    // valid. A single-measure matrix (one measure pivoted across two axes) keeps both.
+    const specMeasures = (chart.config as { spec?: { measures?: string[] } }).spec?.measures;
+    const multiMeasureColumns = Array.isArray(specMeasures) && specMeasures.length > 1;
     const groupingToken = String(chart.config.grouping ?? "").split("_")[0] ?? "";
     const placeholder = /^(dynamic|query|row|name|)$/i;
     const rowAxis =
@@ -3682,9 +3690,11 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   {prettyAxis(key)}
                 </th>
               ))}
-              <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
-                {summaryHeader}
-              </th>
+              {!multiMeasureColumns && (
+                <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
+                  {summaryHeader}
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -3732,9 +3742,11 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                       </td>
                     );
                   })}
-                  <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
-                    {amount(rowTotals[rowIndex] ?? 0)}
-                  </td>
+                  {!multiMeasureColumns && (
+                    <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                      {amount(rowTotals[rowIndex] ?? 0)}
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -3750,9 +3762,11 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   {amount(value)}
                 </td>
               ))}
-              <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
-                {amount(grandTotal)}
-              </td>
+              {!multiMeasureColumns && (
+                <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                  {amount(grandTotal)}
+                </td>
+              )}
             </tr>
           </tbody>
         </table>

@@ -1715,6 +1715,25 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     ]);
   });
 
+  test('refuses client-level EBITDA asks with the real missing-grain explanation', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+
+    const plan = await svc.generateSmartPlan(
+      'Create a line chart showing EBITDA trend for the largest client over the last 8 months',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('no_data');
+    expect((plan as any)?.message ?? '').toContain("can’t calculate EBITDA for a specific client");
+    expect((plan as any)?.message ?? '').toContain('payroll is not booked by client');
+  });
+
   test('still allows EBITDA trend over time at company grain', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 

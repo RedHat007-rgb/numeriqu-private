@@ -171,24 +171,26 @@ describe('EBPO compiler — aggregation correctness', () => {
     expect(sql).not.toContain('period_date = (SELECT max(period_date)');
   });
 
-  test('account-level expense trends compile against the filtered trial-balance expense view', async () => {
-    const runRows = async () => [
-      { v: 'Payroll Expense', m: 100 },
-      { v: 'Rent Expense', m: 50 },
-    ];
-    const sql = await sqlFor(
+  // Account-level (trial-balance) expense is REFUSED: it doesn't reconcile with the
+  // dataset's authoritative figures (its Payroll Expense account ≪ actual Total Payroll),
+  // so an expense-by-account-category chart would present contradictory numbers.
+  test('account-level (trial-balance) expense breakdown is refused as inconsistent', async () => {
+    const r = await compileEbpoSpec(
       base({
         measure: 'account_expense',
         dimension: 'month',
         breakdown: 'account',
         chartType: 'heatmap',
       }),
-      runRows,
+      DB,
+      async () => [],
     );
-    expect(sql).toContain('v_ebpo_trial_balance_monthly');
-    expect(sql).toContain("'Payroll Expense'");
-    expect(sql).toContain("'Rent Expense'");
-    expect(sql).toMatch(/sumIf\(credit_movement_usd, .*Payroll Expense/);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.refusal).toMatch(/trustworthy expense breakdown by account/i);
+      expect(r.refusal).toMatch(/trial balance/i);
+      expect(r.refusal).toMatch(/Total Cost, Total Payroll, or Total Expenses/i);
+    }
   });
 
   // AR/AP Outstanding match PowerBI: SUM over the snapshot/date context, NOT latest-month

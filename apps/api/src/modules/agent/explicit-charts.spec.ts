@@ -2181,7 +2181,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(widget._spec?.dimension).toBe('month');
   });
 
-  test('routes monthly expense-by-account heatmaps to the real trial-balance expense view', async () => {
+  test('refuses monthly expense-by-account heatmaps as inconsistent trial-balance data', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -2196,18 +2196,17 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       { v: 'Payroll Expense', m: 586052 },
       { v: 'Rent Expense', m: 352658 },
     ];
+    // The trial-balance account expense doesn't reconcile with the authoritative payroll/
+    // cost facts (its Payroll Expense ≪ actual Total Payroll), so an expense-by-account
+    // chart would show contradictory numbers → refuse rather than build.
     const plan = await svc.buildEbpoSemanticPlan(
       'Generate a heatmap showing monthly expense trends by account category',
       { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
     );
 
-    expect(plan?.kind).toBe('build');
-    if (plan?.kind !== 'build') return;
-    const widget = plan.plan.dashboard.widgets[0] as any;
-    expect(widget.type).toBe('heatmap');
-    expect(widget._spec?.measure).toBe('account_expense');
-    expect(widget._spec?.dimension).toBe('month');
-    expect(widget._spec?.breakdown).toBe('account');
+    // The semantic builder declines (returns null); the user-facing refusal message is
+    // surfaced by the downstream compile and asserted in chart-spec-ebpo.spec.ts.
+    expect(plan?.kind).not.toBe('build');
   });
 
   test('defaults SLA vs CSAT scatter comparisons to delivery center when no entity is named', async () => {
@@ -2276,7 +2275,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(widget._sql).toContain('delivery_center');
   });
 
-  test('builds SG&A distribution from real expense accounts at account grain', async () => {
+  test('refuses SG&A distribution because account-level (trial-balance) expense is inconsistent', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -2287,17 +2286,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       rows: [{ name: 'Payroll Expense', value: 1200 }],
       error: null,
     });
+    // SG&A maps to the trial-balance account expense, which doesn't reconcile with the
+    // authoritative figures — refuse rather than present a contradictory breakdown.
     const plan = await svc.buildEbpoSemanticPlan(
       'Generate a donut chart showing SG&A expense distribution',
       { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
     );
 
-    expect(plan?.kind).toBe('build');
-    if (plan?.kind !== 'build') return;
-    const widget = plan.plan.dashboard.widgets[0] as any;
-    expect(widget.type).toBe('donut');
-    expect(widget._spec?.measure).toBe('account_expense');
-    expect(widget._spec?.dimension).toBe('account');
+    // Declines to build the inconsistent account-level breakdown.
+    expect(plan?.kind).not.toBe('build');
   });
 
   test('rebuilds same-chart SLA vs CSAT follow-ups as monthly trends instead of refusing on axis change', async () => {

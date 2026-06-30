@@ -1893,6 +1893,21 @@ export function validateEbpoSpec(
         refusal: `I'm sorry, but I don't have a metric called "${mid}" available in this dataset to plot.${tail}`,
       };
   }
+  // Expense broken down by account/category comes ONLY from the trial balance, which does
+  // not reconcile with this dataset's authoritative figures — its Payroll Expense account
+  // (~$0.56M/month) is a fraction of actual Total Payroll (~$2.33M/month from FactPayroll),
+  // and the GL accounts don't tie to FactRevenue cost either. Charting it would present
+  // contradictory expense numbers, so refuse rather than show an untrustworthy breakdown.
+  if (measures.includes('account_expense'))
+    return {
+      ok: false,
+      refusal:
+        `I can't show a trustworthy expense breakdown by account category in this dataset. ` +
+        `The only account-level expense data is the trial balance, and it doesn't reconcile ` +
+        `with the authoritative figures here — for example its Payroll Expense account is far ` +
+        `smaller than the actual Total Payroll. I can show Total Cost, Total Payroll, or Total ` +
+        `Expenses over time or by client / business unit instead.${REFUSAL_CLOSING}`,
+    };
   if (measures.length === 0)
     return {
       ok: false,

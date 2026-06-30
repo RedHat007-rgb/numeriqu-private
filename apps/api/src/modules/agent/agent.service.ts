@@ -7557,13 +7557,45 @@ export class AgentService {
         currentSession.id,
         organizationId,
       );
-      const intent = this.detectIntent(queryText, !!activeDashboard);
+      let intent = this.detectIntent(queryText, !!activeDashboard);
       const conversationHistory = await this.getConversationHistory(
         currentSession.id,
         organizationId,
       );
 
       if (!activeDashboard && this.referencesExistingChart(queryText)) {
+        // The previous turn produced no chart — usually because the requested pie/donut
+        // couldn't represent the data (negative components, a single time-series, etc.).
+        // Rather than dead-ending, fold the earlier request's SUBJECT into this follow-up
+        // and re-plan as a fresh chart: the follow-up often fully describes a valid chart
+        // the refused type couldn't show (e.g. "show operating, investing & financing cash
+        // flows together" → a bar). We neutralize the refused part-to-whole type (pie/donut)
+        // from the carried context so the planner picks an appropriate type, and let the
+        // normal create path build it — or emit its own honest refusal if it still can't.
+        const priorUser = [...conversationHistory]
+          .reverse()
+          .find(
+            (m: any) =>
+              m?.role === 'user' &&
+              String(m?.content ?? '').trim() &&
+              String(m.content).trim() !== queryText.trim(),
+          );
+        if (priorUser) {
+          const priorContext = String((priorUser as any).content)
+            .replace(/\b(pie|donut|doughnut)\s*(chart)?\b/gi, 'chart')
+            .trim();
+          // Drop the "in the same chart" framing so this is planned as a FRESH chart
+          // (there is no chart to edit); otherwise detectIntent keeps routing it to the
+          // edit path, which finds no dashboard and produces nothing.
+          const cleanedFollowUp = queryText
+            .trim()
+            .replace(/\b(in|on|within)\s+the\s+same\s+chart\b[,:\s]*/gi, '')
+            .trim();
+          queryText = `${cleanedFollowUp}\n(Earlier in this chat: ${priorContext})`;
+          spec = parseQuerySpec(queryText);
+          intent = this.detectIntent(queryText, false);
+          // fall through to the normal create flow below.
+        } else {
         const noChartMessage =
           "There isn't an existing chart in this session to modify. The previous request did not produce a chart, so I left the dashboard unchanged.";
         await this.prisma.agentChatMessage.create({
@@ -7608,6 +7640,7 @@ export class AgentService {
           },
         });
         return;
+        }
       }
 
       yield this.chunk('intent', {
@@ -18005,7 +18038,11 @@ export class AgentService {
           remove_indices: [],
           modify: [],
           refusal:
-            'I can only show contribution percentages over time when the series is scoped to a specific client or vendor. This company-wide trend has no entity share to calculate, so I left the chart unchanged.',
+            'To show contribution percentages I need several parts that sum to a positive whole. ' +
+            'This chart is a single company-wide measure over time, so there is no composition to take a ' +
+            'share of — and components like cash flow can be negative, which cannot be expressed as a ' +
+            'percentage of a total. I can split it by an entity such as client or vendor instead, where a ' +
+            'real share exists. I left the chart unchanged.',
         };
       }
 

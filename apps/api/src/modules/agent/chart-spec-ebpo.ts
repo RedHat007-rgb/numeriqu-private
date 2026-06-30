@@ -2460,10 +2460,26 @@ export async function compileEbpoSpec(
     if (timeCompositionPieDonut) {
       const rawValue = value;
       const magnitudeValue = `abs(${rawValue})`;
+      // A part-to-whole composition (pie/donut) over time collapses a MONTH grain to
+      // its 12 calendar-month buckets (Jan…Dec) and a QUARTER grain to 4, aggregated
+      // across ALL years — 48 year-month slices is not a readable composition. This is
+      // exactly how Power BI groups e.g. a cash-flow donut "by month" (legend = month
+      // name, summed over every year). A YEAR grain keeps its distinct years.
+      const MONTH_ABBR =
+        `['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']`;
+      let compLabel = dim.label;
+      let compGroup = dim.group;
+      if (dimId === 'month') {
+        compGroup = `toMonth(period_date)`;
+        compLabel = `${MONTH_ABBR}[${compGroup}]`;
+      } else if (dimId === 'quarter') {
+        compGroup = `toQuarter(period_date)`;
+        compLabel = `concat('Q', toString(${compGroup}))`;
+      }
       baseSql =
         `SELECT * EXCEPT (__ord) FROM (` +
-        `SELECT ${dim.label} AS name, ${rawValue} AS raw_value, ${magnitudeValue} AS value, ${dim.group} AS __ord ` +
-        `FROM ${tbl} WHERE ${where} GROUP BY ${dim.group}${having} ` +
+        `SELECT ${compLabel} AS name, ${rawValue} AS raw_value, ${magnitudeValue} AS value, ${compGroup} AS __ord ` +
+        `FROM ${tbl} WHERE ${where} GROUP BY ${compGroup}${having} ` +
         `ORDER BY __ord DESC LIMIT ${topN}) WHERE value > 0 ORDER BY __ord ASC`;
     } else if (dim.isTime) {
       // Time series: a capped topN means the MOST RECENT N periods ("last 8 months"),

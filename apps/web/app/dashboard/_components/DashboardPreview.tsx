@@ -2449,6 +2449,15 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       nonZeroSeriesCells <= trimmed.length * 1.6;
     const isStackedBarChart = effectiveChartType === "stacked_bar" && isMultiSeries;
     const shouldStackBreakdownBars = isStackedBarChart || sparseBreakdownBars;
+    // A 100%-stacked composition (each bar's segments sum to 100%): the grand total is
+    // always 100, so a per-bar total label is noise — and it must NEVER be drawn as its
+    // own stacked bar (that would double the stack height → a 200% axis).
+    const isPercentStack =
+      Boolean(chart.config.display?.normalized) ||
+      (shouldStackBreakdownBars && chart.config.display?.valueFormat === "percent");
+    // Show a grand-total label on top of each stack ONLY for absolute (non-percent)
+    // stacks, and anchor it to the topmost real segment instead of an extra stacked bar.
+    const showStackTotal = shouldStackBreakdownBars && !labelSeriesKey && !isPercentStack;
     const displayKeys = isMultiSeries ? seriesKeys.slice(0, 8) : [];
     const chartData = isMultiSeries && (shouldStackBreakdownBars || labelSeriesKey)
       ? trimmed.map((row) => ({
@@ -2634,16 +2643,19 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                         }
                       />
                     )}
+                    {/* Grand-total label on top of the stack: anchored to the topmost
+                        real segment (no extra stacked bar, so the axis isn't doubled). */}
+                    {showStackTotal && idx === displayKeys.length - 1 && (
+                      <LabelList
+                        dataKey="_total"
+                        position="top"
+                        offset={6}
+                        style={{ fill: "rgb(var(--color-text-muted))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
+                        formatter={(v: unknown) => fmtVal(Number(v) || 0)}
+                      />
+                    )}
                   </Bar>
                 ))}
-                {shouldStackBreakdownBars && !labelSeriesKey && (
-                  <Bar dataKey="_total" stackId="stack" fill="transparent"
-                    maxBarSize={isExpanded ? 48 : 36} isAnimationActive={false} legendType="none">
-                    <LabelList dataKey="_total" position="top"
-                      style={{ fill: "rgb(var(--color-text-muted))", fontSize: isExpanded ? 10 : 9, fontWeight: 600 }}
-                      formatter={(v: unknown) => fmtVal(Number(v) || 0)} />
-                  </Bar>
-                )}
                 {labelSeriesKey && !shouldStackBreakdownBars && (
                   <Bar
                     dataKey="_labelAnchor"

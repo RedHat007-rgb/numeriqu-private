@@ -7,7 +7,7 @@ import { formatMoneyWithCurrency, formatRelativeTime } from "./format";
 
 type Tone = "info" | "warning" | "success" | "danger" | "neutral";
 
-function toneFromType(type: string): Tone {
+export function toneFromType(type: string): Tone {
   const lower = type.toLowerCase();
   if (lower.includes("error") || lower.includes("anomaly")) return "danger";
   if (lower.includes("warn")) return "warning";
@@ -16,7 +16,7 @@ function toneFromType(type: string): Tone {
   return "neutral";
 }
 
-function deriveInsights(kpis: DashboardResponse["kpis"], currency: string): DashboardResponse["insights"] {
+export function deriveInsights(kpis: DashboardResponse["kpis"], currency: string): DashboardResponse["insights"] {
   const now = new Date().toISOString();
   const openAmount = kpis.openInvoiceAmount ?? kpis.totalExpenses ?? 0;
   const openCount = kpis.openInvoiceCount ?? 0;

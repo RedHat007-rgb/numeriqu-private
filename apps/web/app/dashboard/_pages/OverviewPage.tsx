@@ -1,11 +1,13 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, LayoutGrid, Minus, Settings2, Sparkles } from "lucide-react";
+import { CheckCircle2, LayoutGrid, Minus, Settings2, Sparkles, X } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
 import { Skeleton } from "../../../components/ui/Skeleton";
+import { StatusPill } from "../../../components/ui/StatusPill";
 import { cn } from "../../../components/ui/cn";
 import { useDashboard } from "../_hooks/useDashboard";
 import { useDashboardPreferences } from "../_hooks/dashboardPreferences";
@@ -18,7 +20,7 @@ import {
 } from "../_components/overview/CfoFocusCard";
 import { ConnectedEntitiesCard } from "../_components/overview/ConnectedEntitiesCard";
 import { ExecutiveBriefCard } from "../_components/overview/ExecutiveBriefCard";
-import { NextActionsCard } from "../_components/overview/NextActionsCard";
+import { deriveInsights, NextActionsCard, toneFromType } from "../_components/overview/NextActionsCard";
 import { OverviewDashboardEditor } from "../_components/overview/OverviewDashboardEditor";
 import { InvoiceStatusCard } from "../_components/overview/OrgBreakdownCard";
 import { CashflowCard } from "../_components/overview/RevenueTrendCard";
@@ -31,6 +33,14 @@ import {
 } from "../_components/overview/format";
 import type { DashboardResponse } from "../../../lib/api";
 import type { OverviewCardId, OverviewCardPlacement } from "../_lib/overviewDashboardConfig";
+
+const CFO_AGENDA_STORAGE_KEY = "nq.dashboard.cfo-agenda.v1";
+
+type AgendaPreference = {
+  dismissedFingerprint?: string | null;
+  snoozeUntil?: string | null;
+  hiddenForDate?: string | null;
+};
 
 function spanClass(size: OverviewCardPlacement["size"]) {
   if (size === "wide") return "lg:col-span-12";
@@ -59,6 +69,11 @@ function trendDelta(current: number, previous: number): { value: string; tone: "
 
   const ratio = (current - previous) / Math.abs(previous);
   return { value: formatPercentDelta(ratio), tone: toneFromDelta(ratio) };
+}
+
+function marginRatio(revenue: number, expenses: number) {
+  if (!Number.isFinite(revenue) || revenue === 0) return null;
+  return (revenue - expenses) / revenue;
 }
 
 function OverviewSkeleton() {
@@ -188,13 +203,15 @@ function MetricTile({
 }) {
   return (
     <div className={cn("dashboard-metric-tile h-full min-h-[132px] p-4", className)}>
-      <div className="flex h-full flex-col justify-between gap-4">
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">{eyebrow}</p>
+      <div className="grid h-full grid-rows-[3.5rem_auto_3.5rem] gap-4">
+        <div className="flex min-h-[3.5rem] items-start justify-between gap-3">
+          <p className="max-w-[8.5rem] text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">
+            {eyebrow}
+          </p>
           {delta ? (
             <span
               className={cn(
-                "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
                 delta.tone === "positive"
                   ? "border-feedback-success/25 bg-feedback-success/10 text-feedback-success"
                   : delta.tone === "negative"
@@ -206,12 +223,12 @@ function MetricTile({
             </span>
           ) : null}
         </div>
-        <div>
+        <div className="flex items-start">
           <p className="dashboard-metric-value font-display text-[2.2rem] font-bold leading-none tracking-[-0.04em] text-white">
             {value}
           </p>
-          <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#b8c8e4]">{detail}</p>
         </div>
+        <p className="line-clamp-2 text-xs leading-5 text-[#b8c8e4]">{detail}</p>
       </div>
     </div>
   );
@@ -225,6 +242,7 @@ function CommandHeader({
   refresh,
   state,
   computedAt,
+  onOpenAgenda,
 }: {
   range: ReturnType<typeof useDashboard>["range"];
   setRange: ReturnType<typeof useDashboard>["setRange"];
@@ -233,6 +251,7 @@ function CommandHeader({
   refresh: ReturnType<typeof useDashboard>["refresh"];
   state: ReturnType<typeof useDashboard>["state"];
   computedAt: string;
+  onOpenAgenda: () => void;
 }) {
   return (
     <header className="dashboard-surface dashboard-surface-muted px-4 py-3">
@@ -247,6 +266,10 @@ function CommandHeader({
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={onOpenAgenda}>
+            <Sparkles className="h-4 w-4" />
+            CFO Agenda
+          </Button>
           <TimeRangeSelect value={range} onChange={setRange} />
           <Button
             variant="secondary"
@@ -267,6 +290,99 @@ function CommandHeader({
         </div>
       </div>
     </header>
+  );
+}
+
+function CfoAgendaOverlay({
+  insights,
+  onClose,
+  onHideToday,
+  onRemindLater,
+}: {
+  insights: DashboardResponse["insights"];
+  onClose: () => void;
+  onHideToday: () => void;
+  onRemindLater: () => void;
+}) {
+  const top = insights.slice(0, 3);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
+      <button
+        type="button"
+        className="absolute inset-0 bg-[rgba(5,10,25,0.45)] backdrop-blur-md"
+        aria-label="Close CFO agenda"
+        onClick={onClose}
+      />
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label="CFO agenda"
+        className="relative z-10 w-full max-w-5xl overflow-hidden rounded-[2rem] border border-[rgb(126,186,255,0.2)] bg-[linear-gradient(135deg,rgba(255,255,255,0.05),transparent_26%),linear-gradient(180deg,rgba(20,31,70,0.98),rgba(15,24,55,0.99))] p-6 shadow-[0_40px_120px_-40px_rgba(0,0,0,0.85)] md:p-8"
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white transition hover:bg-white/[0.08]"
+          aria-label="Dismiss CFO agenda"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#91a2ff]">
+          CFO agenda
+        </p>
+        <h2 className="mt-3 max-w-3xl font-display text-3xl font-bold leading-tight text-white md:text-[3.2rem]">
+          Decisions that deserve today
+        </h2>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-[#b8c8e4]">
+          A focused welcome briefing for the current finance picture. Review what changed, then jump into the dashboard when you are ready.
+        </p>
+
+        <div className="mt-6 space-y-3">
+          {top.map((insight) => (
+            <article
+              key={insight.id}
+              className="rounded-[1.4rem] border border-white/10 bg-white/[0.05] p-5 md:p-6"
+            >
+              <div className="flex flex-col gap-4 md:flex-row md:items-start">
+                <StatusPill tone={toneFromType(insight.type)} className="w-fit md:mt-0.5">
+                  {insight.type}
+                </StatusPill>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xl font-semibold text-white md:text-2xl">{insight.title}</p>
+                  {insight.description ? (
+                    <p className="mt-3 max-w-3xl text-base leading-8 text-[#bfd0eb]">
+                      {insight.description}
+                    </p>
+                  ) : null}
+                  <p className="mt-4 text-sm text-[#8ea9d0]">{formatRelativeTime(insight.createdAt)}</p>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <div className="mt-6 flex flex-col gap-3 border-t border-white/8 pt-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={onHideToday}>
+              Don&apos;t show again today
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onRemindLater}>
+              Remind me later
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose}>
+              Close
+            </Button>
+            <Button size="sm" onClick={onClose}>
+              View dashboard
+            </Button>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -335,6 +451,8 @@ function CanvasCard({
 export function OverviewPage() {
   const { state, dashboard, error, refresh, hasLoadedOnce, range, setRange } = useDashboard();
   const { prefs } = useDashboardPreferences();
+  const [agendaOpen, setAgendaOpen] = useState(false);
+  const [agendaReady, setAgendaReady] = useState(false);
 
   const showOnboardingGuide =
     dashboard.kpis.orgCount === 0 &&
@@ -355,6 +473,83 @@ export function OverviewPage() {
     movePlacement,
     resetView,
   } = useOverviewDashboardView(showOnboardingGuide);
+  const agendaInsights = useMemo(
+    () =>
+      dashboard.insights.length > 0
+        ? dashboard.insights
+        : deriveInsights(dashboard.kpis, prefs.currencyDisplay),
+    [dashboard.insights, dashboard.kpis, prefs.currencyDisplay],
+  );
+  const agendaFingerprint = useMemo(
+    () => agendaInsights.slice(0, 5).map((insight) => `${insight.id}:${insight.createdAt}`).join("|"),
+    [agendaInsights],
+  );
+
+  useEffect(() => {
+    if (!hasLoadedOnce) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    let preference: AgendaPreference = {};
+
+    try {
+      const raw = window.localStorage.getItem(CFO_AGENDA_STORAGE_KEY);
+      if (raw) preference = JSON.parse(raw) as AgendaPreference;
+    } catch {
+      preference = {};
+    }
+
+    const snoozed =
+      preference.snoozeUntil && new Date(preference.snoozeUntil).getTime() > Date.now();
+    const hiddenToday = preference.hiddenForDate === today;
+    const dismissedCurrent = preference.dismissedFingerprint === agendaFingerprint;
+    const firstVisit = !preference.dismissedFingerprint;
+    const newInsightsAvailable = !!preference.dismissedFingerprint && !dismissedCurrent;
+
+    const shouldOpen =
+      agendaInsights.length > 0 &&
+      !snoozed &&
+      !hiddenToday &&
+      (firstVisit || newInsightsAvailable);
+
+    setAgendaOpen(shouldOpen);
+    setAgendaReady(true);
+  }, [agendaFingerprint, agendaInsights.length, hasLoadedOnce]);
+
+  function persistAgendaPreference(next: AgendaPreference) {
+    try {
+      window.localStorage.setItem(CFO_AGENDA_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore local storage write failures
+    }
+  }
+
+  function closeAgenda() {
+    setAgendaOpen(false);
+    persistAgendaPreference({
+      dismissedFingerprint: agendaFingerprint,
+      snoozeUntil: null,
+      hiddenForDate: null,
+    });
+  }
+
+  function hideAgendaToday() {
+    setAgendaOpen(false);
+    persistAgendaPreference({
+      dismissedFingerprint: agendaFingerprint,
+      snoozeUntil: null,
+      hiddenForDate: new Date().toISOString().slice(0, 10),
+    });
+  }
+
+  function remindAgendaLater() {
+    const snoozeUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    setAgendaOpen(false);
+    persistAgendaPreference({
+      dismissedFingerprint: null,
+      snoozeUntil,
+      hiddenForDate: null,
+    });
+  }
 
   if ((state === "loading" && !hasLoadedOnce) || !layoutReady) {
     return <OverviewSkeleton />;
@@ -365,7 +560,15 @@ export function OverviewPage() {
   const prev = trend[trend.length - 2];
   const revenueDelta = last && prev ? trendDelta(last.revenue, prev.revenue) : null;
   const invoiceDelta = last && prev ? trendDelta(last.invoices, prev.invoices) : null;
-  const profitDelta = last && prev ? trendDelta(last.revenue - last.expenses, prev.revenue - prev.expenses) : null;
+  const marginDelta =
+    last && prev
+      ? (() => {
+          const current = marginRatio(last.revenue, last.expenses);
+          const previous = marginRatio(prev.revenue, prev.expenses);
+          if (current === null || previous === null) return null;
+          return trendDelta(current, previous);
+        })()
+      : null;
   const connectedOrgCount = dashboard.connectedOrgs.length;
   const providerCount = dashboard.kpis.providerCount;
   const topEntity = dashboard.connectedOrgs[0] ?? null;
@@ -392,9 +595,9 @@ export function OverviewPage() {
         return (
           <MetricTile
             eyebrow="Margin Quality"
-            value={formatPercentDelta(dashboard.kpis.profitMargin)}
+            value={formatPercentDelta(dashboard.kpis.profitMargin / 100)}
             detail={`${formatMoneyWithCurrency(dashboard.kpis.netProfit, prefs.currencyDisplay)} net contribution`}
-            delta={profitDelta}
+            delta={marginDelta}
           />
         );
       case "open-invoices":
@@ -627,7 +830,17 @@ export function OverviewPage() {
         refresh={refresh}
         state={state}
         computedAt={dashboard.meta.computedAt}
+        onOpenAgenda={() => setAgendaOpen(true)}
       />
+
+      {agendaReady && agendaOpen ? (
+        <CfoAgendaOverlay
+          insights={agendaInsights}
+          onClose={closeAgenda}
+          onHideToday={hideAgendaToday}
+          onRemindLater={remindAgendaLater}
+        />
+      ) : null}
 
       {state === "error" && error ? (
         <ErrorBanner

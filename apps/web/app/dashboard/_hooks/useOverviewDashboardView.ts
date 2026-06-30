@@ -13,6 +13,15 @@ import {
 
 const STORAGE_KEY = "nq.dashboard.overview.view.v6";
 
+function shouldPromoteToHero(definition: OverviewCardDefinition, candidate: Partial<OverviewCardPlacement>) {
+  return (
+    definition.defaultSize === "small" &&
+    definition.zone.includes("hero") &&
+    candidate.visible === true &&
+    candidate.zone !== "hero"
+  );
+}
+
 function normalizePlacements(input: unknown, showOnboardingGuide: boolean): OverviewCardPlacement[] {
   const defaults = getRecommendedOverviewPlacements(showOnboardingGuide);
   if (!Array.isArray(input)) return defaults;
@@ -32,9 +41,18 @@ function normalizePlacements(input: unknown, showOnboardingGuide: boolean): Over
 
     normalized.push({
       cardId: candidate.cardId,
-      zone: candidate.zone && definition.zone.includes(candidate.zone) ? candidate.zone : fallback.zone,
+      zone: shouldPromoteToHero(definition, candidate)
+        ? "hero"
+        : candidate.zone && definition.zone.includes(candidate.zone)
+          ? candidate.zone
+          : fallback.zone,
       size: candidate.size && definition.allowedSizes.includes(candidate.size) ? candidate.size : fallback.size,
-      visible: typeof candidate.visible === "boolean" ? candidate.visible : fallback.visible,
+      visible:
+        candidate.cardId === "next-actions"
+          ? false
+          : typeof candidate.visible === "boolean"
+            ? candidate.visible
+            : fallback.visible,
       position: Number.isFinite(candidate.position) ? Number(candidate.position) : fallback.position,
     });
   }
@@ -62,6 +80,7 @@ function sortPlacements(placements: OverviewCardPlacement[]) {
 function preferredRevealZone(cardId: OverviewCardId): OverviewDashboardZone | null {
   const definition = getOverviewCardDefinition(cardId);
   if (!definition) return null;
+  if (definition.defaultSize === "small" && definition.zone.includes("hero")) return "hero";
   if (definition.zone.includes("primary")) return "primary";
   if (definition.zone.includes("hero")) return "hero";
   if (definition.zone.includes("secondary")) return "secondary";

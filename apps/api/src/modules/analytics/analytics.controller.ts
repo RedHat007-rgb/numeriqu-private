@@ -123,6 +123,48 @@ export class AnalyticsController {
         currency: org.currency,
       }));
 
+    const rangeRevenueByOrg = new Map(
+      Array.from(orgMap.entries()).map(([orgId, org]) => [
+        orgId,
+        {
+          revenue: Math.round(org.revenue),
+          invoices: org.invoices,
+          currency: org.currency,
+        },
+      ]),
+    );
+
+    const connectedOrgs =
+      (profile.connectedOrgs ?? []).length > 0
+        ? (profile.connectedOrgs ?? [])
+            .map((org) => {
+              const rangeScoped = rangeRevenueByOrg.get(org.orgId);
+              return {
+                orgName: org.orgName,
+                provider: org.provider,
+                totalRevenue: rangeScoped?.revenue ?? Math.round(org.totalRevenue),
+                invoiceCount: rangeScoped?.invoices ?? org.invoiceCount,
+                currency: rangeScoped?.currency ?? org.currency,
+              };
+            })
+            .sort((a, b) => b.totalRevenue - a.totalRevenue || b.invoiceCount - a.invoiceCount)
+        : orgBreakdown.map((org) => ({
+            orgName: org.name,
+            provider: org.provider ?? 'UNKNOWN',
+            totalRevenue: org.value,
+            invoiceCount: org.invoiceCount ?? 0,
+            currency: org.currency ?? 'USD',
+          }));
+
+    const providerCount =
+      profile.revenue.providerCount > 0
+        ? profile.revenue.providerCount
+        : new Set((profile.connectedOrgs ?? []).map((org) => org.provider)).size;
+    const orgCount =
+      profile.revenue.orgCount > 0
+        ? profile.revenue.orgCount
+        : (profile.connectedOrgs ?? []).length;
+
     const chartRevenue = monthlyChart.reduce((s, m) => s + (m.revenue || 0), 0);
     // profile.revenue.totalRevenue is authoritative (from GL trial balance for sample orgs,
     // from invoice aggregation for real orgs). Fall back to chart sum only if profile has none.
@@ -153,8 +195,8 @@ export class AnalyticsController {
         openInvoiceCount,
         overdueAmount,
         overdueCount,
-        orgCount: orgBreakdown.length,
-        providerCount: new Set(orgBreakdown.map((o) => o.provider)).size,
+        orgCount,
+        providerCount,
       },
       venture: {
         burnRate: profile.ventureMetrics?.burnRate ?? 0,
@@ -172,7 +214,7 @@ export class AnalyticsController {
         })),
         cashflowWaterfall: [],
       },
-      connectedOrgs: orgBreakdown,
+      connectedOrgs,
       insights: [],
       meta: {
         computedAt: new Date().toISOString(),

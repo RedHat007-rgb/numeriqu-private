@@ -206,6 +206,17 @@ describe('EBPO compiler — aggregation correctness', () => {
 });
 
 describe('EBPO compiler — shapes', () => {
+  test('explicit donut of a signed monthly flow compiles as period-magnitude composition with raw values preserved', async () => {
+    const sql = await sqlFor(
+      base({ measure: 'investing_cf', dimension: 'month', chartType: 'donut' }),
+    );
+    expect(sql).toContain('AS raw_value');
+    expect(sql).toContain('abs(');
+    expect(sql).toContain('AS value');
+    expect(sql).toContain('ORDER BY __ord ASC');
+    expect(sql).toContain('WHERE value > 0');
+  });
+
   test('KPI (no dimension) selects a single value with no GROUP BY', async () => {
     const r = await compileEbpoSpec({ measure: 'total_revenue', dimension: '', chartType: 'kpi' } as ChartSpec, DB, noRows);
     expect(r.ok).toBe(true);
@@ -742,6 +753,32 @@ describe('EBPO catalog — extended DAX measures (added, old ones preserved)', (
     expect(sql).toContain('(sum(total_cost_usd) + sum(total_payroll_usd))');
     // absolute additive → no "/ nullIf(... ) * 100" ratio tail
     expect(sql).not.toMatch(/\* 100/);
+  });
+
+  test('total_expenses by client compiles from the client expense semantic view', async () => {
+    const sql = await sqlFor(base({ measure: 'total_expenses', dimension: 'client', chartType: 'bar' }));
+    expect(sql).toContain('analytics.v_ebpo_revenue_expense_by_client');
+    expect(sql).toContain('sum(total_expenses_usd)');
+  });
+
+  test('revenue versus expenses by client over recent months uses the monthly client expense view', async () => {
+    const r = await compileEbpoSpec(
+      base({
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'total_expenses'],
+        dimension: 'client',
+        chartType: 'scatter',
+        recentMonths: 8,
+      }),
+      DB,
+      noRows,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.sql).toContain('analytics.v_ebpo_revenue_expense_by_client_monthly');
+      expect(r.sql).toContain('sum(total_expenses_usd)');
+      expect(r.sql).toContain('AS y');
+    }
   });
 
   // Expense to Revenue % = (cost + payroll) / revenue (composite-numerator ratio-of-sums).

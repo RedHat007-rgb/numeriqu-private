@@ -518,6 +518,56 @@ function semanticViewDdls(db: string) {
       WINDOW w AS (PARTITION BY tenant_id, org_id ORDER BY period_date ASC ROWS BETWEEN 12 PRECEDING AND CURRENT ROW)
     `,
     `
+      CREATE VIEW ${db}.v_ebpo_revenue_expense_by_client_monthly AS
+      SELECT
+        revenue.tenant_id AS tenant_id,
+        revenue.org_id AS org_id,
+        any(revenue.org_name) AS org_name,
+        dates.date AS period_date,
+        dates.year AS year,
+        dates.quarter AS quarter,
+        dates.month AS month,
+        dates.month_name AS month_name,
+        clients.client_name AS client_name,
+        clients.industry AS industry,
+        round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+        round(sum(revenue.cost_usd), 2) AS total_cost_usd,
+        round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+        round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct,
+        round(sum(revenue.cost_usd) + coalesce(any(payroll.total_payroll_usd), 0), 2) AS total_expenses_usd,
+        round((sum(revenue.cost_usd) + coalesce(any(payroll.total_payroll_usd), 0)) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS expense_to_revenue_pct
+      FROM ${db}.ebpo_fact_revenue revenue
+      INNER JOIN ${db}.ebpo_dim_date dates
+        ON dates.tenant_id = revenue.tenant_id AND dates.org_id = revenue.org_id AND dates.date_key = revenue.date_key
+      INNER JOIN ${db}.ebpo_dim_client clients
+        ON clients.tenant_id = revenue.tenant_id AND clients.org_id = revenue.org_id AND clients.client_key = revenue.client_key
+      LEFT JOIN (
+        SELECT tenant_id, org_id, date_key, sum(total_payroll_usd) AS total_payroll_usd
+        FROM ${db}.ebpo_fact_payroll
+        GROUP BY tenant_id, org_id, date_key
+      ) payroll
+        ON payroll.tenant_id = revenue.tenant_id AND payroll.org_id = revenue.org_id AND payroll.date_key = revenue.date_key
+      GROUP BY revenue.tenant_id, revenue.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name,
+        clients.client_name, clients.industry
+    `,
+    `
+      CREATE VIEW ${db}.v_ebpo_revenue_expense_by_client AS
+      SELECT
+        monthly.tenant_id AS tenant_id,
+        monthly.org_id AS org_id,
+        any(monthly.org_name) AS org_name,
+        monthly.client_name AS client_name,
+        monthly.industry AS industry,
+        round(sum(monthly.total_revenue_usd), 2) AS total_revenue_usd,
+        round(sum(monthly.total_cost_usd), 2) AS total_cost_usd,
+        round(sum(monthly.gross_margin_usd), 2) AS gross_margin_usd,
+        round(sum(monthly.gross_margin_usd) / nullIf(sum(monthly.total_revenue_usd), 0) * 100, 2) AS gross_margin_pct,
+        round(sum(monthly.total_expenses_usd), 2) AS total_expenses_usd,
+        round(sum(monthly.total_expenses_usd) / nullIf(sum(monthly.total_revenue_usd), 0) * 100, 2) AS expense_to_revenue_pct
+      FROM ${db}.v_ebpo_revenue_expense_by_client_monthly monthly
+      GROUP BY monthly.tenant_id, monthly.org_id, monthly.client_name, monthly.industry
+    `,
+    `
       CREATE VIEW ${db}.v_ebpo_revenue_by_client AS
       SELECT
         revenue.tenant_id AS tenant_id,
@@ -1040,6 +1090,8 @@ async function recreateSemanticViews(client: ReturnType<typeof createClickHouseC
     "v_ebpo_department_efficiency_monthly",
     "v_ebpo_business_unit_efficiency",
     "v_ebpo_delivery_center_efficiency_monthly",
+    "v_ebpo_revenue_expense_by_client",
+    "v_ebpo_revenue_expense_by_client_monthly",
     "v_ebpo_revenue_monthly",
     "v_ebpo_revenue_by_client",
     "v_ebpo_revenue_by_client_contract",

@@ -143,7 +143,7 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     'sum',
     'flow',
     undefined,
-    ['cost', 'expense'],
+    ['cost', 'cost of revenue', 'cogs'],
   ),
   gross_margin: M(
     'gross_margin',
@@ -368,7 +368,17 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     agg: 'sum',
     kind: 'flow',
     decimals: 0,
-    aliases: ['total expense', 'cost plus payroll', 'cost and payroll'],
+    aliases: [
+      'expense',
+      'expenses',
+      'total expense',
+      'operating expense',
+      'operating expenses',
+      'overhead',
+      'overheads',
+      'cost plus payroll',
+      'cost and payroll',
+    ],
     derived: { num: { add: ['total_cost', 'total_payroll'] } },
   },
   // Trial-balance expense movement at the account grain. The General Ledger fact is
@@ -1161,6 +1171,32 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     },
   },
   {
+    name: 'v_ebpo_revenue_expense_by_client',
+    hasTime: false,
+    dims: ['client', 'industry'],
+    measures: {
+      total_revenue: 'total_revenue_usd',
+      total_cost: 'total_cost_usd',
+      gross_margin: 'gross_margin_usd',
+      total_expenses: 'total_expenses_usd',
+      expense_to_revenue_pct: 'expense_to_revenue_pct',
+      no_clients: 'client_name',
+    },
+  },
+  {
+    name: 'v_ebpo_revenue_expense_by_client_monthly',
+    hasTime: true,
+    dims: ['client', 'industry'],
+    measures: {
+      total_revenue: 'total_revenue_usd',
+      total_cost: 'total_cost_usd',
+      gross_margin: 'gross_margin_usd',
+      total_expenses: 'total_expenses_usd',
+      expense_to_revenue_pct: 'expense_to_revenue_pct',
+      no_clients: 'client_name',
+    },
+  },
+  {
     name: 'v_ebpo_revenue_by_client',
     hasTime: false,
     dims: ['client', 'industry'],
@@ -1940,7 +1976,8 @@ export function validateEbpoSpec(
       (ct === 'pie' || ct === 'donut') &&
       dimId &&
       EBPO_DIMENSIONS[dimId]?.isTime &&
-      !spec.breakdown
+      !spec.breakdown &&
+      !allowsTimeCompositionPieDonut(spec, EBPO_MEASURES[measures[0]!] ?? null)
     ) {
       const m = EBPO_MEASURES[measures[0]!];
       const alt = measures[0] ? ebpoAlternativeClause(measures[0]!) : '';
@@ -2116,6 +2153,21 @@ export function effectiveEbpoChartType(spec: ChartSpec): string {
   return spec.chartType ?? 'bar';
 }
 
+const allowsTimeCompositionPieDonut = (
+  spec: ChartSpec,
+  measure: EbpoMeasureDef | null | undefined,
+): boolean => {
+  const ct = String(spec.chartType ?? '').toLowerCase();
+  if (ct !== 'pie' && ct !== 'donut') return false;
+  const dimId = String(spec.dimension ?? '');
+  if (!dimId || spec.breakdown) return false;
+  if (!EBPO_DIMENSIONS[dimId]?.isTime) return false;
+  // If the measure only exists as a period series, interpret an explicit pie/donut
+  // as "share of total magnitude by period" instead of refusing outright. Keep this
+  // limited to additive flow measures so rates/averages never become fake slices.
+  return measure?.kind === 'flow';
+};
+
 // ─── Compile ──────────────────────────────────────────────────────────────────
 export async function compileEbpoSpec(
   spec: ChartSpec,
@@ -2190,6 +2242,13 @@ export async function compileEbpoSpec(
       // Scorecard: each card can resolve from its own semantic provider. Requiring
       // one physical view for unrelated KPIs (for example margin + people
       // efficiency) incorrectly rejects valid executive scorecards.
+      // Part-to-whole (pie/donut) of component MEASURES: size each slice by the
+      // ABSOLUTE component value and carry the signed raw_value for labelling, so a
+      // composition that mixes positive and negative components (e.g. operating vs
+      // investing vs financing cash flow) renders the way Power BI draws it instead
+      // of refusing or dropping the negative slices.
+      const ctNoDim = String(spec.chartType ?? '').toLowerCase();
+      const partToWhole = ctNoDim === 'pie' || ctNoDim === 'donut';
       const sql =
         measures
           .map((mid) => {
@@ -2203,7 +2262,11 @@ export async function compileEbpoSpec(
               m.kind === 'stock' && view.hasTime,
             );
             const label = quoteLit(m.label);
-            return `SELECT ${label} AS name, ${label} AS label, ${valueExprFor(m, view)} AS value, ${quoteLit(m.format)} AS format FROM ${db}.${view.name} WHERE ${where}`;
+            const valExpr = valueExprFor(m, view);
+            const valueCols = partToWhole
+              ? `${valExpr} AS raw_value, abs(${valExpr}) AS value`
+              : `${valExpr} AS value`;
+            return `SELECT ${label} AS name, ${label} AS label, ${valueCols}, ${quoteLit(m.format)} AS format FROM ${db}.${view.name} WHERE ${where}`;
           })
           .join('\nUNION ALL\n') + `\nLIMIT ${topN}`;
       return {
@@ -2381,6 +2444,8 @@ export async function compileEbpoSpec(
 
   const dim = dimSql(dimId);
   let baseSql: string;
+  const timeCompositionPieDonut =
+    allowsTimeCompositionPieDonut(spec, measure) && dim.isTime && !bdId;
 
   if (!bdId) {
     const where = buildWhere(
@@ -2392,7 +2457,15 @@ export async function compileEbpoSpec(
       recentMonths,
     );
     const having = havingExpr ? ` HAVING ${havingExpr}` : '';
-    if (dim.isTime) {
+    if (timeCompositionPieDonut) {
+      const rawValue = value;
+      const magnitudeValue = `abs(${rawValue})`;
+      baseSql =
+        `SELECT * EXCEPT (__ord) FROM (` +
+        `SELECT ${dim.label} AS name, ${rawValue} AS raw_value, ${magnitudeValue} AS value, ${dim.group} AS __ord ` +
+        `FROM ${tbl} WHERE ${where} GROUP BY ${dim.group}${having} ` +
+        `ORDER BY __ord DESC LIMIT ${topN}) WHERE value > 0 ORDER BY __ord ASC`;
+    } else if (dim.isTime) {
       // Time series: a capped topN means the MOST RECENT N periods ("last 8 months"),
       // never the earliest N. Take the latest N (ORDER BY period DESC), then re-sort
       // ascending for display. When topN ≥ the available periods this returns all of
@@ -2835,13 +2908,14 @@ export function ebpoCatalogPromptText(): string {
     'COMBO / MULTI-MEASURE: to plot several measures together — "compare X and Y", "X as columns and Y as a line", "add Z as a comparison line", clustered bars of two measures — set "measures": [id1, id2, ...] (each from the list above; the first should equal "measure") and usually chartType "combo". All chosen measures must share a grain (e.g. all monthly). Do NOT combine "measures" with "breakdown".',
     'SPLIT INTO LISTED MEASURES: when the user says "split into A, B, C" and A/B/C are measure names or aliases (for example payroll split into base salary, overtime, bonus, benefits), use "measures": [...] with a shared dimension such as month. Do not use "breakdown" unless the split is by a dimension such as department, client, country, vendor, or business unit.',
     'KPI / SCORECARD: for a scorecard or KPI-card request, use chartType "kpi", omit dimension, and put every requested metric in "measures". This produces one card row per measure from the same semantic view.',
-    'COMPONENTS AS PIE/DONUT: "pie/donut of <X> components" or "pie of A, B, C" where A/B/C are MEASURES (e.g. cash flow components = operating_cf, investing_cf, financing_cf) → set measures=[the components], NO dimension and NO time axis (a pie shows a composition at a point, never a monthly series). IMPORTANT: a pie/donut can only show non-negative parts of a whole — if any component can be negative (investing_cf and financing_cf are typically negative), use chartType "bar" instead so the signs are visible. Revenue-vs-cost as a "pie" is likewise better as a bar (two separate totals, not parts of one whole).',
+    'COMPONENTS AS PIE/DONUT: "pie/donut of <X> components" or "pie of A, B, C" where A/B/C are MEASURES (e.g. cash flow components = operating_cf, investing_cf, financing_cf) → set measures=[the components], NO dimension and NO time axis (a pie shows a composition at a point, never a monthly series). HONOR the part-to-whole chart type the user explicitly names: when they ask for a "pie" or "donut", emit that chartType — the compiler sizes each slice by the ABSOLUTE value of its component and labels it with the true signed amount and share, exactly the way Power BI does, so components that can be negative (investing_cf, financing_cf) are SHOWN, never refused or silently downgraded. Only fall back to "bar"/"column" when the user did NOT name a part-to-whole type. The same applies to "revenue versus cost" as a pie — honor the requested type.',
+    'SINGLE CASH-FLOW PIE/DONUT: a pie or donut of ONE cash-flow measure (e.g. "donut showing investing cash flow", "pie of operating cash flow") means that measure\'s composition BY MONTH — set dimension="month" and keep the requested chartType "pie"/"donut". The compiler sizes each monthly slice by its ABSOLUTE value and labels the true signed amount and share, exactly like Power BI. NEVER refuse such a request because the monthly cash-flow values are negative — investing_cf and financing_cf are routinely negative and Power BI shows them as signed slices.',
     'SCATTER / BUBBLE: for "X versus Y by <entity>" set dimension=<entity> and measures=[xId, yId] with chartType "scatter". For "size each bubble by W" add the size measure: measures=[xId, yId, sizeId] with chartType "bubble". All measures must come from one view that also has the entity dimension.',
     'DIMENSIONS (pick one as "dimension"; optionally one as "breakdown" for a single-measure series split; omit "dimension" for a single KPI value):',
     dims,
     'NOTE: REVENUE / COST / GROSS MARGIN have NO GEOGRAPHY relationship in this dataset — the revenue fact is booked only by client, business unit, and contract type (and month). There is NO "revenue by country / region / city / delivery center" — do NOT invent one; emit your best spec and the deterministic compiler will honestly refuse it. OPERATIONS metrics (SLA/CSAT/utilization, calls, tickets, AHT) are available by delivery center / geography, and SLA/CSAT/utilization are also available by department through a weighted delivery-center headcount bridge. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
     'PROFIT MEASURES: "operating profit", "operating income", "net profit", "net income", "EBITDA" → use measure "ebitda" (= revenue − cost − payroll, an absolute $; in this dataset it is negative because payroll is large). "operating profit margin", "net profit margin", "net margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct". The full rev−cost−payroll figure only resolves where revenue, cost, and payroll coexist in the same verified grain: company/month. Payroll is NOT booked by business unit, client, contract type, industry, or revenue geography, so EBITDA by those dimensions must refuse honestly instead of substituting gross margin.',
-    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses" → use measure "total_expenses" (= Total Cost + Total Payroll), available company-wide and by month. IMPORTANT: the dataset still has trial-balance account data, so account/account-category/account-type expense asks are data-backed through the account views when they stay at the company/account grain. "SG&A" maps to that same real expense-account grain (the trial-balance expense accounts), not to a separate named measure. But there is NO client×account bridge, and no revenue-fact-by-department grain — refuse those impossible cross-grain joins honestly. "total_cost" is specifically COST OF REVENUE, only for revenue-vs-cost / gross-margin asks — do NOT use it for a generic "expense" request unless the user explicitly compares revenue vs expenses by a revenue-grained entity (client / business unit / contract type), where cost of revenue is the only attributable expense data.',
+    'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses" → use measure "total_expenses" (= Total Cost + Total Payroll). IMPORTANT: the dataset still has trial-balance account data, so account/account-category/account-type expense asks are data-backed through the account views when they stay at the company/account grain. "SG&A" maps to that same real expense-account grain (the trial-balance expense accounts), not to a separate named measure. But there is NO client×account bridge, and no revenue-fact-by-department grain — refuse those impossible cross-grain joins honestly. "total_cost" is specifically COST OF REVENUE, only for explicit cost / COGS / gross-margin asks. Do NOT silently substitute total_cost for a generic "expense" request.',
     'CLIENTS: "number of clients / how many clients / client count" → measure "no_clients" (a DISTINCTCOUNT). "average/avg revenue per client" → measure "avg_revenue_per_client". "client RANK / rank clients / top N clients" is NOT a measure — plot the underlying measure (usually total_revenue) by dimension "client" with sort:"value_desc" (or "value_asc" for the bottom) and topN. "revenue contribution % / share of total company revenue / revenue concentration" is the company_share TRANSFORM on total_revenue by client, not a separate measure.',
     'FIXED ASSETS ARE POINT-IN-TIME: the fixed-asset measures (asset_cost, net_book_value, accumulated_depreciation, depreciation_pct, asset_count) have NO monthly/time series — there is no month/quarter/year dimension for them. Never give an asset measure a time dimension. A request about "changes in assets", "asset movement", or an asset waterfall/bar/breakdown means the COMPOSITION across a category: set dimension to asset_type (default), delivery_center, country, or region — e.g. "waterfall showing changes in assets" → {measure:"asset_cost", dimension:"asset_type", chartType:"waterfall"}.',
     `NOT AVAILABLE (if the request needs any of these, return a refusal): ${unavailable}.`,

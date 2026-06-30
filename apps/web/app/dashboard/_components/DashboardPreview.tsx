@@ -719,13 +719,19 @@ const PieTooltip = ({ active, payload, metric, grouping, labelMode }: any) => {
   const entry = payload[0];
   const total = entry?.payload?.total;
   const pct = total ? ((entry.value / total) * 100).toFixed(1) : null;
+  const displayValue =
+    typeof entry?.payload?.rawValue === "number"
+      ? entry.payload.rawValue
+      : typeof entry?.payload?.raw_value === "number"
+        ? entry.payload.raw_value
+        : entry.value;
   return (
     <div className="rounded-xl border border-default bg-bg-card/95 p-3 shadow-2xl backdrop-blur-sm">
       <p className="text-xs font-bold text-text-primary">{entry.name}</p>
       <p className="text-xs text-text-secondary">
-        {typeof entry.value === "number"
-          ? formatValue(String(metric ?? ""), String(grouping ?? ""), entry.value)
-          : entry.value}
+        {typeof displayValue === "number"
+          ? formatValue(String(metric ?? ""), String(grouping ?? ""), displayValue)
+          : displayValue}
         {pct && labelMode !== "value" ? ` · ${pct}%` : ""}
       </p>
     </div>
@@ -3003,7 +3009,16 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       return Object.keys(row).find((k) => k !== "value" && typeof row[k] === "string") ?? "name";
     })();
     const cleaned = data
-      .map((d) => ({ ...d, name: String((d as any)[labelKey] ?? (d as any).name ?? ""), value: Number((d as any).value) || 0 }))
+      .map((d) => {
+        const rawValue = Number((d as any).raw_value);
+        const fallbackValue = Number((d as any).value) || 0;
+        return {
+          ...d,
+          name: String((d as any)[labelKey] ?? (d as any).name ?? ""),
+          rawValue: Number.isFinite(rawValue) ? rawValue : fallbackValue,
+          value: Math.abs(fallbackValue),
+        };
+      })
       .filter((d) => d.value > 0);
     const total = cleaned.reduce((s, d) => s + d.value, 0);
     const enriched = cleaned.map((d) => ({ ...d, total }));
@@ -3035,6 +3050,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       outerRadius,
       percent,
       value,
+      payload,
     }: any) => {
       if (percent < 0.06) return null;
       const RADIAN = Math.PI / 180;
@@ -3043,7 +3059,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       const y = cy + r * Math.sin(-midAngle * RADIAN);
       const labelText =
         labelMode === "value"
-          ? fmtVal(Number(value) || 0)
+          ? fmtVal(Number((payload as any)?.rawValue ?? value) || 0)
           : fmtPercent((Number(percent) || 0) * 100);
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
@@ -3173,11 +3189,15 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const donutData = data
       .map((d) => ({
         name: String((d as any)[labelKey] ?? (d as any).name ?? ""),
+        rawValue: Number.isFinite(Number((d as any).raw_value))
+          ? Number((d as any).raw_value)
+          : Number((d as any).value) || 0,
         value: Math.abs(Number((d as any).value) || 0),
       }))
       .filter((d) => d.value > 0);
     const donutTotal = donutData.reduce((s, d) => s + d.value, 0);
     const donutDataWithTotal = donutData.map((d) => ({ ...d, total: donutTotal }));
+    const donutHasSignedSlices = donutDataWithTotal.some((d) => (Number(d.rawValue) || 0) < 0);
     // "Highlight the highest/lowest" → ring the extreme slice (gold max / blue min).
     const donutExtremes = chart.config.display?.highlightExtremes ?? null;
     let donutMaxIdx = -1;
@@ -3205,6 +3225,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       outerRadius,
       percent,
       value,
+      payload,
     }: any) => {
       if (percent < 0.07) return null;
       const RADIAN = Math.PI / 180;
@@ -3213,7 +3234,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       const y = cy + r * Math.sin(-midAngle * RADIAN);
       const labelText =
         labelMode === "value"
-          ? fmtVal(Number(value) || 0)
+          ? fmtVal(Number((payload as any)?.rawValue ?? value) || 0)
           : fmtPercent((Number(percent) || 0) * 100);
       return (
         <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
@@ -3227,7 +3248,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
       <div style={{ height: h + (isExpanded ? 0 : 20), width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            {donutTotal > 0 && (
+            {donutTotal > 0 && !donutHasSignedSlices && (
               <text x="50%" y={isExpanded ? "50%" : "46%"} textAnchor="middle" dominantBaseline="central"
                 fill="rgb(var(--color-text-primary))" fontSize={isExpanded ? 13 : 11} fontWeight={700}>
                 {fmtSeriesValue(donutTotal, "value", chart.config.display?.valueFormat ?? null)}
@@ -3530,12 +3551,13 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const specDim = (chart.config as { spec?: { dimension?: string } }).spec?.dimension;
     // When the columns are several DIFFERENT measures (e.g. Revenue, Cost, Gross Margin)
     // rather than periods/categories of one measure, a per-row total across the columns is
-    // meaningless — summing revenue + cost + gross margin is nonsense (it equals 2× revenue
-    // since margin = revenue − cost). Suppress the row-total column and the corner grand
-    // total in that case; the column totals (each measure summed down its own column) stay
-    // valid. A single-measure matrix (one measure pivoted across two axes) keeps both.
+    // usually meaningless — summing revenue + cost + gross margin is nonsense (it equals
+    // 2× revenue since margin = revenue − cost). By default we suppress those totals, but
+    // if the user explicitly asked for row/grand totals we honor that display request.
     const specMeasures = (chart.config as { spec?: { measures?: string[] } }).spec?.measures;
     const multiMeasureColumns = Array.isArray(specMeasures) && specMeasures.length > 1;
+    const forceTotals = chart.config.display?.showTotals === true;
+    const showTotals = !multiMeasureColumns || forceTotals;
     const groupingToken = String(chart.config.grouping ?? "").split("_")[0] ?? "";
     const placeholder = /^(dynamic|query|row|name|)$/i;
     const rowAxis =
@@ -3690,7 +3712,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   {prettyAxis(key)}
                 </th>
               ))}
-              {!multiMeasureColumns && (
+              {showTotals && (
                 <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
                   {summaryHeader}
                 </th>
@@ -3742,7 +3764,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                       </td>
                     );
                   })}
-                  {!multiMeasureColumns && (
+                  {showTotals && (
                     <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
                       {amount(rowTotals[rowIndex] ?? 0)}
                     </td>
@@ -3762,7 +3784,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   {amount(value)}
                 </td>
               ))}
-              {!multiMeasureColumns && (
+              {showTotals && (
                 <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
                   {amount(grandTotal)}
                 </td>

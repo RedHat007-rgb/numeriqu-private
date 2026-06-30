@@ -273,7 +273,7 @@ function HiddenCardTray({
         <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-text-muted">
           Add cards
         </span>
-        {hiddenCards.slice(0, 8).map((entry) => (
+        {hiddenCards.map((entry) => (
           <button
             key={entry.definition.id}
             type="button"
@@ -385,6 +385,14 @@ export function OverviewPage() {
   const revenueDelta = last && prev ? trendDelta(last.revenue, prev.revenue) : null;
   const invoiceDelta = last && prev ? trendDelta(last.invoices, prev.invoices) : null;
   const profitDelta = last && prev ? trendDelta(last.revenue - last.expenses, prev.revenue - prev.expenses) : null;
+  const connectedOrgCount = dashboard.connectedOrgs.length;
+  const providerCount = dashboard.kpis.providerCount;
+  const topEntity = dashboard.connectedOrgs[0] ?? null;
+  const avgEntityRevenue = connectedOrgCount > 0 ? dashboard.kpis.totalRevenue / connectedOrgCount : 0;
+  const collectionRiskRatio =
+    (dashboard.kpis.openInvoiceAmount ?? 0) > 0
+      ? dashboard.kpis.overdueAmount / (dashboard.kpis.openInvoiceAmount ?? 1)
+      : null;
 
   const renderCard = (cardId: OverviewCardId) => {
     switch (cardId) {
@@ -461,6 +469,46 @@ export function OverviewPage() {
             eyebrow="Burn Rate"
             value={formatMoneyWithCurrency(dashboard.venture.burnRate, prefs.currencyDisplay)}
             detail="Current monthly spend pressure"
+          />
+        );
+      case "entity-count":
+        return (
+          <MetricTile
+            eyebrow="Entities"
+            value={formatNumber(connectedOrgCount)}
+            detail={`${providerCount} provider${providerCount === 1 ? "" : "s"} feeding the backend`}
+          />
+        );
+      case "provider-coverage":
+        return (
+          <MetricTile
+            eyebrow="Coverage"
+            value={formatNumber(providerCount)}
+            detail={`${formatNumber(connectedOrgCount)} connected entit${connectedOrgCount === 1 ? "y" : "ies"} in scope`}
+          />
+        );
+      case "collection-risk":
+        return (
+          <MetricTile
+            eyebrow="Collection Risk"
+            value={collectionRiskRatio === null ? "0%" : formatPercentDelta(collectionRiskRatio)}
+            detail={`${formatNumber(dashboard.kpis.overdueCount)} overdue of ${formatNumber(dashboard.kpis.openInvoiceCount ?? 0)} open invoices`}
+          />
+        );
+      case "largest-entity":
+        return (
+          <MetricTile
+            eyebrow="Largest Entity"
+            value={formatMoneyWithCurrency(topEntity?.totalRevenue ?? 0, prefs.currencyDisplay)}
+            detail={topEntity ? `${topEntity.orgName} · ${topEntity.provider}` : "No connected entities in scope yet"}
+          />
+        );
+      case "avg-entity-revenue":
+        return (
+          <MetricTile
+            eyebrow="Avg Entity Revenue"
+            value={formatMoneyWithCurrency(avgEntityRevenue, prefs.currencyDisplay)}
+            detail="Average revenue across connected entities"
           />
         );
       case "efficiency":

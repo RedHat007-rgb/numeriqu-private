@@ -1,0 +1,32 @@
+[
+ {
+  "id": 8,
+  "section": "Jeevan flagged",
+  "main": "Generate a scatter chart showing DSO by client",
+  "followup": "In the same chart, compare countries."
+ },
+ {
+  "id": 11,
+  "section": "Jeevan flagged",
+  "main": "Generate a pie chart showing cash flow components",
+  "followup": "In the same chart, show operating, investing, and financing cash flows together."
+ },
+ {
+  "id": 13,
+  "section": "Jeevan flagged",
+  "main": "Create a stacked column chart showing financing cash flow",
+  "followup": "In the same chart, display contribution percentages of each cash flow component."
+ },
+ {
+  "id": 14,
+  "section": "Jeevan flagged",
+  "main": "Generate a donut chart showing investing cash flow",
+  "followup": "In the same chart, add free cash flow as a secondary measure."
+ },
+ {
+  "id": 23,
+  "section": "Jeevan flagged",
+  "main": "Create a stacked column chart showing gross margin by industry",
+  "followup": "In the same chart, add revenue YoY growth."
+ }
+]

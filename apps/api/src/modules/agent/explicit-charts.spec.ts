@@ -828,6 +828,91 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.display?.labelSeries).toBe('Total Revenue Label');
   });
 
+  test('rebuilds cash-flow component percentage follow-ups as a real component-share chart', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        {
+          name: 'Jan 2025',
+          'Operating Cash Flow %': 52.4,
+          'Investing Cash Flow %': 21.1,
+          'Financing Cash Flow %': 26.5,
+        },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoComboEditPlan(
+      [
+        {
+          index: 0,
+          w: { chartType: 'stacked_bar', title: 'Financing Cash Flow', queryConfig: {} },
+          spec: { measure: 'financing_cf', dimension: 'month', chartType: 'stacked_bar' },
+        },
+      ],
+      'In the same chart, display contribution percentages of each cash flow component.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.modify).toHaveLength(1);
+    expect(plan?.modify[0]?.type).toBe('stacked_bar');
+    expect(plan?.modify[0]?.title).toBe('Cash Flow Component Contribution by Month');
+    expect(plan?.modify[0]?.display).toEqual(
+      expect.objectContaining({ valueFormat: 'percent', valueDecimals: 1 }),
+    );
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Operating Cash Flow %');
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Investing Cash Flow %');
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Financing Cash Flow %');
+  });
+
+  test('rebuilds gross-margin-by-industry follow-ups with revenue yoy growth from the monthly client industry view', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        {
+          name: 'Banking BPO',
+          'Gross Margin': 1200000,
+          'Revenue YoY Growth %': 24.5,
+        },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoComboEditPlan(
+      [
+        {
+          index: 0,
+          w: { chartType: 'stacked_bar', title: 'Gross Margin by Industry', queryConfig: {} },
+          spec: { measure: 'gross_margin', dimension: 'industry', chartType: 'stacked_bar' },
+        },
+      ],
+      'In the same chart, add revenue YoY growth.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.modify).toHaveLength(1);
+    expect(plan?.modify[0]?.type).toBe('combo');
+    expect(plan?.modify[0]?.display).toEqual(
+      expect.objectContaining({
+        valueFormat: 'currency',
+        secondaryAxisFormat: 'percent',
+        secondaryLabel: 'Revenue YoY Growth %',
+      }),
+    );
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('v_ebpo_revenue_expense_by_client_monthly');
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Revenue YoY Growth %');
+  });
+
   test('treats overall percent reference-line follow-ups as average reference lines', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -1715,6 +1800,177 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     ]);
   });
 
+  test('refuses revenue-versus-expenses by client instead of plotting total cost as expenses', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Dell', x: 54132993.54, y: 1056451 }],
+      error: null,
+    });
+
+    const plan = await svc.specToPlan(
+      {
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'total_cost'],
+        dimension: 'client',
+        chartType: 'scatter',
+        recentMonths: 8,
+      },
+      'Revenue vs Expenses by Client',
+      true,
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+      'Generate a scatter chart showing revenue versus expenses for all clients over the last 8 months',
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget._spec?.measures).toEqual(['total_revenue', 'total_expenses']);
+    expect(widget._sql).toContain('v_ebpo_revenue_expense_by_client_monthly');
+    expect(widget._sql).toContain('sum(total_expenses_usd)');
+  });
+
+  test('refuses largest-client monthly revenue and expenses instead of substituting total cost', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.listTopClientsForScope = async () => ['AT&T'];
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 5000 }],
+      error: null,
+    });
+
+    const plan = await svc.specToPlan(
+      {
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'total_cost'],
+        dimension: 'month',
+        chartType: 'stacked_bar',
+        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+      },
+      'Monthly Revenue and Expenses — Largest Client',
+      true,
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+      'Create a stacked column chart showing monthly revenue and expenses for the largest client',
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget._spec?.measures).toEqual(['total_revenue', 'total_expenses']);
+    expect(widget._sql).toContain('v_ebpo_revenue_expense_by_client_monthly');
+    expect(widget._sql).toContain('sum(total_expenses_usd)');
+    expect(widget._spec?.recentMonths).toBeUndefined();
+  });
+
+  test('does not force an 8-month window onto largest-client gross-profit-vs-expenses trends', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.listTopClientsForScope = async () => ['JP Morgan'];
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', GrossMargin: 4000, TotalExpenses: 7000 }],
+      error: null,
+    });
+
+    const plan = await svc.specToPlan(
+      {
+        measure: 'gross_margin',
+        measures: ['gross_margin', 'total_expenses'],
+        dimension: 'month',
+        chartType: 'bar',
+        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+      },
+      'Gross Profit vs Expenses by Month — Largest Client',
+      true,
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+      'Generate a bar chart showing gross profit by month for the largest client. In the same chart, compare with monthly expenses.',
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget._spec?.recentMonths).toBeUndefined();
+  });
+
+  test('keeps explicit recent windows for largest-client monthly finance matrices', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.listTopClientsForScope = async () => ['JP Morgan'];
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 700, GrossMargin: 300 }],
+      error: null,
+    });
+
+    const plan = await svc.specToPlan(
+      {
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'total_expenses', 'gross_margin'],
+        dimension: 'month',
+        chartType: 'matrix',
+        recentMonths: 8,
+        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+      },
+      'Monthly Revenue, Expenses, and Gross Profit — Largest Client',
+      true,
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+      'Create a matrix showing monthly revenue, expenses, and gross profit for the largest client over the last 8 months. In the same chart, display row totals and grand totals.',
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget._spec?.recentMonths).toBe(8);
+  });
+
+  test('does not force an 8-month window onto largest-client combo charts unless asked', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.listTopClientsForScope = async () => ['JP Morgan'];
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 700, GrossMargin: 300 }],
+      error: null,
+    });
+
+    const plan = await svc.specToPlan(
+      {
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'total_expenses', 'gross_margin'],
+        dimension: 'month',
+        chartType: 'combo',
+        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+      },
+      'Revenue, Expenses & Gross Margin — Largest Client',
+      true,
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+      'Generate a combo chart showing revenue, expenses, and gross margin for the largest client',
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget._spec?.measures).toEqual(['total_revenue', 'total_expenses', 'gross_margin']);
+    expect(widget._spec?.recentMonths).toBeUndefined();
+  });
+
   test('refuses client-level EBITDA asks with the real missing-grain explanation', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -1784,6 +2040,12 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       svc.negativePieDonutMessage('donut', [
         { name: 'Operating Cash Flow', value: 83500000 },
         { name: 'Financing Cash Flow', value: 3800000 },
+      ]),
+    ).toBeNull();
+    expect(
+      svc.negativePieDonutMessage('donut', [
+        { name: 'Jan 2025', value: 31000000, raw_value: -31000000 },
+        { name: 'Feb 2025', value: 18000000, raw_value: -18000000 },
       ]),
     ).toBeNull();
   });

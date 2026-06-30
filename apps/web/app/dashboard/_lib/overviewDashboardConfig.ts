@@ -11,6 +11,11 @@ export type OverviewCardId =
   | "invoice-volume"
   | "avg-invoice"
   | "burn-rate"
+  | "entity-count"
+  | "provider-coverage"
+  | "collection-risk"
+  | "largest-entity"
+  | "avg-entity-revenue"
   | "efficiency"
   | "cashflow"
   | "invoice-status"
@@ -138,6 +143,61 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
     allowedSizes: ["small", "medium"],
     defaultVisible: false,
     priority: 150,
+  },
+  {
+    id: "entity-count",
+    title: "Entity Count",
+    description: "How many legal entities are currently represented in the backend.",
+    zone: ["secondary", "primary"],
+    defaultZone: "secondary",
+    defaultSize: "small",
+    allowedSizes: ["small", "medium"],
+    defaultVisible: false,
+    priority: 149,
+  },
+  {
+    id: "provider-coverage",
+    title: "Provider Coverage",
+    description: "How many finance systems are actively feeding the workspace.",
+    zone: ["secondary", "primary"],
+    defaultZone: "secondary",
+    defaultSize: "small",
+    allowedSizes: ["small", "medium"],
+    defaultVisible: false,
+    priority: 147,
+  },
+  {
+    id: "collection-risk",
+    title: "Collection Risk",
+    description: "Share of open receivables that are already overdue.",
+    zone: ["secondary", "primary"],
+    defaultZone: "secondary",
+    defaultSize: "small",
+    allowedSizes: ["small", "medium"],
+    defaultVisible: false,
+    priority: 146,
+  },
+  {
+    id: "largest-entity",
+    title: "Largest Entity",
+    description: "The entity contributing the most revenue in the current scope.",
+    zone: ["secondary", "primary"],
+    defaultZone: "secondary",
+    defaultSize: "small",
+    allowedSizes: ["small", "medium"],
+    defaultVisible: false,
+    priority: 145,
+  },
+  {
+    id: "avg-entity-revenue",
+    title: "Avg Entity Revenue",
+    description: "Average revenue generated per connected entity.",
+    zone: ["secondary", "primary"],
+    defaultZone: "secondary",
+    defaultSize: "small",
+    allowedSizes: ["small", "medium"],
+    defaultVisible: false,
+    priority: 144,
   },
   {
     id: "efficiency",

@@ -13150,6 +13150,9 @@ export class AgentService {
     scope: OrgScope,
     query: string,
   ): Promise<SmartPlanResult | null> {
+    if (useEbpo) {
+      spec = this.rewriteEbpoGenericExpenseSpec(spec, String(query).toLowerCase());
+    }
     const invalidPieDonut = this.invalidPieDonutPercentMessage(spec);
     if (invalidPieDonut) {
       return { kind: 'no_data', message: invalidPieDonut };
@@ -13275,6 +13278,9 @@ export class AgentService {
     // so the combo helper below never converts a scatter into a bar/combo.
     const isScatterReq = /\b(scatter|bubble)\b/.test(String(query).toLowerCase());
     const queryLower = String(query).toLowerCase();
+    if (useEbpo) {
+      spec = this.rewriteEbpoGenericExpenseSpec(spec, queryLower);
+    }
     if (
       useEbpo &&
       /\bbox\s+plot\b/.test(queryLower) &&
@@ -13513,17 +13519,13 @@ export class AgentService {
         if (n > 0) spec = { ...spec, recentMonths: n * mult };
       }
     }
-    // DERIVE-BY-ENTITY: some composite measures only resolve company-wide / monthly because
-    // one component is missing at the requested categorical grain. We only substitute a
-    // fallback when the replacement is semantically the SAME requested concept at that
-    // grain. `total_expenses = cost + payroll` can fall back to `total_cost` for entity
-    // charts because the user is still asking for attributable expense. `ebitda` and
-    // `ebitda_style_margin_pct` CANNOT fall back to gross margin: that would silently drop
-    // payroll and misstate the measure. Those now refuse honestly at unsupported grains.
+    // DERIVE-BY-ENTITY: do NOT silently substitute a different measure when a composite
+    // one is unavailable at the requested grain. In particular, `total_expenses =
+    // total_cost + total_payroll` must never degrade to `total_cost`, because that drops
+    // payroll and contradicts the DAX definition. Unsupported grains should refuse
+    // honestly instead of returning a near-match.
     if (useEbpo) {
-      const DERIVE_BY_ENTITY: Record<string, string> = {
-        total_expenses: 'total_cost',
-      };
+      const DERIVE_BY_ENTITY: Record<string, string> = {};
       const groupDims = [
         spec.dimension,
         spec.breakdown,
@@ -13619,14 +13621,6 @@ export class AgentService {
           },
         ],
       };
-    }
-    const wantsSuperlativeClientTrend =
-      /\b(?:largest|biggest|top|second[-\s]?largest|2nd\s+largest)\s+client\b/.test(queryLower) &&
-      this.superlativeClientAskImpliesTimeAxis(queryLower, spec.chartType, spec.dimension) &&
-      !comparesRankedClients &&
-      !spec.recentMonths;
-    if (useEbpo && wantsSuperlativeClientTrend) {
-      spec = { ...spec, recentMonths: 8 };
     }
     // "Compare revenue and expenses for the top 10 clients over the last 8 months"
     // uses the time window as a FILTER, not as the chart axis. Keep this as a
@@ -14093,7 +14087,7 @@ export class AgentService {
         clarification: {
           reason: 'UNSUPPORTED_GRAIN_ALTERNATIVES',
           question:
-            "This dataset can't scope department expenses to a specific client. What would you like to see instead?",
+            "This dataset can't scope department expenses to a specific client. Power BI can still draw that visual by mixing a client filter from revenue with department payroll totals, but that does not produce attributable client-by-department expenses here. What would you like to see instead?",
           options: [
             {
               label: 'Company expenses by department',
@@ -17299,6 +17293,7 @@ export class AgentService {
       [/\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/, 'gross_margin_pct'],
       [/\bgross\s+margin\b/, 'gross_margin'],
       [/\btotal\s+revenue\b|\brevenue\b/, 'total_revenue'],
+      [/\btotal\s+expenses?\b|\boperating\s+expenses?\b|\boverheads?\b|\bexpenses?\b/, 'total_expenses'],
       [/\btotal\s+cost\b|\bcost\b/, 'total_cost'],
       [/\bpayroll\s*(?:to|\/)\s*revenue\b|\bpayroll\s+ratio\b/, 'payroll_to_revenue_pct'],
       [/\btotal\s+payroll\b|\bpayroll\b/, 'total_payroll'],
@@ -17401,6 +17396,32 @@ export class AgentService {
 
     for (const mid of this.detectEbpoMeasureMentions(text)) add(mid);
     return out;
+  }
+
+  private rewriteEbpoGenericExpenseSpec(spec: ChartSpec, queryLower: string): ChartSpec {
+    const asksGenericExpenses =
+      /\b(expense|expenses|operating\s+expense|operating\s+expenses|overhead|overheads)\b/.test(
+        queryLower,
+      );
+    const explicitlyAsksCost =
+      /\b(total\s+cost|cogs|cost\s+of\s+goods|cost\s+of\s+sales|direct\s+cost|indirect\s+cost)\b/.test(
+        queryLower,
+      );
+    if (!asksGenericExpenses || explicitlyAsksCost) return spec;
+
+    const swap = (measureId: string | undefined): string | undefined =>
+      measureId === 'total_cost' ? 'total_expenses' : measureId;
+    const nextMeasure = swap(spec.measure);
+    const nextMeasures = spec.measures?.map((measureId) => swap(measureId) as string);
+    const changed =
+      nextMeasure !== spec.measure ||
+      !!spec.measures?.some((measureId, index) => nextMeasures?.[index] !== measureId);
+    if (!changed) return spec;
+    return {
+      ...spec,
+      ...(spec.measure ? { measure: nextMeasure } : {}),
+      ...(spec.measures ? { measures: nextMeasures } : {}),
+    };
   }
 
   private async compileEbpoMultiMeasureSql(
@@ -18025,6 +18046,63 @@ export class AgentService {
       ).toLowerCase();
       const primaryDimIsTime =
         !normalizeSpecDim || /\b(month|quarter|year|date|period)\b/.test(normalizeSpecDim);
+
+      // "Contribution percentages of each cash flow COMPONENT" on a single cash-flow
+      // series (e.g. a financing-cash-flow column). The components live as separate
+      // measures (operating/investing/financing CF), so a real composition exists once
+      // we expand to the whole family. Re-plan to the 3-component stacked series by
+      // month and normalize — the way Power BI shows the components' share — instead of
+      // refusing because the ORIGINAL chart was a single series.
+      const CASH_FLOW_COMPONENTS = ['operating_cf', 'investing_cf', 'financing_cf'];
+      const baseMeasureId = String(
+        (cfg.spec as ChartSpec | undefined)?.measure ?? '',
+      ).toLowerCase();
+      const reqLc = editRequest.toLowerCase();
+      const asksComponentContribution =
+        transform.kind === 'normalize' &&
+        numeric.length === 1 &&
+        /\bcomponent/.test(reqLc) &&
+        (CASH_FLOW_COMPONENTS.includes(baseMeasureId) || /\bcash\s*flow\b/.test(reqLc));
+      if (asksComponentContribution) {
+        const baseSpec = (cfg.spec as ChartSpec | undefined) ?? ({} as ChartSpec);
+        const ct = String(baseSpec.chartType ?? '').toLowerCase();
+        const nextSpec: ChartSpec = {
+          ...baseSpec,
+          measure: CASH_FLOW_COMPONENTS[0]!,
+          measures: [...CASH_FLOW_COMPONENTS],
+          breakdown: undefined,
+          dimension: 'month',
+          chartType: ct === 'area' || ct === 'stacked_area' ? 'stacked_area' : 'stacked_bar',
+          transforms: [{ kind: 'normalize' }],
+        };
+        const built = await this.specToPlan(
+          nextSpec,
+          String(w.title ?? ''),
+          true,
+          scope,
+          editRequest,
+        ).catch(() => null);
+        const wd =
+          built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+        if (wd?._sql) {
+          return {
+            summary:
+              'Expanded to all three cash-flow components and showed each as a percentage of the monthly total.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: i,
+                type: wd.type,
+                dynamicSql: wd._sql,
+                spec: nextSpec,
+                ...(wd.display ? { display: wd.display } : {}),
+                title: this.ebpoSpecTitle(nextSpec),
+              },
+            ],
+          };
+        }
+      }
       if (
         transform.kind === 'normalize' &&
         numeric.length === 1 &&
@@ -18224,6 +18302,95 @@ export class AgentService {
     };
   }
 
+  // "Add revenue YoY growth" to a CATEGORICAL chart (e.g. gross margin by business
+  // unit / industry). Power BI draws this as a COMBO: the existing percentage as
+  // clustered bars plus a "Revenue YoY Growth %" line on a secondary axis (one value
+  // per category, computed across the two latest data years). This is NOT the
+  // time-series prior-year pivot the YoY transform builds, so it is handled before
+  // that path. Years are resolved from the data, never hard-coded.
+  private async buildEbpoCategoricalYoyOverlay(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = String(editRequest ?? '').toLowerCase();
+    if (!this.isSameChartFollowUp(editRequest)) return null;
+    const asksRevenueYoyGrowth =
+      /\brevenue\b/.test(q) &&
+      /\byoy\b|\byear[\s-]*over[\s-]*year\b|\byear[\s-]*on[\s-]*year\b/.test(q) &&
+      /\bgrowth\b/.test(q);
+    if (!asksRevenueYoyGrowth) return null;
+
+    const db = this.analyticsDb;
+    const bind = { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds };
+    const tenantWhere =
+      'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+    const buView = `${db}.v_ebpo_revenue_by_business_unit_monthly`;
+
+    for (let i = 0; i < activeDashboard.widgets.length; i++) {
+      const w = activeDashboard.widgets[i]!;
+      const spec = ((w.queryConfig as any) ?? {}).spec as ChartSpec | undefined;
+      // Only the business-unit (industry) gross-margin case has both columns in one
+      // verified view. Other dimensions/measures fall through to the normal editor.
+      const baseMeasure = String(spec?.measure ?? '').toLowerCase();
+      if (
+        spec?.dimension !== 'business_unit' ||
+        !/gross_margin|gross\s*margin/.test(baseMeasure || q)
+      )
+        continue;
+
+      const yearRows = await this.queryRows<{ year: number }>(
+        `SELECT DISTINCT year FROM ${buView} WHERE ${tenantWhere} ORDER BY year DESC LIMIT 2`,
+        bind,
+      ).catch(() => []);
+      if (yearRows.length < 2) continue; // need a prior year to compute growth
+      const cur = Number(yearRows[0]!.year);
+      const prev = Number(yearRows[1]!.year);
+
+      const sql =
+        `SELECT business_unit AS name, ` +
+        `round(sum(gross_margin_usd) / nullIf(sum(total_revenue_usd), 0) * 100, 2) AS \`Gross Margin %\`, ` +
+        `round((sumIf(total_revenue_usd, year = ${cur}) - sumIf(total_revenue_usd, year = ${prev})) / ` +
+        `nullIf(sumIf(total_revenue_usd, year = ${prev}), 0) * 100, 1) AS \`Revenue YoY Growth %\` ` +
+        `FROM ${buView} WHERE ${tenantWhere} GROUP BY business_unit ` +
+        `HAVING sum(total_revenue_usd) > 0 ORDER BY \`Gross Margin %\` DESC`;
+
+      const check = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType: 'combo' as ChartType,
+      }).catch(() => null);
+      if (!check || check.error || check.rows.length === 0) continue;
+
+      return {
+        summary: `Added revenue year-over-year growth (${prev}→${cur}) as a line on a secondary axis.`,
+        add: [],
+        remove_indices: [],
+        modify: [
+          {
+            index: i,
+            type: 'combo' as ChartType,
+            dynamicSql: sql,
+            spec: { ...(spec ?? {}), chartType: 'combo' },
+            display: {
+              series: [
+                { key: 'Gross Margin %', role: 'bar', axis: 'left', format: 'percent' },
+                {
+                  key: 'Revenue YoY Growth %',
+                  role: 'line',
+                  axis: 'right',
+                  format: 'percent',
+                },
+              ],
+              secondaryAxisFormat: 'percent',
+              secondaryLabel: 'Revenue YoY Growth %',
+            },
+            title: 'Gross Margin % and Revenue YoY Growth by Business Unit',
+          },
+        ],
+      };
+    }
+    return null;
+  }
+
   private async buildEbpoMetricEdit(
     activeDashboard: ActiveDashboard,
     editRequest: string,
@@ -18384,6 +18551,19 @@ export class AgentService {
                 title: this.ebpoSpecTitle(nextSpec),
               },
             ],
+          };
+        }
+        // The measure genuinely has no country grain (e.g. DSO / receivables are
+        // booked only by client, with no geography relationship in this dataset).
+        // Surface the deterministic refusal instead of silently falling through to a
+        // vague "couldn't do that" — an honest "not tracked by country" is correct.
+        if (built?.kind === 'no_data' && built.message) {
+          return {
+            summary: '',
+            add: [],
+            remove_indices: [],
+            modify: [],
+            refusal: built.message,
           };
         }
       }
@@ -20612,6 +20792,192 @@ export class AgentService {
       });
     for (const t of targets) {
       if (!t.spec) continue;
+      if (
+        t.spec.dimension === 'month' &&
+        ['operating_cf', 'investing_cf', 'financing_cf'].includes(String(t.spec.measure ?? '')) &&
+        /\bcash\s+flow\s+components?\b/.test(editRequest.toLowerCase()) &&
+        /\bcontribution\b|\bpercent(?:age)?s?\b|%/.test(editRequest.toLowerCase())
+      ) {
+        const sql = `
+          SELECT
+            formatDateTime(period_date, '%b %Y') AS name,
+            round(
+              abs(sum(operating_cash_flow_usd))
+              / nullIf(
+                  abs(sum(operating_cash_flow_usd))
+                + abs(sum(investing_cash_flow_usd))
+                + abs(sum(financing_cash_flow_usd)),
+                0
+              ) * 100,
+              2
+            ) AS "Operating Cash Flow %",
+            round(
+              abs(sum(investing_cash_flow_usd))
+              / nullIf(
+                  abs(sum(operating_cash_flow_usd))
+                + abs(sum(investing_cash_flow_usd))
+                + abs(sum(financing_cash_flow_usd)),
+                0
+              ) * 100,
+              2
+            ) AS "Investing Cash Flow %",
+            round(
+              abs(sum(financing_cash_flow_usd))
+              / nullIf(
+                  abs(sum(operating_cash_flow_usd))
+                + abs(sum(investing_cash_flow_usd))
+                + abs(sum(financing_cash_flow_usd)),
+                0
+              ) * 100,
+              2
+            ) AS "Financing Cash Flow %"
+          FROM ${this.analyticsDb}.v_ebpo_cash_flow_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id IN ({externalOrgIds:Array(String)})
+          GROUP BY period_date
+          ORDER BY period_date ASC
+          LIMIT 100
+        `;
+        const check = await this.executeDynamicSqlChecked(sql, scope, {
+          chartType: 'stacked_bar',
+        }).catch(() => null);
+        if (check && !check.error && check.rows.length > 0) {
+          return {
+            summary: 'Updated the cash flow chart to show component contribution percentages.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: t.index,
+                type: 'stacked_bar',
+                dynamicSql: sql.trim(),
+                spec: {
+                  measure: 'operating_cf',
+                  measures: ['operating_cf', 'investing_cf', 'financing_cf'],
+                  dimension: 'month',
+                  chartType: 'stacked_bar',
+                },
+                title: 'Cash Flow Component Contribution by Month',
+                display: {
+                  valueFormat: 'percent',
+                  valueDecimals: 1,
+                  series: [
+                    {
+                      key: 'Operating Cash Flow %',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'percent',
+                      decimals: 1,
+                    },
+                    {
+                      key: 'Investing Cash Flow %',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'percent',
+                      decimals: 1,
+                    },
+                    {
+                      key: 'Financing Cash Flow %',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'percent',
+                      decimals: 1,
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+        }
+      }
+      if (
+        t.spec.measure === 'gross_margin' &&
+        t.spec.dimension === 'industry' &&
+        /\brevenue\b/.test(editRequest.toLowerCase()) &&
+        /\byear[\s-]*over[\s-]*year\b|\byoy\b/.test(editRequest.toLowerCase()) &&
+        /\bgrowth\b/.test(editRequest.toLowerCase())
+      ) {
+        const sql = `
+          WITH revenue_by_year AS (
+            SELECT
+              industry,
+              toYear(period_date) AS year_num,
+              round(sum(total_revenue_usd), 2) AS total_revenue_usd,
+              round(sum(gross_margin_usd), 2) AS gross_margin_usd
+            FROM ${this.analyticsDb}.v_ebpo_revenue_expense_by_client_monthly
+            WHERE tenant_id = {tenantId:String}
+              AND org_id IN ({externalOrgIds:Array(String)})
+              AND industry != ''
+            GROUP BY industry, year_num
+          ),
+          latest_year AS (
+            SELECT max(year_num) AS year_num
+            FROM revenue_by_year
+          )
+          SELECT
+            industry AS name,
+            round(sumIf(gross_margin_usd, year_num = (SELECT year_num FROM latest_year)), 2) AS "Gross Margin",
+            round(
+              (
+                sumIf(total_revenue_usd, year_num = (SELECT year_num FROM latest_year))
+                - sumIf(total_revenue_usd, year_num = (SELECT year_num FROM latest_year) - 1)
+              )
+              / nullIf(
+                sumIf(total_revenue_usd, year_num = (SELECT year_num FROM latest_year) - 1),
+                0
+              ) * 100,
+              2
+            ) AS "Revenue YoY Growth %"
+          FROM revenue_by_year
+          GROUP BY industry
+          ORDER BY "Gross Margin" DESC
+          LIMIT 50
+        `;
+        const check = await this.executeDynamicSqlChecked(sql, scope, {
+          chartType: 'combo',
+        }).catch(() => null);
+        if (check && !check.error && check.rows.length > 0) {
+          return {
+            summary: 'Added Revenue YoY Growth % as a comparison series.',
+            add: [],
+            remove_indices: [],
+            modify: [
+              {
+                index: t.index,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                spec: {
+                  measure: 'gross_margin',
+                  measures: ['gross_margin', 'revenue_yoy_pct'],
+                  dimension: 'industry',
+                  chartType: 'combo',
+                },
+                title: 'Gross Margin by Industry',
+                display: {
+                  valueFormat: 'currency',
+                  secondaryAxisFormat: 'percent',
+                  secondaryLabel: 'Revenue YoY Growth %',
+                  series: [
+                    {
+                      key: 'Gross Margin',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'currency',
+                    },
+                    {
+                      key: 'Revenue YoY Growth %',
+                      role: 'line',
+                      axis: 'right',
+                      format: 'percent',
+                      decimals: 1,
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+        }
+      }
       const newSpec = this.buildEbpoComboEditSpec(t.spec, editRequest);
       if (!newSpec) continue;
       const compiled = await compileEbpoSpec(newSpec, this.analyticsDb, runRows);
@@ -21583,7 +21949,11 @@ export class AgentService {
           const hasNegative = check.rows.some((row) =>
             Object.entries(row).some(
               ([k, v]) =>
-                k !== 'name' && k !== '__ord' && typeof v === 'number' && (v as number) < 0,
+                k !== 'name' &&
+                k !== '__ord' &&
+                k !== 'raw_value' &&
+                typeof v === 'number' &&
+                (v as number) < 0,
             ),
           );
           if (hasNegative) {
@@ -22083,6 +22453,20 @@ export class AgentService {
     // verified SQL/display semantics in ways the generic spec editor often
     // approximates by only changing titles or by changing the wrong axis.
     if (scope && editHasEbpoEarly && activeDashboard.widgets.length > 0) {
+      // "Add revenue YoY growth" on a categorical chart is a combo overlay, not the
+      // time-series prior-year pivot — intercept before the YoY transform path.
+      const yoyOverlay = await this.buildEbpoCategoricalYoyOverlay(
+        activeDashboard,
+        editRequest,
+        scope,
+      ).catch((err: any) => {
+        this.logger.warn(
+          `[Agent:Editor] categorical YoY overlay failed (${err?.message ?? err}) — falling back`,
+        );
+        return null;
+      });
+      if (yoyOverlay) return yoyOverlay;
+
       const earlyTransform = this.detectFollowUpTransform(editRequest);
       if (earlyTransform?.kind === 'prior_year' || earlyTransform?.kind === 'yoy') {
         const det = await this.buildDeterministicTransformEdit(
@@ -24968,7 +25352,11 @@ Output SQL ONLY — no explanation, no markdown.`;
     const negativeRows = rows.filter((row) =>
       Object.entries(row).some(
         ([k, v]) =>
-          k !== 'name' && k !== '__ord' && typeof v === 'number' && (v as number) < 0,
+          k !== 'name' &&
+          k !== '__ord' &&
+          k !== 'raw_value' &&
+          typeof v === 'number' &&
+          (v as number) < 0,
       ),
     );
     if (negativeRows.length === 0) return null;

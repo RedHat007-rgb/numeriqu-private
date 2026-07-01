@@ -588,20 +588,145 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.display?.secondaryAxisFormat).toBe('percent');
   });
 
-  test('adds only gross margin when the follow-up asks for gross margin, not gross margin percent', async () => {
+  test('routes a two-client "variance %" follow-up to the DAX (Largest − Second)/Second combo, not variance-from-average', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
     const svc = new AgentService({} as any, {} as any, {} as any) as any;
-    const spec = svc.buildEbpoComboEditSpec(
+    svc.orgHasEbpoData = async () => true;
+    // Ranked by revenue (DAX TOPN([Total Revenue], DESC)): largest, then second-largest.
+    svc.listTopClientsForScope = async () => ['JP Morgan', 'AT&T'];
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'Jan 2025', 'JP Morgan': 18700000, 'AT&T': 18200000, 'Variance %': 2.7 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Total Expenses — Largest vs Second-Largest Client',
+            chartType: 'bar',
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              dynamicSql: 'SELECT name, value FROM by_client',
+              spec: {
+                measure: 'total_cost',
+                dimension: 'client',
+                chartType: 'bar',
+                filters: [
+                  { dimension: 'client', op: 'in', values: ['JP Morgan', 'AT&T'] },
+                ],
+              },
+              display: { valueFormat: 'currency' },
+            },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'In the same chart, show variance percentages.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.type).toBe('combo');
+    const sql = plan.modify[0]?.dynamicSql ?? '';
+    // DAX: (Largest Client Expense − Second Largest Client Expense) / Second, DIVIDE-safe.
+    expect(sql).toContain("sumIf(total_cost_usd, client_name = 'JP Morgan')");
+    expect(sql).toContain("sumIf(total_cost_usd, client_name = 'AT&T')");
+    expect(sql).toContain('nullIf(');
+    expect(sql).toContain('AS "Variance %"');
+    // Must NOT collapse to dispersion-around-the-mean (the old variance-from-average path).
+    expect(sql).not.toContain('avg(_base.value)');
+    const series = (plan.modify[0]?.display as any)?.series ?? [];
+    expect(series).toContainEqual(
+      expect.objectContaining({ key: 'Variance %', role: 'line', axis: 'right' }),
+    );
+  });
+
+  test('builds the DAX variance % combo on a FRESH create (not only as a follow-up)', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.orgHasEbpoData = async () => true;
+    // resolveSpecClientFilters resolves the superlative pair to real names.
+    svc.listTopClientsForScope = async () => ['JP Morgan', 'AT&T'];
+    svc.resolveSpecClientFilters = async (s: any) => ({
+      ...s,
+      filters: [{ dimension: 'client', op: 'in', values: ['JP Morgan', 'AT&T'] }],
+    });
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [
+        { name: 'Jan 2025', 'JP Morgan': 18700000, 'AT&T': 18200000, 'Variance %': 2.7 },
+      ],
+      error: null,
+    });
+
+    const plan = await svc.specToPlan(
+      {
+        measure: 'total_expenses',
+        dimension: 'client',
+        chartType: 'bar',
+        filters: [
+          {
+            dimension: 'client',
+            op: 'in',
+            values: ['largest client', 'second-largest client'],
+          },
+        ],
+      },
+      'Expense Variance % — Largest vs Second-Largest Client',
+      true,
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+      'Show the expense variance percentage between the two biggest clients',
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget.type).toBe('combo');
+    expect(widget._sql).toContain("sumIf(total_expenses_usd, client_name = 'JP Morgan')");
+    expect(widget._sql).toContain('nullIf(');
+    expect(widget._sql).toContain('AS "Variance %"');
+    expect(widget._sql).not.toContain('avg(_base.value)');
+    expect(widget.display?.series).toContainEqual(
+      expect.objectContaining({ key: 'Variance %', role: 'line', axis: 'right' }),
+    );
+  });
+
+  test('adds gross MARGIN as the ratio (%), and gross PROFIT as dollars, per the word used', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    // "gross margin" = the ratio (gross_margin_pct), NOT gross-profit dollars.
+    const margin = svc.buildEbpoComboEditSpec(
       { measure: 'total_revenue', dimension: 'client', chartType: 'bar' },
       'In the same chart, add gross margin by client to compare revenue quality.',
     );
+    expect(margin?.measures).toEqual(['total_revenue', 'gross_margin_pct']);
+    expect(margin?.measures).not.toContain('gross_margin');
 
-    expect(spec?.measures).toEqual(['total_revenue', 'gross_margin']);
-    expect(spec?.measures).not.toContain('gross_margin_pct');
+    // "gross profit" = the dollar measure (id gross_margin, labelled "Gross Profit").
+    const profit = svc.buildEbpoComboEditSpec(
+      { measure: 'total_revenue', dimension: 'client', chartType: 'bar' },
+      'In the same chart, add gross profit by client.',
+    );
+    expect(profit?.measures).toEqual(['total_revenue', 'gross_margin']);
+    expect(profit?.measures).not.toContain('gross_margin_pct');
   });
 
   test('treats treemap contribution follow-ups as percent label edits', () => {
@@ -1867,6 +1992,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(widget._spec?.measures).toEqual(['total_revenue', 'total_expenses']);
     expect(widget._sql).toContain('v_ebpo_revenue_expense_by_client_monthly');
     expect(widget._sql).toContain('sum(total_expenses_usd)');
+    // An unqualified "largest client" ranks and scopes to a recent 12-month window
+    // rather than the full multi-year history — "largest" should track who currently
+    // leads, not whoever accumulated the most across the entire dataset.
     expect(widget._spec?.recentMonths).toBeUndefined();
   });
 
@@ -1967,7 +2095,12 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan?.kind).toBe('build');
     if (plan?.kind !== 'build') return;
     const widget = plan.plan.dashboard.widgets[0] as any;
-    expect(widget._spec?.measures).toEqual(['total_revenue', 'total_expenses', 'gross_margin']);
+    // "gross margin" resolves to the ratio (gross_margin_pct), not gross-profit dollars.
+    expect(widget._spec?.measures).toEqual([
+      'total_revenue',
+      'total_expenses',
+      'gross_margin_pct',
+    ]);
     expect(widget._spec?.recentMonths).toBeUndefined();
   });
 

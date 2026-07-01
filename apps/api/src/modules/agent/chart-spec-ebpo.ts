@@ -145,19 +145,39 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     undefined,
     ['cost', 'cost of revenue', 'cogs'],
   ),
+  // DOLLAR measure (revenue − cost) = GROSS PROFIT. The word "gross margin" is a
+  // PERCENTAGE (see gross_margin_pct) — do NOT alias it here, or "gross margin"
+  // requests wrongly resolve to dollars. The id stays 'gross_margin' for back-compat,
+  // but the label and aliases only ever mean gross profit in dollars.
   gross_margin: M(
     'gross_margin',
-    'Gross Margin',
+    'Gross Profit',
     'currency',
     'sum',
     'flow',
     undefined,
-    ['gross profit'],
+    ['gross profit', 'gross profit usd', 'gross profit dollars'],
   ),
-  // Ratio-of-sums (sum(gm)/sum(revenue)), matching PowerBI DAX DIVIDE(SUM,SUM).
-  // Was avg of a precomputed per-row gross_margin_pct column, which is WRONG when the
-  // view grain is finer than the chart cell (e.g. BU×contract_type×month): averaging
-  // percentages produced impossible values (>100%) and NaN→0.0% for missing combos.
+  gross_profit_pct: {
+    id: 'gross_profit_pct',
+    label: 'Gross Profit %',
+    format: 'percent',
+    agg: 'avg',
+    kind: 'ratio',
+    decimals: 1,
+    aliases: [
+      'gross profit percentage',
+      'gross profit percent',
+      'gross profit pct',
+    ],
+    derived: { num: 'gross_margin', den: 'total_revenue', scale: 100 },
+  },
+  // Ratio-of-sums using the requested DAX semantics:
+  // [ (Total Revenue - Total Expenses) / Total Revenue ] * 0.01
+  // The app's percent formatter expects percent-points, so the effective SQL scale
+  // here is 1 (not 100).
+  // This is intentionally separate from Gross Profit % above, which remains
+  // revenue minus cost divided by revenue.
   gross_margin_pct: {
     id: 'gross_margin_pct',
     label: 'Gross Margin %',
@@ -165,8 +185,20 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     agg: 'avg',
     kind: 'ratio',
     decimals: 1,
-    aliases: ['gross margin percentage', 'gross margin percent', 'gross margin pct'],
-    derived: { num: 'gross_margin', den: 'total_revenue', scale: 100 },
+    // Bare "gross margin" (and "margin") is the RATIO, not gross-profit dollars — a
+    // "gross margin" request must land here, while "gross profit" lands on gross_margin.
+    aliases: [
+      'gross margin',
+      'margin',
+      'gross margin percentage',
+      'gross margin percent',
+      'gross margin pct',
+    ],
+    derived: {
+      num: { add: ['total_revenue'], sub: ['total_expenses'] },
+      den: 'total_revenue',
+      scale: 1,
+    },
   },
   // YoY = window over grain-aggregated revenue vs the same period one year prior (DAX
   // DIVIDE([Total Revenue]-[Revenue LY],[Revenue LY])). The old avg(precomputed monthly
@@ -1582,6 +1614,47 @@ const derivedRefs = (d: NonNullable<EbpoMeasureDef['derived']>): string[] => {
   const t = numTerms(d.num);
   return [...t.add, ...t.sub, ...(d.den ? [d.den] : [])];
 };
+const measureResolvableInView = (
+  view: EbpoViewDef,
+  mid: string,
+  seen = new Set<string>(),
+): boolean => {
+  if (seen.has(mid)) return false;
+  const m = EBPO_MEASURES[mid];
+  if (!m) return false;
+  if (mid in view.measures) return true;
+  const nextSeen = new Set(seen);
+  nextSeen.add(mid);
+  if (m.window) return view.hasTime && measureResolvableInView(view, m.window.base, nextSeen);
+  if (m.derived) return derivedRefs(m.derived).every((id) => measureResolvableInView(view, id, nextSeen));
+  return false;
+};
+const measureAggExprInView = (
+  mid: string,
+  view: EbpoViewDef,
+  cond?: string,
+  seen = new Set<string>(),
+): string => {
+  if (seen.has(mid)) throw new Error(`Circular EBPO derived measure reference: ${mid}`);
+  const m = EBPO_MEASURES[mid];
+  if (!m) throw new Error(`Unknown EBPO measure: ${mid}`);
+  if (view.measures[mid]) {
+    return cond ? aggIfOf(m, view.measures[mid]!, cond) : aggOf(m, view.measures[mid]!);
+  }
+  const nextSeen = new Set(seen);
+  nextSeen.add(mid);
+  if (m.window) {
+    if (!view.hasTime) throw new Error(`Measure ${mid} requires a time-aware view`);
+    return measureAggExprInView(m.window.base, view, cond, nextSeen);
+  }
+  if (m.derived) {
+    const n = numeratorExpr(m.derived.num, view, cond, nextSeen);
+    if (!m.derived.den) return n;
+    const denExpr = measureAggExprInView(m.derived.den, view, cond, nextSeen);
+    return `${n} / nullIf(${denExpr}, 0) * ${m.derived.scale ?? 100}`;
+  }
+  throw new Error(`Measure ${mid} is not available in view ${view.name}`);
+};
 // Build the numerator as a sum-of-terms using `wrap` (sum(col) or sumIf(col, cond)).
 // A single positive term stays bare (byte-identical to the old single-id form); any
 // multi-term numerator is parenthesized: (sum(a) - sum(b) - sum(c)).
@@ -1589,17 +1662,14 @@ const numeratorExpr = (
   num: NonNullable<EbpoMeasureDef['derived']>['num'],
   view: EbpoViewDef,
   cond?: string,
+  seen = new Set<string>(),
 ): string => {
   const t = numTerms(num);
   // Each numerator term aggregates with its OWN measure agg (symmetric with the
   // denominator at aggExprFor). For every flow numerator (agg='sum') this is byte-
   // identical to the old hardcoded sum(); a non-additive term (e.g. a replicated
   // company-level column with agg='max') is taken once instead of summed across rows.
-  const aggTerm = (id: string) => {
-    const m = EBPO_MEASURES[id]!;
-    const col = view.measures[id]!;
-    return cond ? aggIfOf(m, col, cond) : aggOf(m, col);
-  };
+  const aggTerm = (id: string) => measureAggExprInView(id, view, cond, seen);
   const add = t.add.map(aggTerm).join(' + ');
   const sub = t.sub.map((id) => ` - ${aggTerm(id)}`).join('');
   return t.add.length > 1 || t.sub.length ? `(${add}${sub})` : `${add}${sub}`;
@@ -1607,44 +1677,17 @@ const numeratorExpr = (
 // A view "exposes" a measure when it has the measure's column, OR (derived) every
 // column the derivation references (all numerator terms + the denominator).
 const viewExposesMeasure = (view: EbpoViewDef, mid: string): boolean => {
-  const m = EBPO_MEASURES[mid];
-  if (!m) return false;
-  if (mid in view.measures) return true;
-  if (m.window) return view.hasTime && m.window.base in view.measures;
-  if (m.derived) return derivedRefs(m.derived).every((id) => id in view.measures);
-  return false;
+  return measureResolvableInView(view, mid);
 };
 // View-aware aggregate: derived measures compute num/den (ratio-of-sums) from the
 // view's columns; everything else uses the measure's own column + agg.
-const aggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef): string => {
-  if (view.measures[m.id]) return aggOf(m, view.measures[m.id]!);
-  if (m.derived) {
-    const n = numeratorExpr(m.derived.num, view);
-    if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
-    // The denominator uses the DEN MEASURE's own aggregate, not a hardcoded sum() — so a
-    // distinct-count denominator (e.g. Avg Revenue per Client = revenue / No. Clients)
-    // emits uniqExact. For every existing ratio the den is a flow → aggOf = sum(), unchanged.
-    const denM = EBPO_MEASURES[m.derived.den]!;
-    const denExpr = aggOf(denM, view.measures[m.derived.den]!);
-    return `${n} / nullIf(${denExpr}, 0) * ${m.derived.scale ?? 100}`;
-  }
-  return aggOf(m, view.measures[m.id]!);
-};
+const aggExprFor = (m: EbpoMeasureDef, view: EbpoViewDef): string =>
+  measureAggExprInView(m.id, view);
 const condAggExprFor = (
   m: EbpoMeasureDef,
   view: EbpoViewDef,
   cond: string,
-): string => {
-  if (view.measures[m.id]) return aggIfOf(m, view.measures[m.id]!, cond);
-  if (m.derived) {
-    const n = numeratorExpr(m.derived.num, view, cond);
-    if (!m.derived.den) return n; // absolute additive measure (e.g. EBITDA)
-    const denM = EBPO_MEASURES[m.derived.den]!;
-    const denExpr = aggIfOf(denM, view.measures[m.derived.den]!, cond);
-    return `${n} / nullIf(${denExpr}, 0) * ${m.derived.scale ?? 100}`;
-  }
-  return aggIfOf(m, view.measures[m.id]!, cond);
-};
+): string => measureAggExprInView(m.id, view, cond);
 export const valueExprFor = (m: EbpoMeasureDef, view: EbpoViewDef) =>
   `round(${aggExprFor(m, view)}, ${decimalsFor(m)})`;
 const condValueExprFor = (m: EbpoMeasureDef, view: EbpoViewDef, cond: string) =>
@@ -2303,7 +2346,13 @@ export async function compileEbpoSpec(
     if (bdId && !isScatter) {
       const bd = dimSql(bdId);
       const primary = EBPO_MEASURES[measures[0]!]!;
-      const maxValues = Math.max(1, Math.floor(maxBreakdownCols / measures.length));
+      // The breakdown SERIES count is capped by topN when the user asked for a top-N
+      // comparison ("top 2 clients") — mirroring the single-measure path — and otherwise
+      // by the column budget (maxBreakdownCols shared across the measures). Without the
+      // topN cap a "top 2 clients revenue + expenses" chart wrongly plotted every client.
+      const colBudget = Math.max(1, Math.floor(maxBreakdownCols / measures.length));
+      const maxValues =
+        spec.topN && spec.topN > 0 ? Math.min(spec.topN, colBudget) : colBudget;
       const colRows = await runRows(
         `SELECT ${bd.label} AS v, ${aggExprFor(primary, mview)} AS m FROM ${mtbl} WHERE ${where} ` +
           `GROUP BY ${bd.group} HAVING m != 0 ORDER BY abs(m) DESC LIMIT ${maxValues}`,
@@ -2322,12 +2371,17 @@ export async function compileEbpoSpec(
           }),
         )
         .join(', ');
+      // With a breakdown, topN caps the SERIES (handled via maxValues above), NOT the
+      // number of time periods — the month axis shows the full history (or the explicit
+      // recent-months window). Using topN here truncated a "top 2 clients" monthly trend
+      // to 2 months. Mirror the single-measure periodCap.
+      const periodCap = recentMonths && recentMonths > 0 ? recentMonths : 500;
       const sql = mdim.isTime
         ? // Most-recent N periods, re-sorted ascending (see single-measure path).
           `SELECT * EXCEPT (__ord) FROM (` +
           `SELECT ${mdim.label} AS name, ${series}, ${mdim.group} AS __ord ` +
           `FROM ${mtbl} WHERE ${where} GROUP BY ${mdim.group} ` +
-          `ORDER BY __ord DESC LIMIT ${topN}) ORDER BY __ord ASC`
+          `ORDER BY __ord DESC LIMIT ${periodCap}) ORDER BY __ord ASC`
         : `SELECT ${mdim.label} AS name, ${series} ` +
           `FROM ${mtbl} WHERE ${where} GROUP BY ${mdim.group} ` +
           `ORDER BY name ASC LIMIT ${topN}`;

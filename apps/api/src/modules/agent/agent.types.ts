@@ -231,13 +231,16 @@ export type FollowUpTransform =
         | 'cumulative'
         | 'normalize'
         | 'index'
-        | 'reference_line'
         | 'peer_average'
         | 'company_share'
         | 'variance'
         | 'difference'
         | 'growth_pct';
     }
+  // `measure` is a loose keyword (e.g. "revenue") extracted from an explicit
+  // "average <measure>" ask — when present, the reference line averages ONLY that
+  // series instead of the sum of every series in the row (see buildTransformSql).
+  | { kind: 'reference_line'; measure?: string }
   | { kind: 'moving_average'; window: number }
   | { kind: 'second_axis'; second: SecondMeasure };
 

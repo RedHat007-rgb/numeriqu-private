@@ -710,6 +710,11 @@ const CustomTooltip = ({ active, payload, label, metric, grouping, valueFormatte
           )}
         </div>
       ))}
+      {typeof payload[0]?.payload?.["Largest Client"] === "string" && (
+        <p className="mt-1.5 border-t border-default/60 pt-1.5 text-[10px] font-semibold text-text-muted">
+          Largest client: <span className="text-text-secondary">{payload[0].payload["Largest Client"]}</span>
+        </p>
+      )}
     </div>
   );
 };
@@ -1232,6 +1237,9 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
   const chartTitleText = `${chart.title ?? ""} ${chart.description ?? ""}`.toLowerCase();
   const shouldForceNegativeEmphasis =
     /\b(?:cash\s+flow|cash\s+balance|free\s+cash\s+flow|net\s+cash)\b/.test(chartTitleText);
+  const expandedXAxisHeight = isExpanded ? 34 : 24;
+  const expandedLegendHeight = isExpanded ? 36 : 28;
+  const expandedBottomChartMargin = isExpanded ? 44 : 8;
   // LabelList `content` renderer that skips off-stride points (formatter can't see the
   // index, so thinning must happen in a custom content renderer).
   const thinnedLabel =
@@ -1601,7 +1609,10 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-	          <AreaChart data={areaData} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+	          <AreaChart
+              data={areaData}
+              margin={{ top: 8, right: 4, left: 12, bottom: isMultiSeries ? expandedBottomChartMargin : 12 }}
+            >
             <defs>
               <linearGradient id={`grad-line-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="rgb(var(--color-accent-violet))" stopOpacity={0.3} />
@@ -1616,6 +1627,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               axisLine={false}
               minTickGap={14}
               interval="preserveStartEnd"
+              tickMargin={8}
+              height={expandedXAxisHeight}
             />
             <YAxis
               tick={tickStyle}
@@ -1842,15 +1855,15 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     </Area>
                   );
                 })}
-                <Legend
-                  verticalAlign="bottom"
-                  height={28}
-                  iconType="circle"
-                  iconSize={8}
-                  wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
-                  formatter={(value: string) => (
-                    <span style={{ color: "rgb(var(--color-text-secondary))" }}>
-                      {prettySeriesName(String(value))}
+              <Legend
+                verticalAlign="bottom"
+                height={expandedLegendHeight}
+                iconType="circle"
+                iconSize={8}
+                wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: isExpanded ? 8 : 4 }}
+                formatter={(value: string) => (
+                  <span style={{ color: "rgb(var(--color-text-secondary))" }}>
+                    {prettySeriesName(String(value))}
                     </span>
                   )}
                 />
@@ -2222,7 +2235,10 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={comboData} margin={{ top: 8, right: 12, left: 12, bottom: 0 }}>
+          <ComposedChart
+            data={comboData}
+            margin={{ top: 8, right: 12, left: 12, bottom: expandedBottomChartMargin }}
+          >
             <defs>
               <linearGradient id={`grad-bar-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="rgb(var(--color-accent-blue))" stopOpacity={1} />
@@ -2237,6 +2253,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               axisLine={false}
               minTickGap={14}
               interval="preserveStartEnd"
+              tickMargin={8}
+              height={expandedXAxisHeight}
             />
             <YAxis
               yAxisId="left"
@@ -2365,10 +2383,10 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             })}
             <Legend
               verticalAlign="bottom"
-              height={28}
+              height={expandedLegendHeight}
               iconType="circle"
               iconSize={8}
-              wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
+              wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: isExpanded ? 8 : 4 }}
               formatter={(value: string) => (
                 <span style={{ color: "rgb(var(--color-text-secondary))" }}>
                   {prettySeriesName(String(value))}
@@ -2463,12 +2481,26 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     // stacks, and anchor it to the topmost real segment instead of an extra stacked bar.
     const showStackTotal = shouldStackBreakdownBars && !labelSeriesKey && !isPercentStack;
     const displayKeys = isMultiSeries ? seriesKeys.slice(0, 8) : [];
+    // Only a ratio/PERCENTAGE series is non-additive: it lives on a different unit and
+    // cannot share a dollar stack (e.g. a margin %, variance %, growth %). DOLLAR measures
+    // — Gross Profit, Net Income, Contribution $ — ARE additive and stack on top of the
+    // other bars, matching the reference BI (which stacks gross profit as a third segment
+    // on a revenue+expenses column). Previously any measure whose NAME contained
+    // "margin"/"profit"/"variance" was forced to render as a standalone side-by-side bar
+    // even when it held dollars, which broke stacked-column follow-ups like "add gross
+    // profit values". Percentages still stay out of the stack (and off the grand-total sum).
+    const isNonAdditiveKey = (k: string) =>
+      /%|\b(pct|percent|percentage|share|ratio|rate)\b/i.test(String(k).replace(/_/g, " "));
+    const additiveKeys = shouldStackBreakdownBars
+      ? displayKeys.filter((k) => !isNonAdditiveKey(k))
+      : displayKeys;
+    const lastAdditiveKey = additiveKeys.length > 0 ? additiveKeys[additiveKeys.length - 1] : null;
     const chartData = isMultiSeries && (shouldStackBreakdownBars || labelSeriesKey)
       ? trimmed.map((row) => ({
           ...(row as any),
-          _total: displayKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0),
+          _total: additiveKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0),
           _labelAnchor: shouldStackBreakdownBars
-            ? displayKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0)
+            ? additiveKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0)
             : Math.max(...displayKeys.map((k) => Number((row as any)[k]) || 0), 0),
         }))
       : trimmed;
@@ -2480,10 +2512,10 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const barMargin = useHorizontalBars
       ? { top: 6, right: 10, left: 8, bottom: 6 }
       : needsRotatedLabels
-        ? { top: 8, right: 4, left: 12, bottom: 90 }
+        ? { top: 8, right: 4, left: 12, bottom: isExpanded ? 108 : 90 }
         : shouldStackBreakdownBars || labelSeriesKey
-          ? { top: 28, right: 4, left: 12, bottom: 0 }
-          : { top: 8, right: 4, left: 12, bottom: 0 };
+          ? { top: 28, right: 4, left: 12, bottom: expandedBottomChartMargin }
+          : { top: 8, right: 4, left: 12, bottom: isMultiSeries ? expandedBottomChartMargin : 10 };
 
     return (
       <div style={{ height: barHeight, width: "100%" }}>
@@ -2560,6 +2592,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   tickLine={false}
                   axisLine={false}
                   interval={needsRotatedLabels ? 0 : "preserveStartEnd"}
+                  tickMargin={8}
+                  height={needsRotatedLabels ? (isExpanded ? 68 : 56) : expandedXAxisHeight}
                 />
                 <YAxis
                   tick={tickStyle}
@@ -2581,6 +2615,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               </>
             )}
             <Tooltip
+              cursor={{ fill: "rgba(var(--color-text-muted)/0.08)" }}
               content={
                 <CustomTooltip
                   metric={chart.config.metric}
@@ -2611,15 +2646,17 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             )}
             {isMultiSeries ? (
               <>
-                {displayKeys.map((k, idx) => (
+                {displayKeys.map((k, idx) => {
+                  const isDerived = shouldStackBreakdownBars && isNonAdditiveKey(k);
+                  return (
                   <Bar
                     key={k}
                   dataKey={k}
                     name={prettySeriesName(k)}
                     fill={PIE_COLORS[idx % PIE_COLORS.length]}
-                    radius={shouldStackBreakdownBars ? [0, 0, 0, 0] : [4, 4, 0, 0]}
+                    radius={shouldStackBreakdownBars && !isDerived ? [0, 0, 0, 0] : [4, 4, 0, 0]}
                     maxBarSize={shouldStackBreakdownBars ? (isExpanded ? 48 : 36) : (isExpanded ? 20 : 16)}
-                    stackId={shouldStackBreakdownBars ? "stack" : undefined}
+                    stackId={shouldStackBreakdownBars && !isDerived ? "stack" : undefined}
                     isAnimationActive={false}
                   >
                     {idx === 0 && labelSeriesKey && shouldStackBreakdownBars && (
@@ -2647,9 +2684,32 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                         }
                       />
                     )}
+                    {/* A derived/ratio measure isn't part of the additive stack (see
+                        DERIVED_MEASURE_RE above), so it needs its own top label rather
+                        than relying on the shared grand-total anchor below. */}
+                    {isDerived && (
+                      <LabelList
+                        dataKey={k}
+                        position="top"
+                        offset={4}
+                        style={{
+                          fill: "rgb(var(--color-text-secondary))",
+                          fontSize: isExpanded ? 10 : 9,
+                          fontWeight: 600,
+                        }}
+                        formatter={(v: unknown) =>
+                          fmtSeriesValue(
+                            Number(v) || 0,
+                            k,
+                            chart.config.display?.valueFormat ?? null,
+                          )
+                        }
+                      />
+                    )}
                     {/* Grand-total label on top of the stack: anchored to the topmost
-                        real segment (no extra stacked bar, so the axis isn't doubled). */}
-                    {showStackTotal && idx === displayKeys.length - 1 && (
+                        real (additive) segment, excluding any derived measure bars above
+                        (no extra stacked bar, so the axis isn't doubled). */}
+                    {showStackTotal && k === lastAdditiveKey && (
                       <LabelList
                         dataKey="_total"
                         position="top"
@@ -2659,7 +2719,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                       />
                     )}
                   </Bar>
-                ))}
+                  );
+                })}
                 {labelSeriesKey && !shouldStackBreakdownBars && (
                   <Bar
                     dataKey="_labelAnchor"
@@ -2676,10 +2737,10 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 )}
                 <Legend
                   verticalAlign="bottom"
-                  height={28}
+                  height={expandedLegendHeight}
                   iconType="circle"
                   iconSize={8}
-                  wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: 4 }}
+                  wrapperStyle={{ fontSize: isExpanded ? 11 : 10, fontWeight: 600, paddingTop: isExpanded ? 8 : 4 }}
                   formatter={(value: string) => (
                     <span style={{ color: "rgb(var(--color-text-secondary))" }}>
                       {prettySeriesName(String(value))}
@@ -4110,6 +4171,43 @@ function AxisCaption({ chart }: { chart: Chart }) {
   );
 }
 
+// A "largest client" chart with no year stated stitches together each calendar
+// year's actual top-revenue client (see backend: buildPerYearLargestClientSql) —
+// the client can differ by year, so surface who's who rather than leaving it
+// implicit. Collapses to a single name once a specific year scope is active.
+function LargestClientCaption({
+  chart,
+  selection,
+}: {
+  chart: Chart;
+  selection?: ChartScopeSelection;
+}) {
+  const labels = (chart.config.display as { periodEntityLabels?: unknown } | null | undefined)
+    ?.periodEntityLabels as Array<{ year: number; client: string }> | undefined;
+  if (!Array.isArray(labels) || labels.length === 0) return null;
+  if (selection?.kind === "year") {
+    const match = labels.find((entry) => entry.year === selection.year);
+    if (!match) return null;
+    return (
+      <p className="mb-2 text-[10px] font-semibold text-text-muted">
+        Largest client in {selection.year}:{" "}
+        <span className="text-text-secondary">{match.client}</span>
+      </p>
+    );
+  }
+  return (
+    <p className="mb-2 line-clamp-1 text-[10px] font-semibold text-text-muted">
+      Largest client by year:{" "}
+      {labels.map((entry, i) => (
+        <span key={entry.year}>
+          {i > 0 ? <span className="mx-1 text-text-muted/40">·</span> : null}
+          {entry.year} <span className="text-text-secondary">{entry.client}</span>
+        </span>
+      ))}
+    </p>
+  );
+}
+
 function ChartScopeControls({
   data,
   selection,
@@ -4446,6 +4544,7 @@ function ChartCard({
         </div>
       </div>
 
+      <LargestClientCaption chart={chart} selection={scopeSelection} />
       <ChartScopeControls
         data={fullData}
         selection={scopeSelection}
@@ -5050,6 +5149,7 @@ export function DashboardPreview({
                   </p>
                 ) : null}
                 <div className="mt-4">
+                  <LargestClientCaption chart={expandedChart} selection={expandedScope} />
                   <ChartScopeControls
                     data={expandedFullData}
                     selection={expandedScope}

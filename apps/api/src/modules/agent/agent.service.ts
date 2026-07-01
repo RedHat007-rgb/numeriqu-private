@@ -8694,6 +8694,18 @@ export class AgentService {
           dashboardId = updated.id;
           dashboardTitle = updated.title;
           actualWidgetCount = updated.widgetCount;
+
+          // Link THIS edit's request to the resulting dashboard so a SUBSEQUENT
+          // follow-up can still find the live chart. getActiveSessionDashboard resolves
+          // the active chart from the latest SUCCEEDED request's generatedDashboard; the
+          // create path sets this, but the edit path did not — so a second consecutive
+          // edit (e.g. "show it monthly" → "show variance percentages") dead-ended with
+          // "there isn't an existing chart to modify" because the first edit's request
+          // carried a null generatedDashboardId.
+          await this.prisma.agentDashboardRequest.update({
+            where: { id: request.id },
+            data: { generatedDashboardId: updated.id },
+          });
           const widgetSnapshots = await this.buildChartTurnWidgetSnapshots(
             organizationId,
             role,
@@ -11762,6 +11774,197 @@ export class AgentService {
     return out;
   }
 
+  // Measures this dataset's per-client monthly view (v_ebpo_revenue_expense_by_client_monthly)
+  // exposes as precomputed columns — used only by the per-year largest-client stitcher below.
+  private static readonly CLIENT_MONTHLY_MEASURE_COLUMNS: Record<
+    string,
+    {
+      col?: string;
+      alias: string;
+      // A ratio measure (e.g. gross margin %) is computed as sum(num)/sum(den)*100 per
+      // month, NOT summed — matching PowerBI's DIVIDE(SUM,SUM). Averaging a precomputed
+      // per-row % would be wrong.
+      ratio?: { num?: string; numExpr?: string; den: string };
+      format?: 'currency' | 'percent';
+    }
+  > = {
+    total_revenue: { col: 'total_revenue_usd', alias: 'Total Revenue' },
+    total_cost: { col: 'total_cost_usd', alias: 'Total Cost' },
+    total_expenses: { col: 'total_expenses_usd', alias: 'Total Expenses' },
+    // gross_margin_usd is a DOLLAR amount (revenue − cost) = gross profit, not the
+    // ratio %. Label it "Gross Profit" so it reads correctly and can stack additively
+    // with Revenue/Expenses (a "Gross Margin" label wrongly implies a percentage and
+    // trips percent-formatting heuristics). The ratio lives in gross_margin_pct.
+    gross_margin: { col: 'gross_margin_usd', alias: 'Gross Profit' },
+    gross_profit_pct: {
+      ratio: { num: 'gross_margin_usd', den: 'total_revenue_usd' },
+      alias: 'Gross Profit %',
+      format: 'percent',
+    },
+    // Gross Margin % follows the requested DAX:
+    // [ (Total Revenue - Total Expenses) / Total Revenue ] * 0.01
+    // The renderer formats percent-points directly, so the stitched SQL multiplies
+    // by 1 rather than 100.
+    gross_margin_pct: {
+      ratio: {
+        numExpr: '(sum(total_revenue_usd) - sum(total_expenses_usd))',
+        den: 'total_revenue_usd',
+      },
+      alias: 'Gross Margin %',
+      format: 'percent',
+    },
+  };
+
+  /**
+   * Who actually led revenue EACH calendar year (not all-time). All-time ranking picks
+   * whoever accumulated the most across the ENTIRE dataset, which can differ from who
+   * led any single year — confirmed live: JP Morgan very narrowly leads all-time revenue
+   * (2022-2025) while AT&T leads within 2022 and every other year tested. Returns one
+   * entry per year, ordered ascending, e.g. [{year:2022,client:'AT&T'}, ...].
+   */
+  private async resolveLargestClientByYear(
+    scope: OrgScope,
+  ): Promise<Array<{ year: number; client: string }>> {
+    const profile = await this.getDatasetProfile(scope);
+    const win = profile.client.windowedView;
+    if (!win) return [];
+    const rows = await this.queryRows<{ yr: number; client_name: string; w: number }>(
+      `SELECT toYear(${win.dateCol}) AS yr, ${win.nameCol} AS client_name, ${win.weightExpr} AS w
+       FROM ${this.analyticsDb}.${win.view}
+       WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+         AND ${win.nameCol} != ''
+       GROUP BY yr, client_name
+       ORDER BY yr ASC, w DESC`,
+      { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
+    );
+    const seen = new Set<number>();
+    const out: Array<{ year: number; client: string }> = [];
+    for (const r of rows) {
+      const yr = Number((r as any).yr);
+      if (!Number.isFinite(yr) || seen.has(yr)) continue;
+      seen.add(yr);
+      out.push({ year: yr, client: String((r as any).client_name) });
+    }
+    return out;
+  }
+
+  /**
+   * Build one UNION-ALL SQL string that, for each calendar year in the dataset, pulls
+   * that YEAR's actual top-revenue client's monthly rows — so an unqualified "largest
+   * client" trend chart shows the full history without freezing on a single (possibly
+   * stale) all-time winner. Each row carries a "Largest Client" label naming which
+   * client's numbers it holds, so the chart (and its client-side year SCOPE filter) can
+   * always show who was genuinely largest for whatever period is being viewed.
+   */
+  private async buildPerYearLargestClientSql(
+    scope: OrgScope,
+    measures: string[],
+  ): Promise<{ sql: string; perYearClient: Array<{ year: number; client: string }> } | null> {
+    const perYearClient = await this.resolveLargestClientByYear(scope);
+    if (perYearClient.length === 0) return null;
+    const cols = measures
+      .map((m) => AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[m])
+      .filter((c): c is NonNullable<typeof c> => !!c);
+    if (cols.length === 0) return null;
+    const quoteLit = (v: string) => `'${v.replace(/'/g, "''")}'`;
+    const view = `${this.analyticsDb}.v_ebpo_revenue_expense_by_client_monthly`;
+    const selectCols = cols
+      .map((c) =>
+        c.ratio
+          ? `round(${
+              c.ratio.numExpr ?? `sum(${c.ratio.num})`
+            } / nullIf(sum(${c.ratio.den}), 0) * ${
+              c.alias === 'Gross Margin %' ? '1' : '100'
+            }, 1) AS "${c.alias}"`
+          : `round(sum(${c.col}), 0) AS "${c.alias}"`,
+      )
+      .join(',\n             ');
+    const subqueries = perYearClient.map(
+      ({ year, client }) => `
+    SELECT formatDateTime(toStartOfMonth(period_date), '%b %Y') AS name,
+             ${selectCols},
+             ${quoteLit(client)} AS "Largest Client",
+             toStartOfMonth(period_date) AS __ord
+      FROM ${view}
+      WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+        AND toYear(period_date) = ${year} AND client_name = ${quoteLit(client)}
+      GROUP BY toStartOfMonth(period_date)`,
+    );
+    const sql = `SELECT * EXCEPT (__ord) FROM (${subqueries.join('\n      UNION ALL\n')}\n) ORDER BY __ord ASC LIMIT 500`;
+    return { sql, perYearClient };
+  }
+
+  /**
+   * Per-series combo roles for a per-year largest-client chart, so a multi-measure
+   * combo/line/bar request (create OR follow-up) renders with the intended shapes
+   * (e.g. revenue+expenses as columns, gross profit/margin as an overlay line) instead
+   * of the web's legacy heuristic fallback, which mis-assigns bar/line roles. Carrying
+   * explicit roles is ALSO what makes a series reshapeable ("show expenses as a bar").
+   * Keyed on chart-type intent + unit-uniformity, never on specific measure names.
+   */
+  private stitchedComboRoles(
+    query: string,
+    stitchableMeasures: string[],
+    baseChartType?: string | null,
+  ): {
+    series?: ReturnType<typeof ebpoComboSeriesRoles>;
+    type: ChartType;
+    secondaryAxisFormat?: 'currency' | 'number' | 'percent';
+    secondaryLabel?: string;
+  } {
+    const ql = ` ${query.toLowerCase()} `;
+    const reqLine = /\bline\s+chart\b/.test(ql);
+    const reqBar = /\b(?:column|bar)\s+chart\b|\bclustered\b/.test(ql);
+    const reqCombo = /\bcombo\b|combination/.test(ql);
+    const wantsLine =
+      /\bas (?:a |another )?(?:comparison |trend )?line\b|\bcomparison line\b|\btrend line\b/.test(
+        ql,
+      );
+    const wantsBar = /\bas (?:a |)?(?:column|bar)s?\b/.test(ql);
+    const isStacked = /stacked/.test(ql);
+    const fallbackType = (baseChartType ?? 'stacked_bar') as ChartType;
+    if (stitchableMeasures.length <= 1 || isStacked) return { type: fallbackType };
+    const sameUnitCombo =
+      reqCombo &&
+      !wantsBar &&
+      new Set(
+        stitchableMeasures.map((m) => EBPO_MEASURES[m]?.format).filter(Boolean),
+      ).size === 1;
+    const roles = ebpoComboSeriesRoles(stitchableMeasures, {
+      baseType: reqLine ? 'line' : reqBar ? 'bar' : String(baseChartType ?? 'combo'),
+      forceLine:
+        wantsLine && !wantsBar
+          ? stitchableMeasures.slice(1)
+          : sameUnitCombo
+            ? stitchableMeasures.slice(-1)
+            : [],
+      forceBar: wantsBar && !wantsLine ? stitchableMeasures : [],
+    }).map((r, i) => ({
+      // The stitched SQL names its columns with the per-client-monthly aliases, so the
+      // series key must match those, not the generic measure label.
+      ...r,
+      key: AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[stitchableMeasures[i]!]?.alias ?? r.key,
+    }));
+    // A same-unit overlay line (gross profit promoted from an all-$ combo) is an order of
+    // magnitude smaller than the bars — move it to the right axis so it stays visible.
+    if (sameUnitCombo) {
+      const li = roles.length - 1;
+      if (roles[li]?.role === 'line') roles[li] = { ...roles[li]!, axis: 'right' };
+    }
+    const series = new Set(roles.map((r) => r.role)).size > 1 ? roles : undefined;
+    const secondary = series?.find((r) => r.axis === 'right');
+    const type = series
+      ? (ebpoComboChartType(series, { forceCombo: reqCombo }) as ChartType)
+      : fallbackType;
+    return {
+      series,
+      type,
+      ...(secondary
+        ? { secondaryAxisFormat: secondary.format, secondaryLabel: secondary.key }
+        : {}),
+    };
+  }
+
   // ─── Live schema introspection — feeds real dimension values to the SQL planner
   private async introspectLiveSchema(scope: OrgScope): Promise<string> {
     if (scope.externalOrgIds.length === 0) return '';
@@ -13353,6 +13556,68 @@ export class AgentService {
         }
       }
     }
+    // FRESH client-pair variance % (DAX Expense Variance %) as a first-message CREATE —
+    // "expense variance % between the two biggest clients", "top client vs the runner-up
+    // variance", etc. Without this, a create only plots the two client bars and never
+    // computes the variance; the DAX combo used to appear only as a follow-up. Build the
+    // SAME monthly combo (two $ client bars + a Variance % line) the edit path produces,
+    // so variance abides by the DAX on create too. "…from the average/mean" is a
+    // different question (dispersion), so it is excluded and left to normal compile.
+    {
+      const ql = String(query).toLowerCase();
+      if (
+        useEbpo &&
+        /\bvariance\b/.test(ql) &&
+        /\bpercent|percentage|%\b/.test(ql) &&
+        !/\baverage\b|\bmean\b/.test(ql)
+      ) {
+        const resolved = await this.resolveSpecClientFilters(
+          this.repairMissingEntityFilter(spec, ql),
+          scope,
+          ql,
+        ).catch(() => spec);
+        if (this.isClientPairComparisonSpec(resolved)) {
+          const combo = await this.buildClientPairVarianceCombo(resolved, scope);
+          if (combo) {
+            const { sql, a, b, fmt, measure } = combo;
+            const finalTitle = (
+              title ||
+              `${EBPO_MEASURES[measure]?.label ?? measure} Variance % — ${a} vs ${b}`
+            ).slice(0, 80);
+            return {
+              kind: 'build',
+              plan: {
+                tools_to_execute: [],
+                should_generate_dashboard: true,
+                dashboard: {
+                  title: finalTitle,
+                  description: '',
+                  widgets: [
+                    {
+                      title: finalTitle,
+                      description: '',
+                      type: 'combo',
+                      metric: 'dynamic',
+                      grouping: 'dynamic',
+                      display_order: 0,
+                      _sql: sql,
+                      _spec: {
+                        ...resolved,
+                        chartType: 'combo',
+                        dimension: 'month',
+                        breakdown: 'client',
+                      },
+                      display: this.clientPairVarianceDisplay(a, b, fmt),
+                    } as any,
+                  ],
+                },
+                analysis_focus: query,
+              },
+            };
+          }
+        }
+      }
+    }
     // Scatter/bubble: "X versus Y" is a measure-vs-measure plot. Force the type BEFORE
     // compile so the EBPO compiler emits x/y/z columns (not measure-named series), and
     // so the combo helper below never converts a scatter into a bar/combo.
@@ -13360,6 +13625,7 @@ export class AgentService {
     const queryLower = String(query).toLowerCase();
     if (useEbpo) {
       spec = this.rewriteEbpoGenericExpenseSpec(spec, queryLower);
+      spec = this.disambiguateGrossMarginVsProfit(spec, queryLower);
     }
     if (
       useEbpo &&
@@ -13740,6 +14006,110 @@ export class AgentService {
         dimension: 'client',
         breakdown: undefined,
       };
+    }
+    // PER-YEAR LARGEST CLIENT: an unqualified superlative-client TREND ask ("monthly
+    // revenue and expenses for the largest client", no year/window stated) must show
+    // the FULL available history, not a truncated recent window — but picking ONE
+    // client to represent that whole multi-year span is wrong, because "largest" can
+    // differ by year. Confirmed live: JP Morgan very narrowly leads all-time revenue
+    // (2022-2025, $27.56M vs $27.30M) while AT&T actually leads within 2022 and every
+    // other year tested. So instead of freezing on one all-time winner, resolve the
+    // real top-revenue client SEPARATELY for each year and stitch their monthly rows
+    // together (see buildPerYearLargestClientSql) — each row carries a "Largest
+    // Client" label so the chart, and its client-side year SCOPE filter, always shows
+    // who was genuinely largest for whatever period is being viewed. An explicit year
+    // or window in the request still short-circuits straight to the single-client path
+    // below (already correct — verified "...in 2022" returns AT&T's exact numbers).
+    if (useEbpo) {
+      const hasYearFilter = (spec.filters ?? []).some(
+        (f) => String((f as any)?.dimension ?? '') === 'year',
+      );
+      const mentionsYear = /\b(20\d{2})\b/.test(queryLower);
+      const hasSuperlativeClientFilter = (spec.filters ?? []).some((f) => {
+        if (!/client|customer/i.test(String((f as any)?.dimension ?? ''))) return false;
+        const values = Array.isArray((f as any)?.values) ? (f as any).values : [];
+        return values.some((v: unknown) => this.parseClientSuperlative(String(v)) !== null);
+      });
+      const rawMeasures = spec.measures ?? (spec.measure ? [spec.measure] : []);
+      const stitchableMeasures = rawMeasures.filter(
+        (m): m is string => !!m && !!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[m],
+      );
+      if (
+        hasSuperlativeClientFilter &&
+        !hasYearFilter &&
+        !mentionsYear &&
+        !spec.recentMonths &&
+        (spec.dimension ?? 'month') === 'month' &&
+        stitchableMeasures.length > 0 &&
+        stitchableMeasures.length === rawMeasures.length &&
+        this.superlativeClientAskImpliesTimeAxis(queryLower, spec.chartType, spec.dimension)
+      ) {
+        const stitched = await this.buildPerYearLargestClientSql(
+          scope,
+          stitchableMeasures,
+        ).catch(() => null);
+        if (stitched) {
+          const check = await this.executeDynamicSqlChecked(stitched.sql, scope, {
+            chartType: (spec.chartType ?? 'stacked_bar') as any,
+          }).catch(() => null);
+          if (check && !check.error && check.rows.length > 0) {
+            const finalTitle = (title || 'Largest Client Trend').slice(0, 80);
+            // Attach per-series combo roles so the largest-client chart renders with the
+            // intended shapes and stays reshapeable by follow-ups (see stitchedComboRoles).
+            const combo = this.stitchedComboRoles(
+              query,
+              stitchableMeasures,
+              spec.chartType ?? 'stacked_bar',
+            );
+            const stitchedSeries = combo.series;
+            const stitchedSecondary = combo.series?.find((r) => r.axis === 'right');
+            const stitchedType = combo.type;
+            return {
+              kind: 'build',
+              plan: {
+                tools_to_execute: [],
+                should_generate_dashboard: true,
+                dashboard: {
+                  title: finalTitle,
+                  description: '',
+                  widgets: [
+                    {
+                      title: finalTitle,
+                      description: '',
+                      type: stitchedType,
+                      metric: 'dynamic',
+                      grouping: 'dynamic',
+                      display_order: 0,
+                      _sql: stitched.sql,
+                      _spec: {
+                        ...spec,
+                        measures: stitchableMeasures,
+                        chartType: stitchedType as ChartSpec['chartType'],
+                      },
+                      display: {
+                        valueFormat: 'currency',
+                        periodEntityLabels: stitched.perYearClient,
+                        ...(stitchedSeries && stitchedSeries.length > 1
+                          ? {
+                              series: stitchedSeries,
+                              ...(stitchedSecondary
+                                ? {
+                                    secondaryAxisFormat: stitchedSecondary.format,
+                                    secondaryLabel: stitchedSecondary.key,
+                                  }
+                                : {}),
+                            }
+                          : {}),
+                      },
+                    } as any,
+                  ],
+                },
+                analysis_focus: query,
+              },
+            };
+          }
+        }
+      }
     }
     // Resolve superlative client references ("largest client", "second-largest client",
     // "top 5 clients") in filters to the dataset's real top clients BEFORE compiling —
@@ -16844,6 +17214,29 @@ export class AgentService {
     return null;
   }
 
+  // Loose keyword library for "average <measure>" asks — extracts what the user named
+  // (e.g. "revenue" from "add average revenue as a reference line") so the reference
+  // line can average THAT series instead of the row total. Returns undefined for a
+  // generic "company-wide average" ask (no specific measure named), which correctly
+  // keeps the row-total behavior.
+  private static readonly AVERAGE_MEASURE_KEYWORDS = [
+    'revenue', 'expense', 'expenses', 'cost', 'margin', 'profit', 'payroll',
+    'salary', 'cash', 'balance', 'income', 'ebitda', 'headcount', 'sla', 'csat',
+    'utilization', 'utilisation',
+  ];
+  private detectAverageMeasureHint(q: string): string | undefined {
+    const m = q.match(
+      /\b(?:average|avg|mean)\s+(?:the\s+)?(?:total\s+|monthly\s+|overall\s+)?([a-z]+)/,
+    );
+    const word = m?.[1];
+    if (!word) return undefined;
+    return AgentService.AVERAGE_MEASURE_KEYWORDS.some(
+      (k) => word.startsWith(k) || k.startsWith(word),
+    )
+      ? word
+      : undefined;
+  }
+
   private detectFollowUpTransform(req: string): FollowUpTransform | null {
     const q = (req ?? '').toLowerCase();
     if (!q.trim()) return null;
@@ -16932,7 +17325,8 @@ export class AgentService {
         /\b(?:average|avg|mean)\b[^.]*\bby\s+[a-z]/i.test(q) &&
         !/\b(company[\s-]*wide|overall|grand|across\s+all)\b/i.test(q)
       );
-    if (asksAverageOverlay) return { kind: 'reference_line' };
+    if (asksAverageOverlay)
+      return { kind: 'reference_line', measure: this.detectAverageMeasureHint(q) };
     if (
       /\bnormali[sz]e\b|\b100\s*%|\bas a (?:percentage|percent|%)\s+of\s+(?:the\s+)?(?:company\s+|grand\s+)?total\b|\b%\s*of\s*(?:the\s+)?(?:company\s+)?total\b|\bshare of (?:the\s+)?total\b|\bpercentage of (?:the\s+)?(?:company\s+)?total\b|\bproportion of (?:the\s+)?total\b|\bcontribution(?:s)?\b[^.]*\b(?:%|percent(?:age)?s?)\b|\b(?:%|percent(?:age)?)\s+contribution\b/.test(
         q,
@@ -16970,7 +17364,7 @@ export class AgentService {
         /\b(?:compare|comparing)\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
         /\breference\s+line\b/.test(q))
     )
-      return { kind: 'reference_line' };
+      return { kind: 'reference_line', measure: this.detectAverageMeasureHint(q) };
     return null;
   }
 
@@ -17390,7 +17784,16 @@ export class AgentService {
       const primaryOk =
         requested.primary.length === 0 ||
         requested.primary.every(
-          (dim) => dim === currentPrimary || dim === currentBreakdown,
+          (dim) =>
+            dim === currentPrimary ||
+            dim === currentBreakdown ||
+            // A request to regroup onto a TIME axis ("show it monthly", "by month",
+            // "as a monthly trend") is ALWAYS a valid transform — the monthly-trend
+            // regroup handler keeps the current categorical dimension by moving it to
+            // `breakdown` (one line/bar per entity per month). Refusing it forces the
+            // user into the one exact phrase ("change it to monthly") that happens to
+            // slip past this guard, which is the "can't reshape my chart" complaint.
+            timeDims.has(dim),
         );
       const breakdownOk =
         requested.breakdown.length === 0 ||
@@ -17422,10 +17825,26 @@ export class AgentService {
     if (!/\bmonth\b|\bmonthly\b|\btrend\b|\bover\s+time\b/.test(q)) return false;
     return activeDashboard.widgets.some((widget) => {
       const spec = (widget.queryConfig as any)?.spec as ChartSpec | undefined;
+      if (!spec?.dimension || spec.dimension === 'month') return false;
       const measures = (spec?.measures?.length ? spec.measures : [spec?.measure]).filter(
         Boolean,
       );
-      return measures.length >= 2 && spec?.dimension && spec.dimension !== 'month';
+      // Multi-measure combo → monthly trend of those measures.
+      if (measures.length >= 2) return true;
+      // Single-measure RANKED / top-N comparison (e.g. "top 2 clients by expenses",
+      // "largest vs second-largest client") → monthly trend that keeps the ranked
+      // entities as a breakdown (one series per entity per month). The regroup handler
+      // supports this; without allowing it here the axis-conflict guard wrongly refuses
+      // "show it monthly" while the exact phrase "change it to monthly" (not a same-chart
+      // follow-up) slips through — the "I can't reshape my chart" complaint.
+      if (
+        measures.length >= 1 &&
+        typeof spec.topN === 'number' &&
+        spec.topN > 0 &&
+        !spec.breakdown
+      )
+        return true;
+      return false;
     });
   }
 
@@ -17588,6 +18007,31 @@ export class AgentService {
 
     for (const mid of this.detectEbpoMeasureMentions(text)) add(mid);
     return out;
+  }
+
+  /**
+   * Word-sense disambiguation for gross margin vs gross profit. "Gross margin" is the
+   * RATIO (gross_margin_pct, a %); "gross profit" is the DOLLAR amount (gross_margin).
+   * The planner frequently returns the dollar measure (id `gross_margin`) even for a
+   * "margin" ask because the phrase matches the id text, so correct it deterministically
+   * from the wording — and the reverse for an explicit "gross profit" ask. General
+   * semantic rule keyed on the word, not on any specific question.
+   */
+  private disambiguateGrossMarginVsProfit(spec: ChartSpec, queryLower: string): ChartSpec {
+    const wantsMarginPct =
+      /\bgross\s+margins?\b/.test(queryLower) && !/\bgross\s+profits?\b/.test(queryLower);
+    const wantsProfit = /\bgross\s+profits?\b/.test(queryLower);
+    if (!wantsMarginPct && !wantsProfit) return spec;
+    const fix = (id: string | undefined): string | undefined => {
+      if (wantsMarginPct && id === 'gross_margin') return 'gross_margin_pct';
+      if (wantsProfit && id === 'gross_margin_pct') return 'gross_margin';
+      return id;
+    };
+    const next: ChartSpec = { ...spec };
+    if (Array.isArray(spec.measures))
+      next.measures = spec.measures.map((m) => (m ? fix(m) ?? m : m));
+    if (spec.measure) next.measure = fix(spec.measure) ?? spec.measure;
+    return next;
   }
 
   private rewriteEbpoGenericExpenseSpec(spec: ChartSpec, queryLower: string): ChartSpec {
@@ -17870,6 +18314,27 @@ export class AgentService {
     }
 
     if (transform.kind === 'reference_line') {
+      // "average <measure>" (e.g. "add average revenue as a reference line") names ONE
+      // of the chart's existing series — average just that column. Confirmed live: a
+      // 3-measure chart (Revenue/Expenses/Gross Margin) asked for an average REVENUE
+      // line got avg(Revenue + Expenses + Gross Margin) instead, a nonsense figure that
+      // double/triple-counts the row (Gross Margin is itself derived from the other
+      // two). Only fall back to the row-total average for a genuinely generic ask
+      // ("add a company-wide average line") that names no specific measure.
+      const namedColumn = transform.measure
+        ? numeric.find((c) => c.toLowerCase().includes(transform.measure!))
+        : undefined;
+      if (namedColumn) {
+        const proj = [
+          'name',
+          ...numeric.map(id),
+          `round((SELECT avg(${id(namedColumn)}) FROM _base), 2) AS average_${transform.measure}`,
+        ].join(', ');
+        return {
+          sql: wrap(proj),
+          display: { referenceSeries: `average_${transform.measure}` },
+        };
+      }
       // Company-wide average = mean of each row's TOTAL across all series (matches
       // Power BI's "average of monthly total spend"). For a single-series chart the
       // row total IS the value, so this reduces to avg(value). Averaging just one
@@ -18395,7 +18860,10 @@ export class AgentService {
       cumulative: `Added cumulative ${(cumulativeLabelForSummary ?? 'value').toLowerCase()} as a second series in the same chart.`,
       normalize: 'Normalized the chart to 100% (share of total).',
       index: 'Rebased the series to an index where the first period = 100.',
-      reference_line: 'Added a company-wide average reference line.',
+      reference_line:
+        transform.kind === 'reference_line' && transform.measure
+          ? `Added an average ${transform.measure} reference line.`
+          : 'Added a company-wide average reference line.',
       moving_average: `Added a ${transform.kind === 'moving_average' ? transform.window : 3}-period moving average.`,
       second_axis:
         transform.kind === 'second_axis'
@@ -18693,6 +19161,53 @@ export class AgentService {
                   spec: nextSpec,
                   ...(wd.display ? { display: wd.display } : {}),
                   title: nextTitle,
+                },
+              ],
+            };
+          }
+        } else if (typeof spec.topN === 'number' && spec.topN > 0 && !spec.breakdown) {
+          // Single-measure ranked bar ("top N clients by expenses") → "change it to
+          // monthly": the topN ranks the CATEGORICAL dimension (client), not a count of
+          // months. Naively swapping dimension→month while leaving topN in place gets
+          // topN reapplied to months instead (confirmed live: "largest vs second-largest
+          // client expenses" → "change it to monthly" produced company-wide totals for
+          // the LAST 2 MONTHS, losing the client comparison entirely — dimension:'client'
+          // was replaced wholesale with no breakdown to carry the compared entities).
+          // The correct shape keeps topN as the entity limit and moves the original
+          // dimension to `breakdown`, so each month shows one bar/line per top entity.
+          const nextSpec: ChartSpec = {
+            ...spec,
+            dimension: 'month',
+            breakdown: spec.dimension,
+            // Preserve the requested chart FAMILY: a bar comparison stays a (clustered)
+            // bar over months — one bar per ranked entity per month — rather than being
+            // silently switched to a line. The user asked for a bar chart; "show it
+            // monthly" changes the grouping, not the shape. The year toggle keeps a
+            // single year's ~12×N bars readable. Only fall back to a line when the base
+            // had no explicit type.
+            chartType: spec.chartType ?? 'line',
+          };
+          const built = await this.specToPlan(
+            nextSpec,
+            String(w.title ?? ''),
+            true,
+            scope,
+            editRequest,
+          ).catch(() => null);
+          const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+          if (wd?._sql) {
+            return {
+              summary: `Changed the chart to a monthly ${String(spec.chartType ?? '').toLowerCase() === 'bar' ? 'comparison' : 'trend'}, keeping the top ${spec.topN} ${spec.dimension}s compared over time.`,
+              add: [],
+              remove_indices: [],
+              modify: [
+                {
+                  index: i,
+                  type: wd.type,
+                  dynamicSql: wd._sql,
+                  spec: nextSpec,
+                  ...(wd.display ? { display: wd.display } : {}),
+                  title: this.ebpoSpecTitle(nextSpec),
                 },
               ],
             };
@@ -19415,6 +19930,24 @@ export class AgentService {
         /\bvariance\b/.test(q) &&
         (/\baverage\b|\bmean\b/.test(q) || /\bpercent|percentage|%\b/.test(q))
       ) {
+        // A top-client PAIR chart ("largest vs second-largest client") asked for a plain
+        // "variance %" — NOT "variance from the average" — means the PowerBI DAX
+        // Expense Variance % = DIVIDE([Largest Client Expense] − [Second Largest Client
+        // Expense], [Second Largest Client Expense]), where largest/second are ranked by
+        // [Total Revenue]. That is the (Largest − Second)/Second ratio between the two
+        // clients, NOT each client's dispersion around the mean. Only "…from the average"
+        // (or "…from the mean") keeps the variance-from-average path below (e.g. Q14).
+        if (
+          !/\baverage\b|\bmean\b/.test(q) &&
+          this.isClientPairComparisonSpec(spec)
+        ) {
+          const daxVariancePlan = await this.buildClientPairVariancePctPlan(
+            spec,
+            i,
+            scope,
+          );
+          if (daxVariancePlan) return daxVariancePlan;
+        }
         const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
           this.queryRows<Record<string, unknown>>(sql, {
             tenantId: scope.tenantId,
@@ -19735,6 +20268,80 @@ export class AgentService {
           spec.dimension === 'asset_type' &&
           /\bnet\s+book\s+value\b/.test(q) &&
           /\bpercent|percentage|%\b/.test(q));
+      // This widget was built by the per-year largest-client stitcher
+      // (buildPerYearLargestClientSql): its stored spec's client filter is an UNRESOLVED
+      // superlative phrase ("largest client"), because the chart mixes a DIFFERENT client
+      // per year — there is no single resolved name to hand to the generic multi-measure
+      // compiler below. Confirmed live: adding a measure to this chart shape via the
+      // generic path silently dropped the unresolved client filter (falling back to a
+      // company-wide view) AND dropped the pre-existing measures, keeping only the newly
+      // added one. Detect this shape (marked by periodEntityLabels on the widget) and
+      // regenerate the full per-year UNION SQL with the combined measure list instead.
+      const periodEntityLabels = (cfg.display as { periodEntityLabels?: unknown } | undefined)
+        ?.periodEntityLabels;
+      const isPerYearLargestClientChart =
+        Array.isArray(periodEntityLabels) &&
+        periodEntityLabels.length > 0 &&
+        (spec?.filters ?? []).some((f) => {
+          if (!/client|customer/i.test(String((f as any)?.dimension ?? ''))) return false;
+          const values = Array.isArray((f as any)?.values) ? (f as any).values : [];
+          return values.some((v: unknown) => this.parseClientSuperlative(String(v)) !== null);
+        });
+      if (spec && isPerYearLargestClientChart && extraMeasures.length > 0) {
+        const allMeasures = Array.from(new Set([...currentMeasures, ...extraMeasures]));
+        const stitchableMeasures = allMeasures.filter(
+          (m) => !!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[m],
+        );
+        if (stitchableMeasures.length === allMeasures.length) {
+          const stitched = await this.buildPerYearLargestClientSql(
+            scope,
+            stitchableMeasures,
+          ).catch(() => null);
+          if (stitched) {
+            const check = await this.executeDynamicSqlChecked(stitched.sql, scope, {
+              chartType: (w.chartType ?? spec.chartType ?? 'stacked_bar') as any,
+            }).catch(() => null);
+            if (check && !check.error && check.rows.length > 0) {
+              // Recompute per-series combo roles for the new measure set so the follow-up
+              // renders with the right shapes (and the added series is reshapeable) instead
+              // of falling back to the web's role heuristic.
+              const combo = this.stitchedComboRoles(
+                q,
+                stitchableMeasures,
+                w.chartType ?? spec.chartType ?? 'stacked_bar',
+              );
+              return {
+                summary: 'Added the requested EBPO comparison measure.',
+                add: [],
+                remove_indices: [],
+                modify: [
+                  {
+                    index: i,
+                    type: combo.type,
+                    dynamicSql: stitched.sql,
+                    spec: { ...spec, measures: stitchableMeasures, chartType: combo.type },
+                    display: {
+                      ...((cfg.display ?? {}) as DisplayHints),
+                      periodEntityLabels: stitched.perYearClient,
+                      ...(combo.series && combo.series.length > 1
+                        ? {
+                            series: combo.series,
+                            ...(combo.secondaryAxisFormat
+                              ? {
+                                  secondaryAxisFormat: combo.secondaryAxisFormat,
+                                  secondaryLabel: combo.secondaryLabel,
+                                }
+                              : {}),
+                          }
+                        : { series: undefined }),
+                    },
+                  } as any,
+                ],
+              };
+            }
+          }
+        }
+      }
       if (spec && extraMeasures.length > 0 && !needsDerivedEbpoFormula) {
         const built = await this.compileEbpoMultiMeasureSql(
           spec,
@@ -20870,7 +21477,8 @@ export class AgentService {
     // numerator/denominator as extra series. The ratio stays derived unless the
     // user separately asks for those raw measures in another follow-up.
     const impliedComponents: Record<string, string[]> = {
-      gross_margin_pct: ['gross_margin', 'total_revenue'],
+      gross_profit_pct: ['gross_margin', 'total_revenue'],
+      gross_margin_pct: ['total_expenses', 'total_revenue'],
       payroll_to_revenue_pct: ['total_payroll', 'total_revenue'],
       cost_to_income_pct: ['total_cost', 'total_revenue'],
       fcf_margin_pct: ['free_cash_flow', 'total_revenue'],
@@ -21276,6 +21884,237 @@ export class AgentService {
           }
         : {}),
     };
+  }
+
+  // A ranked categorical chart ("largest vs second-largest client's expenses" →
+  // dimension:'client', topN:2, sort:'value_desc') asked to "change it to monthly"
+  // must keep the topN ENTITY ranking and add it as a `breakdown`, plotting each of
+  // those entities' values per month — NOT swap dimension→month wholesale and leave
+  // topN in place, which reapplies topN as a MONTH limit and drops the entity filter
+  // entirely. Confirmed live: the LLM spec-editor did exactly that, turning "largest
+  // vs second-largest client's expenses" into "top 2 months of company-wide expenses"
+  // (queried the KPI view with no client scoping at all). Deterministic and general —
+  // any topN + categorical dimension, not tied to this one question's wording.
+  private async buildEbpoTopNMonthlyRegroupEditPlan(
+    targets: Array<{ w: any; index: number; spec?: ChartSpec }>,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = editRequest.toLowerCase();
+    if (!/\bmonth\b|\bmonthly\b|\btrend\b|\bover\s+time\b/.test(q)) return null;
+    for (const t of targets) {
+      const spec = t.spec;
+      if (
+        !spec?.measure ||
+        !spec.dimension ||
+        spec.dimension === 'month' ||
+        spec.breakdown ||
+        typeof spec.topN !== 'number' ||
+        spec.topN <= 0
+      )
+        continue;
+      // Keep the chart's existing type (a grouped/clustered bar per month stays a
+      // bar chart) — the user asked for "monthly", not a chart-type change.
+      const nextSpec: ChartSpec = {
+        ...spec,
+        dimension: 'month',
+        breakdown: spec.dimension,
+      };
+      const built = await this.specToPlan(
+        nextSpec,
+        String(t.w.title ?? ''),
+        true,
+        scope,
+        editRequest,
+      ).catch(() => null);
+      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      if (!wd?._sql) continue;
+      this.logger.log(
+        `[SpecEdit:EBPO-topN-monthly] kept top ${spec.topN} ${spec.dimension} for: "${editRequest.slice(0, 50)}"`,
+      );
+      return {
+        summary: `Changed the chart to a monthly trend, keeping the top ${spec.topN} ${spec.dimension}s compared over time.`,
+        add: [],
+        remove_indices: [],
+        modify: [
+          {
+            index: t.index,
+            type: wd.type,
+            dynamicSql: wd._sql,
+            spec: nextSpec,
+            ...(wd.display ? { display: wd.display } : {}),
+            title: this.ebpoSpecTitle(nextSpec),
+          },
+        ],
+      };
+    }
+    return null;
+  }
+
+  // A chart spec is a top-client PAIR comparison — eligible for the PowerBI DAX
+  // Expense Variance % — when it plots a $ client measure EITHER as a flat client
+  // ranking (dimension='client', no breakdown) OR as a monthly per-client breakdown
+  // (breakdown='client', dimension='month'), scoped to the ranked pair. The flat case
+  // is Pranjal-2 Q25 ("largest client versus second-largest client"); the monthly case
+  // is the per-month combo. Ratio measures are excluded (no single column to diff).
+  private isClientPairComparisonSpec(spec: ChartSpec | undefined): boolean {
+    if (!spec?.measure) return false;
+    if (!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[spec.measure]?.col) return false;
+    const monthlyBreakdown =
+      spec.breakdown === 'client' && spec.dimension === 'month';
+    const flatClient = spec.dimension === 'client' && !spec.breakdown;
+    if (!monthlyBreakdown && !flatClient) return false;
+    // The monthly breakdown already means "top-N clients over time" → default top-2.
+    // For a flat client bar chart, only treat it as a variance PAIR when it is scoped
+    // to a pair: an explicit largest/second-largest filter, a 2-value client filter,
+    // or topN=2 — so a general 5-client ranking isn't hijacked.
+    if (monthlyBreakdown) return true;
+    const clientFilter = (spec.filters ?? []).find((f) =>
+      /client|customer/i.test(String((f as { dimension?: string })?.dimension ?? '')),
+    ) as { values?: unknown } | undefined;
+    const vals: string[] = Array.isArray(clientFilter?.values)
+      ? (clientFilter!.values as string[])
+      : [];
+    const topN = Number((spec as { topN?: number }).topN ?? NaN);
+    return (
+      vals.length === 2 ||
+      topN === 2 ||
+      vals.some((v) => /second[-\s]?largest|2nd\s+largest/i.test(String(v)))
+    );
+  }
+
+  // DAX Expense Variance % (and its measure-flexible generalization), built once and
+  // shared by EVERY variance path — follow-up edits AND fresh create — so the formula
+  // lives in ONE place. Mirrors the PowerBI measures exactly:
+  //   Largest Client Expense        = CALCULATE([Total Expenses], TOPN(1, ALL(client), [Total Revenue], DESC))
+  //   Second Largest Client Expense = CALCULATE([Total Expenses], the 2nd client by [Total Revenue])
+  //   Expense Variance %            = DIVIDE([Largest] − [Second], [Second])
+  // i.e. the % by which the largest client's measure exceeds the second-largest's,
+  // where both are ranked by REVENUE (not by the diffed measure). Returns the monthly
+  // combo SQL + the two client names + $ format, or null when the shape/data can't
+  // support it (ratio measure, <2 clients, empty result) so the caller falls through.
+  // Measure-flexible (uses the chart's own $ column), window-aware ranking (largest "in
+  // 2022" ≠ all-time), DIVIDE-safe via nullIf.
+  private async buildClientPairVarianceCombo(
+    spec: ChartSpec,
+    scope: OrgScope,
+  ): Promise<{
+    sql: string;
+    a: string;
+    b: string;
+    fmt: 'currency' | 'percent';
+    measure: string;
+  } | null> {
+    const measure = String(spec.measure ?? '');
+    const col = AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[measure];
+    if (!col?.col) return null; // only $ measures (ratios have no single column to diff)
+    const topN = Number((spec as { topN?: number }).topN ?? 2);
+    // Rank within the SAME window the chart scopes: a year/quarter/month filter narrows
+    // the ranking (2022 → AT&T) exactly as DAX's TOPN(ALL(client), [Total Revenue])
+    // evaluates inside the visual's filter context.
+    const timeFilters = (spec.filters ?? []).filter((f) =>
+      /year|quarter|month|period|date/i.test(
+        String((f as { dimension?: string })?.dimension ?? ''),
+      ),
+    );
+    const clients = await this.listTopClientsForScope(
+      scope,
+      Math.max(2, topN),
+      (spec as { recentMonths?: number }).recentMonths ?? null,
+      timeFilters.length ? (timeFilters as unknown[]) : null,
+    ).catch(() => [] as string[]);
+    if (clients.length < 2) return null; // need a largest AND a second-largest
+    const [a, b] = clients; // largest, second-largest — ranked by revenue (DAX TOPN)
+    const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;
+    const ident = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const sumA = `sumIf(${col.col}, client_name = ${lit(a!)})`;
+    const sumB = `sumIf(${col.col}, client_name = ${lit(b!)})`;
+    const view = `${this.analyticsDb}.v_ebpo_revenue_expense_by_client_monthly`;
+    const sql =
+      `SELECT * EXCEPT (__ord) FROM (\n` +
+      `  SELECT formatDateTime(toStartOfMonth(period_date), '%b %Y') AS name,\n` +
+      `    round(${sumA}, 0) AS ${ident(a!)},\n` +
+      `    round(${sumB}, 0) AS ${ident(b!)},\n` +
+      `    round((${sumA} - ${sumB}) / nullIf(${sumB}, 0) * 100, 1) AS "Variance %",\n` +
+      `    toStartOfMonth(period_date) AS __ord\n` +
+      `  FROM ${view}\n` +
+      `  WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})\n` +
+      `    AND client_name IN (${lit(a!)}, ${lit(b!)})\n` +
+      `  GROUP BY toStartOfMonth(period_date)\n` +
+      `  ORDER BY __ord DESC LIMIT 500\n` +
+      `) ORDER BY __ord ASC`;
+    const check = await this.executeDynamicSqlChecked(sql, scope, {
+      chartType: 'combo',
+    }).catch(() => null);
+    if (!check || check.error || check.rows.length === 0) return null;
+    return { sql, a: a!, b: b!, fmt: col.format ?? 'currency', measure };
+  }
+
+  // Shared display hints for the client-pair variance combo (two $ client bars on the
+  // primary axis + a Variance % LINE on a secondary % axis — "variance is monthly").
+  private clientPairVarianceDisplay(
+    a: string,
+    b: string,
+    fmt: 'currency' | 'percent',
+  ): DisplayHints {
+    return {
+      valueFormat: fmt,
+      secondaryAxisFormat: 'percent',
+      secondaryLabel: 'Variance %',
+      series: [
+        { key: a, role: 'bar', axis: 'left', format: fmt },
+        { key: b, role: 'bar', axis: 'left', format: fmt },
+        { key: 'Variance %', role: 'line', axis: 'right', format: 'percent' },
+      ],
+    } as DisplayHints;
+  }
+
+  // Follow-up EDIT wrapper around the shared DAX combo (see buildClientPairVarianceCombo).
+  private async buildClientPairVariancePctPlan(
+    spec: ChartSpec,
+    index: number,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const combo = await this.buildClientPairVarianceCombo(spec, scope);
+    if (!combo) return null;
+    const { sql, a, b, fmt, measure } = combo;
+    return {
+      summary: `Added the ${(EBPO_MEASURES[measure]?.label ?? measure).toLowerCase()} variance % between ${a} and ${b} (largest vs second-largest client by revenue) as a line on a second axis.`,
+      add: [],
+      remove_indices: [],
+      modify: [
+        {
+          index,
+          type: 'combo',
+          dynamicSql: sql,
+          // Normalize the spec to the monthly per-client combo the SQL actually
+          // produces (the flat Q25 base becomes a monthly combo — variance is monthly).
+          spec: { ...spec, chartType: 'combo', dimension: 'month', breakdown: 'client' },
+          display: this.clientPairVarianceDisplay(a, b, fmt),
+        },
+      ],
+    };
+  }
+
+  // "show variance percentages" on a two-client comparison (largest vs second-largest
+  // client, flat OR plotted per month) → the DAX Expense Variance % combo. Delegates to
+  // buildClientPairVariancePctPlan so the (Largest − Second)/Second formula is defined
+  // once. Confirmed live: the LLM free-SQL editor instead added a "Variance %" column
+  // AND flattened everything to one percent axis, so the $3M bars rendered as
+  // "3,000,000%" and dwarfed the real variance line.
+  private async buildEbpoBreakdownVariancePctEditPlan(
+    targets: Array<{ w: any; index: number; spec?: ChartSpec }>,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = editRequest.toLowerCase();
+    if (!/\bvariance\b/.test(q) || !/\bpercent|percentage|%\b/.test(q)) return null;
+    for (const t of targets) {
+      if (!this.isClientPairComparisonSpec(t.spec)) continue;
+      const plan = await this.buildClientPairVariancePctPlan(t.spec!, t.index, scope);
+      if (plan) return plan;
+    }
+    return null;
   }
 
   // "rank clients by receivables" / "order vendors by spend" / "top regions by revenue"
@@ -21996,6 +22835,15 @@ export class AgentService {
           scope,
         );
         if (namedHighlight) return namedHighlight;
+        const breakdownVariancePctPlan =
+          await this.buildEbpoBreakdownVariancePctEditPlan(targets, editRequest, scope);
+        if (breakdownVariancePctPlan) return breakdownVariancePctPlan;
+        const topNMonthlyPlan = await this.buildEbpoTopNMonthlyRegroupEditPlan(
+          targets,
+          editRequest,
+          scope,
+        );
+        if (topNMonthlyPlan) return topNMonthlyPlan;
         const regroupPlan = await this.buildEbpoRegroupEditPlan(targets, editRequest, scope);
         if (regroupPlan) return regroupPlan;
         const impossibleMeasureRefusal = this.buildEbpoUnsupportedMeasureEditRefusal(

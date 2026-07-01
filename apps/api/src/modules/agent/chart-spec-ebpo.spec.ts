@@ -132,14 +132,18 @@ describe('EBPO compiler — aggregation correctness', () => {
   });
 
   test('ratio measure uses RATIO-OF-SUMS, never a naive SUM of the ratio', async () => {
-    // gross_margin_pct = sum(gross_margin)/sum(revenue)*100 (matches PowerBI DAX
-    // DIVIDE(SUM,SUM)). Averaging a precomputed per-row pct is wrong when the view
-    // grain is finer than the cell (BU×contract_type×month) — it produced impossible
-    // values (>100%) and NaN→0% for missing combos.
-    const sql = await sqlFor(base({ measure: 'gross_margin_pct', dimension: 'business_unit', chartType: 'bar' }));
-    expect(sql).toMatch(/sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100/);
+    // Gross Margin % now follows the requested DAX:
+    // [ (Total Revenue - Total Expenses) / Total Revenue ] * 0.01
+    // with Total Expenses derived recursively as Total Cost + Total Payroll.
+    const sql = await sqlFor(base({ measure: 'gross_margin_pct', dimension: 'month', chartType: 'line' }));
+    expect(sql).toMatch(/\(sum\(total_revenue_usd\) - \(sum\(total_cost_usd\) \+ sum\(total_payroll_usd\)\)\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*1/);
     expect(sql).not.toMatch(/avg\(gross_margin_pct\)/);
     expect(sql).not.toMatch(/sum\(gross_margin_pct\)/);
+  });
+
+  test('gross_profit_pct stays cost-based as gross profit over revenue', async () => {
+    const sql = await sqlFor(base({ measure: 'gross_profit_pct', dimension: 'month', chartType: 'line' }));
+    expect(sql).toMatch(/sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100/);
   });
 
   test('overtime to payroll percentage uses RATIO-OF-SUMS', async () => {
@@ -502,7 +506,7 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
       base({ measure: 'total_revenue', measures: ['total_revenue', 'gross_margin_pct'], dimension: 'month', chartType: 'combo' }),
     );
     expect(sql).toMatch(/sum\(total_revenue_usd\).*AS "Total Revenue"/);
-    expect(sql).toMatch(/sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100.*AS "Gross Margin %"/);
+    expect(sql).toMatch(/\(sum\(total_revenue_usd\) - \(sum\(total_cost_usd\) \+ sum\(total_payroll_usd\)\)\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*1.*AS "Gross Margin %"/);
     expect(sql).toMatch(/GROUP BY toStartOfMonth\(period_date\)/);
     // single FROM — all series come from one view
     expect((sql.match(/FROM analytics\./g) || []).length).toBe(1);

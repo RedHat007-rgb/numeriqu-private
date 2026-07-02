@@ -338,6 +338,24 @@ export type MetricsResponse = {
   availableRange?: { start: string; end: string };
 };
 
+// Glass Ledger: the provenance behind a clicked figure — its definition, the rows
+// that make it up, an independently recomputed total, and a trust stamp.
+export type FigureEvidence = {
+  ok: boolean;
+  headline: string;
+  definition: string;
+  measureLabel: string;
+  dimensionLabel: string;
+  category: string;
+  format: "currency" | "number" | "percent";
+  rows: Array<{ label: string; value: number }>;
+  total: number;
+  reconciled: "match" | "mismatch" | "unchecked" | "not_applicable";
+  reconcileNote: string;
+  sql: string;
+  error?: string;
+};
+
 // ── Organisation management ────────────────────────────────────────────────
 
 export type Organization = {

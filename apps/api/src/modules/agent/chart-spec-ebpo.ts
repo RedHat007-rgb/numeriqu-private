@@ -2175,8 +2175,17 @@ const buildWhere = (
           .map((v) => {
             const direct = Number(v);
             if (Number.isInteger(direct) && direct >= 1 && direct <= 12) return direct;
-            const parsed = Date.parse(`${v} 1, 2000`);
-            return Number.isNaN(parsed) ? null : new Date(parsed).getUTCMonth() + 1;
+            // Resolve a month NAME ("Jun", "June") to its 1-based number without going
+            // through Date.parse — that parses "Jun 1, 2000" at LOCAL midnight, and reading
+            // it back with getUTCMonth() shifts a whole month in any timezone ahead of UTC
+            // (e.g. Asia/Calcutta: "Jun" → May, "Jan" → Dec), which silently scoped the
+            // provenance/period filter to the wrong month.
+            const key = String(v).trim().slice(0, 3).toLowerCase();
+            const MONTHS: Record<string, number> = {
+              jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+              jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+            };
+            return MONTHS[key] ?? null;
           })
           .filter((v): v is number => Number.isInteger(v as number) && (v as number) >= 1 && (v as number) <= 12);
         if (monthNums.length) {
@@ -2269,7 +2278,15 @@ export async function compileEbpoSpec(
   // Forces a time-bearing view (so the predicate has a period_date to filter on).
   const recentMonths =
     spec.recentMonths && spec.recentMonths > 0 ? Math.floor(spec.recentMonths) : null;
-  const wantTime = !!recentMonths;
+  // A month/quarter/year FILTER (e.g. "for Aug 2024") can only be honored by a
+  // time-bearing view — buildWhere silently SKIPS a time filter on a lifetime view
+  // (`if (dim.isTime) { if (!view.hasTime) continue; }`). Without forcing a time view
+  // here, a categorical breakdown scoped to one period (e.g. Glass-Ledger provenance:
+  // "revenue by client for Aug 2024") resolves to the all-time by-client view and sums
+  // EVERY month — wrong by ~48×. So any time filter, like recentMonths, requires a
+  // time-grained view.
+  const hasTimeFilter = filterDims.some((d) => EBPO_DIMENSIONS[d]?.isTime);
+  const wantTime = !!recentMonths || hasTimeFilter;
 
   // ── Unrelated-dimension replication (PowerBI parity, single measure) ────────
   // The measure has no view for this categorical dimension but resolves company-wide:

@@ -9,6 +9,7 @@ import type {
   ChatSessionDetail,
   ChatSessionSummary,
   GeneratedDashboard,
+  FigureEvidence,
   HealthResponse,
   MetricsResponse,
   StreamQueryParams,
@@ -125,6 +126,25 @@ export class AgentApi {
       }
     }
     return this.request<MetricsResponse>(`/agent/metrics?${params.toString()}`);
+  }
+
+  // Glass Ledger: the provenance rows behind a single clicked figure.
+  figureEvidence(args: {
+    widgetId: string;
+    category: string;
+    series?: string;
+    expected?: number;
+    orgId?: string;
+  }) {
+    const params = new URLSearchParams();
+    params.set("category", args.category);
+    if (args.series) params.set("series", args.series);
+    if (typeof args.expected === "number" && Number.isFinite(args.expected))
+      params.set("expected", String(args.expected));
+    if (args.orgId) params.set("orgId", args.orgId);
+    return this.request<FigureEvidence>(
+      `/agent/widgets/${encodeURIComponent(args.widgetId)}/evidence?${params.toString()}`,
+    );
   }
 
   async streamQuery(params: StreamQueryParams) {

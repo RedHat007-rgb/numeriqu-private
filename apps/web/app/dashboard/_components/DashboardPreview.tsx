@@ -49,7 +49,9 @@ import {
   LabelList,
 } from "recharts";
 import { ApiError, type ChatMessage, type TimeRange } from "../../../lib/api";
+import type { FigureEvidence } from "../../../lib/api/types";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
+import { ProvenanceDrawer } from "./ProvenanceDrawer";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
 import { cn } from "../../../components/ui/cn";
@@ -981,8 +983,331 @@ class ChartErrorBoundary extends Component<
   }
 }
 
-export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) {
+// Glass Ledger: what a bar/point click reports up so the dashboard can fetch the
+// provenance behind that exact figure.
+export type FigureClickArg = {
+  widgetId: string | null;
+  category: string;
+  series?: string;
+  value?: number;
+};
+
+// ─── Chart zoom (scatter / numeric-axis charts) ────────────────────────────────
+// Points that cluster in a corner (e.g. every delivery center at 90%+ SLA / 80%+
+// CSAT) are unreadable when the axes are pinned to 0–100%. This frame (1) auto-fits
+// the axes to the DATA with padding so the cluster spreads across the plot, and (2)
+// lets the user drag a box to zoom, scroll to zoom, and reset — without stealing the
+// click-to-provenance interaction (a plain click still falls through).
+
+type ZoomRange = [number, number];
+type ZoomDomain = { x: ZoomRange; y: ZoomRange };
+
+// A "nice" rounded step for axis bounds, so a fitted domain doesn't start at 89.7631.
+function niceZoomStep(span: number): number {
+  if (!Number.isFinite(span) || span <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(span / 4)));
+  const norm = span / 4 / mag;
+  const mult = norm >= 5 ? 5 : norm >= 2 ? 2 : 1;
+  return mult * mag;
+}
+
+// Fit a padded, nicely-rounded [min,max] to a set of values.
+function fitZoomBounds(values: number[], pad: number): ZoomRange {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (finite.length === 0) return [0, 1];
+  let lo = Math.min(...finite);
+  let hi = Math.max(...finite);
+  if (lo === hi) {
+    const d = Math.abs(lo) > 1 ? Math.abs(lo) * 0.1 : 1;
+    lo -= d;
+    hi += d;
+  }
+  const span = hi - lo;
+  const padded: ZoomRange = [lo - span * pad, hi + span * pad];
+  const step = niceZoomStep(span);
+  return [Math.floor(padded[0] / step) * step, Math.ceil(padded[1] / step) * step];
+}
+
+function zoomAxisRange(range: ZoomRange, factor: number, center: number | undefined): ZoomRange {
+  const [lo, hi] = range;
+  const c = center ?? (lo + hi) / 2;
+  const nlo = c - (c - lo) / factor;
+  const nhi = c + (hi - c) / factor;
+  if (!(nhi - nlo > 1e-9)) return range;
+  return [nlo, nhi];
+}
+
+function ZoomableChartFrame({
+  height,
+  xValues,
+  yValues,
+  enableXZoom = true,
+  footer,
+  children,
+}: {
+  height: number;
+  xValues: number[];
+  yValues: number[];
+  enableXZoom?: boolean;
+  footer?: ReactNode;
+  children: (domain: ZoomDomain) => ReactNode;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const fit: ZoomDomain = {
+    x: fitZoomBounds(xValues, 0.08),
+    y: fitZoomBounds(yValues, 0.12),
+  };
+  const fitKey = `${fit.x[0]},${fit.x[1]},${fit.y[0]},${fit.y[1]}`;
+  const [view, setView] = useState<ZoomDomain>(fit);
+  const lastFitKey = useRef(fitKey);
+  useEffect(() => {
+    if (lastFitKey.current !== fitKey) {
+      lastFitKey.current = fitKey;
+      setView(fit);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitKey]);
+
+  const isZoomed =
+    view.x[0] !== fit.x[0] ||
+    view.x[1] !== fit.x[1] ||
+    view.y[0] !== fit.y[0] ||
+    view.y[1] !== fit.y[1];
+
+  const [sel, setSel] = useState<{ left: number; top: number; w: number; h: number } | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; grid: DOMRect } | null>(null);
+  const draggedRef = useRef(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  const gridRect = (): DOMRect | null => {
+    const root = containerRef.current;
+    if (!root) return null;
+    const grid = root.querySelector(".recharts-cartesian-grid") as SVGGElement | null;
+    if (grid) return grid.getBoundingClientRect();
+    const surf = root.querySelector(".recharts-surface") as SVGSVGElement | null;
+    return surf ? surf.getBoundingClientRect() : null;
+  };
+  const toData = (clientX: number, clientY: number, g: DOMRect) => {
+    const v = viewRef.current;
+    const fx = Math.min(1, Math.max(0, (clientX - g.left) / g.width));
+    const fy = Math.min(1, Math.max(0, (clientY - g.top) / g.height));
+    return {
+      x: v.x[0] + fx * (v.x[1] - v.x[0]),
+      y: v.y[1] - fy * (v.y[1] - v.y[0]),
+    };
+  };
+
+  const applyZoom = (factor: number, cx?: number, cy?: number) =>
+    setView((v) => ({
+      x: enableXZoom ? zoomAxisRange(v.x, factor, cx) : v.x,
+      y: zoomAxisRange(v.y, factor, cy),
+    }));
+
+  // Recharts stops propagation of mouse events on its own surface, so React handlers on
+  // this wrapper never see them. Attach NATIVE listeners in the CAPTURE phase (top-down)
+  // so we intercept wheel/drag before Recharts can — while a plain click (no drag) still
+  // falls through to the chart's onClick (provenance). preventDefault on wheel stops the
+  // page from scrolling while zooming.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const g = gridRect();
+      if (!g) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2;
+      const d = toData(e.clientX, e.clientY, g);
+      applyZoom(factor, enableXZoom ? d.x : undefined, d.y);
+    };
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const g = gridRect();
+      if (!g) return;
+      dragRef.current = { sx: e.clientX, sy: e.clientY, grid: g };
+      draggedRef.current = false;
+    };
+    const onMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) < 6) return;
+      draggedRef.current = true;
+      const root = el.getBoundingClientRect();
+      setSel({
+        left: Math.min(d.sx, e.clientX) - root.left,
+        top: Math.min(d.sy, e.clientY) - root.top,
+        w: Math.abs(e.clientX - d.sx),
+        h: Math.abs(e.clientY - d.sy),
+      });
+    };
+    const onUp = (e: MouseEvent) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (draggedRef.current && d) {
+        const a = toData(d.sx, d.sy, d.grid);
+        const b = toData(e.clientX, e.clientY, d.grid);
+        const nx: ZoomRange = [Math.min(a.x, b.x), Math.max(a.x, b.x)];
+        const ny: ZoomRange = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
+        if (nx[1] - nx[0] > 0 && ny[1] - ny[0] > 0) {
+          setView((v) => ({ x: enableXZoom ? nx : v.x, y: ny }));
+        }
+      }
+      setSel(null);
+    };
+    // Swallow the click that follows a zoom-drag so it doesn't also open provenance.
+    const onClick = (e: MouseEvent) => {
+      if (draggedRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        draggedRef.current = false;
+      }
+    };
+    const onLeave = () => {
+      dragRef.current = null;
+      setSel(null);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("mousedown", onDown, true);
+    el.addEventListener("mousemove", onMove, true);
+    el.addEventListener("mouseup", onUp, true);
+    el.addEventListener("click", onClick, true);
+    el.addEventListener("mouseleave", onLeave);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("mousedown", onDown, true);
+      el.removeEventListener("mousemove", onMove, true);
+      el.removeEventListener("mouseup", onUp, true);
+      el.removeEventListener("click", onClick, true);
+      el.removeEventListener("mouseleave", onLeave);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enableXZoom]);
+
+  const btn =
+    "flex h-6 w-6 items-center justify-center rounded-md text-sm font-bold leading-none transition-colors";
+  const btnStyle = {
+    background: "rgb(var(--color-bg-elevated) / 0.85)",
+    color: "rgb(var(--color-text-secondary))",
+    border: "1px solid rgb(var(--color-border-subtle) / 0.15)",
+  } as const;
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    fn();
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex flex-col"
+      style={{ height, width: "100%" }}
+    >
+      <div className="absolute right-1 top-1 z-20 flex items-center gap-1" title="Scroll or drag a box to zoom">
+        <button type="button" aria-label="Zoom in" className={btn} style={btnStyle} onMouseDown={stop(() => {})} onClick={stop(() => applyZoom(1.4))}>+</button>
+        <button type="button" aria-label="Zoom out" className={btn} style={btnStyle} onMouseDown={stop(() => {})} onClick={stop(() => applyZoom(1 / 1.4))}>−</button>
+        {isZoomed && (
+          <button type="button" aria-label="Reset zoom" className={btn} style={btnStyle} onMouseDown={stop(() => {})} onClick={stop(() => setView(fit))}>⟳</button>
+        )}
+      </div>
+      <div className="min-h-0 flex-1">{children(view)}</div>
+      {sel && sel.w > 2 && sel.h > 2 && (
+        <div
+          className="pointer-events-none absolute z-10 rounded-sm"
+          style={{
+            left: sel.left,
+            top: sel.top,
+            width: sel.w,
+            height: sel.h,
+            background: "rgb(var(--color-accent-cyan) / 0.15)",
+            border: "1px solid rgb(var(--color-accent-cyan) / 0.7)",
+          }}
+        />
+      )}
+      {footer}
+    </div>
+  );
+}
+
+export function renderChart(
+  chart: Chart,
+  data: DataRow[],
+  isExpanded: boolean,
+  onFigureClick?: (arg: FigureClickArg) => void,
+) {
   const h = isExpanded ? 480 : 240;
+  // Glass Ledger: a datapoint is inspectable only when a handler is wired AND we know
+  // the real widget id to trace it back to.
+  const figureWidgetId = chart.widgetId ?? null;
+  const canInspect = !!onFigureClick && !!figureWidgetId;
+  const emitFigure = (category: string, series: string | undefined, value: unknown) => {
+    if (!onFigureClick || !figureWidgetId) return;
+    const num = Number(value);
+    onFigureClick({
+      widgetId: figureWidgetId,
+      category,
+      series,
+      value: Number.isFinite(num) ? num : undefined,
+    });
+  };
+  // Line / area / scatter / combo charts don't have per-bar cells to click, so they
+  // report the ACTIVE point at the click position (Recharts container onClick). We take
+  // the x-category and the first series there — enough to trace the figure.
+  //
+  // Recharts v3 changed the shape delivered to external click handlers: it no longer
+  // includes `activePayload`, only { activeLabel, activeDataKey, activeIndex,
+  // activeCoordinate, isTooltipActive }. The old code read `state.activePayload` and
+  // always early-returned on v3 → line/area/combo/scatter clicks never opened the
+  // provenance drawer (bars still worked via their own per-bar <Bar onClick>). Read the
+  // v3 fields and fall back to v2's activePayload so both shapes work.
+  const emitFromActive = (state: any) => {
+    if (!state) return;
+    const pts = Array.isArray(state.activePayload) ? state.activePayload : null;
+    const p = pts?.[0];
+    // Category = the x-axis label under the click.
+    const category = String(
+      state.activeLabel ?? p?.payload?.name ?? "",
+    );
+    // Which series was hit. v3 exposes activeDataKey; v2 carried it on the payload.
+    // A shared tooltip may not pin a single series — then we trace the primary measure.
+    const key = String(state.activeDataKey ?? p?.dataKey ?? p?.name ?? "");
+    // Value for the trust-stamp: prefer the payload (v2); on v3 resolve it from the
+    // chart's own data row (matched by category), or by active index as a last resort.
+    let value: unknown =
+      p?.value ?? (p?.payload && key ? p.payload[key] : undefined);
+    if (value === undefined && Array.isArray(data)) {
+      const row =
+        (category && (data as any[]).find((r) => String(r?.name) === category)) ||
+        (state.activeIndex != null ? (data as any[])[Number(state.activeIndex)] : undefined);
+      if (row) value = key && key !== "value" ? (row as any)[key] : (row as any).value;
+    }
+    if (!category && value === undefined) return;
+    emitFigure(
+      category,
+      key && key !== "value" ? prettySeriesName(key) : undefined,
+      value,
+    );
+  };
+  // Precise per-line click: a line's active dot carries its OWN series payload, so
+  // clicking directly on a point of one line traces exactly that series+value even
+  // when the shared tooltip doesn't pin a single dataKey for emitFromActive.
+  const dotClick = (seriesKey: string) => (dotProps: any, evt?: any) => {
+    // Stop the click from also reaching the chart-level onClick (emitFromActive),
+    // which — with a shared tooltip that doesn't pin a single series — would override
+    // this precise per-line trace with the chart's primary measure. Recharts passes
+    // the DOM event as the 2nd arg; some versions fold it into the first.
+    (evt ?? dotProps)?.stopPropagation?.();
+    const payload = dotProps?.payload;
+    if (!payload) return;
+    emitFigure(
+      String(payload?.name ?? ""),
+      seriesKey && seriesKey !== "value" ? prettySeriesName(seriesKey) : undefined,
+      payload?.[seriesKey],
+    );
+  };
+  const inspectDot = (seriesKey: string, radius = 4) =>
+    canInspect
+      ? { r: radius, cursor: "pointer" as const, onClick: dotClick(seriesKey) }
+      : false;
   // A pie/donut can only depict NON-NEGATIVE parts of a whole. If the data carries any
   // negative value (e.g. cash-flow components where investing/financing CF are negative),
   // a pie silently drops those slices and misleads — render it as a bar instead. This is
@@ -1612,6 +1937,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 	          <AreaChart
               data={areaData}
               margin={{ top: 8, right: 4, left: 12, bottom: isMultiSeries ? expandedBottomChartMargin : 12 }}
+              onClick={emitFromActive}
             >
             <defs>
               <linearGradient id={`grad-line-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
@@ -1994,7 +2320,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 	    return (
 	      <div style={{ height: h, width: "100%" }}>
 	        <ResponsiveContainer width="100%" height="100%">
-	          <BarChart data={wf} margin={{ top: 16, right: 4, left: 12, bottom: manyBars ? 28 : 4 }}>
+	          <BarChart data={wf} margin={{ top: 16, right: 4, left: 12, bottom: manyBars ? 28 : 4 }} onClick={emitFromActive}>
 	            <CartesianGrid {...gridStyle} vertical={false} />
 	            <XAxis dataKey="name" tick={tickStyle} tickLine={false} axisLine={false} interval={0}
 	              angle={manyBars ? -40 : 0} textAnchor={manyBars ? "end" : "middle"} height={manyBars ? 48 : 24} />
@@ -2238,6 +2564,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
           <ComposedChart
             data={comboData}
             margin={{ top: 8, right: 12, left: 12, bottom: expandedBottomChartMargin }}
+            onClick={emitFromActive}
           >
             <defs>
               <linearGradient id={`grad-bar-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
@@ -2409,9 +2736,27 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     const rawHasValueSeries = hasFiniteValueKey(barData, "value");
     const isActuallyMultiSeries = !rawHasValueSeries && rawSeriesKeys.length >= 1;
 
-    // Only use horizontal bars for single-series client ranking (NOT for multi-series pivots)
-    const isClientGrouping = chart.config.grouping === "client";
-    const useHorizontalBars = isClientGrouping && !isActuallyMultiSeries && data.length > 6;
+    // Horizontal bars for ANY single-series categorical ranking with long or numerous
+    // labels — the names then read straight across the axis instead of being rotated and
+    // truncated to "London Client M…". Applies to every grouping (delivery center,
+    // business unit, vendor, account, client…), not just clients. Multi-series (clustered)
+    // pivots and time-series bars (months/years) stay vertical.
+    const barNameMaxLen = barData.reduce(
+      (m: number, d: any) => Math.max(m, String((d as any)?.name ?? "").length),
+      0,
+    );
+    const barLooksTimeSeriesRaw =
+      barData.length > 0 &&
+      barData.filter((d: any) =>
+        /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b|\b(19|20)\d{2}\b|^\d{4}-\d{2}/i.test(
+          String((d as any)?.name ?? ""),
+        ),
+      ).length >= barData.length / 2;
+    const useHorizontalBars =
+      !isActuallyMultiSeries &&
+      !barLooksTimeSeriesRaw &&
+      barData.length >= 3 &&
+      (barNameMaxLen > 14 || (chart.config.grouping === "client" && data.length > 6));
 
     const trimmed = useHorizontalBars
       ? barData.slice(0, isExpanded ? 15 : 8)
@@ -2550,12 +2895,19 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                   tick={tickStyle}
                   tickLine={false}
                   axisLine={false}
-                  width={isExpanded ? 200 : 160}
+                  // Size the label gutter to the longest name so full labels fit without
+                  // truncation. Capped so bars keep room; expanded (modal) gets far more.
+                  width={Math.min(
+                    isExpanded ? 340 : 190,
+                    Math.max(120, barNameMaxLen * (isExpanded ? 7.5 : 6.5)),
+                  )}
                   tickMargin={10}
                   interval={0}
                   tickFormatter={(v: string) => {
                     const label = String(v ?? "");
-                    const limit = isExpanded ? 26 : 18;
+                    // Only truncate when a name would overrun the gutter; the gutter is
+                    // sized above so most names show in full.
+                    const limit = isExpanded ? 46 : 24;
                     return label.length > limit ? label.slice(0, limit - 1) + "…" : label;
                   }}
                 />
@@ -2571,7 +2923,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                           const x = Number(props.x ?? 0);
                           const y = Number(props.y ?? 0);
                           const label = String(props.payload?.value ?? "");
-                          const truncated = label.length > 16 ? label.slice(0, 15) + "…" : label;
+                          const truncated = label.length > 22 ? label.slice(0, 21) + "…" : label;
                           return (
                             <g transform={`translate(${x},${y})`}>
                               <text
@@ -2658,6 +3010,14 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     maxBarSize={shouldStackBreakdownBars ? (isExpanded ? 48 : 36) : (isExpanded ? 20 : 16)}
                     stackId={shouldStackBreakdownBars && !isDerived ? "stack" : undefined}
                     isAnimationActive={false}
+                    cursor={canInspect ? "pointer" : undefined}
+                    onClick={(payload: any) =>
+                      emitFigure(
+                        String(payload?.payload?.name ?? payload?.name ?? ""),
+                        prettySeriesName(k),
+                        payload?.payload?.[k] ?? payload?.value,
+                      )
+                    }
                   >
                     {/* "Highlight the largest client" (and any named-category highlight) on a
                         clustered/multi-measure column chart: keep every series' color but dim
@@ -2772,6 +3132,14 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 	                fill={highlight ? "#7c3aed" : `url(#grad-bar-${chart.id})`}
 	                radius={useHorizontalBars ? [6, 6, 6, 6] : [6, 6, 0, 0]}
 	                maxBarSize={useHorizontalBars ? (isExpanded ? 18 : 16) : 56}
+	                cursor={canInspect ? "pointer" : undefined}
+	                onClick={(payload: any) =>
+	                  emitFigure(
+	                    String(payload?.payload?.name ?? payload?.name ?? ""),
+	                    undefined,
+	                    payload?.payload?.value ?? payload?.value,
+	                  )
+	                }
 	              >
 	                {hasBarHighlight
 	                  ? trimmed.map((entry: any, idx: number) => {
@@ -3012,10 +3380,27 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     );
     const hasScatterHighlight = scatterHighlight.size > 0 && !!nameKey;
     return (
-      <div style={{ height: h, width: "100%" }} className="flex flex-col">
-        <div className="min-h-0 flex-1">
+      <ZoomableChartFrame
+        height={h}
+        enableXZoom={!singleCat}
+        xValues={singleCat ? [] : points.map((p: any) => Number(p[xKey]) || 0)}
+        yValues={points.map((p: any) => Number(p[yKey]) || 0)}
+        footer={
+          nameKey ? (
+            <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
+              {data.map((d, i) => (
+                <span key={i} className="inline-flex items-center gap-1 text-[9px] text-text-secondary">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                  {String((d as any)[nameKey])}
+                </span>
+              ))}
+            </div>
+          ) : undefined
+        }
+      >
+        {(view) => (
         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 14, right: 16, left: 12, bottom: 24 }}>
+          <ScatterChart margin={{ top: 14, right: 16, left: 12, bottom: 24 }} onClick={emitFromActive}>
             <CartesianGrid {...gridStyle} />
             <XAxis
               dataKey={xKey}
@@ -3025,7 +3410,13 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               tickLine={false}
               axisLine={false}
               interval={0}
-              {...(singleCat ? {} : { tickFormatter: (v: number) => fmtByUnit(Number(v) || 0, xFmt) })}
+              {...(singleCat
+                ? {}
+                : {
+                    tickFormatter: (v: number) => fmtByUnit(Number(v) || 0, xFmt),
+                    domain: view.x,
+                    allowDataOverflow: true,
+                  })}
               label={{ value: xLabel, position: "insideBottom", offset: -8, fontSize: 10, fill: "rgb(var(--color-text-muted))" }}
             />
             <YAxis
@@ -3038,6 +3429,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
               tickFormatter={(v: number) => fmtByUnit(Number(v) || 0, yFmt)}
               width={64}
               tickMargin={8}
+              domain={view.y}
+              allowDataOverflow
               label={{ value: yLabel, angle: -90, position: "insideLeft", offset: 4, fontSize: 10, fill: "rgb(var(--color-text-muted))" }}
             />
             <Tooltip
@@ -3079,18 +3472,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             </Scatter>
           </ScatterChart>
         </ResponsiveContainer>
-        </div>
-        {nameKey && (
-          <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
-            {data.map((d, i) => (
-              <span key={i} className="inline-flex items-center gap-1 text-[9px] text-text-secondary">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                {String((d as any)[nameKey])}
-              </span>
-            ))}
-          </div>
         )}
-      </div>
+      </ZoomableChartFrame>
     );
   }
 
@@ -3171,6 +3554,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             <Pie data={enriched} cx="45%" cy="50%" innerRadius={0}
               outerRadius={isExpanded ? "65%" : "58%"} paddingAngle={3}
               dataKey="value" nameKey="name" labelLine={false} label={renderLabel}
+              cursor={canInspect ? "pointer" : undefined}
+              onClick={(d: any) => emitFigure(String(d?.name ?? d?.payload?.name ?? ""), undefined, d?.value ?? d?.payload?.value)}
               isAnimationActive={false}>
               {enriched.map((_, i) => {
                 const ring = pieRing(i);
@@ -3352,6 +3737,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             <Pie data={donutDataWithTotal} dataKey="value" nameKey="name" cx="50%" cy={isExpanded ? "50%" : "44%"}
               innerRadius={isExpanded ? 70 : 52} outerRadius={isExpanded ? 120 : 88}
               paddingAngle={2} labelLine={false} label={renderDonutLabel}
+              cursor={canInspect ? "pointer" : undefined}
+              onClick={(d: any) => emitFigure(String(d?.name ?? d?.payload?.name ?? ""), undefined, d?.value ?? d?.payload?.value)}
               isAnimationActive={false}>
               {donutDataWithTotal.map((_, i) => { const ring = donutRing(i); return <Cell key={i} fill={COLORS[i % COLORS.length]} stroke={ring ?? undefined} strokeWidth={ring ? 4 : undefined} />; })}
             </Pie>
@@ -3383,7 +3770,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     return (
       <div style={{ height: Math.max(h, sorted.length * 32 + 40), width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={sorted} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
+          <BarChart data={sorted} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" horizontal={false} />
             <XAxis type="number" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
               tickLine={false} axisLine={false}
@@ -3417,7 +3804,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 16 }}>
+          <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 16 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
             <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 9 }}
               tickLine={false} axisLine={false} />
@@ -3450,7 +3837,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     return (
       <div style={{ height: h, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={paretoData} margin={{ top: 8, right: 40, left: 8, bottom: 16 }}>
+          <ComposedChart data={paretoData} margin={{ top: 8, right: 40, left: 8, bottom: 16 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
             <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 9 }}
               tickLine={false} axisLine={false} />
@@ -3538,15 +3925,38 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
     );
     const hasSize = finiteZ.length > 0 && zSpan > 0;
     return (
-      <div style={{ height: h, width: "100%" }} className="flex flex-col">
-        <div className="min-h-0 flex-1">
+      <ZoomableChartFrame
+        height={h}
+        xValues={bubbleData.map((d: any) => Number(d.x) || 0)}
+        yValues={bubbleData.map((d: any) => Number(d.y) || 0)}
+        footer={
+          <>
+            {bubbleHasName && (
+              <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
+                {bubbleData.map((d, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 text-[9px] text-text-secondary">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                    {String((d as any).name)}
+                  </span>
+                ))}
+              </div>
+            )}
+            {!hasSize && (
+              <p className="px-1 text-[9px] text-text-muted">Uniform size — no size measure in this chart.</p>
+            )}
+          </>
+        }
+      >
+        {(view) => (
         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 14, right: 12, left: 8, bottom: 24 }}>
+          <ScatterChart margin={{ top: 14, right: 12, left: 8, bottom: 24 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
             <XAxis type="number" dataKey="x" name={xLabel}
+              domain={view.x} allowDataOverflow
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
               tickFormatter={(v: number) => fmtByUnit(Number(v) || 0, xFmt)} label={{ value: xLabel, position: "insideBottom", offset: -8, fontSize: 10, fill: "rgb(var(--color-text-muted))" }} />
             <YAxis type="number" dataKey="y" name={yLabel}
+              domain={view.y} allowDataOverflow
               tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }} tickLine={false} axisLine={false}
               width={64} tickMargin={8}
               tickFormatter={(v: number) => fmtByUnit(Number(v) || 0, yFmt)}
@@ -3582,21 +3992,8 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             </Scatter>
           </ScatterChart>
         </ResponsiveContainer>
-        </div>
-        {bubbleHasName && (
-          <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
-            {bubbleData.map((d, i) => (
-              <span key={i} className="inline-flex items-center gap-1 text-[9px] text-text-secondary">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                {String((d as any).name)}
-              </span>
-            ))}
-          </div>
         )}
-        {!hasSize && (
-          <p className="px-1 text-[9px] text-text-muted">Uniform size — no size measure in this chart.</p>
-        )}
-      </div>
+      </ZoomableChartFrame>
     );
   }
 
@@ -3918,7 +4315,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
             const minNegativeSeriesValue =
               negativeSeriesValues.length > 0 ? Math.min(...negativeSeriesValues) : null;
             return (
-              <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+              <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }} onClick={emitFromActive}>
                 <CartesianGrid {...gridStyle} />
                 <XAxis dataKey="name" tick={tickStyle} />
                 <YAxis
@@ -3977,6 +4374,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     stroke={PIE_COLORS[idx % PIE_COLORS.length]}
                     strokeWidth={2}
                     dot={false}
+                    activeDot={inspectDot(key)}
                     isAnimationActive={false}
                   >
                     {multiSeriesLabelMode !== "none" && (
@@ -4036,7 +4434,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
 
           const singleSeriesLabelMode = pointLabelMode(data.length, 1, _forceLabels, isExpanded);
           return (
-            <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
+            <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }} onClick={emitFromActive}>
               <CartesianGrid {...gridStyle} />
               <XAxis dataKey="name" tick={tickStyle} />
               <YAxis
@@ -4086,6 +4484,7 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                 stroke="rgb(var(--color-accent-blue))"
                 strokeWidth={2}
                 dot={false}
+                activeDot={inspectDot("value")}
                 isAnimationActive={false}
               >
                 {singleSeriesLabelMode !== "none" && (
@@ -4501,6 +4900,7 @@ function ChartCard({
   onExpand,
   onScopeChange,
   onDelete,
+  onFigureClick,
 }: {
   chart: Chart;
   data: DataRow[];
@@ -4511,6 +4911,7 @@ function ChartCard({
   onExpand: () => void;
   onScopeChange: (selection: ChartScopeSelection) => void;
   onDelete?: () => void;
+  onFigureClick?: (arg: FigureClickArg) => void;
 }) {
   const isEmpty = data.length === 0;
   const rangeNotice = meta?.rangeNotice ?? chart.rangeNotice ?? null;
@@ -4584,7 +4985,7 @@ function ChartCard({
             </p>
           </div>
         ) : (
-          <ChartErrorBoundary>{renderChart(chart, data, false)}</ChartErrorBoundary>
+          <ChartErrorBoundary>{renderChart(chart, data, false, onFigureClick)}</ChartErrorBoundary>
         )}
       </div>
 
@@ -4616,6 +5017,7 @@ function VersionSection({
   onExpandChart,
   onScopeChange,
   onDeleteChart,
+  onFigureClick,
 }: {
   version: ChartVersionSnapshot | null;
   charts: Chart[];
@@ -4626,6 +5028,7 @@ function VersionSection({
   onExpandChart: (chartId: string) => void;
   onScopeChange: (chartId: string, selection: ChartScopeSelection) => void;
   onDeleteChart?: (chart: Chart) => void;
+  onFigureClick?: (arg: FigureClickArg) => void;
 }) {
   const versionLabel = version ? `Chart v${version.versionNumber}` : "Current dashboard";
   const modeLabel = version
@@ -4690,6 +5093,7 @@ function VersionSection({
               onDelete={
                 onDeleteChart && chart.widgetId ? () => onDeleteChart(chart) : undefined
               }
+              onFigureClick={onFigureClick}
             />
           );
         })}
@@ -4726,7 +5130,40 @@ export function DashboardPreview({
   // while the actual DELETE is deferred behind the undo window.
   const [hiddenWidgetIds, setHiddenWidgetIds] = useState<Set<string>>(new Set());
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // Glass Ledger: provenance drawer for a clicked figure.
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidence, setEvidence] = useState<FigureEvidence | null>(null);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const evidenceReqRef = useRef(0);
   const prevSessionRef = useRef<string | null | undefined>(sessionId);
+
+  const handleFigureClick = async (arg: FigureClickArg) => {
+    if (!arg.widgetId) return;
+    const reqId = ++evidenceReqRef.current;
+    setEvidenceOpen(true);
+    setEvidenceLoading(true);
+    setEvidence(null);
+    setEvidenceError(null);
+    try {
+      const result = await agent.figureEvidence({
+        widgetId: arg.widgetId,
+        category: arg.category,
+        series: arg.series,
+        expected: arg.value,
+      });
+      // Ignore a stale response if the user clicked another bar meanwhile.
+      if (reqId !== evidenceReqRef.current) return;
+      setEvidence(result);
+    } catch (err) {
+      if (reqId !== evidenceReqRef.current) return;
+      setEvidenceError(
+        err instanceof ApiError ? err.message : "Couldn’t trace this figure.",
+      );
+    } finally {
+      if (reqId === evidenceReqRef.current) setEvidenceLoading(false);
+    }
+  };
 
   // Switching chats (or starting a new one) must NOT keep showing the previous
   // dashboard's charts. Keep the render pure and clear the cached dashboard
@@ -5104,6 +5541,7 @@ export function DashboardPreview({
                   ? handleRequestDelete
                   : undefined
               }
+              onFigureClick={handleFigureClick}
             />
           </div>
         ))}
@@ -5181,7 +5619,7 @@ export function DashboardPreview({
 
               <div className="min-h-0 w-full flex-1 rounded-2xl border border-default bg-bg-elevated/30 p-6">
                 <ChartErrorBoundary>
-                  {renderChart(expandedChart, expandedData, true)}
+                  {renderChart(expandedChart, expandedData, true, handleFigureClick)}
                 </ChartErrorBoundary>
               </div>
 
@@ -5200,6 +5638,15 @@ export function DashboardPreview({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Glass Ledger: provenance behind a clicked figure */}
+      <ProvenanceDrawer
+        open={evidenceOpen}
+        loading={evidenceLoading}
+        evidence={evidence}
+        error={evidenceError}
+        onClose={() => setEvidenceOpen(false)}
+      />
     </div>
   );
 }

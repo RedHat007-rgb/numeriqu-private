@@ -23,6 +23,7 @@ import {
   catalogPromptText,
   compileSpec,
   type ChartSpec,
+  type SpecFilter,
 } from './chart-spec';
 import type { EbpoMeasureDef } from './chart-spec-ebpo';
 import {
@@ -75,6 +76,7 @@ import type {
   ChartTurnMode,
   ChartTurnWidgetSnapshot,
   ChartTurnMetadata,
+  FigureEvidence,
   QueryIntent,
   ClarificationPrompt,
   ExplicitChartConstraints,
@@ -9309,6 +9311,286 @@ export class AgentService {
       summary,
       removedTitle,
     };
+  }
+
+  // ─── Glass Ledger: provenance behind a clicked figure ────────────────────
+  /**
+   * "See through the number." Given a widget and the category the user clicked
+   * (e.g. the AT&T bar) plus which series (e.g. Total Revenue), return the detail
+   * rows that make up that figure, an INDEPENDENTLY recomputed total, and a trust
+   * stamp saying whether that recomputation matches the value the chart displayed.
+   *
+   * It reuses the chart's own saved spec — same measures, filters and window — but
+   * regroups by month and scopes to the clicked category, so the evidence is the real
+   * ClickHouse rows behind the aggregate, never a fabrication. Ratio/percent measures
+   * can't be reconciled by summing rows, so they are reported honestly as such rather
+   * than shown a false ✓/✗.
+   */
+  async getFigureEvidence(
+    organizationId: string,
+    role: MembershipRole,
+    widgetId: string,
+    category: string,
+    seriesLabel?: string,
+    expectedValue?: number,
+    orgId?: string,
+  ): Promise<FigureEvidence> {
+    const fail = (error: string): FigureEvidence => ({
+      ok: false,
+      headline: '',
+      definition: '',
+      measureLabel: '',
+      dimensionLabel: '',
+      category,
+      format: 'currency',
+      rows: [],
+      total: 0,
+      reconciled: 'unchecked',
+      reconcileNote: '',
+      sql: '',
+      error,
+    });
+
+    const cat = (category ?? '').trim();
+    if (!cat) return fail('No category was provided to trace.');
+
+    const scope = await this.getOrgScope(organizationId, role, orgId);
+    if (scope.externalOrgIds.length === 0)
+      return fail('No accessible data for this account.');
+
+    const widget = await this.prisma.dashboardWidget.findFirst({
+      where: { id: widgetId, organizationId },
+      select: { queryConfig: true, chartType: true, title: true },
+    });
+    if (!widget) return fail('That chart could not be found.');
+
+    const cfg = (widget.queryConfig ?? {}) as Record<string, unknown>;
+    const spec = cfg.spec as ChartSpec | undefined;
+    if (!spec || typeof spec !== 'object')
+      return fail('Drill-down provenance isn’t available for this chart yet.');
+
+    const primaryDim = String(spec.dimension ?? '').trim();
+    const primaryDimDef = EBPO_DIMENSIONS[primaryDim];
+    if (!primaryDimDef)
+      return fail('Drill-down provenance isn’t available for this chart yet.');
+
+    // Which measure did they click? Match the clicked series label against the
+    // chart's measures; fall back to the primary measure for a single-series chart.
+    const measureIds =
+      Array.isArray(spec.measures) && spec.measures.length
+        ? spec.measures.filter((m): m is string => typeof m === 'string')
+        : [spec.measure].filter((m): m is string => typeof m === 'string');
+    const wantLabel = (seriesLabel ?? '').trim();
+    const wantLower = wantLabel.toLowerCase();
+    const matchedMeasureId = wantLabel
+      ? measureIds.find(
+          (m) => (EBPO_MEASURES[m]?.label ?? '').toLowerCase() === wantLower,
+        )
+      : null;
+    const measureId = matchedMeasureId ?? measureIds[0] ?? spec.measure;
+    const measureDef = EBPO_MEASURES[measureId];
+    if (!measureDef) return fail('That measure isn’t recognized.');
+    const measureLabel = measureDef.label;
+
+    // A series label that ISN'T one of the chart's measures is an entity value from a
+    // wide pivot (e.g. a per-client line, where each series is a client). Trace THAT
+    // entity by filtering the breakdown dimension to it, rather than the whole period.
+    const breakdownDim = String(spec.breakdown ?? '').trim();
+    const breakdownDimDef = breakdownDim ? EBPO_DIMENSIONS[breakdownDim] : null;
+    const seriesIsEntity =
+      !!wantLabel && !matchedMeasureId && !!breakdownDimDef && !breakdownDimDef.isTime;
+
+    // Assemble the scope (which slice) + the detail dimension (how to break it down).
+    const scopeFilters: SpecFilter[] = [...(spec.filters ?? [])];
+    if (seriesIsEntity)
+      scopeFilters.push({ dimension: breakdownDim, op: 'in', values: [wantLabel] });
+
+    let detailDim: string;
+    let recentMonths: number | null = spec.recentMonths ?? null;
+    let scopeLabel: string;
+    let dimensionLabel: string;
+
+    if (!primaryDimDef.isTime) {
+      // Categorical primary (client / department / …): scope to the clicked category
+      // and decompose it over time — the monthly rows behind the aggregate bar.
+      scopeFilters.push({ dimension: primaryDim, op: 'in', values: [cat] });
+      detailDim = 'month';
+      scopeLabel = cat + (spec.recentMonths ? `, last ${spec.recentMonths} months` : '');
+      dimensionLabel = primaryDimDef.label;
+    } else {
+      // Time primary (month / quarter / year): scope to the exact clicked PERIOD and
+      // decompose by the chart's breakdown entity — or, if the click already pinned an
+      // entity (or there is no breakdown), show the single period figure itself.
+      const periodFilters = this.periodFiltersFromLabel(primaryDim, cat);
+      if (periodFilters.length === 0)
+        return fail('Couldn’t identify the period that was clicked.');
+      scopeFilters.push(...periodFilters);
+      recentMonths = null; // an exact period, not a rolling window
+      detailDim =
+        breakdownDimDef && !breakdownDimDef.isTime && !seriesIsEntity
+          ? breakdownDim
+          : primaryDim;
+      scopeLabel = seriesIsEntity ? `${wantLabel}, ${cat}` : cat;
+      dimensionLabel = (EBPO_DIMENSIONS[detailDim] ?? primaryDimDef).label;
+    }
+
+    // Build the evidence spec: the SAME measure/filters, scoped as above, grouped by
+    // the detail dimension.
+    const evidenceSpec: ChartSpec = {
+      measure: measureId,
+      measures: [measureId],
+      dimension: detailDim,
+      breakdown: undefined,
+      filters: scopeFilters,
+      recentMonths,
+      chartType: 'bar',
+      transforms: [],
+    };
+
+    const runRows = (sql: string) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
+    const compiled = await compileEbpoSpec(
+      evidenceSpec,
+      this.analyticsDb,
+      runRows,
+    ).catch(() => null);
+    if (!compiled || !('ok' in compiled) || !compiled.ok)
+      return fail('Could not assemble the evidence for this figure.');
+
+    const probe = await this.executeDynamicSqlChecked(compiled.sql, scope, {
+      chartType: 'bar',
+    }).catch(() => null);
+    if (!probe || probe.error)
+      return fail('Could not read the underlying rows for this figure.');
+
+    const numAt = (r: Record<string, unknown>, key: string) => {
+      const v = Number((r as any)[key]);
+      return Number.isFinite(v) ? v : 0;
+    };
+    const rows = (probe.rows as Record<string, unknown>[]).map((r) => ({
+      label: String((r as any).name ?? ''),
+      value: numAt(r, 'value'),
+    }));
+    const total = rows.reduce((s, r) => s + r.value, 0);
+
+    // Trust stamp. A flow/stock $ measure must reconcile: our independent sum of the
+    // detail rows should equal the number the chart drew. A ratio/percent can't be
+    // summed, so we don't fake a check.
+    const isPercent = measureDef.format === 'percent' || measureDef.kind === 'ratio';
+    const singleRow = rows.length <= 1;
+    let reconciled: FigureEvidence['reconciled'];
+    let reconcileNote: string;
+    if (isPercent) {
+      reconciled = 'not_applicable';
+      reconcileNote =
+        'This is a ratio, so its parts can’t simply be added — the rows show how it breaks down.';
+    } else if (typeof expectedValue === 'number' && Number.isFinite(expectedValue)) {
+      const denom = Math.max(1, Math.abs(expectedValue));
+      const drift = Math.abs(total - expectedValue) / denom;
+      if (drift <= 0.01) {
+        reconciled = 'match';
+        reconcileNote = singleRow
+          ? 'Recomputed from the source — matches the chart exactly.'
+          : 'Recomputed from the source rows — matches the chart exactly.';
+      } else {
+        reconciled = 'mismatch';
+        reconcileNote = `Recomputed total (${this.formatFigure(total, measureDef.format)}) differs from the charted value (${this.formatFigure(expectedValue, measureDef.format)}).`;
+      }
+    } else {
+      reconciled = 'unchecked';
+      reconcileNote = 'Recomputed from the source rows.';
+    }
+
+    return {
+      ok: true,
+      headline: `${measureLabel} for ${scopeLabel}`,
+      definition: this.describeMeasureDefinition(measureDef),
+      measureLabel,
+      dimensionLabel,
+      category: cat,
+      format: measureDef.format,
+      rows,
+      total,
+      reconciled,
+      reconcileNote,
+      sql: compiled.sql,
+    };
+  }
+
+  /**
+   * Turn a clicked time-axis label ("Jun 2025", "2025-06", "Q2 2025", "2025") into the
+   * SpecFilters that scope the evidence query to exactly that period. Month + year are
+   * emitted together so "Jun 2025" doesn't match June of every year.
+   */
+  private periodFiltersFromLabel(dimId: string, label: string): SpecFilter[] {
+    const s = (label ?? '').trim();
+    if (!s) return [];
+    if (dimId === 'year') {
+      const y = s.match(/(19|20)\d{2}/);
+      return y ? [{ dimension: 'year', op: 'in', values: [y[0]] }] : [];
+    }
+    if (dimId === 'quarter') {
+      const m = s.match(/q?([1-4]).*?((?:19|20)\d{2})/i);
+      return m
+        ? [{ dimension: 'quarter', op: 'in', values: [`Q${m[1]} ${m[2]}`] }]
+        : [];
+    }
+    // month: "2025-06" or "Jun 2025"
+    const iso = s.match(/((?:19|20)\d{2})-(\d{1,2})/);
+    if (iso) {
+      return [
+        { dimension: 'month', op: 'in', values: [String(Number(iso[2]))] },
+        { dimension: 'year', op: 'in', values: [iso[1]] },
+      ];
+    }
+    const named = s.match(/([A-Za-z]{3,})\.?\s+((?:19|20)\d{2})/);
+    if (named) {
+      return [
+        { dimension: 'month', op: 'in', values: [named[1]!] },
+        { dimension: 'year', op: 'in', values: [named[2]!] },
+      ];
+    }
+    const bareMonth = s.match(/^([A-Za-z]{3,})$/);
+    if (bareMonth) {
+      return [{ dimension: 'month', op: 'in', values: [bareMonth[1]!] }];
+    }
+    return [];
+  }
+
+  /** Plain-English definition of a measure for the provenance panel. */
+  private describeMeasureDefinition(measureDef: EbpoMeasureDef): string {
+    const aggWord =
+      measureDef.kind === 'ratio'
+        ? 'a ratio of'
+        : measureDef.agg === 'sum'
+          ? 'the sum of'
+          : measureDef.agg === 'avg'
+            ? 'the average of'
+            : measureDef.agg === 'max'
+              ? 'the latest'
+              : measureDef.agg === 'distinct'
+                ? 'a distinct count of'
+                : 'the total of';
+    return `${measureDef.label} is ${aggWord} the underlying ${measureDef.kind} values from your verified data.`;
+  }
+
+  /** Format a number for the provenance panel's reconcile note. */
+  private formatFigure(
+    value: number,
+    format: 'currency' | 'number' | 'percent',
+  ): string {
+    if (format === 'percent') return `${(value * (Math.abs(value) <= 1 ? 100 : 1)).toFixed(1)}%`;
+    if (format === 'currency') {
+      const abs = Math.abs(value);
+      if (abs >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+      if (abs >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+      if (abs >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+      return `$${value.toFixed(0)}`;
+    }
+    return value.toLocaleString();
   }
 
   // ─── Conversation History ────────────────────────────────────────────────

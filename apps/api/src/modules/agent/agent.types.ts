@@ -309,6 +309,35 @@ export type ChartTurnMetadata = {
 
 export type QueryIntent = 'CREATE_DASHBOARD' | 'EDIT_DASHBOARD';
 
+// "Glass Ledger": the provenance behind a single figure the user clicked on a chart.
+// Returned by getFigureEvidence — the plain-English definition, the exact rows that
+// aggregate to the number, an independent recomputed total, and a trust stamp that
+// says whether that recomputation matches what the chart displayed.
+export type FigureEvidence = {
+  ok: boolean;
+  // Human sentence: what this number is (e.g. "Total Revenue for AT&T, last 8 months").
+  headline: string;
+  // The measure's definition/formula in plain terms.
+  definition: string;
+  measureLabel: string;
+  dimensionLabel: string;
+  category: string;
+  format: 'currency' | 'number' | 'percent';
+  // The detail rows (typically monthly) that make up the figure, in order.
+  rows: Array<{ label: string; value: number }>;
+  // Independently recomputed total from `rows`.
+  total: number;
+  // Trust stamp. 'match' = our recomputation equals what the chart showed (to tolerance);
+  // 'mismatch' = it did not (surfaces a real discrepancy); 'unchecked' = the caller gave
+  // no displayed value to compare; 'not_applicable' = a ratio/percent measure that can't
+  // be reconciled by summing rows.
+  reconciled: 'match' | 'mismatch' | 'unchecked' | 'not_applicable';
+  reconcileNote: string;
+  // The exact SQL that produced the evidence rows (for the "show the query" affordance).
+  sql: string;
+  error?: string;
+};
+
 export interface ClarificationPrompt {
   question: string;
   options: Array<{ label: string; value: string }>;

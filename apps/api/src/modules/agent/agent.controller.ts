@@ -134,6 +134,35 @@ export class AgentController {
     );
   }
 
+  @Get('widgets/:widgetId/evidence')
+  async widgetEvidence(
+    @CurrentUser() user: AuthUser,
+    @Param('widgetId') widgetId: string,
+    @Query('category') category: string,
+    @Query('series') series?: string,
+    @Query('expected') expected?: string,
+    @Query('orgId') orgId?: string,
+    @Headers('x-organization-id') organizationId?: string,
+  ) {
+    const context = await this.organizationContext.ensureContext(
+      { id: user.id, email: user.email },
+      { organizationId },
+    );
+    const expectedValue =
+      expected != null && expected !== '' && Number.isFinite(Number(expected))
+        ? Number(expected)
+        : undefined;
+    return this.agentService.getFigureEvidence(
+      context.organization.id,
+      context.membership.role,
+      widgetId,
+      String(category ?? ''),
+      series ? String(series) : undefined,
+      expectedValue,
+      orgId ? String(orgId) : undefined,
+    );
+  }
+
   @Get('metrics')
   async metrics(
     @CurrentUser() user: AuthUser,

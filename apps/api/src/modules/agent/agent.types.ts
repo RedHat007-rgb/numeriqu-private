@@ -121,6 +121,12 @@ export interface DashboardEditPlan {
     // next follow-up edits this updated spec).
     spec?: ChartSpec;
     display?: DisplayHints | null;
+    // Undo/discard: replace the widget's stored queryConfig WHOLESALE with this
+    // previously-snapshotted config, instead of the usual shallow merge. Merging
+    // can't remove keys (e.g. a highlightNames added by the last edit), so reverting
+    // to an earlier version requires a full replace. When present, applyDashboardEdit
+    // ignores the merge fields (dynamicSql/spec/display/metric/…) for this widget.
+    replaceQueryConfig?: Record<string, unknown>;
   }>;
   // Layer D: when a follow-up cannot be satisfied from the data (e.g. YoY with a
   // single year of data, budget variance with no budget), the editor refuses

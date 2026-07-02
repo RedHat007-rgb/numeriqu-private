@@ -8424,6 +8424,8 @@ export class AgentService {
           scope,
           spec.timeRange,
           conversationHistory,
+          currentSession.id,
+          organizationId,
         );
         const editTools = this.deriveToolsFromWidgets(
           activeDashboard.widgets.map((w) => ({
@@ -23405,13 +23407,237 @@ export class AgentService {
     };
   }
 
+  /**
+   * Understand — semantically, not by keyword — whether a follow-up message means
+   * "undo / revert / discard the most recent change" (go back to how the chart was
+   * before the last edit). The model sees WHAT the last change did, so it can tell an
+   * undo ("scrap that", "put it back", "no, remove that highlight") apart from a NEW
+   * data edit ("remove the largest client", "change it to a pie"). Handles paraphrases,
+   * typos, and other languages. A minimal keyword fallback runs ONLY when the model is
+   * unreachable, so undo still works offline — it is a safety net, not the primary path.
+   */
+  private async classifyUndoIntent(
+    editRequest: string,
+    lastChangeSummary: string,
+    conversationHistory?: string,
+  ): Promise<boolean> {
+    const request = (editRequest ?? '').trim();
+    if (!request) return false;
+
+    const system =
+      'You classify a single follow-up message from a user who is iterating on a ' +
+      'chart/dashboard. Decide whether the user wants to UNDO the most recent change ' +
+      '— i.e. discard/revert/cancel it and go back to how the chart was BEFORE that ' +
+      'change. This is NOT an undo if the user is asking for any NEW modification ' +
+      '(changing the data, measure, dimension, filter, sort, top-N, chart type, ' +
+      'adding/removing a data series or a whole chart, highlighting something new, ' +
+      'etc.). "remove the highlight"/"take that back" = undo; "remove the largest ' +
+      'client"/"switch to a pie" = not undo. Respond with ONLY JSON: ' +
+      '{"undo": true} or {"undo": false}.';
+    const user =
+      (lastChangeSummary
+        ? `THE MOST RECENT CHANGE WAS: "${lastChangeSummary}"\n`
+        : '') +
+      (conversationHistory && !conversationHistory.includes('(No prior')
+        ? `CONVERSATION SO FAR:\n${conversationHistory.slice(0, 400)}\n`
+        : '') +
+      `USER MESSAGE: "${request}"\nReturn the JSON now.`;
+
+    try {
+      const ping = await fetch(`${this.OLLAMA_URL}/api/tags`, {
+        signal: AbortSignal.timeout(2500),
+      }).catch(() => null);
+      if (ping?.ok) {
+        const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(15_000),
+          body: JSON.stringify({
+            model: this.OLLAMA_MODEL,
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: user },
+            ],
+            stream: false,
+            format: 'json',
+            // Generous token budget: the answer is tiny, but a reasoning model spends
+            // completion tokens on hidden reasoning first — too small a cap returns empty.
+            options: { temperature: 0, num_predict: 300 },
+          }),
+        });
+        if (resp.ok) {
+          const body = (await resp.json()) as { message?: { content?: string } };
+          const raw = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
+          const match = raw.match(/\{[\s\S]*\}/);
+          if (match) {
+            const parsed = JSON.parse(match[0]) as { undo?: unknown };
+            return parsed.undo === true;
+          }
+        }
+      }
+    } catch {
+      // fall through to the offline safety net
+    }
+
+    // Offline safety net ONLY (model unreachable). Deliberately conservative so it
+    // never hijacks a real edit: requires an explicit undo verb AND a reference to the
+    // change/edit itself, or an unambiguous "go back / put it back" phrasing.
+    const q = request.toLowerCase();
+    const undoVerb = /\b(discard|undo|revert|cancel|roll\s*back|rollback|scrap)\b/.test(q);
+    const changeObj =
+      /\b(change|changes|edit|edits|highlight(?:ing|s)?|modification|modifications|that|it|this|last)\b/.test(
+        q,
+      );
+    return (
+      (undoVerb && changeObj) ||
+      /\b(go|put|take|set|bring)\s+(?:it\s+|things\s+|them\s+)?back\b/.test(q) ||
+      /\brestore\b[^.]*\b(previous|original|prior|last|earlier)\b/.test(q)
+    );
+  }
+
+  /**
+   * "discard the changes" / "undo that" / "revert" / "go back to the previous version"
+   * → step the live chart back to the version BEFORE the last edit, by restoring the
+   * previous chart-turn's widget snapshots wholesale. This is the deterministic undo
+   * that was missing: without it, a revert request fell through to the generic edit
+   * planner, which re-interpreted "discard the changes" as a brand-new request and
+   * produced an unrelated single-series bar chart (or dead-ended in a refusal).
+   *
+   * The intent is understood SEMANTICALLY by the model (see classifyUndoIntent), not
+   * by a hardcoded keyword list — so paraphrases, typos, and other languages ("scrap
+   * that", "put it back how it was", "no, undo") all route here. Returns null to defer
+   * when the request isn't an undo.
+   */
+  private async buildRevertEditPlan(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    sessionId?: string,
+    organizationId?: string,
+    conversationHistory?: string,
+  ): Promise<DashboardEditPlan | null> {
+    // Undo only makes sense against this session's chart history; without it there's
+    // nothing to restore, so let the normal planners handle the request.
+    if (!sessionId || !organizationId) return null;
+
+    // Load this session's chart turns in chronological order.
+    const assistantMessages = await this.prisma.agentChatMessage.findMany({
+      where: { sessionId, organizationId, role: 'assistant' },
+      select: { metadata: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const turns = assistantMessages
+      .map((m) => m.metadata)
+      .filter(
+        (md) =>
+          !!md &&
+          typeof md === 'object' &&
+          (md as Partial<ChartTurnMetadata>).kind === 'chart_turn',
+      )
+      .map((md) => md as unknown as ChartTurnMetadata)
+      // Only turns that actually carry a chart snapshot are restorable.
+      .filter((t) => Array.isArray(t.widgetSnapshots) && t.widgetSnapshots.length > 0);
+
+    // No chart has been built in this session yet → this can't be an undo of a chart
+    // change; defer so the create/edit planners run.
+    if (turns.length === 0) return null;
+
+    // Does the user actually want to undo the most recent change? Ask the model,
+    // giving it what the last change did so it can tell "undo that" (revert) apart
+    // from "remove the largest client" (a new data edit).
+    const wantsUndo = await this.classifyUndoIntent(
+      editRequest,
+      turns[turns.length - 1]?.summary ?? '',
+      conversationHistory,
+    );
+    if (!wantsUndo) return null;
+
+    if (turns.length < 2) {
+      return {
+        summary: '',
+        add: [],
+        remove_indices: [],
+        modify: [],
+        refusal:
+          "There's no earlier version to go back to — this is the original chart, so there are no changes to discard.",
+      };
+    }
+
+    const current = turns[turns.length - 1]!;
+    const prevVersion = current.previousVersionNumber;
+    const previous =
+      (prevVersion != null
+        ? turns.find((t) => t.versionNumber === prevVersion)
+        : null) ?? turns[turns.length - 2]!;
+    const snaps = previous.widgetSnapshots;
+
+    const currentWidgets = activeDashboard.widgets;
+    const modify: DashboardEditPlan['modify'] = [];
+    const remove_indices: number[] = [];
+    const add: DashboardEditPlan['add'] = [];
+
+    // Restore each widget by position: replace kept widgets' configs wholesale, drop
+    // any extras the last edit added, and re-create any the last edit removed.
+    for (let i = 0; i < currentWidgets.length; i++) {
+      const snap = snaps[i];
+      if (!snap) {
+        remove_indices.push(i);
+        continue;
+      }
+      modify.push({
+        index: i,
+        title: snap.title,
+        type: snap.chartType as ChartType,
+        description: (snap.chartConfig as any)?.description,
+        replaceQueryConfig: snap.queryConfig,
+      });
+    }
+    for (let j = currentWidgets.length; j < snaps.length; j++) {
+      const snap = snaps[j]!;
+      const cfg = (snap.queryConfig ?? {}) as Record<string, unknown>;
+      add.push({
+        title: snap.title,
+        description: String((snap.chartConfig as any)?.description ?? ''),
+        type: snap.chartType as ChartType,
+        metric: String(cfg.metric ?? 'dynamic'),
+        grouping: String(cfg.grouping ?? 'query'),
+        ...(typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim()
+          ? { dynamicSql: cfg.dynamicSql.trim() }
+          : {}),
+        display: (cfg.display ?? null) as DisplayHints | null,
+      });
+    }
+
+    const restoredMode = current.mode === 'edit' ? 'the last change' : 'the last chart';
+    return {
+      summary: `Discarded ${restoredMode} and restored the previous version of ${previous.dashboardTitle}.`,
+      add,
+      remove_indices,
+      modify,
+    };
+  }
+
   private async generateEditPlan(
     activeDashboard: ActiveDashboard,
     editRequest: string,
     scope?: OrgScope,
     range?: TimeRange,
     conversationHistory?: string,
+    sessionId?: string,
+    organizationId?: string,
   ): Promise<DashboardEditPlan> {
+    // Undo/discard/revert — restore the previous chart version BEFORE any other edit
+    // routing. "discard the changes" / "undo that" / "go back" must step the chart
+    // back a version, not be re-interpreted as a new create/edit (which previously
+    // mangled the chart into an unrelated bar chart or dead-ended in a refusal).
+    const revertPlan = await this.buildRevertEditPlan(
+      activeDashboard,
+      editRequest,
+      sessionId,
+      organizationId,
+      conversationHistory,
+    );
+    if (revertPlan) return revertPlan;
+
     const deleteTarget = this.resolveDeleteChartTarget(
       activeDashboard,
       editRequest,
@@ -24326,6 +24552,30 @@ export class AgentService {
         if (!widget || removeIds.includes(widget.id)) continue;
         const changes: Record<string, unknown> = {};
         const existingConfig = (widget.queryConfig as Record<string, unknown>) ?? {};
+
+        // Undo/discard: restore a previously-snapshotted config wholesale. A shallow
+        // merge can't drop keys the last edit added (e.g. display.highlightNames), so
+        // reverting requires replacing the entire queryConfig — not merging into it.
+        if (mod.replaceQueryConfig && typeof mod.replaceQueryConfig === 'object') {
+          const restored = { ...(mod.replaceQueryConfig as Record<string, unknown>) };
+          if (JSON.stringify(restored) !== JSON.stringify(existingConfig)) {
+            changes.queryConfig = restored as Prisma.InputJsonValue;
+          }
+          if (mod.type && mod.type !== widget.chartType) changes.chartType = mod.type;
+          if (mod.title) changes.title = mod.title;
+          if (mod.description)
+            changes.chartConfig = {
+              description: mod.description,
+            } as Prisma.InputJsonValue;
+          if (Object.keys(changes).length > 0) {
+            await tx.dashboardWidget.update({
+              where: { id: widget.id },
+              data: changes,
+            });
+          }
+          continue;
+        }
+
         const nextConfig: Record<string, unknown> = { ...existingConfig };
         if (mod.title) changes.title = mod.title;
         const nextMetric =

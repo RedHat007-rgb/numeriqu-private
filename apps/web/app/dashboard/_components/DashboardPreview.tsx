@@ -2659,6 +2659,24 @@ export function renderChart(chart: Chart, data: DataRow[], isExpanded: boolean) 
                     stackId={shouldStackBreakdownBars && !isDerived ? "stack" : undefined}
                     isAnimationActive={false}
                   >
+                    {/* "Highlight the largest client" (and any named-category highlight) on a
+                        clustered/multi-measure column chart: keep every series' color but dim
+                        the categories that weren't asked for, so the highlighted category's
+                        bars (across ALL measures) stand out. Without these Cells the multi-
+                        series renderer ignored display.highlightNames entirely — the emphasis
+                        never rendered even though the backend computed the right name. */}
+                    {hasBarHighlight
+                      ? chartData.map((entry: any, ci: number) => {
+                          const isHi = barHighlightNames.has(String(entry?.name ?? ""));
+                          return (
+                            <Cell
+                              key={ci}
+                              fill={PIE_COLORS[idx % PIE_COLORS.length]}
+                              fillOpacity={isHi ? 1 : 0.25}
+                            />
+                          );
+                        })
+                      : null}
                     {idx === 0 && labelSeriesKey && shouldStackBreakdownBars && (
                       <LabelList
                         dataKey={k}

@@ -2119,7 +2119,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan?.kind).toBe('no_data');
-    expect((plan as any)?.message ?? '').toContain("can’t calculate EBITDA for a specific client");
+    expect((plan as any)?.message ?? '').toContain("can’t calculate net profit for a specific client");
     expect((plan as any)?.message ?? '').toContain('payroll is not booked by client');
   });
 
@@ -2144,7 +2144,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     const widget = plan.plan.dashboard.widgets[0] as any;
     expect(widget._spec?.measure).toBe('ebitda');
     expect(widget._spec?.dimension).toBe('month');
-    expect(widget.title).toBe('Operating Profit (EBITDA-style) Trend');
+    expect(widget.title).toBe('Operating Profit Trend');
   });
 
   test('reports explicit pie/donut refusal when negatives are present', async () => {

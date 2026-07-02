@@ -344,17 +344,21 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   // precomputed per-month pct → diverged at coarse cells).
   ebitda_style_margin_pct: {
     id: 'ebitda_style_margin_pct',
-    label: 'EBITDA-style Margin %',
+    // Net Profit Margin % = DIVIDE([Net Profit], [Total Revenue]) per the team's DAX. The
+    // numerator is (revenue − cost − payroll) = Net Profit; the ratio is unchanged. Kept the
+    // id for back-compat; the label and titles now read "Net Profit Margin".
+    label: 'Net Profit Margin %',
     format: 'percent',
     agg: 'avg',
     kind: 'ratio',
     decimals: 1,
     aliases: [
+      'net profit margin',
+      'profit margin',
+      'net margin',
       'ebitda margin',
       'ebitda style margin',
       'revenue minus cost minus payroll',
-      'net profit margin',
-      'net margin',
       'operating margin',
       'operating profit margin',
     ],
@@ -370,19 +374,28 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   // (~−$68M total / ~−$1.4M per month). "Operating profit" / "net profit" collapse to
   // the same figure here (no separate D&A/tax/interest in the FactRevenue basis), so they
   // alias to this. Only resolves where revenue+cost+payroll co-exist (company / monthly).
+  // Net Profit = [Total Revenue] − [Total Expenses] (the team's canonical DAX). Since
+  // Total Expenses = Total Cost + Total Payroll, this equals revenue − cost − payroll.
+  // In this dataset payroll ($112M) exceeds gross margin ($44M), so Net Profit is
+  // NEGATIVE (~−$68M total / ~−$1.4M per month) — that is expected and charted as-is,
+  // never refused for being negative. "net profit"/"profit" resolve here. It only
+  // resolves where revenue + cost + payroll co-exist (company / monthly); payroll is not
+  // booked by client / business unit / contract type / industry, so a per-entity Net
+  // Profit is refused honestly (not fabricated). The id stays 'ebitda' for back-compat.
   ebitda: {
     id: 'ebitda',
-    label: 'EBITDA',
+    label: 'Net Profit',
     format: 'currency',
     agg: 'sum',
     kind: 'flow',
     decimals: 0,
     aliases: [
-      'ebitda style',
-      'operating profit',
-      'operating income',
       'net profit',
       'net income',
+      'operating profit',
+      'operating income',
+      'ebitda',
+      'ebitda style',
       'earnings before interest taxes depreciation and amortization',
     ],
     derived: {
@@ -2193,6 +2206,18 @@ const opSql = (op: SpecThreshold['op']) =>
 // pies are kept. General — used by both the compiler and specToPlan so the widget TYPE and
 // the SQL agree.
 export function effectiveEbpoChartType(spec: ChartSpec): string {
+  const ct = String(spec.chartType ?? 'bar').toLowerCase();
+  // A line/area chart implies a continuous (usually time) axis. When the PRIMARY
+  // dimension is a discrete category (client, business unit, contract type, industry,
+  // vendor…) with no time axis, a line falsely implies a trend between unordered
+  // categories — render bars instead. Time dimensions (month/quarter/year) and
+  // time-primary charts that merely carry a categorical BREAKDOWN are unaffected (the
+  // guard keys off the primary `dimension`, not `breakdown`). Fires on every path
+  // (create + edit), so a regroup that carries over the old line type self-corrects.
+  if (ct === 'line' || ct === 'area') {
+    const dim = spec.dimension ? EBPO_DIMENSIONS[spec.dimension] : null;
+    if (dim && !dim.isTime) return 'bar';
+  }
   return spec.chartType ?? 'bar';
 }
 
@@ -2984,7 +3009,7 @@ export function ebpoCatalogPromptText(): string {
     'DIMENSIONS (pick one as "dimension"; optionally one as "breakdown" for a single-measure series split; omit "dimension" for a single KPI value):',
     dims,
     'NOTE: REVENUE / COST / GROSS MARGIN have NO GEOGRAPHY relationship in this dataset — the revenue fact is booked only by client, business unit, and contract type (and month). There is NO "revenue by country / region / city / delivery center" — do NOT invent one; emit your best spec and the deterministic compiler will honestly refuse it. OPERATIONS metrics (SLA/CSAT/utilization, calls, tickets, AHT) are available by delivery center / geography, and SLA/CSAT/utilization are also available by department through a weighted delivery-center headcount bridge. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
-    'PROFIT MEASURES: "operating profit", "operating income", "net profit", "net income", "EBITDA" → use measure "ebitda" (= revenue − cost − payroll, an absolute $; in this dataset it is negative because payroll is large). "operating profit margin", "net profit margin", "net margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct". The full rev−cost−payroll figure only resolves where revenue, cost, and payroll coexist in the same verified grain: company/month. Payroll is NOT booked by business unit, client, contract type, industry, or revenue geography, so EBITDA by those dimensions must refuse honestly instead of substituting gross margin.',
+    'PROFIT MEASURES: "profit", "net profit", "net income", "operating profit", "operating income", "EBITDA" → use measure "ebitda" (labelled "Net Profit" = [Total Revenue] − [Total Expenses] = revenue − cost − payroll, an absolute $). In this dataset Net Profit is NEGATIVE (payroll is large) — that is EXPECTED and correct; ALWAYS emit the spec and chart it, never refuse a profit request just because the value is negative. "profit margin", "net profit margin", "net margin", "operating margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct" (labelled "Net Profit Margin %" = DIVIDE([Net Profit],[Total Revenue])). Net Profit resolves only where revenue, cost, and payroll coexist in the same verified grain: company / month / quarter / year. Payroll is NOT booked by business unit, client, contract type, industry, or revenue geography — so for a per-entity net-profit request, emit the spec anyway (measure "ebitda" + that dimension) and let the deterministic compiler return the honest "Net Profit isn\'t available broken down by <X>" refusal; do NOT silently substitute gross margin, and do NOT fabricate a per-entity figure.',
     'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses" → use measure "total_expenses" (= Total Cost + Total Payroll). IMPORTANT: the dataset still has trial-balance account data, so account/account-category/account-type expense asks are data-backed through the account views when they stay at the company/account grain. "SG&A" maps to that same real expense-account grain (the trial-balance expense accounts), not to a separate named measure. But there is NO client×account bridge, and no revenue-fact-by-department grain — refuse those impossible cross-grain joins honestly. "total_cost" is specifically COST OF REVENUE, only for explicit cost / COGS / gross-margin asks. Do NOT silently substitute total_cost for a generic "expense" request.',
     'CLIENTS: "number of clients / how many clients / client count" → measure "no_clients" (a DISTINCTCOUNT). "average/avg revenue per client" → measure "avg_revenue_per_client". "client RANK / rank clients / top N clients" is NOT a measure — plot the underlying measure (usually total_revenue) by dimension "client" with sort:"value_desc" (or "value_asc" for the bottom) and topN. "revenue contribution % / share of total company revenue / revenue concentration" is the company_share TRANSFORM on total_revenue by client, not a separate measure.',
     'FIXED ASSETS ARE POINT-IN-TIME: the fixed-asset measures (asset_cost, net_book_value, accumulated_depreciation, depreciation_pct, asset_count) have NO monthly/time series — there is no month/quarter/year dimension for them. Never give an asset measure a time dimension. A request about "changes in assets", "asset movement", or an asset waterfall/bar/breakdown means the COMPOSITION across a category: set dimension to asset_type (default), delivery_center, country, or region — e.g. "waterfall showing changes in assets" → {measure:"asset_cost", dimension:"asset_type", chartType:"waterfall"}.',

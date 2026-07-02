@@ -380,7 +380,7 @@ describe('EBPO catalog — derived CFO ratios', () => {
     );
     // One FROM (no cross-view join); both series computed as ratio-of-sums.
     expect(sql.match(/FROM analytics\./g)?.length).toBe(1);
-    expect(sql).toContain('"EBITDA-style Margin %"');
+    expect(sql).toContain('"Net Profit Margin %"');
     expect(sql).toContain('"Gross Margin %"');
   });
 

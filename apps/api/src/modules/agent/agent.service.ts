@@ -12578,7 +12578,13 @@ export class AgentService {
       const negativePieDonut = this.negativePieDonutMessage(chartType, check.rows);
       if (negativePieDonut) return { kind: 'no_data', message: negativePieDonut };
       if (this.detectBadChartShape(check.rows, chartType)) return null;
-      const prettyTitle = this.prettifyChartTitle(title);
+      // Net Profit family: title from the resolved measure ("Net Profit" / "Operating
+      // Profit" / their margins), never the raw echo (which could read "EBITDA by Month").
+      const aliasTitle =
+        spec.measure === 'ebitda' || spec.measure === 'ebitda_style_margin_pct'
+          ? this.ebpoProfitAliasTitle(query, spec)
+          : null;
+      const prettyTitle = this.prettifyChartTitle(aliasTitle || title);
       return {
         kind: 'build',
         plan: {
@@ -14150,11 +14156,15 @@ export class AgentService {
     // income or net margin, rebuild the title from the ACTUAL resolved measure label
     // (EBITDA / EBITDA-style Margin % / Gross Margin) so the chart never overclaims.
     const overclaimsProfit =
+      spec.measure === 'ebitda' ||
+      spec.measure === 'ebitda_style_margin_pct' ||
       /\bnet\s+(?:profit|income|margin)\b|\boperating\s+(?:profit|income|margin)\b/i.test(
         title,
       );
     const honestTitle = overclaimsProfit
-      ? this.ebpoProfitAliasTitle(title || query, spec) || this.ebpoSpecTitle(spec)
+      ? this.ebpoProfitAliasTitle(query, spec) ||
+        this.ebpoProfitAliasTitle(title || query, spec) ||
+        this.ebpoSpecTitle(spec)
       : '';
     const finalTitle = this.prettifyChartTitle(
       (honestTitle || title || compiled.measure.label).slice(0, 80),
@@ -14487,9 +14497,9 @@ export class AgentService {
       /\b(?:ebitda|ebit\b|operating\s+(?:profit|income)|net\s+(?:profit|income))\b/i.test(q)
     ) {
       return (
-        'I can’t calculate EBITDA for a specific client in this dataset because payroll is not ' +
+        'I can’t calculate net profit for a specific client in this dataset because payroll is not ' +
         'booked by client. Revenue and cost are available by client over time, but payroll only ' +
-        'exists at company / department grain, so a client-level EBITDA trend would be fabricated.'
+        'exists at company / department grain, so a client-level net profit trend would be fabricated.'
       );
     }
     if (
@@ -14497,8 +14507,8 @@ export class AgentService {
       /\bby\s+(?:business\s+unit|client|contract\s+type|industry)\b/i.test(q)
     ) {
       return (
-        'I can’t calculate EBITDA at that grouping in this dataset because payroll is not ' +
-        'booked by business unit, client, contract type, or industry. I can show EBITDA ' +
+        'I can’t calculate net profit at that grouping in this dataset because payroll is not ' +
+        'booked by business unit, client, contract type, or industry. I can show net profit ' +
         'over time at the company level, or show revenue, cost, and gross margin by that grouping.'
       );
     }
@@ -17451,37 +17461,30 @@ export class AgentService {
     const dimLabel = dim && !isTime ? EBPO_DIMENSIONS[dim]?.label ?? dim : null;
 
     if (spec.measure === 'ebitda') {
+      // "operating profit/income" keeps its name; everything else on this measure
+      // ("net profit", "net income", bare "profit", "ebitda") is the team's Net Profit
+      // (= Total Revenue − Total Expenses).
       if (/\boperating\s+(?:profit|income)\b/.test(q)) {
         return this.prettifyChartTitle(
-          isTime
-            ? 'Operating Profit (EBITDA-style) Trend'
-            : `Operating Profit (EBITDA-style) by ${dimLabel}`,
+          isTime ? 'Operating Profit Trend' : `Operating Profit by ${dimLabel}`,
         );
       }
-      if (/\bnet\s+(?:profit|income)\b/.test(q)) {
-        return this.prettifyChartTitle(
-          isTime
-            ? 'Net Profit (EBITDA-style) Trend'
-            : `Net Profit (EBITDA-style) by ${dimLabel}`,
-        );
-      }
+      return this.prettifyChartTitle(
+        isTime ? 'Net Profit Trend' : `Net Profit by ${dimLabel}`,
+      );
     }
 
     if (spec.measure === 'ebitda_style_margin_pct') {
       if (/\boperating\s+(?:profit|income|margin)\b/.test(q)) {
         return this.prettifyChartTitle(
           isTime
-            ? 'Operating Profit Margin (EBITDA-style) Trend'
-            : `Operating Profit Margin (EBITDA-style) by ${dimLabel}`,
+            ? 'Operating Profit Margin Trend'
+            : `Operating Profit Margin by ${dimLabel}`,
         );
       }
-      if (/\bnet\s+(?:profit|income|margin)\b/.test(q)) {
-        return this.prettifyChartTitle(
-          isTime
-            ? 'Net Profit Margin (EBITDA-style) Trend'
-            : `Net Profit Margin (EBITDA-style) by ${dimLabel}`,
-        );
-      }
+      return this.prettifyChartTitle(
+        isTime ? 'Net Profit Margin Trend' : `Net Profit Margin by ${dimLabel}`,
+      );
     }
 
     return null;
@@ -17890,6 +17893,16 @@ export class AgentService {
     const asksCumulativeRevenue =
       /\b(cumulative|running\s+total)\b/.test(text) &&
       /\b(revenue|sales|income)\b/.test(text);
+    // Net Profit family. "profit margin"/"net margin"/"operating margin" → the ratio;
+    // bare "profit"/"net profit"/"net income"/"operating profit"/"ebitda" → the $ measure.
+    // Guarded so "gross profit"/"gross margin" stay on the gross measures.
+    const asksNetProfitMargin =
+      /\b(?:net\s+profit|net|profit|operating(?:\s+profit)?|ebitda)\s+margin\b/.test(text) &&
+      !/\bgross\s+margin\b/.test(text);
+    const asksNetProfit =
+      !asksNetProfitMargin &&
+      (/\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(text) ||
+        (/\bprofit\b/.test(text) && !/\bgross\s+profit\b/.test(text)));
     const out: string[] = [];
     const add = (id: string) => {
       if (!out.includes(id)) out.push(id);
@@ -17899,6 +17912,8 @@ export class AgentService {
     if (asksArToRevenue) add('ar_to_revenue_pct');
     if (asksApToCost) add('ap_to_cost_pct');
     if (asksCumulativeRevenue) add('revenue_ytd');
+    if (asksNetProfitMargin) add('ebitda_style_margin_pct');
+    if (asksNetProfit) add('ebitda');
     const checks: Array<[RegExp, string]> = [
       [/\byear[-\s]+over[-\s]+year\s+revenue\s+growth\b|\brevenue\s+yoy\s+growth\b|\byoy\s+revenue\s+growth\b/, 'revenue_yoy_pct'],
       [/\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/, 'gross_margin_pct'],
@@ -21091,6 +21106,109 @@ export class AgentService {
     return null;
   }
 
+  // Map a follow-up edit like "…by business unit" / "for each client" / "per contract
+  // type" to the ENTITY dimension it names. Returns null when there is no regroup intent
+  // or the named group isn't an entity dimension (time regroups are handled elsewhere).
+  // Deliberately excludes `account` / `aging_bucket` — those have dedicated handlers.
+  private detectEbpoRegroupDimension(editRequest: string): string | null {
+    const q = String(editRequest ?? '').toLowerCase();
+    const m =
+      /\b(?:by|per|across|for\s+each|for\s+every|grouped\s+by|broken\s+down\s+by|split\s+by)\s+(?:the\s+)?(?:each\s+)?([a-z][a-z /&-]{1,30})/.exec(
+        q,
+      );
+    if (!m) return null;
+    const phrase = ` ${m[1]} `;
+    const pats: Array<[RegExp, string]> = [
+      [/\bbusiness\s*units?\b/, 'business_unit'],
+      [/\bcontract\s*types?\b/, 'contract_type'],
+      [/\bclients?\b|\bcustomers?\b/, 'client'],
+      [/\bindustr(?:y|ies)\b|\bsectors?\b/, 'industry'],
+      [/\bdepartments?\b/, 'department'],
+      [/\bcountr(?:y|ies)\b/, 'country'],
+      [/\bregions?\b/, 'region'],
+      [/\bcit(?:y|ies)\b/, 'city'],
+      [/\bdelivery\s*centers?\b/, 'delivery_center'],
+      [/\bvendors?\b|\bsuppliers?\b/, 'vendor'],
+      [/\basset\s*types?\b/, 'asset_type'],
+      [/\bmarket\s*types?\b/, 'market_type'],
+      [/\bgrades?\b/, 'grade'],
+    ];
+    for (const [re, id] of pats) if (re.test(phrase)) return id;
+    return null;
+  }
+
+  // GENERIC REGROUP for follow-up edits: "<current chart> by <entity>". When the current
+  // measure genuinely supports that grouping, regroup and apply it; when it does NOT (e.g.
+  // Net Profit by business unit — payroll isn't booked per BU), surface the deterministic
+  // honest refusal ("Net Profit isn't available broken down by Business Unit…") instead of
+  // falling through to the vague "I wasn't able to apply that change" dead-end. Runs after
+  // the specialised metric-edit handlers and before the LLM SQL editor.
+  private async buildEbpoRegroupRefusalOrEdit(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const targetDim = this.detectEbpoRegroupDimension(editRequest);
+    if (!targetDim) return null;
+    // Don't hijack edits that also introduce a new measure — those are combos/overlays
+    // handled by the dedicated builders.
+    if (this.detectEbpoAdditionalMeasures(editRequest).length > 0) return null;
+    for (let i = 0; i < activeDashboard.widgets.length; i++) {
+      const w = activeDashboard.widgets[i]!;
+      const cfg = (w.queryConfig as any) ?? {};
+      const spec = cfg.spec as ChartSpec | undefined;
+      if (!spec?.measure) continue;
+      if (spec.dimension === targetDim || spec.breakdown === targetDim) continue;
+      const nextSpec: ChartSpec = {
+        ...spec,
+        dimension: targetDim,
+        breakdown: undefined,
+        chartType:
+          String(spec.chartType ?? '').toLowerCase() === 'line'
+            ? 'bar'
+            : (spec.chartType ?? 'bar'),
+      };
+      const built = await this.specToPlan(
+        nextSpec,
+        String(w.title ?? ''),
+        true,
+        scope,
+        editRequest,
+      ).catch(() => null);
+      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      if (wd?._sql) {
+        const nextTitle =
+          this.ebpoProfitAliasTitle(editRequest, nextSpec) || this.ebpoSpecTitle(nextSpec);
+        return {
+          summary: `Regrouped the chart by ${EBPO_DIMENSIONS[targetDim]?.label ?? targetDim}.`,
+          add: [],
+          remove_indices: [],
+          modify: [
+            {
+              index: i,
+              type: wd.type,
+              dynamicSql: wd._sql,
+              spec: nextSpec,
+              ...(wd.display ? { display: wd.display } : {}),
+              title: nextTitle,
+            },
+          ],
+        };
+      }
+      // Measure can't be grouped that way in this dataset → honest refusal, not a dead-end.
+      if (built?.kind === 'no_data' && built.message) {
+        return {
+          summary: '',
+          add: [],
+          remove_indices: [],
+          modify: [],
+          refusal: built.message,
+        };
+      }
+    }
+    return null;
+  }
+
   // Give vocabulary widgets (metric/grouping, no stored SQL) an editable
   // dynamicSql by synthesizing + verifying an equivalent query. Returns a copy of
   // the dashboard with backfilled widgets so follow-up edits can rewrite them.
@@ -24002,6 +24120,23 @@ export class AgentService {
         return null;
       });
       if (ebpoMetricEdit) return applyPresentationEditHints(ebpoMetricEdit);
+    }
+
+    // Generic "regroup by <entity>" follow-up: apply it when the data supports the grain,
+    // or surface the honest deterministic refusal when it doesn't (e.g. Net Profit by
+    // business unit), instead of the vague "couldn't apply that" dead-end below.
+    if (scope && editHasEbpo && effectiveDashboard.widgets.length > 0) {
+      const regroup = await this.buildEbpoRegroupRefusalOrEdit(
+        effectiveDashboard,
+        editRequest,
+        scope,
+      ).catch((err: any) => {
+        this.logger.warn(
+          `[Agent:Editor] EBPO regroup edit failed (${err?.message ?? err}) — falling back`,
+        );
+        return null;
+      });
+      if (regroup) return applyPresentationEditHints(regroup);
     }
 
     // ── PRIMARY: SQL-first editor ─────────────────────────────────────────

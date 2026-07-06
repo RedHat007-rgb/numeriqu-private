@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, LayoutGrid, Minus, Settings2, Sparkles, X } from "lucide-react";
+import { CheckCircle2, Info, LayoutGrid, Minus, Settings2, Sparkles, X } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
@@ -18,6 +18,13 @@ import {
   makeClientConcentrationItems,
   makeServiceLevelItems,
 } from "../_components/overview/CfoFocusCard";
+import {
+  BusinessUnitBreakdownCard,
+  CostElementsCard,
+  DeliveryCenterScorecardCard,
+  WorkforceByDepartmentCard,
+  WorkforceByGeographyCard,
+} from "../_components/overview/BreakdownCards";
 import { ConnectedEntitiesCard } from "../_components/overview/ConnectedEntitiesCard";
 import { ExecutiveBriefCard } from "../_components/overview/ExecutiveBriefCard";
 import { deriveInsights, NextActionsCard, toneFromType } from "../_components/overview/NextActionsCard";
@@ -29,9 +36,11 @@ import {
   formatMoneyWithCurrency,
   formatNumber,
   formatPercentDelta,
+  formatRunwayDaysFromMonths,
   formatRelativeTime,
 } from "../_components/overview/format";
 import type { DashboardResponse } from "../../../lib/api";
+import { getOverviewCardDefinition } from "../_lib/overviewDashboardConfig";
 import type { OverviewCardId, OverviewCardPlacement } from "../_lib/overviewDashboardConfig";
 
 const CFO_AGENDA_STORAGE_KEY = "nq.dashboard.cfo-agenda.v1";
@@ -193,35 +202,70 @@ function MetricTile({
   value,
   detail,
   delta,
+  overview,
+  interactive = false,
   className,
 }: {
   eyebrow: string;
   value: string;
   detail: string;
   delta?: { value: string; tone: "neutral" | "positive" | "negative" } | null;
+  overview?: string;
+  interactive?: boolean;
   className?: string;
 }) {
+  const [showInfo, setShowInfo] = useState(false);
+  const canFlip = interactive && Boolean(overview);
+  const toggleInfo = () => setShowInfo((value) => !value);
+
   return (
-    <div className={cn("dashboard-metric-tile h-full min-h-[132px] p-4", className)}>
+    <div
+      className={cn(
+        "dashboard-metric-tile h-full min-h-[132px] p-4",
+        canFlip && "cursor-pointer transition hover:border-accent-blue/40",
+        className,
+      )}
+      onClick={canFlip ? toggleInfo : undefined}
+      role={canFlip ? "button" : undefined}
+      tabIndex={canFlip ? 0 : undefined}
+      aria-expanded={canFlip ? showInfo : undefined}
+      onKeyDown={
+        canFlip
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                toggleInfo();
+              }
+            }
+          : undefined
+      }
+    >
       <div className="grid h-full grid-rows-[3.5rem_auto_3.5rem] gap-4">
         <div className="flex min-h-[3.5rem] items-start justify-between gap-3">
-          <p className="max-w-[8.5rem] text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">
+          <p className="min-w-0 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">
             {eyebrow}
           </p>
-          {delta ? (
-            <span
-              className={cn(
-                "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
-                delta.tone === "positive"
-                  ? "border-feedback-success/25 bg-feedback-success/10 text-feedback-success"
-                  : delta.tone === "negative"
-                    ? "border-feedback-danger/25 bg-feedback-danger/10 text-feedback-danger"
-                    : "border-white/10 bg-white/[0.04] text-[#9db4d8]",
-              )}
-            >
-              {delta.value}
-            </span>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-2">
+            {delta ? (
+              <span
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                  delta.tone === "positive"
+                    ? "border-feedback-success/25 bg-feedback-success/10 text-feedback-success"
+                    : delta.tone === "negative"
+                      ? "border-feedback-danger/25 bg-feedback-danger/10 text-feedback-danger"
+                      : "border-white/10 bg-white/[0.04] text-[#9db4d8]",
+                )}
+              >
+                {delta.value}
+              </span>
+            ) : null}
+            {canFlip ? (
+              <span className="text-[#7f9bc4]" aria-hidden="true">
+                <Info className="h-4 w-4" />
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="flex items-start">
           <p className="dashboard-metric-value font-display text-[2.2rem] font-bold leading-none tracking-[-0.04em] text-white">
@@ -230,6 +274,23 @@ function MetricTile({
         </div>
         <p className="line-clamp-2 text-xs leading-5 text-[#b8c8e4]">{detail}</p>
       </div>
+
+      {canFlip && showInfo ? (
+        <div className="absolute inset-0 z-10 flex flex-col bg-[rgba(9,16,36,0.95)] p-4 backdrop-blur-sm">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-cyan">
+              {eyebrow}
+            </p>
+            <span className="text-text-muted" aria-hidden="true">
+              <X className="h-4 w-4" />
+            </span>
+          </div>
+          <p className="mt-2 text-[13px] leading-6 text-[#c4d3ee]">{overview}</p>
+          <p className="mt-auto pt-2 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+            Tap to close
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -465,7 +526,6 @@ export function OverviewPage() {
     setIsEditing,
     visibleCards,
     hiddenCards,
-    cardsByZone,
     selectedCard,
     setSelectedCardId,
     updatePlacement,
@@ -579,12 +639,15 @@ export function OverviewPage() {
       : null;
 
   const renderCard = (cardId: OverviewCardId) => {
+    const overview = getOverviewCardDefinition(cardId)?.description;
     switch (cardId) {
       case "executive-brief":
         return <ExecutiveBriefCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
       case "revenue-command":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Revenue"
             value={formatMoneyWithCurrency(dashboard.kpis.totalRevenue, prefs.currencyDisplay)}
             detail={`${formatNumber(dashboard.kpis.totalInvoices)} invoices in scope`}
@@ -594,7 +657,9 @@ export function OverviewPage() {
       case "margin-quality":
         return (
           <MetricTile
-            eyebrow="Margin Quality"
+            overview={overview}
+            interactive={!isEditing}
+            eyebrow="Net Margin Percentage"
             value={formatPercentDelta(dashboard.kpis.profitMargin / 100)}
             detail={`${formatMoneyWithCurrency(dashboard.kpis.netProfit, prefs.currencyDisplay)} net contribution`}
             delta={marginDelta}
@@ -603,6 +668,8 @@ export function OverviewPage() {
       case "open-invoices":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Open Invoices"
             value={formatMoneyWithCurrency(dashboard.kpis.openInvoiceAmount, prefs.currencyDisplay)}
             detail={`${formatNumber(dashboard.kpis.openInvoiceCount ?? 0)} open · ${formatMoneyWithCurrency(dashboard.kpis.overdueAmount, prefs.currencyDisplay)} overdue`}
@@ -611,8 +678,10 @@ export function OverviewPage() {
       case "cash-runway":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Cash Runway"
-            value={`${dashboard.venture.runwayMonths.toFixed(1)} mo`}
+            value={formatRunwayDaysFromMonths(dashboard.venture.runwayMonths)}
             detail={`${formatMoneyWithCurrency(dashboard.venture.burnRate, prefs.currencyDisplay)} monthly operating load`}
           />
         );
@@ -627,6 +696,8 @@ export function OverviewPage() {
       case "working-capital":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Working Capital"
             value={formatMoneyWithCurrency(dashboard.cfo?.workingCapital ?? 0, prefs.currencyDisplay)}
             detail={`${formatMoneyWithCurrency(dashboard.cfo?.cashBalance ?? 0, prefs.currencyDisplay)} cash balance`}
@@ -643,7 +714,7 @@ export function OverviewPage() {
       case "service-levels":
         return (
           <CfoFocusCard
-            eyebrow="Delivery pulse"
+            eyebrow="KPIs Impacting the efficiency of business"
             title="Operational strain that can quietly destroy margin"
             items={makeServiceLevelItems(dashboard)}
           />
@@ -651,7 +722,9 @@ export function OverviewPage() {
       case "payroll-discipline":
         return (
           <MetricTile
-            eyebrow="Payroll / Revenue"
+            overview={overview}
+            interactive={!isEditing}
+            eyebrow="High Payroll to Revenue Percentage"
             value={formatPercentDelta((dashboard.cfo?.payrollToRevenuePct ?? 0) / 100)}
             detail="Labor absorption on the latest operating month"
           />
@@ -659,6 +732,8 @@ export function OverviewPage() {
       case "cash-on-hand":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Cash on Hand"
             value={formatMoneyWithCurrency(dashboard.venture.cashOnHand, prefs.currencyDisplay)}
             detail={`${dashboard.kpis.orgCount} connected entities`}
@@ -667,6 +742,8 @@ export function OverviewPage() {
       case "overdue-exposure":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Overdue"
             value={formatMoneyWithCurrency(dashboard.kpis.overdueAmount, prefs.currencyDisplay)}
             detail={`${formatNumber(dashboard.kpis.overdueCount)} invoices past due`}
@@ -675,6 +752,8 @@ export function OverviewPage() {
       case "invoice-volume":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Invoices"
             value={formatNumber(dashboard.kpis.totalInvoices)}
             detail={`${dashboard.kpis.providerCount} providers online`}
@@ -684,6 +763,8 @@ export function OverviewPage() {
       case "avg-invoice":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Average Invoice"
             value={formatMoneyWithCurrency(dashboard.kpis.avgInvoiceValue, prefs.currencyDisplay)}
             detail="Across the selected scope"
@@ -692,6 +773,8 @@ export function OverviewPage() {
       case "burn-rate":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Burn Rate"
             value={formatMoneyWithCurrency(dashboard.venture.burnRate, prefs.currencyDisplay)}
             detail="Current monthly spend pressure"
@@ -700,6 +783,8 @@ export function OverviewPage() {
       case "entity-count":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Entities"
             value={formatNumber(connectedOrgCount)}
             detail={`${providerCount} provider${providerCount === 1 ? "" : "s"} feeding the backend`}
@@ -708,6 +793,8 @@ export function OverviewPage() {
       case "provider-coverage":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Coverage"
             value={formatNumber(providerCount)}
             detail={`${formatNumber(connectedOrgCount)} connected entit${connectedOrgCount === 1 ? "y" : "ies"} in scope`}
@@ -716,6 +803,8 @@ export function OverviewPage() {
       case "collection-risk":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Collection Risk"
             value={collectionRiskRatio === null ? "0%" : formatPercentDelta(collectionRiskRatio)}
             detail={`${formatNumber(dashboard.kpis.overdueCount)} overdue of ${formatNumber(dashboard.kpis.openInvoiceCount ?? 0)} open invoices`}
@@ -724,7 +813,9 @@ export function OverviewPage() {
       case "largest-entity":
         return (
           <MetricTile
-            eyebrow="Largest Entity"
+            overview={overview}
+            interactive={!isEditing}
+            eyebrow="Exposure of the biggest client in revenue"
             value={formatMoneyWithCurrency(topEntity?.totalRevenue ?? 0, prefs.currencyDisplay)}
             detail={topEntity ? `${topEntity.orgName} · ${topEntity.provider}` : "No connected entities in scope yet"}
           />
@@ -732,6 +823,8 @@ export function OverviewPage() {
       case "avg-entity-revenue":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Avg Entity Revenue"
             value={formatMoneyWithCurrency(avgEntityRevenue, prefs.currencyDisplay)}
             detail="Average revenue across connected entities"
@@ -740,6 +833,8 @@ export function OverviewPage() {
       case "efficiency":
         return (
           <MetricTile
+            overview={overview}
+            interactive={!isEditing}
             eyebrow="Efficiency"
             value={`${dashboard.venture.efficiencyMultiplier.toFixed(2)}x`}
             detail="Revenue generated per burn dollar"
@@ -761,23 +856,28 @@ export function OverviewPage() {
         return (
           <ConnectedEntitiesCard orgs={dashboard.connectedOrgs} currency={prefs.currencyDisplay} />
         );
+      case "business-units":
+        return <BusinessUnitBreakdownCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
+      case "cost-elements":
+        return <CostElementsCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
+      case "workforce-department":
+        return <WorkforceByDepartmentCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
+      case "workforce-geography":
+        return <WorkforceByGeographyCard dashboard={dashboard} />;
+      case "delivery-centers":
+        return <DeliveryCenterScorecardCard dashboard={dashboard} />;
       default:
         return null;
     }
   };
 
-  const renderZone = (
+  const renderPackedCards = (
     zoneCards: Array<{ definition: { id: OverviewCardId; title: string }; placement: OverviewCardPlacement }>,
   ) => (
-    <div className="grid gap-3 lg:grid-cols-12">
+    <div className="grid gap-3 lg:grid-cols-12 lg:grid-flow-dense lg:items-stretch">
       {zoneCards.map((entry) => {
-        const size =
-          zoneCards.length === 1 && entry.placement.size === "medium"
-            ? "wide"
-            : entry.placement.size;
-
         return (
-          <div key={entry.definition.id} className={spanClass(size)}>
+          <div key={entry.definition.id} className={cn(spanClass(entry.placement.size), "min-w-0")}>
             <CanvasCard
               isEditing={isEditing}
               isSelected={selectedCard?.definition.id === entry.definition.id}
@@ -796,7 +896,12 @@ export function OverviewPage() {
   const renderHeroCards = (
     zoneCards: Array<{ definition: { id: OverviewCardId; title: string }; placement: OverviewCardPlacement }>,
   ) => (
-    <div className={cn("grid gap-3 lg:grid-cols-12", showOnboardingGuide ? "xl:col-span-10" : "xl:col-span-12")}>
+    <div
+      className={cn(
+        "grid gap-3 xl:grid-cols-12 xl:grid-flow-dense xl:items-stretch",
+        showOnboardingGuide ? "xl:col-span-10" : "xl:col-span-12",
+      )}
+    >
       {zoneCards.map((entry) => {
         const size =
           zoneCards.length === 1 && entry.placement.size === "medium"
@@ -804,7 +909,7 @@ export function OverviewPage() {
             : entry.placement.size;
 
         return (
-          <div key={entry.definition.id} className={heroSpanClass(size)}>
+          <div key={entry.definition.id} className={cn(heroSpanClass(size), "min-w-0")}>
             <CanvasCard
               isEditing={isEditing}
               isSelected={selectedCard?.definition.id === entry.definition.id}
@@ -819,6 +924,18 @@ export function OverviewPage() {
       })}
     </div>
   );
+
+  // The CFO command brief acts as a hard divider:
+  //   • only small KPI tiles render above it
+  //   • all bigger cards (medium/wide) render below it
+  const briefEntry = visibleCards.find((card) => card.definition.id === "executive-brief") ?? null;
+  const smallBandCards = visibleCards.filter(
+    (card) => card.definition.id !== "executive-brief" && card.placement.size === "small",
+  );
+  const bigBandCards = visibleCards.filter(
+    (card) => card.definition.id !== "executive-brief" && card.placement.size !== "small",
+  );
+  const hasAnyCard = smallBandCards.length > 0 || bigBandCards.length > 0 || briefEntry !== null;
 
   return (
     <div className="space-y-3">
@@ -871,9 +988,10 @@ export function OverviewPage() {
       ) : null}
 
       <section className="space-y-3" aria-label="Overview dashboard canvas">
-        {cardsByZone.hero.length > 0 || showOnboardingGuide ? (
+        {/* Small KPI band — everything above the CFO command brief */}
+        {smallBandCards.length > 0 || showOnboardingGuide ? (
           <div className="grid gap-3 xl:grid-cols-12">
-            {cardsByZone.hero.length > 0 ? renderHeroCards(cardsByZone.hero) : null}
+            {smallBandCards.length > 0 ? renderHeroCards(smallBandCards) : null}
             {showOnboardingGuide ? (
               <div className="xl:col-span-2">
                 <SetupCard dashboard={dashboard} onOpenCustomize={() => setIsEditing(true)} />
@@ -882,16 +1000,18 @@ export function OverviewPage() {
           </div>
         ) : null}
 
-        {cardsByZone.primary.length === 0 ? (
+        {/* CFO command brief — the divider between small KPIs and the big cards */}
+        {briefEntry ? renderPackedCards([briefEntry]) : null}
+
+        {/* Big cards band — everything below the CFO command brief */}
+        {bigBandCards.length > 0 ? renderPackedCards(bigBandCards) : null}
+
+        {!hasAnyCard ? (
           <ZoneEmptyState
             title="No main cards selected"
             detail="Turn on one or more finance cards in Customize to bring the core analysis into view."
           />
-        ) : (
-          renderZone(cardsByZone.primary)
-        )}
-
-        {cardsByZone.secondary.length > 0 ? renderZone(cardsByZone.secondary) : null}
+        ) : null}
       </section>
     </div>
   );

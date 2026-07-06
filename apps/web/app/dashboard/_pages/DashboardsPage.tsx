@@ -278,7 +278,10 @@ function ChartRenderer({
       },
       {
         label: "Runway",
-        value: `${raw?.runwayMonths ?? 0}mo`,
+        value: (() => {
+          const days = Math.round((raw?.runwayMonths ?? 0) * 30);
+          return `${days} ${days === 1 ? "day" : "days"}`;
+        })(),
         icon: Clock,
         color: "text-feedback-warning",
         bg: "bg-feedback-warning/8",

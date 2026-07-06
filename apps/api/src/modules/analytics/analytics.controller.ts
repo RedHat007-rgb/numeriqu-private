@@ -268,6 +268,11 @@ export class AnalyticsController {
             topClientConcentrationPct: executive.topClientConcentrationPct,
             topBusinessUnitName: executive.topBusinessUnitName,
             topBusinessUnitMarginPct: executive.topBusinessUnitMarginPct,
+            businessUnits: executive.businessUnits,
+            costElements: executive.costElements,
+            headcountByDepartment: executive.headcountByDepartment,
+            headcountByGeography: executive.headcountByGeography,
+            deliveryCenters: executive.deliveryCenters,
           }
         : {
             mode: 'generic',
@@ -289,6 +294,11 @@ export class AnalyticsController {
             topClientConcentrationPct: 0,
             topBusinessUnitName: null,
             topBusinessUnitMarginPct: 0,
+            businessUnits: [],
+            costElements: [],
+            headcountByDepartment: [],
+            headcountByGeography: [],
+            deliveryCenters: [],
           },
       charts: {
         monthlyTrend: monthlyChart,

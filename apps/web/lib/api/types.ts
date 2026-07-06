@@ -149,6 +149,17 @@ export type DashboardResponse = {
     topClientConcentrationPct?: number;
     topBusinessUnitName?: string | null;
     topBusinessUnitMarginPct?: number;
+    businessUnits?: Array<{ name: string; revenue: number; cost: number; marginPct: number }>;
+    costElements?: Array<{ name: string; value: number }>;
+    headcountByDepartment?: Array<{ name: string; headcount: number; payroll: number }>;
+    headcountByGeography?: Array<{ name: string; headcount: number }>;
+    deliveryCenters?: Array<{
+      name: string;
+      slaPct: number;
+      utilizationPct: number;
+      csatPct: number;
+      callsHandled: number;
+    }>;
   };
   charts: {
     monthlyTrend: Array<{

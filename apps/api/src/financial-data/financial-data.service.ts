@@ -877,11 +877,21 @@ export class FinancialDataService {
         });
       }
 
+      // Dimensional breakdowns for the CFO "lower cards". Isolated so a failure
+      // in any single query degrades that card to an empty state and never nulls
+      // the whole executive snapshot.
+      const breakdowns = await this.getEbpoBusinessBreakdowns(tenantId, orgId, range, totalCost);
+
       return {
         mode: 'ebpo',
         orgId,
         orgName,
         headline,
+        businessUnits: breakdowns.businessUnits,
+        costElements: breakdowns.costElements,
+        headcountByDepartment: breakdowns.headcountByDepartment,
+        headcountByGeography: breakdowns.headcountByGeography,
+        deliveryCenters: breakdowns.deliveryCenters,
         totalRevenue,
         totalCost,
         totalPayroll,
@@ -924,6 +934,202 @@ export class FinancialDataService {
     } catch (error: any) {
       this.logger.warn(`[FinancialData] EBPO executive snapshot failed: ${error.message}`);
       return null;
+    }
+  }
+
+  /**
+   * Dimensional breakdowns behind the CFO "lower cards": business units, cost
+   * elements, workforce by department & geography, and delivery-center service.
+   * Every query is isolated (Promise.allSettled + per-branch guards) so a single
+   * failing view degrades that one card to an empty state without breaking the
+   * rest of the dashboard. All figures come from the same EBPO views the agent
+   * already reads — no fabricated numbers.
+   */
+  private async getEbpoBusinessBreakdowns(
+    tenantId: string,
+    orgId: string,
+    range: any,
+    deliveryCostUsd: number,
+  ): Promise<EbpoBreakdowns> {
+    const empty: EbpoBreakdowns = {
+      businessUnits: [],
+      costElements: [],
+      headcountByDepartment: [],
+      headcountByGeography: [],
+      deliveryCenters: [],
+    };
+
+    const params = { tenantId, orgId };
+    const monthWhere = this.timeWhere(range, 'period_date');
+    const factDateWhere = this.timeWhere(range, 'dates.date');
+
+    const runJson = async (query: string): Promise<any[]> => {
+      const result = await this.clickhouse.query({
+        query,
+        query_params: params,
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      });
+      return (await result.json()) as any[];
+    };
+
+    try {
+      const [buRes, payrollRes, deptRes, geoRes, dcRes] = await Promise.allSettled([
+        // Business units — real per-BU revenue, cost and ratio-of-sums margin.
+        runJson(`
+          SELECT
+            coalesce(nullIf(revenue.business_unit, ''), 'Unassigned') AS name,
+            round(sum(revenue.revenue_usd), 2) AS revenue_usd,
+            round(sum(revenue.cost_usd), 2) AS cost_usd,
+            round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS margin_pct
+          FROM ${this.dbName}.ebpo_fact_revenue revenue
+          INNER JOIN ${this.dbName}.ebpo_dim_date dates
+            ON dates.tenant_id = revenue.tenant_id
+           AND dates.org_id = revenue.org_id
+           AND dates.date_key = revenue.date_key
+          WHERE revenue.tenant_id = {tenantId:String}
+            AND revenue.org_id = {orgId:String}
+            ${factDateWhere}
+          GROUP BY name
+          ORDER BY revenue_usd DESC
+          LIMIT 6
+        `),
+        // Payroll cost elements (flow — summed over range).
+        runJson(`
+          SELECT
+            round(sum(total_base_salary_usd), 2) AS base_salary,
+            round(sum(total_overtime_usd), 2) AS overtime,
+            round(sum(total_bonus_usd), 2) AS bonus,
+            round(sum(total_benefits_usd), 2) AS benefits
+          FROM ${this.dbName}.v_ebpo_payroll_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${monthWhere}
+        `),
+        // Headcount by department (stock — latest month only).
+        runJson(`
+          WITH latest AS (
+            SELECT max(period_date) AS pd
+            FROM ${this.dbName}.v_ebpo_department_efficiency_monthly
+            WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String} ${monthWhere}
+          )
+          SELECT
+            coalesce(nullIf(department, ''), 'Unassigned') AS name,
+            sum(employee_count) AS headcount,
+            round(sum(total_payroll_usd), 2) AS payroll
+          FROM ${this.dbName}.v_ebpo_department_efficiency_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            AND period_date = (SELECT pd FROM latest)
+          GROUP BY name
+          ORDER BY headcount DESC
+          LIMIT 6
+        `),
+        // Headcount by geography / country (stock — latest month only).
+        runJson(`
+          WITH latest AS (
+            SELECT max(period_date) AS pd
+            FROM ${this.dbName}.v_ebpo_payroll_monthly
+            WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String} ${monthWhere}
+          )
+          SELECT
+            coalesce(nullIf(country, ''), 'Unassigned') AS name,
+            sum(employee_count) AS headcount
+          FROM ${this.dbName}.v_ebpo_payroll_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            AND period_date = (SELECT pd FROM latest)
+          GROUP BY name
+          ORDER BY headcount DESC
+          LIMIT 6
+        `),
+        // Delivery-center service scorecard (latest month).
+        runJson(`
+          WITH latest AS (
+            SELECT max(period_date) AS pd
+            FROM ${this.dbName}.v_ebpo_operations_monthly
+            WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String} ${monthWhere}
+          )
+          SELECT
+            coalesce(nullIf(delivery_center, ''), 'Unassigned') AS name,
+            round(avg(sla_compliance_pct), 1) AS sla_pct,
+            round(avg(utilization_pct), 1) AS utilization_pct,
+            round(avg(csat_pct), 1) AS csat_pct,
+            sum(calls_handled) AS calls_handled
+          FROM ${this.dbName}.v_ebpo_operations_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            AND period_date = (SELECT pd FROM latest)
+          GROUP BY name
+          ORDER BY sla_pct DESC
+          LIMIT 6
+        `),
+      ]);
+
+      const labels = ['businessUnits', 'costElements', 'headcountByDepartment', 'headcountByGeography', 'deliveryCenters'];
+      [buRes, payrollRes, deptRes, geoRes, dcRes].forEach((r, i) => {
+        if (r.status === 'rejected') {
+          this.logger.warn(`[FinancialData] EBPO breakdown "${labels[i]}" query failed: ${r.reason?.message ?? r.reason}`);
+        }
+      });
+
+      const businessUnits: EbpoBusinessUnitRow[] =
+        buRes.status === 'fulfilled'
+          ? buRes.value.map((r) => ({
+              name: String(r.name ?? 'Unassigned'),
+              revenue: parseFloat(r.revenue_usd) || 0,
+              cost: parseFloat(r.cost_usd) || 0,
+              marginPct: parseFloat(r.margin_pct) || 0,
+            }))
+          : [];
+
+      const costElements: EbpoCostElementRow[] = [];
+      if (deliveryCostUsd > 0) costElements.push({ name: 'Delivery Cost', value: Math.round(deliveryCostUsd * 100) / 100 });
+      if (payrollRes.status === 'fulfilled') {
+        const p = payrollRes.value[0] ?? {};
+        const push = (name: string, raw: any) => {
+          const value = parseFloat(raw) || 0;
+          if (value > 0) costElements.push({ name, value: Math.round(value * 100) / 100 });
+        };
+        push('Base Salary', p.base_salary);
+        push('Overtime', p.overtime);
+        push('Bonus', p.bonus);
+        push('Benefits', p.benefits);
+      }
+      costElements.sort((a, b) => b.value - a.value);
+
+      const headcountByDepartment: EbpoDepartmentRow[] =
+        deptRes.status === 'fulfilled'
+          ? deptRes.value.map((r) => ({
+              name: String(r.name ?? 'Unassigned'),
+              headcount: parseInt(r.headcount) || 0,
+              payroll: parseFloat(r.payroll) || 0,
+            }))
+          : [];
+
+      const headcountByGeography: EbpoGeographyRow[] =
+        geoRes.status === 'fulfilled'
+          ? geoRes.value.map((r) => ({
+              name: String(r.name ?? 'Unassigned'),
+              headcount: parseInt(r.headcount) || 0,
+            }))
+          : [];
+
+      const deliveryCenters: EbpoDeliveryCenterRow[] =
+        dcRes.status === 'fulfilled'
+          ? dcRes.value.map((r) => ({
+              name: String(r.name ?? 'Unassigned'),
+              slaPct: parseFloat(r.sla_pct) || 0,
+              utilizationPct: parseFloat(r.utilization_pct) || 0,
+              csatPct: parseFloat(r.csat_pct) || 0,
+              callsHandled: parseInt(r.calls_handled) || 0,
+            }))
+          : [];
+
+      return { businessUnits, costElements, headcountByDepartment, headcountByGeography, deliveryCenters };
+    } catch (error: any) {
+      this.logger.warn(`[FinancialData] EBPO breakdowns failed: ${error.message}`);
+      return empty;
     }
   }
 
@@ -1539,8 +1745,48 @@ export interface ExecutiveSnapshot {
   topClientConcentrationPct?: number;
   topBusinessUnitName?: string | null;
   topBusinessUnitMarginPct?: number;
+  businessUnits: EbpoBusinessUnitRow[];
+  costElements: EbpoCostElementRow[];
+  headcountByDepartment: EbpoDepartmentRow[];
+  headcountByGeography: EbpoGeographyRow[];
+  deliveryCenters: EbpoDeliveryCenterRow[];
   cashflowWaterfall: Array<{ name: string; value: number; fill?: string }>;
   insights: ExecutiveInsight[];
+}
+
+export interface EbpoBusinessUnitRow {
+  name: string;
+  revenue: number;
+  cost: number;
+  marginPct: number;
+}
+export interface EbpoCostElementRow {
+  name: string;
+  value: number;
+}
+export interface EbpoDepartmentRow {
+  name: string;
+  headcount: number;
+  payroll: number;
+}
+export interface EbpoGeographyRow {
+  name: string;
+  headcount: number;
+}
+export interface EbpoDeliveryCenterRow {
+  name: string;
+  slaPct: number;
+  utilizationPct: number;
+  csatPct: number;
+  callsHandled: number;
+}
+
+export interface EbpoBreakdowns {
+  businessUnits: EbpoBusinessUnitRow[];
+  costElements: EbpoCostElementRow[];
+  headcountByDepartment: EbpoDepartmentRow[];
+  headcountByGeography: EbpoGeographyRow[];
+  deliveryCenters: EbpoDeliveryCenterRow[];
 }
 
 export interface RevenueMetrics {

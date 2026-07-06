@@ -148,7 +148,7 @@ export function OverviewDashboardEditor({
           ) : null}
 
           <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
-            <div className="min-h-0 border-b border-default/60 px-5 py-4 lg:border-b-0 lg:border-r lg:px-6">
+            <div className="flex min-h-0 flex-col border-b border-default/60 px-5 py-4 lg:border-b-0 lg:border-r lg:px-6">
               <div className="mb-3 flex items-center justify-between">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">On dashboard</p>
@@ -156,7 +156,7 @@ export function OverviewDashboardEditor({
                 </div>
                 <StatusPill tone="info">{visibleCards.length} visible</StatusPill>
               </div>
-              <div className="max-h-full space-y-2 overflow-y-auto overscroll-contain pr-1">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pb-4 pr-1">
                 {visibleCards.map(({ definition, placement }) => (
                   <button
                     key={definition.id}
@@ -185,7 +185,7 @@ export function OverviewDashboardEditor({
             </div>
 
             <div className="min-h-0 px-5 py-4 lg:px-6">
-              <section className="flex h-full flex-col rounded-[1.2rem] border border-default bg-bg-elevated/25 p-4">
+              <section className="flex h-full min-h-0 flex-col rounded-[1.2rem] border border-default bg-bg-elevated/25 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">Selected card</p>
@@ -196,7 +196,7 @@ export function OverviewDashboardEditor({
                   </StatusPill>
                 </div>
 
-                <div className="mt-4 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1">
+                <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pb-4 pr-1">
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       variant="secondary"

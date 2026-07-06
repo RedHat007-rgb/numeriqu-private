@@ -61,6 +61,11 @@ export function formatPercentDelta(ratio: number | null | undefined) {
   return percentFormat.format(ratio);
 }
 
+export function formatRunwayDaysFromMonths(months: number | null | undefined) {
+  const days = Math.round((months ?? 0) * 30);
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
 export function formatRelativeTime(iso: string | null | undefined) {
   if (!iso) return "never";
   const at = new Date(iso);

@@ -26,7 +26,12 @@ export type OverviewCardId =
   | "cashflow"
   | "invoice-status"
   | "next-actions"
-  | "connected-entities";
+  | "connected-entities"
+  | "business-units"
+  | "cost-elements"
+  | "workforce-department"
+  | "workforce-geography"
+  | "delivery-centers";
 
 export type OverviewCardDefinition = {
   id: OverviewCardId;
@@ -74,8 +79,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "margin-quality",
-    title: "Margin Quality",
-    description: "Net margin and contribution signal for the current scope.",
+    title: "Net Margin Percentage",
+    description: "Net margin percentage and contribution signal for the current scope.",
     zone: ["hero", "primary"],
     defaultZone: "hero",
     defaultSize: "small",
@@ -140,7 +145,7 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "service-levels",
-    title: "Delivery Pulse",
+    title: "KPIs Impacting the efficiency of business",
     description: "Operational reliability metrics that can silently erode margin quality.",
     zone: ["primary", "secondary"],
     defaultZone: "secondary",
@@ -151,8 +156,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "payroll-discipline",
-    title: "Labor Efficiency",
-    description: "Payroll absorption and labor efficiency pressure against revenue.",
+    title: "High Payroll to Revenue Percentage",
+    description: "Protect margin by tracking payroll absorption against revenue.",
     zone: ["hero", "secondary", "primary"],
     defaultZone: "secondary",
     defaultSize: "small",
@@ -250,8 +255,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "largest-entity",
-    title: "Largest Entity",
-    description: "The entity contributing the most revenue in the current scope.",
+    title: "Exposure of the biggest client in revenue",
+    description: "Revenue exposure from the largest client in the current scope.",
     zone: ["hero", "secondary", "primary"],
     defaultZone: "secondary",
     defaultSize: "small",
@@ -325,6 +330,61 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
     defaultVisible: false,
     priority: 110,
   },
+  {
+    id: "business-units",
+    title: "Business Unit Performance",
+    description: "Revenue and gross margin ranked by business unit, so you can see where the portfolio earns.",
+    zone: ["primary", "secondary"],
+    defaultZone: "primary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: true,
+    priority: 176,
+  },
+  {
+    id: "cost-elements",
+    title: "Cost Elements",
+    description: "Operating cost broken into delivery cost, base salary, overtime, bonus, and benefits.",
+    zone: ["primary", "secondary"],
+    defaultZone: "primary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: true,
+    priority: 175,
+  },
+  {
+    id: "workforce-department",
+    title: "Workforce by Department",
+    description: "Headcount and payroll distribution across departments.",
+    zone: ["primary", "secondary"],
+    defaultZone: "secondary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: true,
+    priority: 174,
+  },
+  {
+    id: "workforce-geography",
+    title: "Global Delivery Footprint",
+    description: "Delivery headcount ranked by geography and country.",
+    zone: ["primary", "secondary"],
+    defaultZone: "secondary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: true,
+    priority: 173,
+  },
+  {
+    id: "delivery-centers",
+    title: "Delivery Center Scorecard",
+    description: "SLA compliance, utilization, and CSAT ranked by delivery center.",
+    zone: ["primary", "secondary"],
+    defaultZone: "secondary",
+    defaultSize: "medium",
+    allowedSizes: ["medium", "wide"],
+    defaultVisible: true,
+    priority: 172,
+  },
 ];
 
 export function getOverviewCardDefinition(cardId: OverviewCardId) {
@@ -358,6 +418,11 @@ export function getRecommendedOverviewPlacements(showOnboardingGuide: boolean): 
     { cardId: "avg-entity-revenue", zone: "secondary", position: 22, size: "small", visible: false },
     { cardId: "efficiency", zone: "secondary", position: 23, size: "small", visible: false },
     { cardId: "payroll-discipline", zone: "secondary", position: 24, size: "small", visible: false },
+    { cardId: "business-units", zone: "primary", position: 25, size: "medium", visible: true },
+    { cardId: "cost-elements", zone: "primary", position: 26, size: "medium", visible: true },
+    { cardId: "workforce-department", zone: "secondary", position: 27, size: "medium", visible: true },
+    { cardId: "workforce-geography", zone: "secondary", position: 28, size: "medium", visible: true },
+    { cardId: "delivery-centers", zone: "secondary", position: 29, size: "medium", visible: true },
   ];
 
   return recommended

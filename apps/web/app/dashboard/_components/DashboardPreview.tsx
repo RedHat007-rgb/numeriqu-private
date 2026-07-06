@@ -872,7 +872,10 @@ function VentureMetricCard({ data }: { data: VentureData }) {
     },
     {
       label: "Runway",
-      value: `${data.runwayMonths ?? 0}mo`,
+      value: (() => {
+        const days = Math.round((data.runwayMonths ?? 0) * 30);
+        return `${days} ${days === 1 ? "day" : "days"}`;
+      })(),
       sub:
         (data.runwayMonths ?? 0) < 6
           ? "⚠ critical"

@@ -78,7 +78,7 @@ function buildDecisionItems(dashboard: DashboardResponse, currency: string): Dec
 
   if ((cfo?.payrollToRevenuePct ?? 0) > 40) {
     items.push({
-      label: "Protect margin",
+      label: "High Payroll to Revenue Percentage - Protect Margin",
       summary: "Labor load is climbing relative to revenue capacity.",
       value: safePercent(cfo?.payrollToRevenuePct),
       tone: "warning",
@@ -175,7 +175,12 @@ function DecisionRow({ item, index }: { item: DecisionItem; index: number }) {
           </div>
           <p className="mt-2 text-sm leading-6 text-[#bfd0eb]">{item.summary}</p>
         </div>
-        <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-semibold", toneClass(item.tone))}>
+        <span
+          className={cn(
+            "min-w-fit rounded-full border px-3 py-1.5 text-base font-bold leading-none tracking-[-0.02em] md:text-lg",
+            toneClass(item.tone),
+          )}
+        >
           {item.value}
         </span>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import type { DashboardResponse } from "../../../../lib/api";
-import { formatMoneyWithCurrency, formatNumber, formatPercentDelta } from "./format";
+import { formatMoneyWithCurrency, formatNumber, formatPercentDelta, formatRunwayDaysFromMonths } from "./format";
 import { StatCard } from "./StatCard";
 
 type Tone = "neutral" | "positive" | "negative";
@@ -66,7 +66,7 @@ export function KpiGrid({ kpis, venture, charts, currency }: Props) {
       <StatCard
         className="lg:col-span-3"
         label="Cash Runway"
-        value={`${venture.runwayMonths.toFixed(1)} mo`}
+        value={formatRunwayDaysFromMonths(venture.runwayMonths)}
         detail={`${formatMoneyWithCurrency(venture.burnRate, currency)} monthly burn`}
         delta={
           venture.runwayMonths === 0

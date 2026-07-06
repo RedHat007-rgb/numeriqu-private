@@ -42,6 +42,9 @@ import {
 import type { DashboardResponse } from "../../../lib/api";
 import { getOverviewCardDefinition } from "../_lib/overviewDashboardConfig";
 import type { OverviewCardId, OverviewCardPlacement } from "../_lib/overviewDashboardConfig";
+import { getCardGlossary } from "../_lib/glossary";
+import type { CardGlossary } from "../_lib/glossary";
+import { GlossaryBackFace } from "../_components/overview/GlossaryBackFace";
 
 const CFO_AGENDA_STORAGE_KEY = "nq.dashboard.cfo-agenda.v1";
 
@@ -203,6 +206,7 @@ function MetricTile({
   detail,
   delta,
   overview,
+  glossary,
   interactive = false,
   className,
 }: {
@@ -211,11 +215,12 @@ function MetricTile({
   detail: string;
   delta?: { value: string; tone: "neutral" | "positive" | "negative" } | null;
   overview?: string;
+  glossary?: CardGlossary | null;
   interactive?: boolean;
   className?: string;
 }) {
   const [showInfo, setShowInfo] = useState(false);
-  const canFlip = interactive && Boolean(overview);
+  const canFlip = interactive && (Boolean(glossary) || Boolean(overview));
   const toggleInfo = () => setShowInfo((value) => !value);
 
   return (
@@ -276,20 +281,24 @@ function MetricTile({
       </div>
 
       {canFlip && showInfo ? (
-        <div className="absolute inset-0 z-10 flex flex-col bg-[rgba(9,16,36,0.95)] p-4 backdrop-blur-sm">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-cyan">
-              {eyebrow}
+        glossary ? (
+          <GlossaryBackFace glossary={glossary} onClose={() => setShowInfo(false)} />
+        ) : (
+          <div className="absolute inset-0 z-10 flex flex-col bg-[rgba(9,16,36,0.95)] p-4 backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent-cyan">
+                {eyebrow}
+              </p>
+              <span className="text-text-muted" aria-hidden="true">
+                <X className="h-4 w-4" />
+              </span>
+            </div>
+            <p className="mt-2 text-[13px] leading-6 text-[#c4d3ee]">{overview}</p>
+            <p className="mt-auto pt-2 text-[10px] uppercase tracking-[0.18em] text-text-muted">
+              Tap to close
             </p>
-            <span className="text-text-muted" aria-hidden="true">
-              <X className="h-4 w-4" />
-            </span>
           </div>
-          <p className="mt-2 text-[13px] leading-6 text-[#c4d3ee]">{overview}</p>
-          <p className="mt-auto pt-2 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-            Tap to close
-          </p>
-        </div>
+        )
       ) : null}
     </div>
   );
@@ -639,7 +648,8 @@ export function OverviewPage() {
       : null;
 
   const renderCard = (cardId: OverviewCardId) => {
-    const overview = getOverviewCardDefinition(cardId)?.description;
+    const glossary = getCardGlossary(cardId);
+    const overview = glossary?.primary.definition ?? getOverviewCardDefinition(cardId)?.description;
     switch (cardId) {
       case "executive-brief":
         return <ExecutiveBriefCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
@@ -647,6 +657,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Revenue"
             value={formatMoneyWithCurrency(dashboard.kpis.totalRevenue, prefs.currencyDisplay)}
@@ -658,6 +669,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Net Margin Percentage"
             value={formatPercentDelta(dashboard.kpis.profitMargin / 100)}
@@ -669,6 +681,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Open Invoices"
             value={formatMoneyWithCurrency(dashboard.kpis.openInvoiceAmount, prefs.currencyDisplay)}
@@ -679,6 +692,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Cash Runway"
             value={formatRunwayDaysFromMonths(dashboard.venture.runwayMonths)}
@@ -691,12 +705,15 @@ export function OverviewPage() {
             eyebrow="Treasury radar"
             title="How quickly revenue turns into usable cash"
             items={makeCashDisciplineItems(dashboard, prefs.currencyDisplay)}
+            glossary={glossary}
+            interactive={!isEditing}
           />
         );
       case "working-capital":
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Working Capital"
             value={formatMoneyWithCurrency(dashboard.cfo?.workingCapital ?? 0, prefs.currencyDisplay)}
@@ -709,6 +726,8 @@ export function OverviewPage() {
             eyebrow="Concentration risk"
             title="Where client dependence can blindside the board"
             items={makeClientConcentrationItems(dashboard, prefs.currencyDisplay)}
+            glossary={glossary}
+            interactive={!isEditing}
           />
         );
       case "service-levels":
@@ -717,12 +736,15 @@ export function OverviewPage() {
             eyebrow="KPIs Impacting the efficiency of business"
             title="Operational strain that can quietly destroy margin"
             items={makeServiceLevelItems(dashboard)}
+            glossary={glossary}
+            interactive={!isEditing}
           />
         );
       case "payroll-discipline":
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="High Payroll to Revenue Percentage"
             value={formatPercentDelta((dashboard.cfo?.payrollToRevenuePct ?? 0) / 100)}
@@ -733,6 +755,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Cash on Hand"
             value={formatMoneyWithCurrency(dashboard.venture.cashOnHand, prefs.currencyDisplay)}
@@ -743,6 +766,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Overdue"
             value={formatMoneyWithCurrency(dashboard.kpis.overdueAmount, prefs.currencyDisplay)}
@@ -753,6 +777,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Invoices"
             value={formatNumber(dashboard.kpis.totalInvoices)}
@@ -764,6 +789,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Average Invoice"
             value={formatMoneyWithCurrency(dashboard.kpis.avgInvoiceValue, prefs.currencyDisplay)}
@@ -774,6 +800,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Burn Rate"
             value={formatMoneyWithCurrency(dashboard.venture.burnRate, prefs.currencyDisplay)}
@@ -784,6 +811,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Entities"
             value={formatNumber(connectedOrgCount)}
@@ -794,6 +822,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Coverage"
             value={formatNumber(providerCount)}
@@ -804,6 +833,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Collection Risk"
             value={collectionRiskRatio === null ? "0%" : formatPercentDelta(collectionRiskRatio)}
@@ -814,6 +844,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Exposure of the biggest client in revenue"
             value={formatMoneyWithCurrency(topEntity?.totalRevenue ?? 0, prefs.currencyDisplay)}
@@ -824,6 +855,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Avg Entity Revenue"
             value={formatMoneyWithCurrency(avgEntityRevenue, prefs.currencyDisplay)}
@@ -834,6 +866,7 @@ export function OverviewPage() {
         return (
           <MetricTile
             overview={overview}
+            glossary={glossary}
             interactive={!isEditing}
             eyebrow="Efficiency"
             value={`${dashboard.venture.efficiencyMultiplier.toFixed(2)}x`}

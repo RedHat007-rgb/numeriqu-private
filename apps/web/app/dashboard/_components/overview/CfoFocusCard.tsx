@@ -1,8 +1,11 @@
 "use client";
 
-import { Shield, Target, Wallet } from "lucide-react";
+import { useState } from "react";
+import { Info, Shield, Target, Wallet } from "lucide-react";
 import { cn } from "../../../../components/ui/cn";
 import type { DashboardResponse } from "../../../../lib/api";
+import type { CardGlossary } from "../../_lib/glossary";
+import { GlossaryBackFace } from "./GlossaryBackFace";
 import { formatMoneyWithCurrency, formatPercentDelta } from "./format";
 
 type Tone = "neutral" | "positive" | "warning";
@@ -25,15 +28,40 @@ export function CfoFocusCard({
   title,
   eyebrow,
   items,
+  glossary,
+  interactive = false,
 }: {
   title: string;
   eyebrow: string;
   items: FocusItem[];
+  glossary?: CardGlossary | null;
+  interactive?: boolean;
 }) {
   const Icon = iconForEyebrow(eyebrow);
+  const [showInfo, setShowInfo] = useState(false);
+  const canFlip = interactive && Boolean(glossary);
 
   return (
-    <section className="dashboard-focus-card h-full overflow-hidden p-5">
+    <section
+      className={cn(
+        "dashboard-focus-card relative h-full overflow-hidden p-5",
+        canFlip && "cursor-pointer transition hover:border-accent-blue/40",
+      )}
+      onClick={canFlip ? () => setShowInfo((v) => !v) : undefined}
+      role={canFlip ? "button" : undefined}
+      tabIndex={canFlip ? 0 : undefined}
+      aria-expanded={canFlip ? showInfo : undefined}
+      onKeyDown={
+        canFlip
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setShowInfo((v) => !v);
+              }
+            }
+          : undefined
+      }
+    >
       <div className="flex items-start justify-between gap-4 border-b border-white/8 pb-4">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#7ecaff]">{eyebrow}</p>
@@ -42,7 +70,7 @@ export function CfoFocusCard({
           </h2>
         </div>
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-[#8bd3ff]">
-          <Icon className="h-5 w-5" />
+          {canFlip ? <Info className="h-5 w-5" aria-hidden /> : <Icon className="h-5 w-5" />}
         </div>
       </div>
 
@@ -80,6 +108,10 @@ export function CfoFocusCard({
           </div>
         ))}
       </div>
+
+      {canFlip && showInfo && glossary ? (
+        <GlossaryBackFace glossary={glossary} onClose={() => setShowInfo(false)} />
+      ) : null}
     </section>
   );
 }

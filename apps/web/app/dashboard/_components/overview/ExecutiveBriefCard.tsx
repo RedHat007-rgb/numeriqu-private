@@ -227,7 +227,7 @@ export function ExecutiveBriefCard({
             </p>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-3 lg:w-[25rem] lg:grid-cols-1">
+          <div className="grid gap-2 sm:grid-cols-2 lg:w-[25rem] lg:grid-cols-1">
             <MetricPill
               label="Cash balance"
               value={cashBalance}
@@ -237,11 +237,6 @@ export function ExecutiveBriefCard({
               label="Working capital"
               value={workingCapital}
               tone={(cfo?.workingCapital ?? 0) >= 0 ? "positive" : "warning"}
-            />
-            <MetricPill
-              label="Top exposure"
-              value={topClientExposure}
-              tone={concentration >= 25 ? "warning" : "neutral"}
             />
           </div>
         </div>

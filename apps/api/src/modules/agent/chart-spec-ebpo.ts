@@ -1571,6 +1571,32 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       dpo_days: 'dpo_days',
     },
   },
+  {
+    // Comprehensive revenue view carrying EVERY categorical dimension of the revenue
+    // fact at once (business_unit + contract_type + region/country/delivery_center +
+    // department), monthly. It exists so a two-dimension request — e.g. "revenue by
+    // department broken down by business unit", "geography split by contract type",
+    // "business unit by geography" — has a single view exposing BOTH the primary
+    // dimension and the breakdown. Listed LAST so resolveEbpoView only falls back to it
+    // when no narrower single-purpose view already carries the requested dim/breakdown
+    // pair (ties resolve to the earlier view). gross_margin_pct derives ratio-of-sums, so
+    // only the additive $ measures are mapped here.
+    name: 'v_ebpo_revenue_by_dimensions_monthly',
+    hasTime: true,
+    dims: [
+      'business_unit',
+      'contract_type',
+      'region',
+      'country',
+      'delivery_center',
+      'department',
+    ],
+    measures: {
+      total_revenue: 'total_revenue_usd',
+      total_cost: 'total_cost_usd',
+      gross_margin: 'gross_margin_usd',
+    },
+  },
 ];
 
 // ─── Catalog: what is genuinely NOT in the data (honest refusals) ─────────────

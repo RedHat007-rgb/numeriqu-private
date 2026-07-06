@@ -697,6 +697,37 @@ function semanticViewDdls(db: string) {
         dept.department_name
     `,
     `
+      CREATE VIEW ${db}.v_ebpo_revenue_by_dimensions_monthly AS
+      SELECT
+        revenue.tenant_id AS tenant_id,
+        revenue.org_id AS org_id,
+        any(revenue.org_name) AS org_name,
+        dates.date AS period_date,
+        dates.year AS year,
+        dates.quarter AS quarter,
+        dates.month AS month,
+        dates.month_name AS month_name,
+        revenue.business_unit AS business_unit,
+        revenue.contract_type AS contract_type,
+        geo.region AS region,
+        geo.country AS country,
+        geo.delivery_center AS delivery_center,
+        dept.department_name AS department,
+        round(sum(revenue.revenue_usd), 2) AS total_revenue_usd,
+        round(sum(revenue.cost_usd), 2) AS total_cost_usd,
+        round(sum(revenue.gross_margin_usd), 2) AS gross_margin_usd,
+        round(sum(revenue.gross_margin_usd) / nullIf(sum(revenue.revenue_usd), 0) * 100, 2) AS gross_margin_pct
+      FROM ${db}.ebpo_fact_revenue revenue
+      INNER JOIN ${db}.ebpo_dim_date dates
+        ON dates.tenant_id = revenue.tenant_id AND dates.org_id = revenue.org_id AND dates.date_key = revenue.date_key
+      INNER JOIN ${db}.ebpo_dim_geography geo
+        ON geo.tenant_id = revenue.tenant_id AND geo.org_id = revenue.org_id AND geo.geography_key = revenue.geography_key
+      INNER JOIN ${db}.ebpo_dim_department dept
+        ON dept.tenant_id = revenue.tenant_id AND dept.org_id = revenue.org_id AND dept.department_key = revenue.department_key
+      GROUP BY revenue.tenant_id, revenue.org_id, dates.date, dates.year, dates.quarter, dates.month, dates.month_name,
+        revenue.business_unit, revenue.contract_type, geo.region, geo.country, geo.delivery_center, dept.department_name
+    `,
+    `
       CREATE VIEW ${db}.v_ebpo_revenue_by_client_contract_monthly AS
       SELECT
         revenue.tenant_id AS tenant_id,
@@ -1175,6 +1206,7 @@ async function recreateSemanticViews(client: ReturnType<typeof createClickHouseC
     "v_ebpo_revenue_by_business_unit_monthly",
     "v_ebpo_revenue_by_geography_monthly",
     "v_ebpo_revenue_by_department_monthly",
+    "v_ebpo_revenue_by_dimensions_monthly",
     "v_ebpo_revenue_by_client_contract_monthly",
     "v_ebpo_payroll_monthly",
     "v_ebpo_employee_headcount",

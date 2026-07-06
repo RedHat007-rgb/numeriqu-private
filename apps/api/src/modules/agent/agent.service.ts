@@ -18300,10 +18300,12 @@ export class AgentService {
       /\b(revenue|sales|income)\b/.test(text);
     // Net Profit family. "profit margin"/"net margin"/"operating margin" → the ratio;
     // bare "profit"/"net profit"/"net income"/"operating profit"/"ebitda" → the $ measure.
-    // Guarded so "gross profit"/"gross margin" stay on the gross measures.
+    // Guarded so "gross margin" AND "gross profit margin" stay on the gross measures —
+    // the "profit" alternative would otherwise swallow "gross PROFIT margin" and route it
+    // to Net Profit Margin %, which then falsely refuses per-entity groupings.
     const asksNetProfitMargin =
       /\b(?:net\s+profit|net|profit|operating(?:\s+profit)?|ebitda)\s+margin\b/.test(text) &&
-      !/\bgross\s+margin\b/.test(text);
+      !/\bgross\s+(?:profit\s+)?margin\b/.test(text);
     const asksNetProfit =
       !asksNetProfitMargin &&
       (/\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(text) ||
@@ -18321,6 +18323,12 @@ export class AgentService {
     if (asksNetProfit) add('ebitda');
     const checks: Array<[RegExp, string]> = [
       [/\byear[-\s]+over[-\s]+year\s+revenue\s+growth\b|\brevenue\s+yoy\s+growth\b|\byoy\s+revenue\s+growth\b/, 'revenue_yoy_pct'],
+      // "gross profit margin" / "gross profit %" is the gross-margin RATIO booked on the
+      // revenue fact (gross_margin / revenue). It must NOT fall through to the bare
+      // "margin" alias (gross_margin_pct, a revenue-minus-total-expenses net-ish ratio) or
+      // to Net Profit Margin %. Keep it on gross_profit_pct, which derives as a
+      // ratio-of-sums and is available at every revenue grouping (BU, client, geography…).
+      [/\bgross\s+profit\s+margin\b|\bgross\s+profit\s*(?:percentage|percent|%|pct)\b/, 'gross_profit_pct'],
       [/\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/, 'gross_margin_pct'],
       [/\bgross\s+margin\b/, 'gross_margin'],
       [/\btotal\s+revenue\b|\brevenue\b/, 'total_revenue'],
@@ -18378,6 +18386,15 @@ export class AgentService {
     };
     dropGrossMarginDollarWhenPercentOnly();
 
+    // When the user explicitly says "gross profit margin" / "gross profit %", the bare
+    // "margin" alias (gross_margin_pct) and the "profit margin" Net Profit routing can
+    // both slip in as spurious extra measures. Applied AFTER the alias loop below so the
+    // loop can't re-add them.
+    const asksGrossProfitPct =
+      /\bgross\s+profit\s+margin\b|\bgross\s+profit\s*(?:percentage|percent|%|pct)\b/.test(
+        text,
+      );
+
     const normalize = (value: string) =>
       ` ${value
         .toLowerCase()
@@ -18390,6 +18407,15 @@ export class AgentService {
       if (candidates.some((candidate) => haystack.includes(normalize(candidate)))) add(id);
     }
     dropGrossMarginDollarWhenPercentOnly();
+    // Collapse "gross profit margin"/"gross profit %" onto the single gross-margin ratio
+    // so an add-a-line follow-up plots exactly one % series (see note above).
+    if (asksGrossProfitPct) {
+      if (!out.includes('gross_profit_pct')) out.push('gross_profit_pct');
+      for (const spurious of ['gross_margin_pct', 'ebitda_style_margin_pct', 'gross_margin']) {
+        const idx = out.indexOf(spurious);
+        if (idx !== -1) out.splice(idx, 1);
+      }
+    }
     return out.filter(
       (id) =>
         !((asksAccountLevelExpenses || asksSgaExpenses) &&
@@ -21542,6 +21568,212 @@ export class AgentService {
     return null;
   }
 
+  // Resolve the SECOND dimension a "break down / split / stack by <Y>" follow-up names.
+  // Superset of detectEbpoRegroupDimension's target table plus the bare word "geography"
+  // (which the user uses interchangeably with region); for a stacked segmentation, region
+  // (a handful of segments) reads far better than country, so geography → region here.
+  private detectEbpoBreakdownDimension(editRequest: string): string | null {
+    const q = String(editRequest ?? '').toLowerCase();
+    const m =
+      /\b(?:by|into|per|across|using|on|with)\s+(?:the\s+)?(?:each\s+)?([a-z][a-z /&-]{1,30})/.exec(
+        q,
+      );
+    if (!m) return null;
+    const phrase = ` ${m[1]} `;
+    const pats: Array<[RegExp, string]> = [
+      [/\bbusiness\s*units?\b/, 'business_unit'],
+      [/\bcontract\s*types?\b/, 'contract_type'],
+      [/\bclients?\b|\bcustomers?\b/, 'client'],
+      [/\bindustr(?:y|ies)\b|\bsectors?\b/, 'industry'],
+      [/\bdepartments?\b/, 'department'],
+      [/\bcountr(?:y|ies)\b/, 'country'],
+      [/\bregions?\b|\bgeograph(?:y|ies|ic(?:al)?)\b/, 'region'],
+      [/\bcit(?:y|ies)\b/, 'city'],
+      [/\bdelivery\s*centers?\b/, 'delivery_center'],
+      [/\bvendors?\b|\bsuppliers?\b/, 'vendor'],
+      [/\basset\s*types?\b/, 'asset_type'],
+      [/\bmarket\s*types?\b/, 'market_type'],
+      [/\bgrades?\b/, 'grade'],
+    ];
+    for (const [re, id] of pats) if (re.test(phrase)) return id;
+    return null;
+  }
+
+  // BREAKDOWN (segment/stack) follow-up: "break down [each] <X> by <Y>", "split each <X>
+  // by <Y>", "break it down by <Y>", "stack by <Y>", "segment by <Y>". Unlike a regroup
+  // (which REPLACES the primary dimension), this KEEPS the chart's current dimension as
+  // the primary axis and adds <Y> as a per-category breakdown (a stacked/grouped chart).
+  // Returns null when the wording isn't a breakdown, when the pair is degenerate, or when
+  // no view carries both dimensions (compileEbpoSpec then honestly declines).
+  private async buildEbpoBreakdownEditPlan(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const q = String(editRequest ?? '').toLowerCase();
+    const wantsBreakdown =
+      /\bbreak\s*(?:it|them|this|the\s+chart)?\s*down\b|\bbroken\s+down\b|\bbreakdown\b|\bsplit\b|\bstack(?:ed)?\b|\bsegment(?:ed|ation)?\b|\bcolou?r(?:ed|\s+coded)?\s+by\b/.test(
+        q,
+      );
+    if (!wantsBreakdown) return null;
+    const targetDim = this.detectEbpoBreakdownDimension(editRequest);
+    if (!targetDim || !EBPO_DIMENSIONS[targetDim]) return null;
+    // Adding a new MEASURE ("add cost and gross profit margin") is a different edit
+    // handled by the combo builders — don't hijack it as a dimensional breakdown.
+    if (this.detectEbpoAdditionalMeasures(editRequest).length > 0) return null;
+    for (let i = 0; i < activeDashboard.widgets.length; i++) {
+      const w = activeDashboard.widgets[i]!;
+      const cfg = (w.queryConfig as any) ?? {};
+      const spec = cfg.spec as ChartSpec | undefined;
+      const primary = spec?.dimension;
+      if (!spec?.measure || !primary) continue;
+      // Need a real categorical primary to keep; a time axis or a same-as-target axis
+      // isn't a breakdown (that's a regroup / trend, handled elsewhere).
+      if (EBPO_DIMENSIONS[primary]?.isTime) continue;
+      if (primary === targetDim) continue;
+      const nextSpec: ChartSpec = {
+        ...spec,
+        dimension: primary,
+        breakdown: targetDim,
+        chartType: 'stacked_bar',
+      };
+      const built = await this.specToPlan(
+        nextSpec,
+        String(w.title ?? ''),
+        true,
+        scope,
+        editRequest,
+      ).catch(() => null);
+      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      if (wd?._sql) {
+        const primaryLabel = EBPO_DIMENSIONS[primary]?.label ?? primary;
+        const targetLabel = EBPO_DIMENSIONS[targetDim]?.label ?? targetDim;
+        return {
+          summary: `Broke ${primaryLabel} down by ${targetLabel}.`,
+          add: [],
+          remove_indices: [],
+          modify: [
+            {
+              index: i,
+              type: wd.type,
+              dynamicSql: wd._sql,
+              spec: nextSpec,
+              ...(wd.display ? { display: wd.display } : {}),
+              title: `${this.ebpoSpecTitle({ ...nextSpec, breakdown: undefined })} by ${targetLabel}`,
+            },
+          ],
+        };
+      }
+      if (built?.kind === 'no_data' && built.message) {
+        return {
+          summary: '',
+          add: [],
+          remove_indices: [],
+          modify: [],
+          refusal: built.message,
+        };
+      }
+    }
+    return null;
+  }
+
+  // SORT/RE-ORDER follow-up: "sort from highest to lowest", "order ascending", "sort by
+  // value low to high", "sort alphabetically". Re-orders the CURRENT categorical chart by
+  // its leading measure (or by name) — no measure/dimension change. Previously unhandled,
+  // so these fell through to the generic "I wasn't able to apply that change" dead-end even
+  // though compileEbpoSpec already honours spec.sort. Returns null for time-series charts
+  // (chronological order is the meaningful one) or when no sort intent is present.
+  private detectEbpoSortOrder(
+    editRequest: string,
+  ): 'value_desc' | 'value_asc' | 'name_asc' | null {
+    const q = String(editRequest ?? '').toLowerCase();
+    const hasSortVerb = /\b(sort|re-?order|reorder|arrange|order(?:ed)?|rank(?:ed)?)\b/.test(q);
+    const asc =
+      /\b(lowest\s+to\s+highest|low\s+to\s+high|smallest\s+to\s+(?:largest|biggest|highest)|least\s+to\s+(?:most|greatest)|ascending|\basc\b|bottom\s+to\s+top|increasing)\b/.test(
+        q,
+      );
+    const desc =
+      /\b(highest\s+to\s+lowest|high\s+to\s+low|largest\s+to\s+smallest|biggest\s+to\s+smallest|greatest\s+to\s+least|most\s+to\s+least|descending|\bdesc\b|top\s+to\s+bottom|decreasing)\b/.test(
+        q,
+      );
+    const byName = /\b(alphabetical(?:ly)?|by\s+name|a\s*(?:-|to|–)\s*z)\b/.test(q);
+    if (byName && (hasSortVerb || asc || desc)) return 'name_asc';
+    if (asc) return 'value_asc';
+    if (desc) return 'value_desc';
+    // "sort the chart" with no explicit direction → default to highest-first.
+    if (hasSortVerb) return 'value_desc';
+    return null;
+  }
+
+  private async buildEbpoSortEditPlan(
+    activeDashboard: ActiveDashboard,
+    editRequest: string,
+    scope: OrgScope,
+  ): Promise<DashboardEditPlan | null> {
+    const sort = this.detectEbpoSortOrder(editRequest);
+    if (!sort) return null;
+    // A sort that also names a new measure/dimension is really a regroup/combo — let the
+    // dedicated builders handle it.
+    if (this.detectEbpoAdditionalMeasures(editRequest).length > 0) return null;
+    for (let i = 0; i < activeDashboard.widgets.length; i++) {
+      const w = activeDashboard.widgets[i]!;
+      const cfg = (w.queryConfig as any) ?? {};
+      const spec = cfg.spec as ChartSpec | undefined;
+      const dim = spec?.dimension;
+      if (!spec?.measure || !dim) continue;
+      // Sorting a time axis by value would scramble chronology — keep time charts as-is.
+      if (EBPO_DIMENSIONS[dim]?.isTime) continue;
+      if (spec.sort === sort) {
+        // Already in the requested order (e.g. the default value_desc). Confirm rather
+        // than dead-end, and leave the chart untouched.
+        const dirLabel =
+          sort === 'value_asc'
+            ? 'lowest to highest'
+            : sort === 'name_asc'
+              ? 'alphabetical order'
+              : 'highest to lowest';
+        return {
+          summary: `The chart is already sorted from ${dirLabel}.`,
+          add: [],
+          remove_indices: [],
+          modify: [],
+        };
+      }
+      const nextSpec: ChartSpec = { ...spec, sort };
+      const built = await this.specToPlan(
+        nextSpec,
+        String(w.title ?? ''),
+        true,
+        scope,
+        editRequest,
+      ).catch(() => null);
+      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      if (wd?._sql) {
+        const dirLabel =
+          sort === 'value_asc'
+            ? 'lowest to highest'
+            : sort === 'name_asc'
+              ? 'alphabetical order'
+              : 'highest to lowest';
+        return {
+          summary: `Sorted the chart from ${dirLabel}.`,
+          add: [],
+          remove_indices: [],
+          modify: [
+            {
+              index: i,
+              type: wd.type,
+              dynamicSql: wd._sql,
+              spec: nextSpec,
+              ...(wd.display ? { display: wd.display } : {}),
+            },
+          ],
+        };
+      }
+    }
+    return null;
+  }
+
   // GENERIC REGROUP for follow-up edits: "<current chart> by <entity>". When the current
   // measure genuinely supports that grouping, regroup and apply it; when it does NOT (e.g.
   // Net Profit by business unit — payroll isn't booked per BU), surface the deterministic
@@ -24092,6 +24324,25 @@ export class AgentService {
     const editHasEbpoEarly = scope
       ? await this.orgHasEbpoData(scope).catch(() => false)
       : false;
+    // "Break down / split each <X> by <Y>" keeps the chart's current dimension and adds
+    // <Y> as a stacked breakdown. Must run BEFORE the same-chart axis-conflict guard,
+    // which would otherwise read the "by <Y>" as a primary regroup and refuse ("that
+    // would change the grouping from X to Y").
+    if (editHasEbpoEarly && scope) {
+      const breakdownPlan = await this.buildEbpoBreakdownEditPlan(
+        activeDashboard,
+        editRequest,
+        scope,
+      );
+      if (breakdownPlan) return breakdownPlan;
+      // "Sort from highest to lowest" / "order ascending" — re-order the current chart.
+      const sortPlan = await this.buildEbpoSortEditPlan(
+        activeDashboard,
+        editRequest,
+        scope,
+      );
+      if (sortPlan) return sortPlan;
+    }
     const allowTrendRegroup =
       editHasEbpoEarly &&
       this.isEbpoTrendRegroupFollowUp(activeDashboard, editRequest);

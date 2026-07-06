@@ -1216,6 +1216,37 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     },
   },
   {
+    // Genuine per-geography revenue: ebpo_fact_revenue carries geography_key (added
+    // 2026-07-06), joined to ebpo_dim_geography. Unlike the operations views (which
+    // only carry SLA/CSAT/etc by geography), these total_revenue/cost/gross_margin are
+    // REAL per-region/country/delivery-center values — so "revenue/cost/margin by
+    // region|country|delivery center" now compiles instead of refusing. gross_margin_pct
+    // derives from gross_margin/total_revenue (ratio-of-sums), so it is not mapped here.
+    name: 'v_ebpo_revenue_by_geography_monthly',
+    hasTime: true,
+    dims: ['region', 'country', 'delivery_center'],
+    measures: {
+      total_revenue: 'total_revenue_usd',
+      total_cost: 'total_cost_usd',
+      gross_margin: 'gross_margin_usd',
+    },
+  },
+  {
+    // Genuine per-department revenue: ebpo_fact_revenue carries department_key (added
+    // 2026-07-06), joined to ebpo_dim_department. This is REAL per-department revenue —
+    // distinct from v_ebpo_department_efficiency_monthly, where total_revenue_usd is the
+    // company total replicated on every department row (and is therefore NOT exposed
+    // there). So "revenue/cost/margin by department" now compiles from this view.
+    name: 'v_ebpo_revenue_by_department_monthly',
+    hasTime: true,
+    dims: ['department'],
+    measures: {
+      total_revenue: 'total_revenue_usd',
+      total_cost: 'total_cost_usd',
+      gross_margin: 'gross_margin_usd',
+    },
+  },
+  {
     name: 'v_ebpo_revenue_expense_by_client',
     hasTime: false,
     dims: ['client', 'industry'],
@@ -3043,7 +3074,7 @@ export function ebpoCatalogPromptText(): string {
     'SCATTER / BUBBLE: for "X versus Y by <entity>" set dimension=<entity> and measures=[xId, yId] with chartType "scatter". For "size each bubble by W" add the size measure: measures=[xId, yId, sizeId] with chartType "bubble". All measures must come from one view that also has the entity dimension.',
     'DIMENSIONS (pick one as "dimension"; optionally one as "breakdown" for a single-measure series split; omit "dimension" for a single KPI value):',
     dims,
-    'NOTE: REVENUE / COST / GROSS MARGIN have NO GEOGRAPHY relationship in this dataset — the revenue fact is booked only by client, business unit, and contract type (and month). There is NO "revenue by country / region / city / delivery center" — do NOT invent one; emit your best spec and the deterministic compiler will honestly refuse it. OPERATIONS metrics (SLA/CSAT/utilization, calls, tickets, AHT) are available by delivery center / geography, and SLA/CSAT/utilization are also available by department through a weighted delivery-center headcount bridge. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
+    'NOTE: REVENUE / COST / GROSS MARGIN are booked by client, business unit, contract type, and — since the FactRevenue geography_key / department_key were added — also by region, country, delivery center, and department (each available by month or as an aggregate). So "revenue / cost / gross margin by region | country | delivery center | department" IS supported; emit the spec (measure total_revenue / total_cost / gross_margin + that dimension). The only geography grain NOT carried on the revenue fact is CITY (city stays operations-only). OPERATIONS metrics (SLA/CSAT/utilization, calls, tickets, AHT) are available by delivery center / geography, and SLA/CSAT/utilization are also available by department through a weighted delivery-center headcount bridge. In general, do NOT pre-refuse a measure-by-dimension request — emit your best spec (the right measure id + dimension id) and let the deterministic compiler decide: it returns an honest refusal ONLY when that exact combination genuinely has no data, and never fabricates. Refuse up-front ONLY when the MEASURE itself is absent from the measures list above (or is in the NOT AVAILABLE list below).',
     'PROFIT MEASURES: "profit", "net profit", "net income", "operating profit", "operating income", "EBITDA" → use measure "ebitda" (labelled "Net Profit" = [Total Revenue] − [Total Expenses] = revenue − cost − payroll, an absolute $). In this dataset Net Profit is NEGATIVE (payroll is large) — that is EXPECTED and correct; ALWAYS emit the spec and chart it, never refuse a profit request just because the value is negative. "profit margin", "net profit margin", "net margin", "operating margin", "EBITDA margin" (a %) → use "ebitda_style_margin_pct" (labelled "Net Profit Margin %" = DIVIDE([Net Profit],[Total Revenue])). Net Profit resolves only where revenue, cost, and payroll coexist in the same verified grain: company / month / quarter / year. Payroll is NOT booked by business unit, client, contract type, industry, or revenue geography — so for a per-entity net-profit request, emit the spec anyway (measure "ebitda" + that dimension) and let the deterministic compiler return the honest "Net Profit isn\'t available broken down by <X>" refusal; do NOT silently substitute gross margin, and do NOT fabricate a per-entity figure.',
     'EXPENSE vs COST: "expense", "expenses", "operating expense", "overhead", "total expenses" → use measure "total_expenses" (= Total Cost + Total Payroll). IMPORTANT: the dataset still has trial-balance account data, so account/account-category/account-type expense asks are data-backed through the account views when they stay at the company/account grain. "SG&A" maps to that same real expense-account grain (the trial-balance expense accounts), not to a separate named measure. But there is NO client×account bridge, and no revenue-fact-by-department grain — refuse those impossible cross-grain joins honestly. "total_cost" is specifically COST OF REVENUE, only for explicit cost / COGS / gross-margin asks. Do NOT silently substitute total_cost for a generic "expense" request.',
     'CLIENTS: "number of clients / how many clients / client count" → measure "no_clients" (a DISTINCTCOUNT). "average/avg revenue per client" → measure "avg_revenue_per_client". "client RANK / rank clients / top N clients" is NOT a measure — plot the underlying measure (usually total_revenue) by dimension "client" with sort:"value_desc" (or "value_asc" for the bottom) and topN. "revenue contribution % / share of total company revenue / revenue concentration" is the company_share TRANSFORM on total_revenue by client, not a separate measure.',

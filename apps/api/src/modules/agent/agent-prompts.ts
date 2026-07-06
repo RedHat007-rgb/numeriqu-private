@@ -765,9 +765,26 @@ TABLE: v_ebpo_business_unit_efficiency
 TABLE: v_ebpo_delivery_center_efficiency_monthly
   Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
     delivery_center, region, country, calls_handled, utilization_pct, employee_count
-  OPERATIONS only by delivery center / region / country. This dataset has NO revenue by
-  geography (FactRevenue has no geography key) — do NOT compute revenue/revenue-per-employee
-  by delivery center, region, or country; there is no such column or relationship.
+  OPERATIONS only by delivery center / region / country (SLA/CSAT/utilization/calls).
+  Revenue-per-EMPLOYEE by geography is still NOT available here. For revenue / cost /
+  gross margin by geography or department, use the dedicated revenue-by-dimension views below.
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_revenue_by_geography_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    region, country, delivery_center, total_revenue_usd, total_cost_usd,
+    gross_margin_usd, gross_margin_pct
+  Real per-geography revenue/cost/gross-margin (ebpo_fact_revenue.geography_key ->
+  ebpo_dim_geography). Use for revenue / cost / gross margin by region, country, or
+  delivery center, monthly or aggregate. gross_margin_pct = SUM(gross_margin)/SUM(revenue).
+  Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
+
+TABLE: v_ebpo_revenue_by_department_monthly
+  Columns: tenant_id, org_id, period_date, year, quarter, month, month_name,
+    department, total_revenue_usd, total_cost_usd, gross_margin_usd, gross_margin_pct
+  Real per-department revenue/cost/gross-margin (ebpo_fact_revenue.department_key ->
+  ebpo_dim_department). Use for revenue / cost / gross margin by department, monthly or
+  aggregate. This is genuine per-department revenue, NOT the company total replicated.
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
 
 TABLE: v_fact_accounting_journal_lines_latest

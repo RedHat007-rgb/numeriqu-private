@@ -10,6 +10,9 @@ export function InvoiceStatusCard({
   dashboard: DashboardResponse;
   currency: string;
 }) {
+  const isEbpo = dashboard.cfo?.mode === "ebpo";
+  const lineNoun = isEbpo ? "aging lines" : "invoices";
+
   const items = dashboard.charts.invoiceStatus.map((row) => ({
     name: row.name,
     count: row.count,
@@ -40,7 +43,7 @@ export function InvoiceStatusCard({
             <div className="rounded-[1rem] border border-white/10 bg-white/[0.04] p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">Open balance</p>
               <p className="mt-2 text-2xl font-bold text-white">{formatMoneyWithCurrency(dashboard.kpis.openInvoiceAmount, currency)}</p>
-              <p className="mt-1 text-sm text-[#b8c8e4]">{formatNumber(dashboard.kpis.openInvoiceCount ?? 0)} invoices still open</p>
+              <p className="mt-1 text-sm text-[#b8c8e4]">{formatNumber(dashboard.kpis.openInvoiceCount ?? 0)} {lineNoun} still open</p>
             </div>
             <div className="rounded-[1rem] border border-dashed border-white/10 px-4 py-5 text-sm text-[#a8bfdf]">
               No status buckets yet. Once invoice aging is available, this card will split healthy receivables from overdue exposure.
@@ -54,7 +57,7 @@ export function InvoiceStatusCard({
                   <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
                     <div className="min-w-0">
                       <p className="truncate font-medium text-white">{item.name}</p>
-                      <p className="text-[#9db4d8]">{formatNumber(item.count)} invoices</p>
+                      <p className="text-[#9db4d8]">{formatNumber(item.count)} {lineNoun}</p>
                     </div>
                     <span className="font-mono text-[#8ad7ff]">{formatMoneyWithCurrency(item.amount, currency)}</span>
                   </div>
@@ -80,7 +83,7 @@ export function InvoiceStatusCard({
                 <p className="text-xs text-[#9db4d8]">{formatMoneyWithCurrency(topBucket?.amount ?? 0, currency)}</p>
               </div>
               <div className="rounded-[1rem] border border-white/8 bg-white/[0.03] p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">Invoices in play</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">{isEbpo ? "Aging lines in play" : "Invoices in play"}</p>
                 <p className="mt-1 text-lg font-bold text-white">{formatNumber(dashboard.kpis.openInvoiceCount ?? 0)}</p>
                 <p className="text-xs text-[#9db4d8]">Across all open aging buckets</p>
               </div>

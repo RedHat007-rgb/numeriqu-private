@@ -82,14 +82,17 @@ describe('EBPO catalog — view resolution', () => {
     expect(view?.name).not.toBe('v_ebpo_payroll_monthly');
   });
 
-  test('revenue has NO geography relationship — no view exposes it by country/region/delivery center', () => {
-    // FactRevenue has no geography key. The fabricated allocated_revenue measure was removed,
-    // so total_revenue does not resolve against any geography dimension.
-    expect(resolveEbpoView('total_revenue', 'country', null)).toBeNull();
-    expect(resolveEbpoView('total_revenue', 'region', null)).toBeNull();
-    expect(resolveEbpoView('total_revenue', 'delivery_center', null)).toBeNull();
+  test('revenue resolves by geography + department (real keys added to FactRevenue)', () => {
+    // ebpo_fact_revenue now carries geography_key + department_key (added 2026-07-06),
+    // so total_revenue resolves against region/country/delivery_center via the geography
+    // view and against department via the department view. These are REAL per-slice values.
+    expect(resolveEbpoView('total_revenue', 'country', null)?.name).toBe('v_ebpo_revenue_by_geography_monthly');
+    expect(resolveEbpoView('total_revenue', 'region', null)?.name).toBe('v_ebpo_revenue_by_geography_monthly');
+    expect(resolveEbpoView('total_revenue', 'delivery_center', null)?.name).toBe('v_ebpo_revenue_by_geography_monthly');
+    expect(resolveEbpoView('total_revenue', 'department', null)?.name).toBe('v_ebpo_revenue_by_department_monthly');
+    // City is still NOT carried on the revenue fact (revenue geography stops at delivery center).
     expect(resolveEbpoView('total_revenue', 'city', null)).toBeNull();
-    // and there is no longer an allocated_revenue measure at all
+    // and there is still no fabricated allocated_revenue measure
     expect(EBPO_MEASURES['allocated_revenue']).toBeUndefined();
   });
 
@@ -266,22 +269,18 @@ describe('EBPO compiler — shapes', () => {
     expect(sql).not.toContain('period_date = (SELECT max(period_date)');
   });
 
-  test('revenue by country / region is REFUSED, not fabricated (no geography relationship)', async () => {
-    // total_revenue is an additive flow with no geography view → not replicated, refused.
+  test('revenue by country / region / department compiles against the real per-slice views', async () => {
+    // ebpo_fact_revenue now carries geography_key + department_key, so these resolve to
+    // genuine per-slice revenue/cost/margin — not fabricated, not company-total replication.
     const country = await compileEbpoSpec(
       { measure: 'total_revenue', dimension: 'country', chartType: 'bar' } as ChartSpec,
       DB,
       noRows,
     );
-    expect(country.ok).toBe(false);
-    if (!country.ok) {
-      // polite + professional, no internal jargon, and HELPFUL (suggests real alternatives)
-      expect(country.refusal).toMatch(/^I'm sorry/);
-      expect(country.refusal).toMatch(/Country/);
-      expect(country.refusal).not.toMatch(/no EBPO view|view exposes/i); // no jargon
-      expect(country.refusal).toMatch(/I can show Total Revenue by .*Business Unit/);
-      expect(country.refusal).toMatch(/over time \(by month, quarter, or year\)/);
-      expect(country.refusal).toMatch(/I've left the chart unchanged\./);
+    expect(country.ok).toBe(true);
+    if (country.ok) {
+      expect(country.sql).toContain('analytics.v_ebpo_revenue_by_geography_monthly');
+      expect(country.sql).toContain('country');
     }
 
     const region = await compileEbpoSpec(
@@ -289,7 +288,17 @@ describe('EBPO compiler — shapes', () => {
       DB,
       noRows,
     );
-    expect(region.ok).toBe(false);
+    expect(region.ok).toBe(true);
+
+    const dept = await compileEbpoSpec(
+      { measure: 'total_cost', dimension: 'department', chartType: 'bar' } as ChartSpec,
+      DB,
+      noRows,
+    );
+    expect(dept.ok).toBe(true);
+    if (dept.ok) {
+      expect(dept.sql).toContain('analytics.v_ebpo_revenue_by_department_monthly');
+    }
   });
 
   test('operations by delivery center compiles against an operations view', async () => {

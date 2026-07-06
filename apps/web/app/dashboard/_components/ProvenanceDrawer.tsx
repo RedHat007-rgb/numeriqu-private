@@ -166,19 +166,19 @@ export function ProvenanceDrawer({ open, loading, evidence, error, onClose }: Pr
                         />
                       </span>
                       <span className="w-20 shrink-0 text-right text-[11px] font-semibold tabular-nums" style={{ color: "rgb(var(--color-text-primary))" }}>
-                        {fmt(r.value, evidence.format)}
+                        {fmt(r.value, evidence.rowsFormat ?? evidence.format)}
                       </span>
                     </li>
                   ))}
                 </ul>
 
-                {/* Total */}
+                {/* Total / result */}
                 <div className="mt-3 flex items-center justify-between border-t pt-3" style={{ borderColor: "rgb(var(--color-border-subtle) / 0.1)" }}>
                   <span className="text-xs font-semibold" style={{ color: "rgb(var(--color-text-secondary))" }}>
-                    Total ({evidence.rows.length} {evidence.rows.length === 1 ? "row" : "rows"})
+                    {evidence.totalLabel ?? `Total (${evidence.rows.length} ${evidence.rows.length === 1 ? "row" : "rows"})`}
                   </span>
                   <span className="text-sm font-bold tabular-nums" style={{ color: "rgb(var(--color-accent-cyan))" }}>
-                    {evidence.reconciled === "not_applicable" ? "—" : fmt(evidence.total, evidence.format)}
+                    {evidence.reconciled === "not_applicable" && !evidence.totalLabel ? "—" : fmt(evidence.total, evidence.format)}
                   </span>
                 </div>
               </div>

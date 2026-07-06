@@ -2772,6 +2772,24 @@ export async function compileEbpoSpec(
 }
 
 // ─── Transforms (same layering approach as the GL compiler) ───────────────────
+/**
+ * True when a spec's transforms rewrite the OUTPUT into a percentage (normalize /
+ * growth % / share-of-company). The single authority callers must use when deriving
+ * display formats from a spec WITHOUT compiling it — e.g. deriveEbpoDisplayFromSpec —
+ * so a $-measure spec whose transform yields % never gets formatted as dollars.
+ * (The compiler itself reports the same fact per-compile via `outputPercent`.)
+ */
+export function specTransformsProducePercent(
+  input: ChartSpec['transforms'],
+): boolean {
+  return normalizeTransforms(input).some(
+    (t) =>
+      t.kind === 'normalize' ||
+      t.kind === 'growth_pct' ||
+      t.kind === 'company_share',
+  );
+}
+
 function normalizeTransforms(input: ChartSpec['transforms']): SpecTransform[] {
   const out: SpecTransform[] = [];
   for (const t of input ?? []) {

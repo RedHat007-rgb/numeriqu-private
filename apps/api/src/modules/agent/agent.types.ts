@@ -322,11 +322,20 @@ export type FigureEvidence = {
   measureLabel: string;
   dimensionLabel: string;
   category: string;
+  // Unit of the headline value / `total` (and of the rows unless `rowsFormat` overrides).
   format: 'currency' | 'number' | 'percent';
+  // Unit of the row VALUES when they differ from the result — e.g. a share figure whose
+  // result is a % but whose supporting rows are the dollar numerator + denominator.
+  // Defaults to `format` when omitted.
+  rowsFormat?: 'currency' | 'number' | 'percent';
   // The detail rows (typically monthly) that make up the figure, in order.
   rows: Array<{ label: string; value: number }>;
-  // Independently recomputed total from `rows`.
+  // Independently recomputed total/result. Usually the sum of `rows`, but for a ratio
+  // (share, margin) it is the computed ratio, not a sum — see `totalLabel`.
   total: number;
+  // Label for the total/result line. Defaults to "Total (N rows)" when omitted; a ratio
+  // sets this (e.g. "Share of company total") so the line isn't mislabeled as a sum.
+  totalLabel?: string;
   // Trust stamp. 'match' = our recomputation equals what the chart showed (to tolerance);
   // 'mismatch' = it did not (surfaces a real discrepancy); 'unchecked' = the caller gave
   // no displayed value to compare; 'not_applicable' = a ratio/percent measure that can't

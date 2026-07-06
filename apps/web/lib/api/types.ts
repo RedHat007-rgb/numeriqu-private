@@ -348,8 +348,10 @@ export type FigureEvidence = {
   dimensionLabel: string;
   category: string;
   format: "currency" | "number" | "percent";
+  rowsFormat?: "currency" | "number" | "percent";
   rows: Array<{ label: string; value: number }>;
   total: number;
+  totalLabel?: string;
   reconciled: "match" | "mismatch" | "unchecked" | "not_applicable";
   reconcileNote: string;
   sql: string;

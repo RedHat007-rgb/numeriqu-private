@@ -1936,7 +1936,7 @@ export function renderChart(
         <ResponsiveContainer width="100%" height="100%">
 	          <AreaChart
               data={areaData}
-              margin={{ top: 8, right: 4, left: 12, bottom: isMultiSeries ? expandedBottomChartMargin : 12 }}
+              margin={{ top: isExpanded ? 28 : 16, right: isExpanded ? 54 : 30, left: 12, bottom: isMultiSeries ? expandedBottomChartMargin : 12 }}
               onClick={emitFromActive}
             >
             <defs>
@@ -2465,7 +2465,14 @@ export function renderChart(
       // It must be the bar on the LEFT axis with its own ($/count) unit; same-unit overlays
       // join it on the left, different-unit overlays (the %s) get the right axis.
       const hasValue = data.some((r) => toFiniteNumber((r as any).value) != null);
-      const valueFmt = inferComboFmt("value");
+      // With NO overlay columns there is nothing else the chart-wide valueFormat could
+      // describe — it IS the primary series' unit (e.g. a company-share % rendered as a
+      // combo). Only when overlays exist does valueFormat risk describing the overlay,
+      // so only then fall back to name inference (the "7000000.0%" Pareto guard).
+      const valueFmt: ComboFmt =
+        orderedKeys.length === 0
+          ? ((chart.config.display?.valueFormat as ComboFmt) ?? inferComboFmt("value"))
+          : inferComboFmt("value");
       series = [];
       if (hasValue)
         series.push({ key: "value", role: "bar", format: valueFmt, axis: "left" });
@@ -3373,7 +3380,14 @@ export function renderChart(
         chart.config.display?.valueFormat ??
         "number",
     );
-    const showInlineLabels = !!nameKey && data.length <= 18;
+    // A single-category scatter with few points already names every point clearly on the
+    // X-AXIS, so drawing the name AGAIN above each dot (and a third time in the footer
+    // legend below) is triple redundancy that clutters the chart. Suppress those two only
+    // when the x-axis can comfortably show every label; a true X-vs-Y scatter, or a
+    // high-cardinality category scatter whose axis labels would thin/overlap, still needs
+    // the inline labels + colour legend to stay identifiable.
+    const singleCatClean = singleCat && data.length <= 8;
+    const showInlineLabels = !!nameKey && data.length <= 18 && !singleCatClean;
     // "highlight the largest client" → emphasize the named point(s), dim the rest.
     const scatterHighlight = new Set(
       (chart.config.display?.highlightNames ?? []).map((s) => String(s)),
@@ -3386,7 +3400,7 @@ export function renderChart(
         xValues={singleCat ? [] : points.map((p: any) => Number(p[xKey]) || 0)}
         yValues={points.map((p: any) => Number(p[yKey]) || 0)}
         footer={
-          nameKey ? (
+          nameKey && !singleCatClean ? (
             <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
               {data.map((d, i) => (
                 <span key={i} className="inline-flex items-center gap-1 text-[9px] text-text-secondary">
@@ -3400,7 +3414,7 @@ export function renderChart(
       >
         {(view) => (
         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 14, right: 16, left: 12, bottom: 24 }} onClick={emitFromActive}>
+          <ScatterChart margin={{ top: 24, right: isExpanded ? 40 : 24, left: 12, bottom: 24 }} onClick={emitFromActive}>
             <CartesianGrid {...gridStyle} />
             <XAxis
               dataKey={xKey}
@@ -4315,7 +4329,7 @@ export function renderChart(
             const minNegativeSeriesValue =
               negativeSeriesValues.length > 0 ? Math.min(...negativeSeriesValues) : null;
             return (
-              <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }} onClick={emitFromActive}>
+              <LineChart data={data} margin={{ top: isExpanded ? 28 : 16, right: isExpanded ? 54 : 30, left: 12, bottom: 0 }} onClick={emitFromActive}>
                 <CartesianGrid {...gridStyle} />
                 <XAxis dataKey="name" tick={tickStyle} />
                 <YAxis
@@ -4434,7 +4448,7 @@ export function renderChart(
 
           const singleSeriesLabelMode = pointLabelMode(data.length, 1, _forceLabels, isExpanded);
           return (
-            <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }} onClick={emitFromActive}>
+            <LineChart data={data} margin={{ top: isExpanded ? 28 : 16, right: isExpanded ? 54 : 30, left: 12, bottom: 0 }} onClick={emitFromActive}>
               <CartesianGrid {...gridStyle} />
               <XAxis dataKey="name" tick={tickStyle} />
               <YAxis

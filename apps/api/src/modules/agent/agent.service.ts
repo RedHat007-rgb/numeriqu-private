@@ -37,6 +37,7 @@ import {
   effectiveEbpoChartType,
   resolveEbpoView,
   resolveEbpoViewMulti,
+  specTransformsProducePercent,
   valueExprFor,
 } from './chart-spec-ebpo';
 import {
@@ -9392,6 +9393,108 @@ export class AgentService {
     if (!measureDef) return fail('That measure isn’t recognized.');
     const measureLabel = measureDef.label;
 
+    const runRowsFn = (sql: string) =>
+      this.queryRows<Record<string, unknown>>(sql, {
+        tenantId: scope.tenantId,
+        externalOrgIds: scope.externalOrgIds,
+      });
+
+    // A transform can change the plotted value AWAY from the raw measure (share of the
+    // company total, normalize, growth %, cumulative…). Provenance must reconcile
+    // against THAT transformed value — not the raw dollars — or it falsely reports a
+    // mismatch (e.g. "$886.9K ≠ 39.2%"). Detect the transforms up front.
+    const transformKinds = (spec.transforms ?? [])
+      .map((t) => (typeof t === 'string' ? t : (t as { kind?: string })?.kind))
+      .filter((k): k is string => !!k);
+    const wantsShare = transformKinds.includes('company_share');
+
+    // ── Share-of-company-total ("concentration") provenance ──────────────────
+    // The clicked bar is entity ÷ company-wide total for that period. Recompute BOTH
+    // halves and show the real ratio, so the trust stamp checks the % the chart drew.
+    if (wantsShare && primaryDimDef.isTime) {
+      const periodFilters = this.periodFiltersFromLabel(primaryDim, cat);
+      const entityFilter = (spec.filters ?? []).find(
+        (f) => f.dimension === 'client' || f.dimension === 'vendor',
+      );
+      if (periodFilters.length > 0 && entityFilter) {
+        const baseFilters = spec.filters ?? [];
+        const scopedValue = async (
+          filters: SpecFilter[],
+        ): Promise<number | null> => {
+          const s: ChartSpec = {
+            measure: measureId,
+            measures: [measureId],
+            dimension: primaryDim,
+            breakdown: undefined,
+            filters,
+            recentMonths: null,
+            chartType: 'bar',
+            transforms: [],
+          };
+          const c = await compileEbpoSpec(s, this.analyticsDb, runRowsFn).catch(
+            () => null,
+          );
+          if (!c || !('ok' in c) || !c.ok) return null;
+          const p = await this.executeDynamicSqlChecked(c.sql, scope, {
+            chartType: 'bar',
+          }).catch(() => null);
+          if (!p || p.error) return null;
+          return (p.rows as Record<string, unknown>[]).reduce(
+            (sum, r) => sum + (Number((r as any).value) || 0),
+            0,
+          );
+        };
+        const num = await scopedValue([...baseFilters, ...periodFilters]);
+        const den = await scopedValue([
+          ...baseFilters.filter((f) => f !== entityFilter),
+          ...periodFilters,
+        ]);
+        if (num != null && den != null && den !== 0) {
+          const share = (num / den) * 100;
+          const rawEntity = String(entityFilter.values?.[0] ?? '').trim();
+          const entityLabel = /\b(largest|biggest|top|smallest|second)\b/i.test(
+            rawEntity,
+          )
+            ? `The ${rawEntity}`
+            : rawEntity || 'This client';
+          let reconciled: FigureEvidence['reconciled'] = 'unchecked';
+          let reconcileNote = `Recomputed ${share.toFixed(1)}% from ${this.formatFigure(num, 'currency')} ÷ ${this.formatFigure(den, 'currency')}.`;
+          if (typeof expectedValue === 'number' && Number.isFinite(expectedValue)) {
+            const drift =
+              Math.abs(share - expectedValue) / Math.max(1, Math.abs(expectedValue));
+            if (drift <= 0.02) {
+              reconciled = 'match';
+              reconcileNote = `${entityLabel} billed ${this.formatFigure(num, 'currency')} of the company's ${this.formatFigure(den, 'currency')} that ${primaryDimDef.label.toLowerCase()} — ${share.toFixed(1)}%, matching the chart.`;
+            } else {
+              reconciled = 'mismatch';
+              reconcileNote = `Recomputed ${share.toFixed(1)}% differs from the charted ${expectedValue.toFixed(1)}%.`;
+            }
+          }
+          return {
+            ok: true,
+            headline: `${entityLabel}'s share of ${measureLabel} — ${cat}`,
+            definition: `Share of the company-wide total: ${entityLabel}'s ${measureLabel} for ${cat}, divided by every client's ${measureLabel} that ${primaryDimDef.label.toLowerCase()}.`,
+            measureLabel,
+            dimensionLabel: 'Client',
+            category: cat,
+            format: 'percent',
+            // The two supporting rows are DOLLARS (numerator + denominator); the result
+            // is the % they produce.
+            rowsFormat: 'currency',
+            rows: [
+              { label: entityLabel, value: num },
+              { label: 'Company total', value: den },
+            ],
+            total: share,
+            totalLabel: 'Share of total',
+            reconciled,
+            reconcileNote,
+            sql: '',
+          };
+        }
+      }
+    }
+
     // A series label that ISN'T one of the chart's measures is an entity value from a
     // wide pivot (e.g. a per-client line, where each series is a client). Trace THAT
     // entity by filtering the breakdown dimension to it, rather than the whole period.
@@ -9480,10 +9583,28 @@ export class AgentService {
     // detail rows should equal the number the chart drew. A ratio/percent can't be
     // summed, so we don't fake a check.
     const isPercent = measureDef.format === 'percent' || measureDef.kind === 'ratio';
+    // The chart applies a transform (growth %, normalize, cumulative, moving average…)
+    // that we did NOT specially reconstruct above, so the raw detail rows are the inputs
+    // to that transform — NOT the plotted value. Comparing their $ sum to the plotted
+    // (transformed) value would falsely report a mismatch, so we don't run that check.
+    const hasUnhandledTransform = transformKinds.length > 0;
     const singleRow = rows.length <= 1;
     let reconciled: FigureEvidence['reconciled'];
     let reconcileNote: string;
-    if (isPercent) {
+    if (hasUnhandledTransform) {
+      reconciled = 'not_applicable';
+      const kindWord =
+        transformKinds.includes('normalize') || transformKinds.includes('company_share')
+          ? 'a share'
+          : transformKinds.includes('growth_pct')
+            ? 'a growth-rate'
+            : transformKinds.includes('cumulative')
+              ? 'a running-total'
+              : transformKinds.includes('moving_average')
+                ? 'a moving-average'
+                : 'a derived';
+      reconcileNote = `The chart plots ${kindWord} value; the rows below are the raw ${measureLabel} figures it's computed from.`;
+    } else if (isPercent) {
       reconciled = 'not_applicable';
       reconcileNote =
         'This is a ratio, so its parts can’t simply be added — the rows show how it breaks down.';
@@ -22255,9 +22376,20 @@ export class AgentService {
 
   private deriveEbpoDisplayFromSpec(spec?: ChartSpec | null): DisplayHints | null {
     if (!spec) return null;
-    const measureList = (spec.measures ?? []).filter((m): m is string => !!m);
+    // Dedupe: an LLM-echoed spec sometimes lists the same measure twice
+    // (["total_revenue","total_revenue"]) — that is ONE series, not two. Without the
+    // dedupe this derives a phantom second series and multi-measure formatting for
+    // what compiles as a single-measure chart.
+    const measureList = Array.from(
+      new Set((spec.measures ?? []).filter((m): m is string => !!m)),
+    );
     if (measureList.length <= 1) return null;
     if (!measureList.every((id) => !!EBPO_MEASURES[id])) return null;
+    // A percent-producing transform (normalize / growth % / company share) rewrites
+    // the OUTPUT to %, overriding every measure's native $ unit — same authority the
+    // compiler reports as `outputPercent`. Without this, a share-of-revenue chart
+    // derived from its spec gets "$" formatting slapped onto percentage values.
+    const percentOutput = specTransformsProducePercent(spec.transforms);
     const sameUnit =
       new Set(measureList.map((id) => EBPO_MEASURES[id]!.format)).size === 1;
     const roles = ebpoComboSeriesRoles(measureList, {
@@ -22273,12 +22405,17 @@ export class AgentService {
           : [],
     });
     if (roles.length === 0) return null;
+    const effectiveRoles = percentOutput
+      ? roles.map((r) => ({ ...r, format: 'percent' as const }))
+      : roles;
     const firstM = EBPO_MEASURES[measureList[0]!];
-    const secondaryRole = roles.find((r) => r.axis === 'right');
+    const secondaryRole = effectiveRoles.find((r) => r.axis === 'right');
     return {
-      valueFormat: firstM?.format ?? null,
-      ...(typeof firstM?.decimals === 'number' ? { valueDecimals: firstM.decimals } : {}),
-      series: roles,
+      valueFormat: percentOutput ? 'percent' : (firstM?.format ?? null),
+      ...(!percentOutput && typeof firstM?.decimals === 'number'
+        ? { valueDecimals: firstM.decimals }
+        : {}),
+      series: effectiveRoles,
       ...(secondaryRole
         ? {
             secondaryAxisFormat: secondaryRole.format,
@@ -23343,6 +23480,16 @@ export class AgentService {
           continue;
         const newSpec = parsed?.spec as ChartSpec | undefined;
         if (!newSpec || typeof newSpec !== 'object') continue;
+        // Sanitize a degenerate LLM spec: the same measure listed twice is ONE series
+        // (["total_revenue","total_revenue"] otherwise yields a phantom duplicate
+        // series, a "Total Revenue, Total Revenue" title, and multi-measure display
+        // derivation for what compiles as a single-measure chart).
+        if (Array.isArray(newSpec.measures)) {
+          const uniqueMeasures = Array.from(
+            new Set(newSpec.measures.filter((m): m is string => !!m)),
+          );
+          newSpec.measures = uniqueMeasures.length > 0 ? uniqueMeasures : null;
+        }
         if (!this.specCanModelChart(newSpec)) continue;
         // "Highlight the highest/largest …" or "highlight negative periods" is a
         // PRESENTATION intent (emphasize datapoints), NOT a structural change. The LLM

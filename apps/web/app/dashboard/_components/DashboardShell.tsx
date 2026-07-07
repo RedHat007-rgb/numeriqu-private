@@ -16,6 +16,8 @@ import {
   ChevronDown,
   PanelsLeftBottom,
   ArrowLeft,
+  BarChart3,
+  ExternalLink,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
@@ -34,6 +36,59 @@ const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon:
   { href: "/dashboard/team", label: "Team", description: "Members, roles, access", icon: Users },
   { href: "/dashboard/settings", label: "Settings", description: "Workspace and session", icon: Shield },
 ];
+
+const POWER_BI_URL =
+  "https://app.powerbi.com/view?r=eyJrIjoiODVmYzkyYzQtYjI5ZS00MjM4LWIzNjctY2I1MzQ5YzMxOWFiIiwidCI6ImYzYzVhY2ZkLTg4OGMtNGQ2Yi1hZDNiLWQyNDYwZThhMTQ0NyJ9&pageName=ebbb890dd70e7910d663";
+
+/**
+ * PowerBI launch button with special effects: brand-amber gradient, a sweeping
+ * shimmer on hover, and an animated glow ring. Opens the embedded report in a
+ * new tab. Collapses to an icon-only pill when the sidebar is collapsed.
+ */
+function PowerBiButton({ collapsed }: { collapsed: boolean }) {
+  return (
+    <a
+      href={POWER_BI_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Open Power BI report in a new tab"
+      aria-label="Open Power BI report in a new tab"
+      className={cn(
+        "group relative flex items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-sm font-semibold",
+        "text-[#3d2b00] transition-all duration-300",
+        "bg-[linear-gradient(110deg,#F2C811_0%,#F5D33f_45%,#E8A600_100%)]",
+        "shadow-[0_4px_16px_-4px_rgba(242,200,17,0.55)] ring-1 ring-amber-300/50",
+        "hover:-translate-y-0.5 hover:shadow-[0_8px_28px_-4px_rgba(242,200,17,0.8)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200",
+        collapsed && "justify-center px-2",
+      )}
+    >
+      {/* animated glow ring */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-lg opacity-0 ring-2 ring-amber-300/70 blur-[2px] transition-opacity duration-500 group-hover:opacity-100 group-hover:animate-pulse"
+      />
+      {/* sweeping shimmer */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 -left-full w-1/2 skew-x-[-20deg] bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.7),transparent)] transition-transform duration-700 ease-out group-hover:translate-x-[300%]"
+      />
+      <span
+        className={cn(
+          "relative z-10 flex size-8 items-center justify-center rounded-lg bg-white/25 ring-1 ring-white/40",
+        )}
+      >
+        <BarChart3 className="size-4" />
+      </span>
+      {!collapsed ? (
+        <span className="relative z-10 flex min-w-0 flex-1 items-center gap-1.5">
+          <span className="truncate">Power BI</span>
+          <ExternalLink className="size-3.5 shrink-0 opacity-70 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:opacity-100" />
+        </span>
+      ) : null}
+    </a>
+  );
+}
 
 function initials(value: string) {
   const cleaned = value.trim();
@@ -354,6 +409,10 @@ export function DashboardShell({
                     />
                   ))}
                 </nav>
+
+                <div className="pt-1">
+                  <PowerBiButton collapsed={navCollapsed} />
+                </div>
               </aside>
             ) : null}
 
@@ -409,6 +468,9 @@ export function DashboardShell({
                     <span className="font-semibold">{item.label}</span>
                   </Link>
                 ))}
+                <div className="pt-1">
+                  <PowerBiButton collapsed={false} />
+                </div>
               </nav>
             </div>
           </div>

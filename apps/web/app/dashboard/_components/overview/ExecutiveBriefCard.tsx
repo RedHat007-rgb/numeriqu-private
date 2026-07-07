@@ -31,6 +31,64 @@ function safeDays(value: number | null | undefined) {
   return value && Number.isFinite(value) ? `${Math.round(value)}d` : "—";
 }
 
+function safeRatio(numerator: number | null | undefined, denominator: number | null | undefined) {
+  if (numerator === null || numerator === undefined || denominator === null || denominator === undefined) {
+    return null;
+  }
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+    return null;
+  }
+  return numerator / denominator;
+}
+
+function buildWatchlistItems(dashboard: DashboardResponse): DecisionItem[] {
+  const cfo = dashboard.cfo;
+  const openInvoiceAmount = dashboard.kpis.openInvoiceAmount ?? 0;
+  const overdueAmount = dashboard.kpis.overdueAmount ?? 0;
+  const totalRevenue = dashboard.kpis.totalRevenue ?? 0;
+  const apOutstanding = cfo?.apOutstanding ?? 0;
+  const cashBalance = cfo?.cashBalance ?? dashboard.venture.cashOnHand ?? 0;
+
+  const arRiskShare = safeRatio(overdueAmount, openInvoiceAmount);
+  const apPressure = safeRatio(apOutstanding, cashBalance);
+  const arCoverage = safeRatio(cashBalance, openInvoiceAmount);
+  const fcfMargin = safeRatio(cfo?.freeCashFlow ?? 0, totalRevenue);
+
+  return [
+    {
+      label: "AR risk share",
+      summary: "Past-due balance as a share of open receivables.",
+      value: arRiskShare !== null ? formatPercentDelta(arRiskShare) : "—",
+      tone: arRiskShare !== null && arRiskShare >= 0.3 ? "warning" : arRiskShare !== null && arRiskShare < 0.12 ? "positive" : "neutral",
+    },
+    {
+      label: "Bills due vs cash",
+      summary: "How much supplier payable load sits against available cash.",
+      value:
+        apPressure === null
+          ? "—"
+          : apPressure === 0
+            ? "Clear"
+            : apPressure < 0.1
+              ? "<0.1x"
+              : `${apPressure.toFixed(1)}x`,
+      tone: apPressure !== null && apPressure >= 1 ? "warning" : apPressure !== null && apPressure < 0.5 ? "positive" : "neutral",
+    },
+    {
+      label: "AR coverage",
+      summary: "Cash on hand relative to open receivables.",
+      value: arCoverage !== null ? `${arCoverage.toFixed(1)}x` : "—",
+      tone: arCoverage !== null && arCoverage < 1 ? "warning" : arCoverage !== null && arCoverage >= 2 ? "positive" : "neutral",
+    },
+    {
+      label: "FCF margin",
+      summary: "Free cash flow as a share of revenue.",
+      value: fcfMargin !== null ? formatPercentDelta(fcfMargin) : "—",
+      tone: fcfMargin !== null && fcfMargin >= 0 ? "positive" : "warning",
+    },
+  ];
+}
+
 function buildHeadline(cfo: DashboardResponse["cfo"]) {
   if (!cfo) return "Finance signal is still warming up";
 
@@ -188,6 +246,35 @@ function DecisionRow({ item, index }: { item: DecisionItem; index: number }) {
   );
 }
 
+function WatchlistTile({ item, index }: { item: DecisionItem; index: number }) {
+  return (
+    <div className="rounded-[1rem] border border-white/10 bg-[#08152f]/72 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={cn("h-2.5 w-2.5 rounded-full border", toneClass(item.tone))} />
+            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#86a7d0]">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+          </div>
+          <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#8eacd4]">
+            {item.label}
+          </p>
+        </div>
+        <span
+          className={cn(
+            "min-w-fit rounded-full border px-3 py-1.5 text-sm font-bold leading-none tracking-[-0.02em]",
+            toneClass(item.tone),
+          )}
+        >
+          {item.value}
+        </span>
+      </div>
+      <p className="mt-4 text-sm leading-6 text-[#bfd0eb]">{item.summary}</p>
+    </div>
+  );
+}
+
 export function ExecutiveBriefCard({
   dashboard,
   currency,
@@ -200,11 +287,10 @@ export function ExecutiveBriefCard({
   const cashBalance = safeMoney(cfo?.cashBalance ?? dashboard.venture.cashOnHand, currency);
   const workingCapital = safeMoney(cfo?.workingCapital, currency);
   const topClientExposure = concentration > 0 ? safePercent(concentration) : "—";
-  const overdueAmount = safeMoney(dashboard.kpis.overdueAmount, currency);
-  const openInvoiceAmount = safeMoney(dashboard.kpis.openInvoiceAmount, currency);
   const headline = buildHeadline(cfo);
   const narrative = buildNarrative(cfo);
   const decisionItems = buildDecisionItems(dashboard, currency);
+  const watchlistItems = buildWatchlistItems(dashboard);
 
   return (
     <section className="dashboard-command-card relative overflow-hidden p-5 md:p-6">
@@ -297,6 +383,9 @@ export function ExecutiveBriefCard({
                   Board watchlist
                 </p>
                 <h3 className="mt-2 text-lg font-semibold text-white">What can hurt cash first</h3>
+                <p className="mt-2 max-w-[32ch] text-sm leading-6 text-[#8ea9d0]">
+                  Early-warning signals across receivables, payables, and cash cover.
+                </p>
               </div>
               <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[#8ad7ff]/15 bg-[#8ad7ff]/8 text-[#8ad7ff]">
                 <Activity className="h-4 w-4" />
@@ -304,28 +393,9 @@ export function ExecutiveBriefCard({
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-[1rem] border border-white/10 bg-[#08152f]/70 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">Receivables open</p>
-                <p className="mt-2 text-[1.75rem] font-bold tracking-[-0.04em] text-white">{openInvoiceAmount}</p>
-              </div>
-              <div className="rounded-[1rem] border border-white/10 bg-[#08152f]/70 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">Past due now</p>
-                <p className="mt-2 text-[1.75rem] font-bold tracking-[-0.04em] text-white">{overdueAmount}</p>
-              </div>
-            </div>
-
-            <div className="mt-3 rounded-[1rem] border border-white/10 bg-[#07132d]/70 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">Margin discipline</p>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">Gross margin</p>
-                  <p className="mt-2 text-2xl font-bold text-white">{safePercent(cfo?.grossMarginPct ?? dashboard.kpis.profitMargin)}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">Payroll / revenue</p>
-                  <p className="mt-2 text-2xl font-bold text-white">{safePercent(cfo?.payrollToRevenuePct)}</p>
-                </div>
-              </div>
+              {watchlistItems.map((item, index) => (
+                <WatchlistTile key={`${item.label}-${index}`} item={item} index={index} />
+              ))}
             </div>
           </div>
         </div>

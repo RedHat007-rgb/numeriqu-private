@@ -26,7 +26,6 @@ export type OverviewCardId =
   | "cashflow"
   | "invoice-status"
   | "next-actions"
-  | "connected-entities"
   | "business-units"
   | "cost-elements"
   | "workforce-department"
@@ -320,17 +319,6 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
     priority: 120,
   },
   {
-    id: "connected-entities",
-    title: "Data Command",
-    description: "Live finance feeds, entity coverage, and signal readiness.",
-    zone: ["primary", "secondary"],
-    defaultZone: "secondary",
-    defaultSize: "medium",
-    allowedSizes: ["medium", "wide"],
-    defaultVisible: false,
-    priority: 110,
-  },
-  {
     id: "business-units",
     title: "Business Unit Performance",
     description: "Revenue and gross margin ranked by business unit, so you can see where the portfolio earns.",
@@ -406,7 +394,6 @@ export function getRecommendedOverviewPlacements(showOnboardingGuide: boolean): 
     { cardId: "client-concentration", zone: "primary", position: 10, size: "medium", visible: true },
     { cardId: "service-levels", zone: "secondary", position: 11, size: "medium", visible: true },
     { cardId: "next-actions", zone: "secondary", position: 12, size: "medium", visible: false },
-    { cardId: "connected-entities", zone: "secondary", position: 13, size: "medium", visible: true },
     { cardId: "cash-on-hand", zone: "secondary", position: 14, size: "small", visible: false },
     { cardId: "overdue-exposure", zone: "secondary", position: 15, size: "small", visible: false },
     { cardId: "invoice-volume", zone: "secondary", position: 16, size: "small", visible: false },

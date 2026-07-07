@@ -41,6 +41,7 @@ function makeFallbackDashboard(): DashboardResponse {
       slaCompliancePct: 0,
       utilizationPct: 0,
       csatPct: 0,
+      apOutstanding: 0,
       topClientName: null,
       topClientRevenue: 0,
       topClientConcentrationPct: 0,

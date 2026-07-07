@@ -126,7 +126,6 @@ const CARD_GLOSSARY: Partial<Record<OverviewCardId, CardGlossaryMap>> = {
   "delivery-centers": { primary: "Delivery Pulse", related: ["SLA Compliance", "Utilization", "CSAT"] },
   "cashflow": { primary: "Operating Cash Flow", related: ["Free Cash Flow"] },
   "invoice-status": { primary: "Aging", related: ["Open Balance", "Past Due Now"] },
-  "connected-entities": { primary: "Entities Live", related: ["Signal State"] },
 };
 
 export type CardGlossary = {

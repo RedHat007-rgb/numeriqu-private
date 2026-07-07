@@ -99,20 +99,6 @@ const SAMPLE_PROMPTS = [
     color: "text-feedback-warning",
     bg: "bg-feedback-warning/8",
   },
-  {
-    label: "Entity Comparison",
-    icon: Users,
-    prompt: "Compare spend concentration across all my connected entities. Which vendors or entities drive the most cost and why?",
-    color: "text-accent-cyan",
-    bg: "bg-accent-cyan/8",
-  },
-  {
-    label: "Quarterly Review",
-    icon: Search,
-    prompt: "Give me a full quarterly spend analysis with quarter-over-quarter comparisons and vendor signals.",
-    color: "text-accent-blue",
-    bg: "bg-accent-blue/8",
-  },
 ];
 
 const EDIT_CHIPS = [

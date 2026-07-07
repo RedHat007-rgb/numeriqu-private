@@ -166,6 +166,9 @@ export function makeClientConcentrationItems(dashboard: DashboardResponse, curre
 
 export function makeServiceLevelItems(dashboard: DashboardResponse): FocusItem[] {
   const cfo = dashboard.cfo;
+  const deliveryCenters = cfo?.deliveryCenters ?? [];
+  const atRiskCenters = deliveryCenters.filter((center) => (center.slaPct ?? 0) < 95).length;
+
   return [
     {
       label: "SLA compliance",
@@ -180,7 +183,22 @@ export function makeServiceLevelItems(dashboard: DashboardResponse): FocusItem[]
     {
       label: "CSAT",
       value: formatPercentDelta((cfo?.csatPct ?? 0) / 100),
-      tone: "neutral",
+      tone: (cfo?.csatPct ?? 0) < 80 ? "warning" : "neutral",
+    },
+    {
+      label: "Payroll intensity",
+      value: formatPercentDelta((cfo?.payrollToRevenuePct ?? 0) / 100),
+      tone: (cfo?.payrollToRevenuePct ?? 0) >= 60 ? "warning" : "neutral",
+    },
+    {
+      label: "Gross margin",
+      value: formatPercentDelta((cfo?.grossMarginPct ?? 0) / 100),
+      tone: (cfo?.grossMarginPct ?? 0) < 25 ? "warning" : "positive",
+    },
+    {
+      label: "At-risk centers",
+      value: deliveryCenters.length > 0 ? `${atRiskCenters} / ${deliveryCenters.length}` : "—",
+      tone: atRiskCenters > 0 ? "warning" : "positive",
     },
   ];
 }

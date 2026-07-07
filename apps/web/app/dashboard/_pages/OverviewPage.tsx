@@ -25,7 +25,6 @@ import {
   WorkforceByDepartmentCard,
   WorkforceByGeographyCard,
 } from "../_components/overview/BreakdownCards";
-import { ConnectedEntitiesCard } from "../_components/overview/ConnectedEntitiesCard";
 import { ExecutiveBriefCard } from "../_components/overview/ExecutiveBriefCard";
 import { deriveInsights, NextActionsCard, toneFromType } from "../_components/overview/NextActionsCard";
 import { OverviewDashboardEditor } from "../_components/overview/OverviewDashboardEditor";
@@ -245,16 +244,18 @@ function MetricTile({
           : undefined
       }
     >
-      <div className="grid h-full grid-rows-[3.5rem_auto_3.5rem] gap-4">
-        <div className="flex min-h-[3.5rem] items-start justify-between gap-3">
-          <p className="min-w-0 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">
+      <div className="grid h-full min-w-0 grid-rows-[auto_auto_auto] gap-4">
+        <div className="flex min-h-[3.5rem] min-w-0 items-start justify-between gap-2">
+          <p className="line-clamp-2 min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#86a7d0]">
             {eyebrow}
           </p>
-          <div className="flex shrink-0 items-center gap-2">
+          {/* Keep the delta badge and the info icon together in the flex row so the
+              badge can never slide under (or overlap) the icon. */}
+          <div className="flex shrink-0 items-center gap-1.5">
             {delta ? (
               <span
                 className={cn(
-                  "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
                   delta.tone === "positive"
                     ? "border-feedback-success/25 bg-feedback-success/10 text-feedback-success"
                     : delta.tone === "negative"
@@ -266,14 +267,14 @@ function MetricTile({
               </span>
             ) : null}
             {canFlip ? (
-              <span className="text-[#7f9bc4]" aria-hidden="true">
+              <span className="pointer-events-none text-[#7f9bc4]" aria-hidden="true">
                 <Info className="h-4 w-4" />
               </span>
             ) : null}
           </div>
         </div>
-        <div className="flex items-start">
-          <p className="dashboard-metric-value font-display text-[2.2rem] font-bold leading-none tracking-[-0.04em] text-white">
+        <div className="flex min-w-0 items-start">
+          <p className="dashboard-metric-value max-w-full font-display text-[clamp(1.75rem,4.8vw,2.2rem)] font-bold leading-none tracking-[-0.04em] text-white break-words">
             {value}
           </p>
         </div>
@@ -885,10 +886,6 @@ export function OverviewPage() {
             currency={prefs.currencyDisplay}
           />
         );
-      case "connected-entities":
-        return (
-          <ConnectedEntitiesCard orgs={dashboard.connectedOrgs} currency={prefs.currencyDisplay} />
-        );
       case "business-units":
         return <BusinessUnitBreakdownCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
       case "cost-elements":
@@ -965,9 +962,26 @@ export function OverviewPage() {
   const smallBandCards = visibleCards.filter(
     (card) => card.definition.id !== "executive-brief" && card.placement.size === "small",
   );
-  const bigBandCards = visibleCards.filter(
+  const bigBandCardsRaw = visibleCards.filter(
     (card) => card.definition.id !== "executive-brief" && card.placement.size !== "small",
   );
+  // These four dimensional breakdowns must always sit directly below the CFO brief,
+  // in this fixed order, whenever they are visible. Pinning here (at render time,
+  // rather than via stored positions) means hiding then re-showing any of them
+  // always returns it to the front of the band instead of the end.
+  const pinnedBelowBrief: OverviewCardId[] = [
+    "workforce-department", // Workforce
+    "workforce-geography", // Global footprint
+    "delivery-centers", // Service delivery
+    "cost-elements", // Cost structure
+  ];
+  const pinnedBigBandCards = pinnedBelowBrief
+    .map((cardId) => bigBandCardsRaw.find((card) => card.definition.id === cardId))
+    .filter((card): card is (typeof bigBandCardsRaw)[number] => Boolean(card));
+  const bigBandCards = [
+    ...pinnedBigBandCards,
+    ...bigBandCardsRaw.filter((card) => !pinnedBelowBrief.includes(card.definition.id)),
+  ];
   const hasAnyCard = smallBandCards.length > 0 || bigBandCards.length > 0 || briefEntry !== null;
 
   return (

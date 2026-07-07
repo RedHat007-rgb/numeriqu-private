@@ -144,6 +144,7 @@ export type DashboardResponse = {
     slaCompliancePct: number;
     utilizationPct: number;
     csatPct: number;
+    apOutstanding?: number;
     topClientName?: string | null;
     topClientRevenue?: number;
     topClientConcentrationPct?: number;

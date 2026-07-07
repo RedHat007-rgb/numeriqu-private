@@ -161,6 +161,12 @@ export type DashboardResponse = {
       csatPct: number;
       callsHandled: number;
     }>;
+    /** Distinct employees active within the selected range (full set, not top-6 rows). */
+    workforceHeadcount?: number;
+    /** Total payroll summed over the selected range. */
+    workforcePayroll?: number;
+    /** Distinct countries with workforce in the selected range. */
+    workforceCountries?: number;
   };
   charts: {
     monthlyTrend: Array<{

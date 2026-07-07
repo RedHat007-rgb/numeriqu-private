@@ -911,6 +911,9 @@ export class FinancialDataService {
         headcountByDepartment: breakdowns.headcountByDepartment,
         headcountByGeography: breakdowns.headcountByGeography,
         deliveryCenters: breakdowns.deliveryCenters,
+        workforceHeadcount: breakdowns.workforceHeadcount,
+        workforcePayroll: breakdowns.workforcePayroll,
+        workforceCountries: breakdowns.workforceCountries,
         totalRevenue,
         totalCost,
         totalPayroll,
@@ -943,7 +946,7 @@ export class FinancialDataService {
         topBusinessUnitMarginPct: parseFloat(topBusinessUnit.gross_margin_pct) || 0,
         cashflowWaterfall: [
           { name: 'Revenue', value: totalRevenue, fill: '#00c7d2' },
-          { name: 'Delivery Cost', value: -totalCost, fill: '#ff8a4c' },
+          { name: 'Total Cost', value: -totalCost, fill: '#ff8a4c' },
           { name: 'Payroll', value: -totalPayroll, fill: '#ff5f7a' },
           { name: 'Free Cash Flow', value: freeCashFlow, fill: freeCashFlow >= 0 ? '#37d67a' : '#ff5f7a' },
           { name: 'Working Capital', value: workingCapital, fill: '#4f8cff' },
@@ -976,6 +979,9 @@ export class FinancialDataService {
       headcountByDepartment: [],
       headcountByGeography: [],
       deliveryCenters: [],
+      workforceHeadcount: 0,
+      workforcePayroll: 0,
+      workforceCountries: 0,
     };
 
     const params = { tenantId, orgId };
@@ -994,7 +1000,7 @@ export class FinancialDataService {
     };
 
     try {
-      const [buRes, payrollRes, deptRes, geoRes, dcRes] = await Promise.allSettled([
+      const [buRes, payrollRes, deptRes, geoRes, dcRes, workforceTotalsRes] = await Promise.allSettled([
         // Business units — real per-BU revenue, cost and ratio-of-sums margin.
         runJson(`
           SELECT
@@ -1026,39 +1032,42 @@ export class FinancialDataService {
             AND org_id = {orgId:String}
             ${monthWhere}
         `),
-        // Headcount by department (stock — latest month only).
+        // Headcount by department — DISTINCT employees active within the selected range
+        // (filter-driven), with payroll summed over that range. Each employee is stable to
+        // one department, so per-department distinct counts partition cleanly. Top 6 for
+        // the bars; the true totals come from the workforce-totals query below.
         runJson(`
-          WITH latest AS (
-            SELECT max(period_date) AS pd
-            FROM ${this.dbName}.v_ebpo_department_efficiency_monthly
-            WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String} ${monthWhere}
-          )
           SELECT
-            coalesce(nullIf(department, ''), 'Unassigned') AS name,
-            sum(employee_count) AS headcount,
-            round(sum(total_payroll_usd), 2) AS payroll
-          FROM ${this.dbName}.v_ebpo_department_efficiency_monthly
-          WHERE tenant_id = {tenantId:String}
-            AND org_id = {orgId:String}
-            AND period_date = (SELECT pd FROM latest)
+            coalesce(nullIf(payroll.department, ''), 'Unassigned') AS name,
+            uniqExact(payroll.employee_key) AS headcount,
+            round(sum(payroll.total_payroll_usd), 2) AS payroll
+          FROM ${this.dbName}.ebpo_fact_payroll payroll
+          INNER JOIN ${this.dbName}.ebpo_dim_date dates
+            ON dates.tenant_id = payroll.tenant_id
+           AND dates.org_id = payroll.org_id
+           AND dates.date_key = payroll.date_key
+          WHERE payroll.tenant_id = {tenantId:String}
+            AND payroll.org_id = {orgId:String}
+            ${factDateWhere}
           GROUP BY name
           ORDER BY headcount DESC
           LIMIT 6
         `),
-        // Headcount by geography / country (stock — latest month only).
+        // Headcount by country — DISTINCT employees active within the selected range
+        // (filter-driven). Top 6 for the bars; totals/percentages use the full-set
+        // workforce-totals query below so nothing is understated by the LIMIT.
         runJson(`
-          WITH latest AS (
-            SELECT max(period_date) AS pd
-            FROM ${this.dbName}.v_ebpo_payroll_monthly
-            WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String} ${monthWhere}
-          )
           SELECT
-            coalesce(nullIf(country, ''), 'Unassigned') AS name,
-            sum(employee_count) AS headcount
-          FROM ${this.dbName}.v_ebpo_payroll_monthly
-          WHERE tenant_id = {tenantId:String}
-            AND org_id = {orgId:String}
-            AND period_date = (SELECT pd FROM latest)
+            coalesce(nullIf(payroll.country, ''), 'Unassigned') AS name,
+            uniqExact(payroll.employee_key) AS headcount
+          FROM ${this.dbName}.ebpo_fact_payroll payroll
+          INNER JOIN ${this.dbName}.ebpo_dim_date dates
+            ON dates.tenant_id = payroll.tenant_id
+           AND dates.org_id = payroll.org_id
+           AND dates.date_key = payroll.date_key
+          WHERE payroll.tenant_id = {tenantId:String}
+            AND payroll.org_id = {orgId:String}
+            ${factDateWhere}
           GROUP BY name
           ORDER BY headcount DESC
           LIMIT 6
@@ -1084,10 +1093,28 @@ export class FinancialDataService {
           ORDER BY sla_pct DESC
           LIMIT 6
         `),
+        // Workforce TOTALS over the full selected range (NOT limited to the top-6 rows):
+        // distinct headcount, payroll summed over the range, and distinct country count.
+        // The cards use these for Total headcount / Total FTE / Countries / percentages so
+        // they never understate when there are more than 6 departments or countries.
+        runJson(`
+          SELECT
+            uniqExact(payroll.employee_key) AS headcount,
+            round(sum(payroll.total_payroll_usd), 2) AS payroll,
+            uniqExact(nullIf(payroll.country, '')) AS countries
+          FROM ${this.dbName}.ebpo_fact_payroll payroll
+          INNER JOIN ${this.dbName}.ebpo_dim_date dates
+            ON dates.tenant_id = payroll.tenant_id
+           AND dates.org_id = payroll.org_id
+           AND dates.date_key = payroll.date_key
+          WHERE payroll.tenant_id = {tenantId:String}
+            AND payroll.org_id = {orgId:String}
+            ${factDateWhere}
+        `),
       ]);
 
-      const labels = ['businessUnits', 'costElements', 'headcountByDepartment', 'headcountByGeography', 'deliveryCenters'];
-      [buRes, payrollRes, deptRes, geoRes, dcRes].forEach((r, i) => {
+      const labels = ['businessUnits', 'costElements', 'headcountByDepartment', 'headcountByGeography', 'deliveryCenters', 'workforceTotals'];
+      [buRes, payrollRes, deptRes, geoRes, dcRes, workforceTotalsRes].forEach((r, i) => {
         if (r.status === 'rejected') {
           this.logger.warn(`[FinancialData] EBPO breakdown "${labels[i]}" query failed: ${r.reason?.message ?? r.reason}`);
         }
@@ -1103,8 +1130,12 @@ export class FinancialDataService {
             }))
           : [];
 
+      // NOTE: the COGS "Total Cost" line (FactRevenue[CostUSD]) was intentionally removed
+      // from this breakdown — it duplicated/clashed with the card's "TOTAL COST" footer and
+      // mixed a revenue-cost figure into what is otherwise the payroll composition. The
+      // Total Cost measure still surfaces on the Net Margin / cashflow-waterfall views.
       const costElements: EbpoCostElementRow[] = [];
-      if (deliveryCostUsd > 0) costElements.push({ name: 'Delivery Cost', value: Math.round(deliveryCostUsd * 100) / 100 });
+      void deliveryCostUsd;
       if (payrollRes.status === 'fulfilled') {
         const p = payrollRes.value[0] ?? {};
         const push = (name: string, raw: any) => {
@@ -1146,7 +1177,21 @@ export class FinancialDataService {
             }))
           : [];
 
-      return { businessUnits, costElements, headcountByDepartment, headcountByGeography, deliveryCenters };
+      const wt = workforceTotalsRes.status === 'fulfilled' ? (workforceTotalsRes.value[0] ?? {}) : {};
+      const workforceHeadcount = parseInt(wt.headcount) || 0;
+      const workforcePayroll = parseFloat(wt.payroll) || 0;
+      const workforceCountries = parseInt(wt.countries) || 0;
+
+      return {
+        businessUnits,
+        costElements,
+        headcountByDepartment,
+        headcountByGeography,
+        deliveryCenters,
+        workforceHeadcount,
+        workforcePayroll,
+        workforceCountries,
+      };
     } catch (error: any) {
       this.logger.warn(`[FinancialData] EBPO breakdowns failed: ${error.message}`);
       return empty;
@@ -1770,6 +1815,9 @@ export interface ExecutiveSnapshot {
   headcountByDepartment: EbpoDepartmentRow[];
   headcountByGeography: EbpoGeographyRow[];
   deliveryCenters: EbpoDeliveryCenterRow[];
+  workforceHeadcount: number;
+  workforcePayroll: number;
+  workforceCountries: number;
   cashflowWaterfall: Array<{ name: string; value: number; fill?: string }>;
   insights: ExecutiveInsight[];
 }
@@ -1807,6 +1855,12 @@ export interface EbpoBreakdowns {
   headcountByDepartment: EbpoDepartmentRow[];
   headcountByGeography: EbpoGeographyRow[];
   deliveryCenters: EbpoDeliveryCenterRow[];
+  /** Distinct employees active within the selected range (full set, not top-6). */
+  workforceHeadcount: number;
+  /** Total payroll summed over the selected range. */
+  workforcePayroll: number;
+  /** Distinct countries with workforce in the selected range. */
+  workforceCountries: number;
 }
 
 export interface RevenueMetrics {

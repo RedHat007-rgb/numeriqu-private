@@ -274,6 +274,9 @@ export class AnalyticsController {
             headcountByDepartment: executive.headcountByDepartment,
             headcountByGeography: executive.headcountByGeography,
             deliveryCenters: executive.deliveryCenters,
+            workforceHeadcount: executive.workforceHeadcount,
+            workforcePayroll: executive.workforcePayroll,
+            workforceCountries: executive.workforceCountries,
           }
         : {
             mode: 'generic',

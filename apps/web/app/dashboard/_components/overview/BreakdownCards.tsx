@@ -172,7 +172,7 @@ export function CostElementsCard({
       eyebrow="Cost structure"
       title="Which cost elements consume the operating budget"
       icon={Coins}
-      emptyLabel="No cost elements in scope yet. This card breaks total operating cost into delivery cost, base salary, overtime, bonus and benefits."
+      emptyLabel="No cost elements in scope yet. This card breaks total operating cost into total cost, base salary, overtime, bonus and benefits."
       items={elements.map((e) => ({
         name: e.name,
         valueLabel: formatMoneyWithCurrency(e.value, currency),
@@ -205,8 +205,13 @@ export function WorkforceByDepartmentCard({
   currency: string;
 }) {
   const depts = dashboard.cfo?.headcountByDepartment ?? [];
-  const totalHeadcount = depts.reduce((sum, d) => sum + d.headcount, 0);
-  const totalPayroll = depts.reduce((sum, d) => sum + d.payroll, 0);
+  // Totals come from the backend over the FULL range (all departments), so they don't
+  // understate when the bars are capped at the top 6. Fall back to the row sum only if the
+  // backend didn't supply them.
+  const totalHeadcount =
+    dashboard.cfo?.workforceHeadcount ?? depts.reduce((sum, d) => sum + d.headcount, 0);
+  const totalPayroll =
+    dashboard.cfo?.workforcePayroll ?? depts.reduce((sum, d) => sum + d.payroll, 0);
   const max = maxOf(depts.map((d) => d.headcount));
   const top = depts[0];
 
@@ -227,7 +232,7 @@ export function WorkforceByDepartmentCard({
           ? [
               { label: "Total headcount", value: `${formatNumber(totalHeadcount)} FTE` },
               { label: "Largest team", value: top.name, detail: `${formatNumber(top.headcount)} FTE` },
-              { label: "Payroll (latest)", value: formatMoneyWithCurrency(totalPayroll, currency) },
+              { label: "Total payroll", value: formatMoneyWithCurrency(totalPayroll, currency) },
             ]
           : undefined
       }
@@ -237,7 +242,10 @@ export function WorkforceByDepartmentCard({
 
 export function WorkforceByGeographyCard({ dashboard }: { dashboard: DashboardResponse }) {
   const geos = dashboard.cfo?.headcountByGeography ?? [];
-  const total = geos.reduce((sum, g) => sum + g.headcount, 0);
+  // Use the backend's full-range totals so percentages and the country count reflect ALL
+  // countries, not just the top-6 shown as bars. Fall back to row-derived values.
+  const total = dashboard.cfo?.workforceHeadcount ?? geos.reduce((sum, g) => sum + g.headcount, 0);
+  const countryCount = dashboard.cfo?.workforceCountries ?? geos.length;
   const max = maxOf(geos.map((g) => g.headcount));
   const top = geos[0];
 
@@ -256,7 +264,7 @@ export function WorkforceByGeographyCard({ dashboard }: { dashboard: DashboardRe
       footer={
         top
           ? [
-              { label: "Countries", value: formatNumber(geos.length) },
+              { label: "Countries", value: formatNumber(countryCount) },
               {
                 label: "Largest base",
                 value: top.name,

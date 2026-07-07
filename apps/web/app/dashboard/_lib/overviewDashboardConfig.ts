@@ -332,7 +332,7 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   {
     id: "cost-elements",
     title: "Cost Elements",
-    description: "Operating cost broken into delivery cost, base salary, overtime, bonus, and benefits.",
+    description: "Operating cost broken into total cost, base salary, overtime, bonus, and benefits.",
     zone: ["primary", "secondary"],
     defaultZone: "primary",
     defaultSize: "medium",

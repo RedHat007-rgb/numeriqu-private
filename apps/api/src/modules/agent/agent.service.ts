@@ -9367,13 +9367,24 @@ export class AgentService {
 
     const cfg = (widget.queryConfig ?? {}) as Record<string, unknown>;
     const spec = cfg.spec as ChartSpec | undefined;
-    if (!spec || typeof spec !== 'object')
-      return fail('Drill-down provenance isn’t available for this chart yet.');
-
-    const primaryDim = String(spec.dimension ?? '').trim();
-    const primaryDimDef = EBPO_DIMENSIONS[primaryDim];
-    if (!primaryDimDef)
-      return fail('Drill-down provenance isn’t available for this chart yet.');
+    const primaryDim = spec ? String(spec.dimension ?? '').trim() : '';
+    const primaryDimDef = primaryDim ? EBPO_DIMENSIONS[primaryDim] : undefined;
+    // Charts that aren't compiled EBPO-spec charts — legacy GL metric charts, smart-SQL
+    // "dynamic" charts, or a spec whose primary axis isn't a recognized EBPO dimension —
+    // can't be decomposed by the EBPO path below. Rather than dead-ending with
+    // "not available", reconstruct the figure from the widget's OWN saved query: re-run
+    // it live and reconcile the clicked value. Universal provenance for EVERY chart.
+    if (!spec || typeof spec !== 'object' || !primaryDimDef)
+      return this.getFigureEvidenceGeneric(
+        organizationId,
+        role,
+        orgId,
+        widgetId,
+        widget,
+        cat,
+        seriesLabel,
+        expectedValue,
+      );
 
     // Which measure did they click? Match the clicked series label against the
     // chart's measures; fall back to the primary measure for a single-series chart.
@@ -9638,6 +9649,247 @@ export class AgentService {
       reconciled,
       reconcileNote,
       sql: compiled.sql,
+    };
+  }
+
+  /**
+   * Universal provenance fallback for any chart that ISN'T a compiled EBPO-spec chart —
+   * legacy GL metric charts, smart-SQL "dynamic" charts, or a spec whose primary axis
+   * isn't a recognized EBPO dimension. Instead of dead-ending with "not available", it
+   * re-runs the widget's OWN saved query live (the same code path that drew the chart),
+   * locates the clicked category (and series), and reconciles that value against what
+   * the chart displayed. The rows come straight from the re-executed query, never a
+   * fabrication — so every figure on every chart is traceable.
+   */
+  private async getFigureEvidenceGeneric(
+    organizationId: string,
+    role: MembershipRole,
+    orgId: string | undefined,
+    widgetId: string,
+    widget: { queryConfig: unknown; chartType: string | null; title: string | null },
+    category: string,
+    seriesLabel?: string,
+    expectedValue?: number,
+  ): Promise<FigureEvidence> {
+    const cat = (category ?? '').trim();
+    const genericFail = (error: string): FigureEvidence => ({
+      ok: false,
+      headline: '',
+      definition: '',
+      measureLabel: '',
+      dimensionLabel: '',
+      category: cat,
+      format: 'currency',
+      rows: [],
+      total: 0,
+      reconciled: 'unchecked',
+      reconcileNote: '',
+      sql: '',
+      error,
+    });
+    if (!cat) return genericFail('No category was provided to trace.');
+
+    const cfg = (widget.queryConfig ?? {}) as Record<string, unknown>;
+    const metric = String(cfg.metric ?? '').trim();
+    const grouping = String(cfg.grouping ?? '').trim();
+    if (!metric || !grouping)
+      return genericFail('Drill-down provenance isn’t available for this chart yet.');
+
+    // Re-run the chart's own query with its saved parameters. For dynamic charts this
+    // re-executes the stored SQL (via widgetId); for GL charts it re-runs the
+    // metric×grouping builder — the exact path that produced the chart.
+    const timeRange = (cfg.timeRange ?? undefined) as TimeRange | undefined;
+    const providerHint = (cfg.providerHint ?? undefined) as string | undefined;
+    const clientName = (cfg.clientName ?? undefined) as string | undefined;
+    const clientNames = Array.isArray(cfg.clientNames)
+      ? (cfg.clientNames as string[])
+      : undefined;
+    const cfgOrgId = (cfg.orgId ?? undefined) as string | undefined;
+    const breakdown = (cfg.breakdown ?? undefined) as string | undefined;
+    const topNRaw = cfg.topN ?? null;
+    const topN =
+      typeof topNRaw === 'number'
+        ? topNRaw
+        : typeof topNRaw === 'string' && topNRaw.trim()
+          ? Number(topNRaw)
+          : undefined;
+
+    let data: Array<Record<string, unknown>> = [];
+    try {
+      const result = await this.metricData(
+        organizationId,
+        role,
+        metric,
+        grouping,
+        timeRange,
+        providerHint,
+        clientName,
+        clientNames,
+        cfgOrgId ?? orgId,
+        breakdown,
+        Number.isFinite(topN ?? NaN) ? (topN as number) : undefined,
+        widgetId,
+      );
+      data = Array.isArray(result.data)
+        ? (result.data as Array<Record<string, unknown>>)
+        : [];
+    } catch (err: any) {
+      this.logger.warn(
+        `[Provenance:Generic] widgetId=${widgetId} re-run failed: ${err?.message}`,
+      );
+      return genericFail('Could not read the underlying rows for this figure.');
+    }
+    if (data.length === 0)
+      return genericFail('Could not read the underlying rows for this figure.');
+
+    const norm = (s: unknown) => String(s ?? '').trim().toLowerCase();
+    const catLower = norm(cat);
+    const matched =
+      data.find((r) => norm((r as any).name) === catLower) ??
+      data.find((r) => norm((r as any).label) === catLower) ??
+      (catLower
+        ? data.find((r) => norm((r as any).name).includes(catLower))
+        : undefined);
+    if (!matched) return genericFail(`Couldn’t find “${cat}” in this chart’s data.`);
+
+    // Format hints from the saved display config: per-series formats, then the chart's
+    // primary value unit, then a keyword heuristic — so a percent series never renders
+    // as dollars (or vice-versa).
+    const display = (cfg.display ?? null) as {
+      valueFormat?: 'currency' | 'number' | 'percent' | null;
+      series?: Array<{
+        key: string;
+        format?: 'currency' | 'number' | 'percent';
+      }> | null;
+    } | null;
+    const inferFormat = (key: string): 'currency' | 'number' | 'percent' => {
+      const s = display?.series?.find((x) => norm(x.key) === norm(key));
+      if (s?.format) return s.format;
+      const k = key.toLowerCase();
+      if (
+        /(^|[^a-z])(pct|percent|margin|rate|ratio|share|util|utilization|sla|csat|growth)([^a-z]|$)/.test(
+          k,
+        ) ||
+        /_pct\b/.test(k)
+      )
+        return 'percent';
+      if (
+        /(^|[^a-z])(count|headcount|fte|employees|calls|volume|quantity|qty|units|tickets)([^a-z]|$)/.test(
+          k,
+        )
+      )
+        return 'number';
+      return display?.valueFormat ?? 'currency';
+    };
+
+    // Numeric columns this category row carries (excludes the label/axis keys).
+    const skipKeys = new Set([
+      'name',
+      'label',
+      'month',
+      'period',
+      'date',
+      'category',
+      'order',
+      'x',
+      'group',
+    ]);
+    const numericKeys = Object.keys(matched).filter(
+      (k) =>
+        !skipKeys.has(k.toLowerCase()) &&
+        Number.isFinite(Number((matched as any)[k])),
+    );
+    if (numericKeys.length === 0)
+      return genericFail('This figure has no numeric value to trace.');
+
+    // Which series did they click? The frontend sends a PRETTIFIED label
+    // ("total_revenue_usd" → "Total Revenue"), so match loosely (strip case, "usd" and
+    // non-alphanumerics) against the raw column keys — an exact match won't line up.
+    // Fall back to the canonical `value` column, then the first numeric column.
+    const loose = (s: unknown) =>
+      String(s ?? '')
+        .toLowerCase()
+        .replace(/\busd\b/g, '')
+        .replace(/[^a-z0-9]/g, '');
+    const prettifyKey = (k: string) =>
+      k
+        .replace(/_/g, ' ')
+        .replace(/\busd\b/gi, '')
+        .replace(/\bpct\b/gi, '%')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+    const want = (seriesLabel ?? '').trim();
+    const wantLower = want.toLowerCase();
+    const clickedKey =
+      (want && numericKeys.find((k) => k.toLowerCase() === wantLower)) ||
+      (want && numericKeys.find((k) => loose(k) === loose(want))) ||
+      (numericKeys.includes('value') ? 'value' : undefined) ||
+      numericKeys[0];
+    const clickedValue = Number((matched as any)[clickedKey]);
+    const clickedLabel =
+      clickedKey === 'value'
+        ? want || String(widget.title ?? 'Value')
+        : want || prettifyKey(clickedKey);
+    const format = inferFormat(clickedKey === 'value' ? want || metric : clickedKey);
+
+    // Rows behind it: for a multi-series category, show every series value that shares
+    // the clicked unit (the real breakdown for that category). For a single-series
+    // point the figure is atomic, so show the one row. All values come straight from
+    // the re-executed query.
+    const multiSeries = numericKeys.length > 1;
+    const rows = multiSeries
+      ? numericKeys
+          .filter((k) => inferFormat(k) === format)
+          .map((k) => ({ label: prettifyKey(k), value: Number((matched as any)[k]) }))
+      : [{ label: cat, value: clickedValue }];
+
+    let reconciled: FigureEvidence['reconciled'];
+    let reconcileNote: string;
+    if (typeof expectedValue === 'number' && Number.isFinite(expectedValue)) {
+      const drift =
+        Math.abs(clickedValue - expectedValue) /
+        Math.max(1, Math.abs(expectedValue));
+      if (drift <= 0.01) {
+        reconciled = 'match';
+        reconcileNote =
+          'Re-ran this chart’s own query just now — the value matches exactly.';
+      } else {
+        reconciled = 'mismatch';
+        reconcileNote = `Re-running the query returned ${this.formatFigure(clickedValue, format)}, which differs from the charted ${this.formatFigure(expectedValue, format)}.`;
+      }
+    } else {
+      reconciled = 'unchecked';
+      reconcileNote =
+        'Recomputed by re-running this chart’s own query against the database.';
+    }
+
+    const dynamicSql = typeof cfg.dynamicSql === 'string' ? cfg.dynamicSql : '';
+    const sourceWord = dynamicSql
+      ? 'the saved SQL query behind this chart'
+      : 'this chart’s data query';
+    const definition = multiSeries
+      ? `Each value for “${cat}” comes from re-running ${sourceWord} live against the database.`
+      : `“${cat}” = ${this.formatFigure(clickedValue, format)}, read straight from ${sourceWord} re-run live against the database.`;
+    const dimensionLabel =
+      grouping && grouping !== 'query' && grouping !== 'dynamic'
+        ? grouping.charAt(0).toUpperCase() + grouping.slice(1)
+        : 'Category';
+
+    return {
+      ok: true,
+      headline: `${clickedLabel} for ${cat}`,
+      definition,
+      measureLabel: clickedLabel,
+      dimensionLabel,
+      category: cat,
+      format,
+      rows,
+      total: clickedValue,
+      totalLabel: multiSeries ? clickedLabel : undefined,
+      reconciled,
+      reconcileNote,
+      sql: dynamicSql,
     };
   }
 

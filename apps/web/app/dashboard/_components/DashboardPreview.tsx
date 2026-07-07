@@ -1271,17 +1271,46 @@ export function renderChart(
       state.activeLabel ?? p?.payload?.name ?? "",
     );
     // Which series was hit. v3 exposes activeDataKey; v2 carried it on the payload.
-    // A shared tooltip may not pin a single series — then we trace the primary measure.
-    const key = String(state.activeDataKey ?? p?.dataKey ?? p?.name ?? "");
+    // A shared tooltip may not pin a single series — resolved below from the data row.
+    let key = String(state.activeDataKey ?? p?.dataKey ?? p?.name ?? "");
     // Value for the trust-stamp: prefer the payload (v2); on v3 resolve it from the
     // chart's own data row (matched by category), or by active index as a last resort.
     let value: unknown =
       p?.value ?? (p?.payload && key ? p.payload[key] : undefined);
-    if (value === undefined && Array.isArray(data)) {
-      const row =
-        (category && (data as any[]).find((r) => String(r?.name) === category)) ||
-        (state.activeIndex != null ? (data as any[])[Number(state.activeIndex)] : undefined);
-      if (row) value = key && key !== "value" ? (row as any)[key] : (row as any).value;
+    const row =
+      (category && Array.isArray(data)
+        ? (data as any[]).find((r) => String(r?.name) === category)
+        : undefined) ||
+      (state.activeIndex != null && Array.isArray(data)
+        ? (data as any[])[Number(state.activeIndex)]
+        : undefined);
+    if (value === undefined && row) {
+      value = key && key !== "value" ? (row as any)[key] : (row as any).value;
+    }
+    // Clicking the body of a multi-series line/area with a shared tooltip pins neither a
+    // series nor a value. Fall back to the first numeric series in the row so the figure
+    // still traces to a concrete series AND carries its on-screen value — that value lets
+    // the backend reconcile the recompute and stamp it "verified", instead of the neutral
+    // "recomputed from source" you get with no value to compare against.
+    if ((!key || key === "value" || value === undefined) && row) {
+      const skip = new Set([
+        "name",
+        "label",
+        "month",
+        "period",
+        "date",
+        "category",
+        "order",
+        "x",
+        "group",
+      ]);
+      const firstKey = Object.keys(row).find(
+        (k) => !skip.has(k.toLowerCase()) && Number.isFinite(Number((row as any)[k])),
+      );
+      if (firstKey) {
+        if (!key || key === "value") key = firstKey;
+        if (value === undefined) value = (row as any)[firstKey];
+      }
     }
     if (!category && value === undefined) return;
     emitFigure(

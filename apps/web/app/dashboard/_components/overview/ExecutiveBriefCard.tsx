@@ -266,7 +266,7 @@ export function ExecutiveBriefCard({
     <section className="dashboard-command-card relative overflow-hidden p-5 md:p-6">
       <div className="relative z-[1] space-y-5">
         <div className="flex flex-col gap-4 border-b border-white/8 pb-5">
-          <div className="max-w-[46rem]">
+          <div className="w-full">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-[#8ad7ff]/16 bg-[#8ad7ff]/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-[#8ad7ff]">
                 CFO command brief
@@ -275,10 +275,10 @@ export function ExecutiveBriefCard({
                 {cfo?.mode === "ebpo" ? "Live EBPO finance stream" : "Awaiting live finance stream"}
               </span>
             </div>
-            <h2 className="mt-4 max-w-[14ch] font-display text-[2rem] font-bold leading-[1.02] tracking-[-0.045em] text-white md:text-[2.9rem]">
+            <h2 className="mt-4 font-display text-[2rem] font-bold leading-[1.05] tracking-[-0.045em] text-white md:text-[2.9rem]">
               {headline}
             </h2>
-            <p className="mt-4 max-w-[68ch] text-sm leading-7 text-[#bfd0eb] md:text-[0.98rem]">
+            <p className="mt-4 max-w-[90ch] text-sm leading-7 text-[#bfd0eb] md:text-[0.98rem]">
               {narrative}
             </p>
           </div>

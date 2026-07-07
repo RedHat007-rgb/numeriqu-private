@@ -110,7 +110,7 @@ interface ChartConfig {
     showTotals?: boolean | null; // matrix/heatmap totals are rendered when true/default
     conditionalThreshold?: number | null; // matrix cells at/above this value use conditional color
     conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null; // dynamic "above average" highlight
-    conditionalColor?: "green" | null;
+    conditionalColor?: "green" | "red" | null;
     // Heatmap/matrix: ring-highlight the highest and/or lowest cell.
     highlightExtremes?: "max" | "min" | "both" | null;
     // Line/area/bar: mark negative datapoints red and draw a zero baseline.
@@ -625,6 +625,22 @@ function fmtPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+function isRiskHeatmapMetric(metric: string, title?: string | null): boolean {
+  const text = `${metric ?? ""} ${title ?? ""}`.toLowerCase();
+  return /\boverdue\b|\bpast\s+due\b|\bdelinq(?:uent|uency)?\b|\barrears?\b|\blate\s+payment\b|\bunpaid\b|\bnonpayment\b|\bbad\s+debt\b|\brisk\b|\bloss(?:es)?\b|\bdeficit\b|\bshortfall\b/.test(
+    text,
+  );
+}
+
+function heatmapPalette(
+  metric: string,
+  title?: string | null,
+  conditionalColor?: "green" | "red" | null,
+): "green" | "red" {
+  if (conditionalColor === "red" || conditionalColor === "green") return conditionalColor;
+  return isRiskHeatmapMetric(metric, title) ? "red" : "green";
+}
+
 function formatValue(metric: string, grouping: string, value: number): string {
   const metricKey = String(metric ?? "").toLowerCase();
   const isPercent =
@@ -1048,7 +1064,7 @@ function ZoomableChartFrame({
   footer,
   children,
 }: {
-  height: number;
+  height: number | string;
   xValues: number[];
   yValues: number[];
   enableXZoom?: boolean;
@@ -1238,6 +1254,11 @@ export function renderChart(
   onFigureClick?: (arg: FigureClickArg) => void,
 ) {
   const h = isExpanded ? 480 : 240;
+  // Expanded charts live inside a flex-1 modal container that is taller than 480px, so a
+  // fixed-height wrapper leaves dead space below and mis-aligns the plot. When expanded we
+  // fill the container (height:100%); in-card charts keep their fixed pixel height. Numeric
+  // `h` is still used where sizing math needs a number (axis offsets, data-driven heights).
+  const wrapH: number | string = isExpanded ? "100%" : h;
   // Glass Ledger: a datapoint is inspectable only when a handler is wired AND we know
   // the real widget id to trace it back to.
   const figureWidgetId = chart.widgetId ?? null;
@@ -1399,17 +1420,26 @@ export function renderChart(
   };
   const fmtVal = (value: number): string => {
     const n = Number(value) || 0;
-    if (_vfmt === "percent") return `${n.toFixed(_vdec ?? 1)}%`;
+    const _lbl = String(chart.config.yAxisLabel ?? "").toLowerCase();
+    const labelLooksPercent =
+      /%|\bpercent(age)?\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(_lbl);
+    const labelLooksCurrency =
+      /\busd\b|\(\s*\$\s*\)|dollars?|\bbalance\b|\boutstanding\b|\breceiv(?:able|ables)\b|\boverdue\b|\bamount\b|\bvalue\b|\brevenue\b|\bincome\b|\bexpense\b|\bcost\b|\bprofit\b|\bmargin\b|\bcash\b|\basset\b|\bliabil(?:ity|ities)\b|\bequity\b|\bpayable\b|\bdebit\b|\bcredit\b/.test(
+        _lbl,
+      );
+    if (_vfmt === "percent") {
+      if (labelLooksCurrency && !labelLooksPercent) return fmtCurrency(n);
+      return `${n.toFixed(_vdec ?? 1)}%`;
+    }
     if (_vfmt === "currency") return fmtCurrency(n);
     if (_vfmt === "number") return fmtNumber(n);
     // Safety net for dynamic charts with no explicit valueFormat: trust the unit the
     // planner stated in yAxisLabel (e.g. "Gross Margin (%)"). High-precision — never
     // overrides an explicit $/USD unit, so a currency chart can't be mislabeled.
-    const _lbl = String(chart.config.yAxisLabel ?? "").toLowerCase();
     if (
       _lbl &&
-      !/\busd\b|\(\s*\$\s*\)|dollars?/.test(_lbl) &&
-      /%|\bpercent(age)?\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(_lbl)
+      !labelLooksCurrency &&
+      labelLooksPercent
     )
       return fmtPercent(n);
     return formatValue(_metric, _grouping, n);
@@ -1737,7 +1767,7 @@ export function renderChart(
     const x = (value: number) => 8 + ((value - domainMin) / span) * 84;
 
     return (
-      <div style={{ height: h, width: "100%" }} className="flex flex-col gap-2 overflow-hidden">
+      <div style={{ height: wrapH, width: "100%" }} className="flex flex-col gap-2 overflow-hidden">
         <div className="flex justify-between px-2 text-[10px] font-semibold text-text-muted">
           <span>{fmtVal(domainMin)}</span>
           <span>{fmtVal(domainMax)}</span>
@@ -1964,7 +1994,7 @@ export function renderChart(
     })();
 
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: wrapH, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
 	          <AreaChart
               data={areaData}
@@ -2350,7 +2380,7 @@ export function renderChart(
 	    };
 
 	    return (
-	      <div style={{ height: h, width: "100%" }}>
+	      <div style={{ height: wrapH, width: "100%" }}>
 	        <ResponsiveContainer width="100%" height="100%">
 	          <BarChart data={wf} margin={{ top: 16, right: 4, left: 12, bottom: manyBars ? 28 : 4 }} onClick={emitFromActive}>
 	            <CartesianGrid {...gridStyle} vertical={false} />
@@ -2598,7 +2628,7 @@ export function renderChart(
     );
 
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: wrapH, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={comboData}
@@ -3341,7 +3371,7 @@ export function renderChart(
     };
 
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: wrapH, width: "100%" }}>
         {hasColorMetric && (
           <div className="mb-2 flex items-center justify-end gap-2 text-[10px] font-bold text-text-secondary">
             <span>{colorMetricLabel}</span>
@@ -3427,7 +3457,7 @@ export function renderChart(
     const hasScatterHighlight = scatterHighlight.size > 0 && !!nameKey;
     return (
       <ZoomableChartFrame
-        height={h}
+        height={wrapH}
         enableXZoom={!singleCat}
         xValues={singleCat ? [] : points.map((p: any) => Number(p[xKey]) || 0)}
         yValues={points.map((p: any) => Number(p[yKey]) || 0)}
@@ -3594,7 +3624,7 @@ export function renderChart(
     };
 
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: wrapH, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie data={enriched} cx="45%" cy="50%" innerRadius={0}
@@ -3640,23 +3670,49 @@ export function renderChart(
   if (chart.type === "table") {
     const limit = isExpanded ? 25 : 10;
     const rows = data.slice(0, limit);
-    const totalSpend = rows.reduce((s, r) => s + (Number((r as any).value) || 0), 0);
     const cols = rows.length > 0 ? Object.keys(rows[0] ?? {}).slice(0, 8) : [];
     const isCurrencyCol = (col: string) =>
       col === "value" || /amount|spend|revenue|income|expense|total|cost|profit/i.test(col);
     const isPercentCol = (col: string) => /pct|percent|share|ratio|rate/i.test(col);
 
-    const formatCell = (col: string, val: unknown, rowIdx: number): string => {
+    // A KPI-snapshot table unions heterogeneous metrics (Gross Margin %, DSO (Days),
+    // Revenue $, …). The unit of each row lives in its NAME, so the "value" column must be
+    // formatted PER ROW — otherwise a 35% margin renders as "$35" and 30 days as "$30".
+    const rowName = (r: any) => String(r?.name ?? r?.metric ?? "");
+    const rowUnit = (name: string): "percent" | "days" | "currency" => {
+      const s = name.toLowerCase();
+      if (/%|\bpct\b|percent|margin|\brate\b|\bratio\b|\bshare\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(s)) return "percent";
+      if (/\bdays?\b|\bdso\b|\bdpo\b|\bdio\b|\bccc\b/.test(s)) return "days";
+      return "currency";
+    };
+    const formatValueByName = (n: number, name: string): string => {
+      const u = rowUnit(name);
+      if (u === "percent") return `${n.toFixed(1)}%`;
+      if (u === "days") return `${Math.round(n)}d`;
+      return fmtCurrency(n);
+    };
+    // "% Share" and the "Total Spend" header only make sense when EVERY row is the same
+    // currency (a real spend breakdown). For a mixed-unit KPI list both are meaningless.
+    const allCurrencyValues =
+      cols.includes("value") && rows.length > 0 && rows.every((r) => rowUnit(rowName(r)) === "currency");
+    const totalSpend = allCurrencyValues
+      ? rows.reduce((s, r) => s + (Number((r as any).value) || 0), 0)
+      : 0;
+    const showShare = allCurrencyValues && totalSpend > 0;
+    const valueHeader = allCurrencyValues ? "Total Spend" : "Value";
+
+    const formatCell = (col: string, val: unknown, rowIdx: number, row: any): string => {
       if (col === "rank") return String(rowIdx + 1);
       const n = typeof val === "number" ? val : Number(val);
       if (!Number.isFinite(n)) return String(val ?? "");
+      if (col === "value") return formatValueByName(n, rowName(row));
       if (isPercentCol(col)) return `${n.toFixed(1)}%`;
       if (isCurrencyCol(col)) return fmtCurrency(n);
       return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2);
     };
 
     return (
-      <div style={{ height: h, width: "100%" }} className="overflow-hidden rounded-xl border border-default bg-bg-elevated/30">
+      <div style={{ height: wrapH, width: "100%" }} className="overflow-hidden rounded-xl border border-default bg-bg-elevated/30">
         <div className="h-full overflow-auto">
           <table className="w-full text-left text-[11px]">
             <thead className="sticky top-0 bg-bg-elevated/80 backdrop-blur">
@@ -3664,10 +3720,10 @@ export function renderChart(
                 <th className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted w-8">#</th>
                 {cols.map((c) => (
                   <th key={c} className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted">
-                    {c === "value" ? "Total Spend" : c.replaceAll("_", " ")}
+                    {c === "value" ? valueHeader : c.replaceAll("_", " ")}
                   </th>
                 ))}
-                {totalSpend > 0 && cols.includes("value") && (
+                {showShare && (
                   <th className="px-3 py-2 font-bold uppercase tracking-wider text-text-muted">% Share</th>
                 )}
               </tr>
@@ -3678,12 +3734,12 @@ export function renderChart(
                   <td className="px-3 py-2 text-text-muted font-mono text-center">{idx + 1}</td>
                   {cols.map((c) => (
                     <td key={c} className={`px-3 py-2 whitespace-nowrap ${isCurrencyCol(c) ? "text-text-primary font-semibold" : "text-text-secondary"}`}>
-                      {formatCell(c, (r as any)?.[c], idx)}
+                      {formatCell(c, (r as any)?.[c], idx, r)}
                     </td>
                   ))}
-                  {totalSpend > 0 && cols.includes("value") && (
+                  {showShare && (
                     <td className="px-3 py-2 text-text-muted font-mono">
-                      {totalSpend > 0 ? `${((Number((r as any).value) || 0) / totalSpend * 100).toFixed(1)}%` : "—"}
+                      {`${((Number((r as any).value) || 0) / totalSpend * 100).toFixed(1)}%`}
                     </td>
                   )}
                 </tr>
@@ -3771,7 +3827,7 @@ export function renderChart(
     };
 
     return (
-      <div style={{ height: h + (isExpanded ? 0 : 20), width: "100%" }}>
+      <div style={{ height: isExpanded ? "100%" : h + 20, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             {donutTotal > 0 && !donutHasSignedSlices && (
@@ -3814,7 +3870,7 @@ export function renderChart(
   if (chart.type === "horizontal_bar") {
     const sorted = [...data].sort((a, b) => (Number((b as any).value) || 0) - (Number((a as any).value) || 0));
     return (
-      <div style={{ height: Math.max(h, sorted.length * 32 + 40), width: "100%" }}>
+      <div style={{ height: isExpanded ? "100%" : Math.max(h, sorted.length * 32 + 40), width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={sorted} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" horizontal={false} />
@@ -3848,7 +3904,7 @@ export function renderChart(
   // ── histogram (distribution bars) ─────────────────────────────────────────
   if (chart.type === "histogram") {
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: wrapH, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 16 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
@@ -3881,7 +3937,7 @@ export function renderChart(
       return { ...(d as any), cumPct: totalVal > 0 ? Math.round((cumSum / totalVal) * 100) : 0 };
     });
     return (
-      <div style={{ height: h, width: "100%" }}>
+      <div style={{ height: wrapH, width: "100%" }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={paretoData} margin={{ top: 8, right: 40, left: 8, bottom: 16 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
@@ -3914,7 +3970,7 @@ export function renderChart(
     const color = score >= 80 ? "#10B981" : score >= 60 ? "#0EA5E9" : score >= 40 ? "#F59E0B" : "#EF4444";
     const gaugeData = [{ name: "Score", value: score, fill: color }, { name: "Remaining", value: 100 - score, fill: "transparent" }];
     return (
-      <div style={{ height: h, width: "100%" }} className="flex flex-col items-center justify-center">
+      <div style={{ height: wrapH, width: "100%" }} className="flex flex-col items-center justify-center">
         <ResponsiveContainer width="100%" height={isExpanded ? 300 : 200}>
           <RadialBarChart cx="50%" cy="70%" innerRadius="60%" outerRadius="90%"
             startAngle={180} endAngle={0} data={gaugeData}>
@@ -3972,7 +4028,7 @@ export function renderChart(
     const hasSize = finiteZ.length > 0 && zSpan > 0;
     return (
       <ZoomableChartFrame
-        height={h}
+        height={wrapH}
         xValues={bubbleData.map((d: any) => Number(d.x) || 0)}
         yValues={bubbleData.map((d: any) => Number(d.y) || 0)}
         footer={
@@ -4128,27 +4184,36 @@ export function renderChart(
       typeof chart.config.display?.conditionalThreshold === "number"
         ? chart.config.display.conditionalThreshold
         : null;
+    const palette = heatmapPalette(
+      chart.config.metric,
+      chart.title,
+      chart.config.display?.conditionalColor ?? null,
+    );
+    const useRiskPalette = palette === "red";
     const cellTheme = (value: number, highlight: boolean) => {
-      if (highlight && chart.config.display?.conditionalColor === "green") {
-        return { bg: "#16a34a", fg: "#ffffff" };
+      if (highlight) {
+        return useRiskPalette ? { bg: "#dc2626", fg: "#ffffff" } : { bg: "#16a34a", fg: "#ffffff" };
       }
       const maxVal = Math.max(
         ...rows.flatMap((row) => colKeys.map((key) => Math.abs(Number((row as any)[key]) || 0))),
         1,
       );
       const intensity = Math.min(1, Math.abs(value) / maxVal);
+      const low = useRiskPalette ? { r: 34, g: 197, b: 94 } : { r: 248, g: 113, b: 113 };
+      const high = useRiskPalette ? { r: 220, g: 38, b: 38 } : { r: 34, g: 197, b: 94 };
       if (intensity >= 0.5) {
         const t = (intensity - 0.5) / 0.5;
-        const r = lerp(245, 22, t);
-        const g = lerp(158, 163, t);
-        const b = lerp(11, 74, t);
+        const r = lerp(low.r, high.r, t);
+        const g = lerp(low.g, high.g, t);
+        const b = lerp(low.b, high.b, t);
         const fg = intensity >= 0.8 ? "#ffffff" : "#111827";
         return { bg: rgb(r, g, b), fg };
       }
       const t = intensity / 0.5;
-      const r = lerp(248, 245, t);
-      const g = lerp(113, 158, t);
-      const b = lerp(113, 11, t);
+      const mid = { r: 245, g: 158, b: 11 };
+      const r = lerp(low.r, mid.r, t);
+      const g = lerp(low.g, mid.g, t);
+      const b = lerp(low.b, mid.b, t);
       return { bg: rgb(r, g, b), fg: intensity < 0.25 ? "#ffffff" : "#111827" };
     };
     // Aggregate non-null cells only. For percent grids use the MEAN (a sum of
@@ -4184,7 +4249,7 @@ export function renderChart(
       rows.flatMap((row) => colKeys.map((key) => cellNum(row, key))),
     );
     const shouldHighlight = (value: number, colKey: string, rowAvg: number) => {
-      if (chart.config.display?.conditionalColor !== "green") return false;
+      if (chart.config.display?.conditionalColor == null) return false;
       if (conditionalThreshold !== null) return value >= conditionalThreshold;
       if (conditionalMode === "columnAverage") return value > (colAverages[colKey] ?? 0);
       if (conditionalMode === "rowAverage") return value > rowAvg;
@@ -4193,8 +4258,10 @@ export function renderChart(
     };
 
     // "Highlight the highest / lowest" → ring the SINGLE extreme cell(s) across the
-    // whole grid (emerald for max, red for min). Only the first occurrence is ringed
-    // so a grid with many tied values (e.g. lots of 0%) doesn't ring dozens of cells.
+    // whole grid. The ring color follows the palette so risk heatmaps keep high
+    // values red while standard positive heatmaps keep high values green. Only the
+    // first occurrence is ringed so a grid with many tied values (e.g. lots of 0%)
+    // doesn't ring dozens of cells.
     const extremes = chart.config.display?.highlightExtremes ?? null;
     let maxPos: { r: number; c: number } | null = null;
     let minPos: { r: number; c: number } | null = null;
@@ -4212,28 +4279,30 @@ export function renderChart(
     }
     const extremeRing = (r: number, c: number): string | null => {
       if (!extremes) return null;
+      const maxRing = useRiskPalette ? "#ef4444" : "#10b981";
+      const minRing = useRiskPalette ? "#10b981" : "#ef4444";
       if ((extremes === "max" || extremes === "both") && maxPos && maxPos.r === r && maxPos.c === c)
-        return "#10b981";
+        return maxRing;
       if ((extremes === "min" || extremes === "both") && minPos && minPos.r === r && minPos.c === c)
-        return "#ef4444";
+        return minRing;
       return null;
     };
 
     return (
-      <div style={{ height: h, width: "100%", overflowX: "auto" }}>
+      <div style={{ height: wrapH, width: "100%", overflowX: "auto" }}>
         <div className="mb-2 flex items-center gap-3 text-[10px] font-semibold text-text-muted">
           <span className="uppercase tracking-wider">Intensity</span>
           <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-[3px] bg-[#f87171]" />
-            Low
+            <span className={cn("h-3 w-3 rounded-[3px]", useRiskPalette ? "bg-[#22c55e]" : "bg-[#f87171]")} />
+            {useRiskPalette ? "Low risk" : "Low"}
           </span>
           <span className="flex items-center gap-1">
             <span className="h-3 w-3 rounded-[3px] bg-[#f5b61b]" />
             Medium
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-[3px] bg-[#22c55e]" />
-            High
+            <span className={cn("h-3 w-3 rounded-[3px]", useRiskPalette ? "bg-[#dc2626]" : "bg-[#22c55e]")} />
+            {useRiskPalette ? "High overdue" : "High"}
           </span>
         </div>
         <table className="min-w-full border-separate border-spacing-1">
@@ -4335,7 +4404,7 @@ export function renderChart(
   }
 
   return (
-    <div style={{ height: h, width: "100%" }}>
+    <div style={{ height: wrapH, width: "100%" }}>
       <ResponsiveContainer width="100%" height="100%">
         {(() => {
           const seriesKeys = inferNumericSeriesKeys(data);

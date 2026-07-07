@@ -7,9 +7,7 @@ export type OverviewCardId =
   | "margin-quality"
   | "open-invoices"
   | "cash-runway"
-  | "cash-discipline"
   | "working-capital"
-  | "client-concentration"
   | "service-levels"
   | "payroll-discipline"
   | "cash-on-hand"
@@ -109,17 +107,6 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
     priority: 184,
   },
   {
-    id: "cash-discipline",
-    title: "Treasury Radar",
-    description: "Free cash flow, operating cash flow, and cash-conversion pressure in one view.",
-    zone: ["primary", "secondary"],
-    defaultZone: "primary",
-    defaultSize: "medium",
-    allowedSizes: ["medium", "wide"],
-    defaultVisible: true,
-    priority: 182,
-  },
-  {
     id: "working-capital",
     title: "Working Capital",
     description: "Cash, AR, AP, and liquidity pressure in one place.",
@@ -129,17 +116,6 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
     allowedSizes: ["small", "medium"],
     defaultVisible: true,
     priority: 181,
-  },
-  {
-    id: "client-concentration",
-    title: "Concentration Risk",
-    description: "Shows whether revenue dependence is becoming a renewal or pricing risk.",
-    zone: ["primary", "secondary"],
-    defaultZone: "secondary",
-    defaultSize: "medium",
-    allowedSizes: ["medium", "wide"],
-    defaultVisible: false,
-    priority: 179,
   },
   {
     id: "service-levels",
@@ -376,9 +352,7 @@ export function getRecommendedOverviewPlacements(showOnboardingGuide: boolean): 
     { cardId: "working-capital", zone: "hero", position: 4, size: "small", visible: true },
     { cardId: "collection-risk", zone: "hero", position: 5, size: "small", visible: true },
     { cardId: "executive-brief", zone: "primary", position: 6, size: "wide", visible: true },
-    { cardId: "cash-discipline", zone: "primary", position: 7, size: "medium", visible: true },
     { cardId: "cashflow", zone: "primary", position: 8, size: "medium", visible: true },
-    { cardId: "client-concentration", zone: "primary", position: 10, size: "medium", visible: true },
     { cardId: "service-levels", zone: "secondary", position: 11, size: "medium", visible: true },
     { cardId: "next-actions", zone: "secondary", position: 12, size: "medium", visible: false },
     { cardId: "cash-on-hand", zone: "secondary", position: 14, size: "small", visible: false },

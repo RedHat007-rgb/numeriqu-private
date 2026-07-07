@@ -208,7 +208,7 @@ export interface DisplayHints {
     | 'rowAverage'
     | 'overallAverage'
     | null;
-  conditionalColor?: 'green' | null;
+  conditionalColor?: 'green' | 'red' | null;
   // Heatmap/matrix: ring-highlight the single highest and/or lowest cell ("highlight
   // the highest and lowest margin months"). 'max' rings the top cell, 'min' the
   // bottom, 'both' rings both — distinct from the threshold/average green fill.

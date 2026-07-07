@@ -375,8 +375,10 @@ export function DeliveryCenterScorecardCard({ dashboard }: { dashboard: Dashboar
       emptyLabel="No delivery-center operations in scope yet. Once operations data is synced, this card ranks centers by SLA with utilization and CSAT."
       items={barCenters.map((c) => ({
         name: c.name,
-        valueLabel: formatPercentDelta(c.slaPct / 100),
-        subLabel: `${formatPercentDelta(c.utilizationPct / 100)} util · ${formatPercentDelta(c.csatPct / 100)} CSAT`,
+        // Label every number so a first-time reader knows what it is: the bar + big value
+        // is SLA compliance, the sub-line spells out utilization and CSAT.
+        valueLabel: `${formatPercentDelta(c.slaPct / 100)} SLA`,
+        subLabel: `${formatPercentDelta(c.utilizationPct / 100)} utilization · ${formatPercentDelta(c.csatPct / 100)} CSAT`,
         fraction: c.slaPct / 100,
         tone: c.slaPct >= 95 ? "positive" : c.slaPct < 90 ? "warning" : "brand",
       }))}

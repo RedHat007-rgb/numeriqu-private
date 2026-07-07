@@ -13242,6 +13242,11 @@ export class AgentService {
           ? this.ebpoProfitAliasTitle(query, spec)
           : null;
       const prettyTitle = this.prettifyChartTitle(aliasTitle || title);
+      const riskHeatmapDisplay =
+        (chartType === 'heatmap' || chartType === 'matrix') &&
+        this.inferMatrixConditionalColor(query) === 'red'
+          ? { conditionalColor: 'red' as const }
+          : {};
       return {
         kind: 'build',
         plan: {
@@ -13262,6 +13267,7 @@ export class AgentService {
                 _sql: compiled.sql,
                 _spec: { ...spec, chartType: chartType as ChartSpec['chartType'] },
                 display: {
+                  ...riskHeatmapDisplay,
                   // Percent format follows what the compiler actually produced.
                   valueFormat: (compiled as { outputPercent?: boolean }).outputPercent
                     ? 'percent'
@@ -13695,6 +13701,45 @@ export class AgentService {
           },
         };
       }
+    }
+
+    // AR/AP aging concentration heatmaps are a real matrix in the EBPO semantic views:
+    // client/vendor rows crossed with the aging_bucket values present in the data.
+    // Keep this catalog-backed so wording like "concentration" stays matrix-shaped.
+    if (
+      (chartType === 'heatmap' || chartType === 'matrix') &&
+      /\b(concentrat|risk|overdue|aging|bucket|receivable|payable|ar\b|ap\b)\b/.test(qLow) &&
+      /\b(receivables?|ar\b|a\/r|clients?|customers?)\b/.test(qLow)
+    ) {
+      const built = await build(
+        {
+          measure: 'ar_outstanding',
+          dimension: 'client',
+          breakdown: 'aging_bucket',
+          chartType: 'heatmap',
+        },
+        'Overdue Receivables by Client and Aging Bucket',
+        'Outstanding receivables exposure across clients and aging buckets',
+      );
+      if (built) return built;
+    }
+
+    if (
+      (chartType === 'heatmap' || chartType === 'matrix') &&
+      /\b(concentrat|risk|overdue|aging|bucket|payable|ap\b)\b/.test(qLow) &&
+      /\b(payables?|ap\b|a\/p|vendors?|suppliers?)\b/.test(qLow)
+    ) {
+      const built = await build(
+        {
+          measure: 'ap_outstanding',
+          dimension: 'vendor',
+          breakdown: 'aging_bucket',
+          chartType: 'heatmap',
+        },
+        'Overdue Payables by Vendor and Aging Bucket',
+        'Outstanding payables exposure across vendors and aging buckets',
+      );
+      if (built) return built;
     }
 
     const measureIds = this.detectEbpoMeasureMentions(query);
@@ -18310,6 +18355,7 @@ export class AgentService {
     const wantsNegative =
       wantsHighlight &&
       /\bnegative\b|\bbelow\s+zero\b|\bloss(?:es)?\b|\bdeficits?\b|\bshortfalls?\b/.test(q);
+    const conditionalColor = this.inferMatrixConditionalColor(q);
 
     const hints: DisplayHints = {};
     if (wantsTotals) hints.showTotals = true;
@@ -18318,7 +18364,7 @@ export class AgentService {
     } else if (extremes) {
       hints.highlightExtremes = extremes;
     } else if (wantsHighlight || threshold !== null || avgMode) {
-      hints.conditionalColor = 'green';
+      hints.conditionalColor = conditionalColor;
       if (threshold !== null) hints.conditionalThreshold = threshold;
       if (avgMode) hints.conditionalThresholdMode = avgMode;
     }
@@ -18361,6 +18407,15 @@ export class AgentService {
       ) ||
       /\bthe\s+same\s+chart\b/.test(text)
     );
+  }
+
+  private inferMatrixConditionalColor(req: string): 'green' | 'red' {
+    const q = String(req ?? '').toLowerCase();
+    return /\boverdue\b|\bpast\s+due\b|\bdelinq(?:uent|uency)?\b|\barrears?\b|\blate\s+payment\b|\bunpaid\b|\bnonpayment\b|\bbad\s+debt\b|\brisk\b|\bloss(?:es)?\b|\bdeficit\b|\bshortfall\b/.test(
+      q,
+    )
+      ? 'red'
+      : 'green';
   }
 
   private detectRequestedChartAxes(req: string): {
@@ -18597,8 +18652,8 @@ export class AgentService {
       [/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/, 'financing_cf'],
       [/\bfree\s+cash\s+flow\b|\bfree\s+cf\b|\bfcf\b/, 'free_cash_flow'],
       [/\bcash\s+balance\b/, 'cash_balance'],
-      [/\boutstanding\s+receivables?\b|\bar\s+outstanding\b|\breceivables?\b|\ba\/?r\b/, 'ar_outstanding'],
-      [/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b|\ba\/?p\b/, 'ap_outstanding'],
+      [/\boverdue\s+receivables?\b|\boutstanding\s+receivables?\b|\bar\s+outstanding\b|\breceivables?\b|\ba\/?r\b/, 'ar_outstanding'],
+      [/\boverdue\s+payables?\b|\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b|\ba\/?p\b/, 'ap_outstanding'],
       [/\bcollection\s+rate\b/, 'collection_rate_pct'],
       [/\bdso\b/, 'dso_days'],
       [/\bdpo\b/, 'dpo_days'],
@@ -20796,7 +20851,7 @@ export class AgentService {
         if (isHeatmapLike) {
           const hints: DisplayHints = { showTotals: true, conditionalColor: 'green' };
           if (/\bhighest|largest|max\b/.test(q)) hints.conditionalThresholdMode = 'overallAverage';
-          if (/\blowest|smallest|min\b/.test(q)) hints.conditionalColor = 'green';
+          hints.conditionalColor = this.inferMatrixConditionalColor(q);
           const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
             this.queryRows<Record<string, unknown>>(sql, {
               tenantId: scope.tenantId,
@@ -24732,6 +24787,7 @@ export class AgentService {
               : preSpecMatrixHints.conditionalThresholdMode === 'overallAverage'
                 ? 'above the overall average'
                 : null;
+        const paletteColor = preSpecMatrixHints.conditionalColor === 'red' ? 'red' : 'green';
         const extremesLabel =
           preSpecMatrixHints.highlightExtremes === 'both'
             ? 'Highlighted the highest and lowest cells.'
@@ -24743,9 +24799,9 @@ export class AgentService {
         const summary =
           extremesLabel ??
           (preSpecMatrixHints.conditionalThreshold != null
-            ? `Highlighted matrix cells above ${preSpecMatrixHints.conditionalThreshold.toLocaleString()} in green and kept row/column totals visible.`
+            ? `Highlighted matrix cells above ${preSpecMatrixHints.conditionalThreshold.toLocaleString()} in ${paletteColor} and kept row/column totals visible.`
             : avgLabel
-              ? `Highlighted matrix cells ${avgLabel} in green.`
+              ? `Highlighted matrix cells ${avgLabel} in ${paletteColor}.`
               : 'Kept matrix row and column totals visible.');
         return {
           summary,
@@ -24963,6 +25019,7 @@ export class AgentService {
             : matrixDisplayHints.conditionalThresholdMode === 'overallAverage'
               ? 'above the overall average'
               : null;
+      const paletteColor = matrixDisplayHints.conditionalColor === 'red' ? 'red' : 'green';
       const extremesLabel =
         matrixDisplayHints.highlightExtremes === 'both'
           ? 'Highlighted the highest and lowest cells.'
@@ -24974,9 +25031,9 @@ export class AgentService {
       const summarySuffix =
         extremesLabel ??
         (matrixDisplayHints.conditionalThreshold != null
-          ? `Highlighted matrix cells above ${matrixDisplayHints.conditionalThreshold.toLocaleString()} in green and kept row/column totals visible.`
+          ? `Highlighted matrix cells above ${matrixDisplayHints.conditionalThreshold.toLocaleString()} in ${paletteColor} and kept row/column totals visible.`
           : avgLabel
-            ? `Highlighted matrix cells ${avgLabel} in green.`
+            ? `Highlighted matrix cells ${avgLabel} in ${paletteColor}.`
             : 'Kept matrix row and column totals visible.');
       plan.summary = plan.summary
         ? `${plan.summary} ${summarySuffix}`

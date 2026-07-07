@@ -119,20 +119,41 @@ const GRID = { strokeDasharray: "3 3", stroke: "rgb(var(--color-text-muted) / 0.
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
-function fmtCurrency(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(0)}`;
+function fmtCurrency(value: number | null | undefined): string {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return "$0";
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
+  return `$${v.toFixed(0)}`;
 }
 
-function fmtNumber(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toFixed(0);
+function fmtNumber(value: number | null | undefined): string {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return "0";
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  return v.toFixed(0);
 }
 
-function fmtPercent(value: number): string {
-  return `${value.toFixed(1)}%`;
+function fmtPercent(value: number | null | undefined): string {
+  const v = Number(value);
+  return `${(Number.isFinite(v) ? v : 0).toFixed(1)}%`;
+}
+
+function isRiskHeatmapMetric(metric: string, title?: string | null): boolean {
+  const text = `${metric ?? ""} ${title ?? ""}`.toLowerCase();
+  return /\boverdue\b|\bpast\s+due\b|\bdelinq(?:uent|uency)?\b|\barrears?\b|\blate\s+payment\b|\bunpaid\b|\bnonpayment\b|\bbad\s+debt\b|\brisk\b|\bloss(?:es)?\b|\bdeficit\b|\bshortfall\b/.test(
+    text,
+  );
+}
+
+function heatmapPalette(
+  metric: string,
+  title?: string | null,
+  conditionalColor?: "green" | "red" | null,
+): "green" | "red" {
+  if (conditionalColor === "red" || conditionalColor === "green") return conditionalColor;
+  return isRiskHeatmapMetric(metric, title) ? "red" : "green";
 }
 
 function prettyChartType(type: string): string {
@@ -249,6 +270,7 @@ function ChartRenderer({
   type,
   data,
   chartId,
+  title,
   metric,
   grouping,
   display,
@@ -256,12 +278,13 @@ function ChartRenderer({
   type: string;
   data: ChartData;
   chartId: string;
+  title?: string | null;
   metric: string;
   grouping: string;
   display?: {
     conditionalThreshold?: number | null;
     conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null;
-    conditionalColor?: "green" | null;
+    conditionalColor?: "green" | "red" | null;
   } | null;
 }) {
   const h = 200;
@@ -707,23 +730,28 @@ function ChartRenderer({
       typeof display?.conditionalThreshold === "number"
         ? display.conditionalThreshold
         : null;
+    const palette = heatmapPalette(metric, title ?? null, display?.conditionalColor ?? null);
+    const useRiskPalette = palette === "red";
     const cellTheme = (value: number, highlight: boolean) => {
-      if (highlight && display?.conditionalColor === "green") {
-        return { bg: "#16a34a", fg: "#ffffff" };
+      if (highlight) {
+        return useRiskPalette ? { bg: "#dc2626", fg: "#ffffff" } : { bg: "#16a34a", fg: "#ffffff" };
       }
       const intensity = Math.min(1, Math.abs(value) / maxVal);
+      const low = useRiskPalette ? { r: 34, g: 197, b: 94 } : { r: 248, g: 113, b: 113 };
+      const high = useRiskPalette ? { r: 220, g: 38, b: 38 } : { r: 34, g: 197, b: 94 };
       if (intensity >= 0.5) {
         const t = (intensity - 0.5) / 0.5;
-        const r = lerp(245, 22, t);
-        const g = lerp(158, 163, t);
-        const b = lerp(11, 74, t);
+        const r = lerp(low.r, high.r, t);
+        const g = lerp(low.g, high.g, t);
+        const b = lerp(low.b, high.b, t);
         const fg = intensity >= 0.8 ? "#ffffff" : "#111827";
         return { bg: rgb(r, g, b), fg };
       }
       const t = intensity / 0.5;
-      const r = lerp(248, 245, t);
-      const g = lerp(113, 158, t);
-      const b = lerp(113, 11, t);
+      const mid = { r: 245, g: 158, b: 11 };
+      const r = lerp(low.r, mid.r, t);
+      const g = lerp(low.g, mid.g, t);
+      const b = lerp(low.b, mid.b, t);
       return { bg: rgb(r, g, b), fg: intensity < 0.25 ? "#ffffff" : "#111827" };
     };
     const rowTotals = rows.map((row) =>
@@ -743,7 +771,7 @@ function ChartRenderer({
     const overallAverage =
       rows.length && colKeys.length ? grandTotal / (rows.length * colKeys.length) : 0;
     const shouldHighlight = (value: number, colKey: string, rowAvg: number) => {
-      if (display?.conditionalColor !== "green") return false;
+      if (display?.conditionalColor == null) return false;
       if (conditionalThreshold !== null) return value >= conditionalThreshold;
       if (conditionalMode === "columnAverage") return value > (colAverages[colKey] ?? 0);
       if (conditionalMode === "rowAverage") return value > rowAvg;
@@ -756,16 +784,16 @@ function ChartRenderer({
         <div className="mb-2 flex items-center gap-3 text-[10px] font-semibold text-text-muted">
           <span className="uppercase tracking-wider">Intensity</span>
           <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-[3px] bg-[#f87171]" />
-            Low
+            <span className={cn("h-3 w-3 rounded-[3px]", useRiskPalette ? "bg-[#22c55e]" : "bg-[#f87171]")} />
+            {useRiskPalette ? "Low risk" : "Low"}
           </span>
           <span className="flex items-center gap-1">
             <span className="h-3 w-3 rounded-[3px] bg-[#f5b61b]" />
             Medium
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-3 w-3 rounded-[3px] bg-[#22c55e]" />
-            High
+            <span className={cn("h-3 w-3 rounded-[3px]", useRiskPalette ? "bg-[#dc2626]" : "bg-[#22c55e]")} />
+            {useRiskPalette ? "High overdue" : "High"}
           </span>
         </div>
         <table className="min-w-full border-separate border-spacing-1">
@@ -1014,6 +1042,7 @@ function ExpandedDashboard({
                   type={chart.type}
                   data={data}
                   chartId={chart.id}
+                  title={chart.title}
                   metric={String((chart.queryConfig as any)?.metric ?? "")}
                   grouping={String((chart.queryConfig as any)?.grouping ?? "")}
                   display={(chart.queryConfig as any)?.display ?? null}
@@ -1145,7 +1174,21 @@ export function DashboardsPage() {
           const breakdown = (chart.queryConfig as any)?.breakdown ?? null;
           const topN = (chart.queryConfig as any)?.topN ?? null;
           try {
-            const res = await agent.getMetrics(metric, grouping, timeRange, providerHint, clientName, clientNames, orgId, breakdown, topN);
+            // Dynamic-SQL charts (metric "dynamic") store their query server-side; the
+            // backend resolves it from the widget id. Without passing widgetId the metrics
+            // endpoint has no SQL to run and returns empty → "No data available".
+            const res = await agent.getMetrics(
+              metric,
+              grouping,
+              timeRange,
+              providerHint,
+              clientName,
+              clientNames,
+              orgId,
+              breakdown,
+              topN,
+              metric === "dynamic" ? chart.id : null,
+            );
             dataMap[chart.id] = (res.data ?? []) as ChartData;
           } catch {
             dataMap[chart.id] = [];
@@ -1227,6 +1270,7 @@ export function DashboardsPage() {
                       type={zoomChart.chart.type}
                       data={zoomChart.data}
                       chartId={zoomChart.chart.id}
+                      title={zoomChart.chart.title}
                       metric={String((zoomChart.chart.queryConfig as any)?.metric ?? "")}
                       grouping={String((zoomChart.chart.queryConfig as any)?.grouping ?? "")}
                       display={(zoomChart.chart.queryConfig as any)?.display ?? null}

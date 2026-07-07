@@ -318,7 +318,7 @@ export type ChartConfig = {
     showTotals?: boolean | null;
     conditionalThreshold?: number | null;
     conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null;
-    conditionalColor?: "green" | null;
+    conditionalColor?: "green" | "red" | null;
     highlightExtremes?: "max" | "min" | "both" | null;
     highlightNegative?: boolean;
   } | null;

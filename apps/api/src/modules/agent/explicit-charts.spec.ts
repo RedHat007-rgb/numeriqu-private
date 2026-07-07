@@ -501,6 +501,34 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.display?.highlightExtremes).toBe('both');
   });
 
+  test('uses a red risk palette for overdue heatmap highlights', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const plan = await svc.generateEditPlan(
+      {
+        id: 'dash',
+        title: 'Dashboard',
+        widgets: [
+          {
+            id: 'w1',
+            title: 'Overdue Receivable Concentration Heatmap',
+            chartType: 'heatmap',
+            queryConfig: { metric: 'overdue', grouping: 'aging_bucket' },
+            displayOrder: 0,
+          },
+        ],
+      },
+      'Highlight the overdue balances in this heatmap.',
+    );
+
+    expect(plan.modify).toHaveLength(1);
+    expect(plan.modify[0]?.display?.conditionalColor).toBe('red');
+  });
+
   test('keeps opening and closing balance by account as a line chart when building the plan', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
@@ -2526,6 +2554,43 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         ),
       ).toBe(true);
     }
+  });
+
+  test('builds overdue receivables concentration as a data-driven aging heatmap', async () => {
+    process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+
+    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    svc.queryRows = async () => [
+      { v: 'Fresh', m: 10 },
+      { v: 'Severely Late', m: 90 },
+    ];
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Client A', Fresh: 10, 'Severely Late': 90 }],
+      error: null,
+    });
+
+    const plan = await svc.buildEbpoSemanticPlan(
+      'Generate a heat map of overdue receivables concentration.',
+      { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
+    );
+
+    expect(plan?.kind).toBe('build');
+    if (plan?.kind !== 'build') return;
+    const widget = plan.plan.dashboard.widgets[0] as any;
+    expect(widget.type).toBe('heatmap');
+    expect(widget._spec).toMatchObject({
+      measure: 'ar_outstanding',
+      dimension: 'client',
+      breakdown: 'aging_bucket',
+      chartType: 'heatmap',
+    });
+    expect(widget._sql).toContain('"Fresh"');
+    expect(widget._sql).toContain('"Severely Late"');
+    expect(widget.display?.conditionalColor).toBe('red');
+    expect(widget.display?.valueFormat).toBe('currency');
   });
 
   test('resolves SLA by geography to a real geography-grained chart', async () => {

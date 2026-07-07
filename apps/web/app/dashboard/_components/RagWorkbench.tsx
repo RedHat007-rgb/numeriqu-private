@@ -1,16 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion, AnimatePresence } from "framer-motion";
 import { ApiError } from "../../../lib/api";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 import { cn } from "../../../components/ui/cn";
+import { StatusPill } from "../../../components/ui/StatusPill";
 import type { ChatSessionSummary } from "../../../lib/api/types";
 import {
-  Sparkles,
+  ArrowLeft,
+  LayoutDashboard,
   Send,
   Loader2,
   Plus,
@@ -276,12 +278,117 @@ function MessageBubble({
   );
 }
 
+function PrismComingSoonOverlay({
+  onGoBack,
+  onGoHome,
+}: {
+  onGoBack: () => void;
+  onGoHome: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center px-4 py-6 sm:px-6">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-2xl" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(70,126,255,0.18),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(43,124,255,0.12),transparent_26%)]" />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.22, ease: "easeOut" }}
+        className="relative w-full max-w-4xl overflow-hidden rounded-[28px] border border-white/10 bg-bg-card/92 shadow-2xl shadow-black/45 ring-1 ring-white/5"
+      >
+        <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#2b7cff_0%,#79a9ff_50%,#2b7cff_100%)]" />
+        <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="border-b border-white/8 p-6 sm:p-8 lg:border-b-0 lg:border-r lg:border-white/8">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex size-12 items-center justify-center rounded-2xl bg-accent-blue/10 ring-1 ring-accent-blue/20">
+                <BookOpen size={22} className="text-accent-blue" />
+              </div>
+              <StatusPill tone="neutral" withDot={false} className="px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]">
+                Coming soon
+              </StatusPill>
+            </div>
+
+            <h2 className="mt-5 max-w-lg font-display text-3xl font-bold tracking-tight text-text-primary sm:text-4xl">
+              Prism is almost here.
+            </h2>
+            <p className="mt-4 max-w-xl text-sm leading-7 text-text-muted sm:text-base">
+              We’re shaping Prism into a focused evidence workspace for finance. For now, the product is still under construction, so this area stays locked while we finish it.
+            </p>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              {[
+                "Cited answers from live data",
+                "Fast navigation back to workspace",
+                "A cleaner, guided launch screen",
+                "Prism first, clutter later",
+              ].map((item) => (
+                <div
+                  key={item}
+                  className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm font-medium text-text-primary ring-1 ring-white/5"
+                >
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col justify-between gap-6 bg-white/[0.03] p-6 sm:p-8">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-text-muted">
+                Launch status
+              </p>
+              <div className="mt-4 rounded-3xl border border-white/8 bg-bg-surface/55 p-4 ring-1 ring-white/5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-text-primary">Prism</span>
+                  <span className="rounded-full bg-accent-blue/12 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-accent-blue">
+                    Building
+                  </span>
+                </div>
+                <div className="mt-4 space-y-3">
+                  <div className="h-3 rounded-full bg-white/8">
+                    <div className="h-3 w-[38%] rounded-full bg-[linear-gradient(90deg,#2b7cff,#79a9ff)]" />
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="h-16 rounded-2xl border border-white/8 bg-white/[0.03]" />
+                    <div className="h-16 rounded-2xl border border-white/8 bg-white/[0.03]" />
+                    <div className="h-16 rounded-2xl border border-white/8 bg-white/[0.03]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={onGoBack}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-default bg-bg-surface px-4 py-3 text-sm font-semibold text-text-primary transition-colors hover:bg-bg-elevated/70"
+              >
+                <ArrowLeft size={16} />
+                Go back
+              </button>
+              <button
+                type="button"
+                onClick={onGoHome}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent-blue px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-accent-blue/90"
+              >
+                <LayoutDashboard size={16} />
+                Back to dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // ─── RagWorkbench ─────────────────────────────────────────────────────────────
 
 export function RagWorkbench() {
+  const router = useRouter();
   const { rag, loading } = useNumeriquApi();
   const searchParams = useSearchParams();
   const autoAskRef = useRef(false);
+  const showComingSoon = true;
 
   // Sidebar
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
@@ -438,139 +545,146 @@ export function RagWorkbench() {
   const visibleMessages = messages.filter((m) => m.role !== "system");
 
   return (
-    <div className="surface-card flex h-full overflow-hidden p-0">
-      {/* ── Col 1: History Sidebar ── */}
-      <SessionSidebar
-        sessions={sessions}
-        activeSessionId={sessionId}
-        onSelectSession={(id) => void handleSelectSession(id)}
-        onNewSession={handleNewSession}
-        isLoading={sessionsLoading}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-      />
+    <div className="relative surface-card flex h-full overflow-hidden p-0">
+      <div className={cn("flex h-full w-full overflow-hidden", showComingSoon && "blur-[2px] saturate-75")}>
+        {/* ── Col 1: History Sidebar ── */}
+        <SessionSidebar
+          sessions={sessions}
+          activeSessionId={sessionId}
+          onSelectSession={(id) => void handleSelectSession(id)}
+          onNewSession={handleNewSession}
+          isLoading={sessionsLoading}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+        />
 
-      {/* ── Col 2: Chat ── */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-default px-4 py-3">
-          <div className="flex items-center gap-2">
-            <BookOpen size={13} className="text-accent-blue" />
-            <span className="text-xs font-bold text-text-primary">Prism</span>
-          </div>
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider",
-              isStreaming ? "bg-accent-blue/12 text-accent-blue" : "bg-bg-elevated text-text-muted",
-            )}
-          >
-            {isStreaming ? "thinking" : "ready"}
-          </span>
-        </div>
-
-        {/* Messages */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
-          {!hasConversation ? (
-            <WelcomeScreen />
-          ) : (
-            <div className="space-y-4">
-              <AnimatePresence initial={false}>
-                {visibleMessages.map((message, index) => (
-                  <MessageBubble
-                    key={index}
-                    message={message}
-                    isStreaming={isStreaming}
-                    isLast={index === visibleMessages.length - 1}
-                    statusMsg={statusMsg}
-                  />
-                ))}
-              </AnimatePresence>
+        {/* ── Col 2: Chat ── */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-default px-4 py-3">
+            <div className="flex items-center gap-2">
+              <BookOpen size={13} className="text-accent-blue" />
+              <span className="text-xs font-bold text-text-primary">Prism</span>
+              <StatusPill tone="neutral" withDot={false} className="px-2 py-0.5 text-[10px] uppercase tracking-[0.18em]">
+                Coming soon
+              </StatusPill>
             </div>
-          )}
-        </div>
-
-        {/* Error */}
-        <AnimatePresence>
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              className="mx-3 mb-2 flex items-start justify-between gap-2 rounded-xl border border-feedback-danger/25 bg-feedback-danger/8 px-3 py-2 text-xs text-feedback-danger"
-            >
-              <span className="flex-1">{error}</span>
-              <button
-                onClick={() => setError(null)}
-                className="shrink-0 text-feedback-danger/60 hover:text-feedback-danger"
-              >
-                ✕
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-      {/* Input */}
-      <div className="border-t border-default p-3">
-        <AnimatePresence>
-          {pendingClarification && !isStreaming ? (
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
-              className="mb-2 rounded-xl border border-accent-blue/20 bg-accent-blue/6 p-3"
-            >
-              <p className="text-xs font-semibold text-text-primary">{pendingClarification.question}</p>
-              {pendingClarification.reason ? (
-                <p className="mt-1 text-[11px] text-text-muted">{pendingClarification.reason}</p>
-              ) : null}
-              {pendingClarification.options.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {pendingClarification.options.map((opt) => (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      onClick={() => void ask(opt.value)}
-                      className="rounded-full bg-bg-elevated px-3 py-1 text-[11px] font-semibold text-text-secondary ring-1 ring-default transition-colors hover:bg-bg-elevated/70 hover:text-text-primary"
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              <p className="mt-2 text-[10px] text-text-muted">You can also type your answer and press send.</p>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void ask(input);
-            }}
-          >
-            <input
-              ref={inputRef}
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              disabled={isStreaming}
-              placeholder="Ask about revenue, burn rate, overdue invoices, cash flow..."
-              className="flex-1 rounded-xl border border-default bg-bg-surface/70 px-4 py-2.5 text-sm text-text-primary outline-none transition-colors focus:border-accent-blue/50 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || isStreaming}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-blue text-white shadow-md transition-all hover:bg-accent-blue/90 disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              {isStreaming ? (
-                <Loader2 size={15} className="animate-spin" />
-              ) : (
-                <Send size={15} />
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                isStreaming ? "bg-accent-blue/12 text-accent-blue" : "bg-bg-elevated text-text-muted",
               )}
-            </button>
-          </form>
+            >
+              {isStreaming ? "thinking" : "ready"}
+            </span>
+          </div>
+
+          {/* Messages */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+            {!hasConversation ? (
+              <WelcomeScreen />
+            ) : (
+              <div className="space-y-4">
+                <AnimatePresence initial={false}>
+                  {visibleMessages.map((message, index) => (
+                    <MessageBubble
+                      key={index}
+                      message={message}
+                      isStreaming={isStreaming}
+                      isLast={index === visibleMessages.length - 1}
+                      statusMsg={statusMsg}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
+
+          {/* Error */}
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                className="mx-3 mb-2 flex items-start justify-between gap-2 rounded-xl border border-feedback-danger/25 bg-feedback-danger/8 px-3 py-2 text-xs text-feedback-danger"
+              >
+                <span className="flex-1">{error}</span>
+                <button
+                  onClick={() => setError(null)}
+                  className="shrink-0 text-feedback-danger/60 hover:text-feedback-danger"
+                >
+                  ✕
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Input */}
+          <div className="border-t border-default p-3">
+            <AnimatePresence>
+              {pendingClarification && !isStreaming ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 6 }}
+                  className="mb-2 rounded-xl border border-accent-blue/20 bg-accent-blue/6 p-3"
+                >
+                  <p className="text-xs font-semibold text-text-primary">{pendingClarification.question}</p>
+                  {pendingClarification.reason ? (
+                    <p className="mt-1 text-[11px] text-text-muted">{pendingClarification.reason}</p>
+                  ) : null}
+                  {pendingClarification.options.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {pendingClarification.options.map((opt) => (
+                        <button
+                          key={opt.label}
+                          type="button"
+                          onClick={() => void ask(opt.value)}
+                          className="rounded-full bg-bg-elevated px-3 py-1 text-[11px] font-semibold text-text-secondary ring-1 ring-default transition-colors hover:bg-bg-elevated/70 hover:text-text-primary"
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="mt-2 text-[10px] text-text-muted">You can also type your answer and press send.</p>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void ask(input);
+              }}
+            >
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={isStreaming}
+                placeholder="Ask about revenue, burn rate, overdue invoices, cash flow..."
+                className="flex-1 rounded-xl border border-default bg-bg-surface/70 px-4 py-2.5 text-sm text-text-primary outline-none transition-colors focus:border-accent-blue/50 disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || isStreaming}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-blue text-white shadow-md transition-all hover:bg-accent-blue/90 disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                {isStreaming ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+              </button>
+            </form>
+          </div>
         </div>
       </div>
+      {showComingSoon ? (
+        <PrismComingSoonOverlay
+          onGoBack={() => router.back()}
+          onGoHome={() => router.push("/dashboard")}
+        />
+      ) : null}
     </div>
   );
 }

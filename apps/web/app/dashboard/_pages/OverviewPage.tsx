@@ -14,8 +14,6 @@ import { useDashboardPreferences } from "../_hooks/dashboardPreferences";
 import { useOverviewDashboardView } from "../_hooks/useOverviewDashboardView";
 import {
   CfoFocusCard,
-  makeCashDisciplineItems,
-  makeClientConcentrationItems,
   makeServiceLevelItems,
 } from "../_components/overview/CfoFocusCard";
 import {
@@ -690,16 +688,6 @@ export function OverviewPage() {
             detail={`${formatMoneyWithCurrency(dashboard.venture.burnRate, prefs.currencyDisplay)} monthly operating load`}
           />
         );
-      case "cash-discipline":
-        return (
-          <CfoFocusCard
-            eyebrow="Treasury radar"
-            title="How quickly revenue turns into usable cash"
-            items={makeCashDisciplineItems(dashboard, prefs.currencyDisplay)}
-            glossary={glossary}
-            interactive={!isEditing}
-          />
-        );
       case "working-capital":
         return (
           <MetricTile
@@ -709,16 +697,6 @@ export function OverviewPage() {
             eyebrow="Working Capital"
             value={formatMoneyWithCurrency(dashboard.cfo?.workingCapital ?? 0, prefs.currencyDisplay)}
             detail={`${formatMoneyWithCurrency(dashboard.cfo?.cashBalance ?? 0, prefs.currencyDisplay)} cash balance`}
-          />
-        );
-      case "client-concentration":
-        return (
-          <CfoFocusCard
-            eyebrow="Concentration risk"
-            title="Where client dependence can blindside the board"
-            items={makeClientConcentrationItems(dashboard, prefs.currencyDisplay)}
-            glossary={glossary}
-            interactive={!isEditing}
           />
         );
       case "service-levels":

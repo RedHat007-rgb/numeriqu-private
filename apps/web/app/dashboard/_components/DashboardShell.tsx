@@ -119,25 +119,41 @@ function NavLink({
       href={href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
+        "group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
         collapsed && "justify-center px-2",
         active
           ? "bg-accent-blue/10 text-text-primary ring-1 ring-accent-blue/25"
           : "text-text-secondary hover:bg-bg-elevated/60 hover:text-text-primary",
       )}
     >
-      <div className={cn(
-        "flex size-8 items-center justify-center rounded-lg ring-1 transition-colors",
-        active
-          ? "bg-accent-blue/10 ring-accent-blue/25 text-accent-blue"
-          : "bg-bg-surface ring-default text-text-muted group-hover:text-text-primary",
-      )}>
+      <div
+        className={cn(
+          "flex size-8 items-center justify-center rounded-lg ring-1 transition-colors",
+          active
+            ? "bg-accent-blue/10 ring-accent-blue/25 text-accent-blue"
+            : "bg-bg-surface ring-default text-text-muted group-hover:text-text-primary",
+        )}
+      >
         <Icon className="size-4" />
       </div>
       {!collapsed ? (
-        <div className="min-w-0 flex-1">
-          <span className="block truncate font-semibold">{label}</span>
-        </div>
+        label === "Prism" ? (
+          <div className="min-w-0 flex-1 pr-16">
+            <span className="block truncate font-semibold">{label}</span>
+            <span
+              className={cn(
+                "absolute right-2 top-1.5 whitespace-nowrap rounded-full px-1.5 py-0.5",
+                "bg-text-muted/10 text-[8px] font-bold uppercase leading-none tracking-[0.14em] text-text-muted ring-1 ring-text-muted/15",
+              )}
+            >
+              Coming soon
+            </span>
+          </div>
+        ) : (
+          <div className="min-w-0 flex-1">
+            <span className="block truncate font-semibold">{label}</span>
+          </div>
+        )
       ) : null}
     </Link>
   );

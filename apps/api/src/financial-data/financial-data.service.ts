@@ -598,25 +598,43 @@ export class FinancialDataService {
   /**
    * Revenue by month — time series per org for trend analysis (Gold Layer only)
    */
-  private timeWhere(range: any, dateColumn: string): string {
+  /**
+   * SQL anchor for the EBPO dataset's latest available month. Relative windows
+   * ("last N months", MTD/QTD/YTD) must be measured from the newest data — the
+   * dataset is historical (ends Dec 2025), so anchoring to now() (a later date)
+   * returns zero rows. Every EBPO query binds {tenantId:String}/{orgId:String},
+   * so this correlated subquery is valid wherever it is embedded. Mirrors the
+   * pattern already used by chart-spec-ebpo.ts.
+   */
+  private ebpoLatestAnchor(): string {
+    return `(SELECT max(period_date) FROM ${this.dbName}.v_ebpo_kpi_monthly WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String})`;
+  }
+
+  /**
+   * Build a relative-date WHERE fragment. `anchor` is the SQL expression the
+   * window is measured back from — pass a data-anchored expression (see
+   * {@link ebpoLatestAnchor}) for historical datasets; defaults to now().
+   */
+  private timeWhere(range: any, dateColumn: string, anchor: string = 'now()'): string {
     if (!range || range.kind === 'ALL_TIME') return '';
-    if (range.kind === 'MTD') return `AND ${dateColumn} >= toStartOfMonth(now())`;
-    if (range.kind === 'QTD') return `AND ${dateColumn} >= toStartOfQuarter(now())`;
-    if (range.kind === 'YTD') return `AND ${dateColumn} >= toStartOfYear(now())`;
+    if (range.kind === 'MTD') return `AND ${dateColumn} >= toStartOfMonth(${anchor})`;
+    if (range.kind === 'QTD') return `AND ${dateColumn} >= toStartOfQuarter(${anchor})`;
+    if (range.kind === 'YTD') return `AND ${dateColumn} >= toStartOfYear(${anchor})`;
     if (range.kind === 'LAST_N_DAYS') {
-      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.days ?? 1))} DAY)`;
+      return `AND ${dateColumn} >= (${anchor} - INTERVAL ${Math.max(1, Math.floor(range.days ?? 1))} DAY)`;
     }
     if (range.kind === 'LAST_N_WEEKS') {
-      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.weeks ?? 1))} WEEK)`;
+      return `AND ${dateColumn} >= (${anchor} - INTERVAL ${Math.max(1, Math.floor(range.weeks ?? 1))} WEEK)`;
     }
     if (range.kind === 'LAST_N_MONTHS') {
-      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.months ?? 1))} MONTH)`;
+      // Whole calendar months including the anchor month: N=3 anchored to Dec → Oct, Nov, Dec.
+      return `AND ${dateColumn} >= addMonths(toStartOfMonth(${anchor}), -${Math.max(1, Math.floor(range.months ?? 1)) - 1})`;
     }
     if (range.kind === 'LAST_N_QUARTERS') {
-      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.quarters ?? 1)) * 3} MONTH)`;
+      return `AND ${dateColumn} >= addMonths(toStartOfMonth(${anchor}), -${Math.max(1, Math.floor(range.quarters ?? 1)) * 3 - 1})`;
     }
     if (range.kind === 'LAST_N_YEARS') {
-      return `AND ${dateColumn} >= (now() - INTERVAL ${Math.max(1, Math.floor(range.years ?? 1))} YEAR)`;
+      return `AND ${dateColumn} >= (${anchor} - INTERVAL ${Math.max(1, Math.floor(range.years ?? 1))} YEAR)`;
     }
     return '';
   }
@@ -632,7 +650,8 @@ export class FinancialDataService {
     const orgName =
       String((activeConns[0]?.metadata as Record<string, unknown>)?.orgName ?? '') ||
       'EBPO Enterprise';
-    const rangeFilter = this.timeWhere(range, 'period_date');
+    const anchor = this.ebpoLatestAnchor();
+    const rangeFilter = this.timeWhere(range, 'period_date', anchor);
 
     try {
       const [summaryResult, latestResult, arResult, apResult, clientResult, unitResult] =
@@ -765,7 +784,7 @@ export class FinancialDataService {
                AND client.client_key = revenue.client_key
               WHERE revenue.tenant_id = {tenantId:String}
                 AND revenue.org_id = {orgId:String}
-                ${this.timeWhere(range, 'dates.date')}
+                ${this.timeWhere(range, 'dates.date', anchor)}
               GROUP BY client_name
               ORDER BY total_revenue_usd DESC
               LIMIT 1
@@ -787,7 +806,7 @@ export class FinancialDataService {
                AND dates.date_key = revenue.date_key
               WHERE revenue.tenant_id = {tenantId:String}
                 AND revenue.org_id = {orgId:String}
-                ${this.timeWhere(range, 'dates.date')}
+                ${this.timeWhere(range, 'dates.date', anchor)}
               GROUP BY business_unit
               ORDER BY total_revenue_usd DESC
               LIMIT 1
@@ -960,8 +979,9 @@ export class FinancialDataService {
     };
 
     const params = { tenantId, orgId };
-    const monthWhere = this.timeWhere(range, 'period_date');
-    const factDateWhere = this.timeWhere(range, 'dates.date');
+    const anchor = this.ebpoLatestAnchor();
+    const monthWhere = this.timeWhere(range, 'period_date', anchor);
+    const factDateWhere = this.timeWhere(range, 'dates.date', anchor);
 
     const runJson = async (query: string): Promise<any[]> => {
       const result = await this.clickhouse.query({
@@ -1134,7 +1154,7 @@ export class FinancialDataService {
   }
 
   private async getEbpoMonthlyKpiTrend(tenantId: string, orgId: string, range?: any): Promise<any[]> {
-    const time = this.timeWhere(range, 'period_date');
+    const time = this.timeWhere(range, 'period_date', this.ebpoLatestAnchor());
     const result = await this.clickhouse.query({
       query: `
         SELECT

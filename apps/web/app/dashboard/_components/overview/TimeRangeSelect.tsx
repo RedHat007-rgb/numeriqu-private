@@ -6,13 +6,14 @@ import { cn } from "../../../../components/ui/cn";
 
 type Option = { id: string; label: string; range: TimeRange };
 
+// Windows are anchored server-side to the latest available data month (not
+// today), so "Last 3 months" always lands on the most recent 3 months of data.
 const OPTIONS: Option[] = [
-  { id: "LAST_N_DAYS:30", label: "Last 30 days", range: { kind: "LAST_N_DAYS", days: 30 } },
-  { id: "LAST_N_DAYS:90", label: "Last 90 days", range: { kind: "LAST_N_DAYS", days: 90 } },
-  { id: "MTD", label: "Month to date", range: { kind: "MTD" } },
+  { id: "LAST_N_MONTHS:3", label: "Last 3 months", range: { kind: "LAST_N_MONTHS", months: 3 } },
+  { id: "LAST_N_MONTHS:6", label: "Last 6 months", range: { kind: "LAST_N_MONTHS", months: 6 } },
+  { id: "LAST_N_MONTHS:12", label: "Last 12 months", range: { kind: "LAST_N_MONTHS", months: 12 } },
   { id: "QTD", label: "Quarter to date", range: { kind: "QTD" } },
   { id: "YTD", label: "Year to date", range: { kind: "YTD" } },
-  { id: "LAST_N_MONTHS:12", label: "Last 12 months", range: { kind: "LAST_N_MONTHS", months: 12 } },
   { id: "ALL_TIME", label: "All time", range: { kind: "ALL_TIME" } },
 ];
 

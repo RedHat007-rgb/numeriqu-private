@@ -550,8 +550,14 @@ export function OverviewPage() {
         : deriveInsights(dashboard.kpis, prefs.currencyDisplay),
     [dashboard.insights, dashboard.kpis, prefs.currencyDisplay],
   );
+  // Fingerprint the agenda by the STABLE identity of its insights (id + type),
+  // never by createdAt (regenerated on every fetch) or the numeric description
+  // (changes with the selected range). Otherwise every refresh / date change
+  // produces a "new" fingerprint and the agenda re-opens — only the numbers
+  // should change, not the modal. A genuinely new *kind* of insight (new id)
+  // still changes the fingerprint and re-surfaces the agenda, as intended.
   const agendaFingerprint = useMemo(
-    () => agendaInsights.slice(0, 5).map((insight) => `${insight.id}:${insight.createdAt}`).join("|"),
+    () => agendaInsights.slice(0, 5).map((insight) => `${insight.id}:${insight.type}`).join("|"),
     [agendaInsights],
   );
 

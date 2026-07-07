@@ -7,7 +7,10 @@ import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 export type LoadState = "idle" | "loading" | "ready" | "error";
 
 const RANGE_STORAGE_KEY = "nq.dashboard.range";
-const DEFAULT_RANGE: TimeRange = { kind: "LAST_N_DAYS", days: 90 };
+// Data is historical (ends Dec 2025) and windows anchor to the latest data
+// month server-side, so default to the most recent 3 months rather than a
+// day-count relative to today (which would fall outside the data).
+const DEFAULT_RANGE: TimeRange = { kind: "LAST_N_MONTHS", months: 3 };
 
 function makeFallbackDashboard(): DashboardResponse {
   return {
@@ -64,8 +67,9 @@ function safeParseRange(value: string | null): TimeRange | null {
     const kind = (parsed as any).kind as TimeRange["kind"];
 
     if (kind === "ALL_TIME" || kind === "MTD" || kind === "QTD" || kind === "YTD") return { kind };
-    if (kind === "LAST_N_DAYS" && Number.isFinite((parsed as any).days)) return { kind, days: Number((parsed as any).days) };
-    if (kind === "LAST_N_WEEKS" && Number.isFinite((parsed as any).weeks)) return { kind, weeks: Number((parsed as any).weeks) };
+    // Legacy day/week windows are no longer offered (imprecise on monthly data) —
+    // drop them so callers fall back to DEFAULT_RANGE (last 3 months).
+    if (kind === "LAST_N_DAYS" || kind === "LAST_N_WEEKS") return null;
     if (kind === "LAST_N_MONTHS" && Number.isFinite((parsed as any).months)) return { kind, months: Number((parsed as any).months) };
     if (kind === "LAST_N_QUARTERS" && Number.isFinite((parsed as any).quarters)) return { kind, quarters: Number((parsed as any).quarters) };
     if (kind === "LAST_N_YEARS" && Number.isFinite((parsed as any).years)) return { kind, years: Number((parsed as any).years) };
@@ -110,15 +114,17 @@ export function useDashboard() {
 
   const updateRange = useCallback(
     (next: TimeRange) => {
+      // Only update state + persist. The effect below refetches whenever `range`
+      // changes, so calling refresh() here too would fire a duplicate request
+      // (and a double "Refreshing…" flash) for every date selection.
       setRange(next);
       try {
         window.localStorage.setItem(RANGE_STORAGE_KEY, JSON.stringify(next));
       } catch {
         // ignore
       }
-      void refresh(next);
     },
-    [refresh],
+    [],
   );
 
   useEffect(() => {

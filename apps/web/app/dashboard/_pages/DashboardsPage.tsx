@@ -53,6 +53,7 @@ import { EmptyState } from "../../../components/ui/EmptyState";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 import { ApiError, type WorkspaceDashboardSummary } from "../../../lib/api";
 import { cn } from "../../../components/ui/cn";
+import { toFiniteNumber } from "../_lib/parse-number";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,17 +67,6 @@ type ZoomChartState = {
 } | null;
 
 // ─── Series Key Inference ─────────────────────────────────────────────────────
-
-function toFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const n = Number(trimmed);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
 
 function hasFiniteValueKey(rows: ChartData, key: string): boolean {
   return rows.some((row) => toFiniteNumber((row as any)?.[key]) !== null);
@@ -100,6 +90,14 @@ function inferNumericSeriesKeys(rows: ChartData): string[] {
     .filter(([, total]) => total > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([k]) => k);
+}
+
+function inferHeatmapSeriesKeys(rows: ChartData): string[] {
+  const seriesKeys = inferNumericSeriesKeys(rows).filter((key) => key !== "total");
+  if (seriesKeys.length > 0) return seriesKeys;
+  if (hasFiniteValueKey(rows, "value")) return ["value"];
+  if (hasFiniteValueKey(rows, "total")) return ["total"];
+  return [];
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -710,7 +708,7 @@ function ChartRenderer({
 
   if (type === "heatmap" || type === "matrix") {
     const rows = data.filter(Boolean);
-    const colKeys = inferNumericSeriesKeys(rows).filter((k) => k !== "total");
+    const colKeys = inferHeatmapSeriesKeys(rows);
     const rowAxis = String(grouping ?? "").split("_")[0] || "row";
     const prettyAxis = (value: string) =>
       value
@@ -723,7 +721,7 @@ function ChartRenderer({
       Math.round(from + (to - from) * Math.max(0, Math.min(1, t)));
     const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
     const maxVal = Math.max(
-      ...rows.flatMap((row) => colKeys.map((key) => Math.abs(Number((row as any)[key]) || 0))),
+      ...rows.flatMap((row) => colKeys.map((key) => Math.abs(toFiniteNumber((row as any)[key]) ?? 0))),
       1,
     );
     const conditionalThreshold =
@@ -755,12 +753,13 @@ function ChartRenderer({
       return { bg: rgb(r, g, b), fg: intensity < 0.25 ? "#ffffff" : "#111827" };
     };
     const rowTotals = rows.map((row) =>
-      colKeys.reduce((sum, key) => sum + (Number((row as any)[key]) || 0), 0),
+      colKeys.reduce((sum, key) => sum + (toFiniteNumber((row as any)[key]) ?? 0), 0),
     );
     const colTotals = colKeys.map((key) =>
-      rows.reduce((sum, row) => sum + (Number((row as any)[key]) || 0), 0),
+      rows.reduce((sum, row) => sum + (toFiniteNumber((row as any)[key]) ?? 0), 0),
     );
     const grandTotal = rowTotals.reduce((sum, value) => sum + value, 0);
+    const showTotals = colKeys.length > 1;
 
     // Dynamic "above average" conditional highlight (column / row / overall mean).
     const conditionalMode = display?.conditionalThresholdMode ?? null;
@@ -810,16 +809,18 @@ function ChartRenderer({
                   {prettyAxis(key)}
                 </th>
               ))}
-              <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
-                Total
-              </th>
+              {showTotals && (
+                <th className="rounded-md border border-default bg-bg-card px-3 py-2 text-center text-[11px] font-semibold text-text-muted shadow-sm">
+                  Total
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
             {rows.map((row, rowIndex) => {
               const rowLabel = String((row as any).name ?? `Row ${rowIndex + 1}`);
               const rowAvg = colKeys.length
-                ? colKeys.reduce((s, k) => s + (Number((row as any)[k]) || 0), 0) /
+                ? colKeys.reduce((s, k) => s + (toFiniteNumber((row as any)[k]) ?? 0), 0) /
                   colKeys.length
                 : 0;
               return (
@@ -828,7 +829,7 @@ function ChartRenderer({
                     {rowLabel}
                   </th>
                   {colKeys.map((key) => {
-                    const value = Number((row as any)[key]) || 0;
+                    const value = toFiniteNumber((row as any)[key]) ?? 0;
                     const theme = cellTheme(value, shouldHighlight(value, key, rowAvg));
                     return (
                       <td
@@ -841,28 +842,32 @@ function ChartRenderer({
                       </td>
                     );
                   })}
-                  <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
-                    {amount(rowTotals[rowIndex] ?? 0)}
-                  </td>
+                  {showTotals && (
+                    <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                      {amount(rowTotals[rowIndex] ?? 0)}
+                    </td>
+                  )}
                 </tr>
               );
             })}
-            <tr>
-              <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-bold text-text-primary shadow-sm">
-                Total
-              </th>
-              {colTotals.map((value, index) => (
-                <td
-                  key={colKeys[index] ?? index}
-                  className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm"
-                >
-                  {amount(value)}
+            {showTotals && (
+              <tr>
+                <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-bold text-text-primary shadow-sm">
+                  Total
+                </th>
+                {colTotals.map((value, index) => (
+                  <td
+                    key={colKeys[index] ?? index}
+                    className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm"
+                  >
+                    {amount(value)}
+                  </td>
+                ))}
+                <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
+                  {amount(grandTotal)}
                 </td>
-              ))}
-              <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
-                {amount(grandTotal)}
-              </td>
-            </tr>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

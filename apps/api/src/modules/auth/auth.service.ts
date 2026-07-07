@@ -22,6 +22,7 @@ const DEMO_EMAILS = new Set([
 
 const SAMPLE_ORG_SLUG = 'sample-company-2024';
 const SAMPLE_ORG_NAME = 'Sample Company 2024';
+const DEMO_DEFAULT_ORG_SLUG = (process.env.DEMO_DEFAULT_ORG_SLUG ?? 'enterprise-bpo').trim();
 
 // Additional orgs demo users may switch into, beyond the shared sample org.
 // Demo users get active ADMIN membership in each of these (when the org exists)
@@ -155,7 +156,7 @@ export class AuthService {
     const extraOrgs = DEMO_EXTRA_ORG_SLUGS.length
       ? await prisma.organization.findMany({
           where: { slug: { in: DEMO_EXTRA_ORG_SLUGS } },
-          select: { id: true },
+          select: { id: true, slug: true, name: true },
         })
       : [];
     for (const org of extraOrgs) {
@@ -213,8 +214,12 @@ export class AuthService {
       path: '/',
     });
 
+    // Prefer the enterprise demo workspace when it exists, otherwise fall back to the sample org.
+    const preferredDemoOrg =
+      extraOrgs.find((org) => org.slug === DEMO_DEFAULT_ORG_SLUG) ?? sampleOrg;
+
     // Also set the selected org cookie so the UI is scoped immediately.
-    response.cookie('nq_organization_id', encodeURIComponent(sampleOrg.id), {
+    response.cookie('nq_organization_id', encodeURIComponent(preferredDemoOrg.id), {
       httpOnly: false,
       secure,
       sameSite: 'lax',
@@ -222,8 +227,8 @@ export class AuthService {
       path: '/',
     });
 
-    this.logger.log(`[Demo] ${normalized} signed in → org ${sampleOrg.id}`);
-    return { user: session.user, orgId: sampleOrg.id };
+    this.logger.log(`[Demo] ${normalized} signed in → org ${preferredDemoOrg.id} (${preferredDemoOrg.slug})`);
+    return { user: session.user, orgId: preferredDemoOrg.id };
   }
 
   async verifyOtpAndCreateSession(params: {

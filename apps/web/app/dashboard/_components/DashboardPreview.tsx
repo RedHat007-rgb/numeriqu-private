@@ -55,6 +55,7 @@ import { ProvenanceDrawer } from "./ProvenanceDrawer";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ErrorBanner } from "../../../components/ui/ErrorBanner";
 import { cn } from "../../../components/ui/cn";
+import { toFiniteNumber } from "../_lib/parse-number";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -229,17 +230,6 @@ const PIE_COLORS = [
 
 // ─── Series Key Inference ─────────────────────────────────────────────────────
 
-function toFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const n = Number(trimmed);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
 function hasFiniteValueKey(rows: DataRow[], key: string): boolean {
   return rows.some((row) => toFiniteNumber((row as any)?.[key]) !== null);
 }
@@ -264,6 +254,14 @@ function inferNumericSeriesKeys(rows: DataRow[]): string[] {
     .filter(([, total]) => total > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([k]) => k);
+}
+
+function inferHeatmapSeriesKeys(rows: DataRow[]): string[] {
+  const seriesKeys = inferNumericSeriesKeys(rows).filter((key) => key !== "total");
+  if (seriesKeys.length > 0) return seriesKeys;
+  if (hasFiniteValueKey(rows, "value")) return ["value"];
+  if (hasFiniteValueKey(rows, "total")) return ["total"];
+  return [];
 }
 
 function toSeriesKey(value: unknown): string {
@@ -4135,9 +4133,7 @@ export function renderChart(
   // ── heatmap (general grid: rows = series, columns = categories) ────────────
   if (chart.type === "heatmap" || chart.type === "matrix") {
     const rows = data.filter(Boolean);
-    const colKeys =
-      inferNumericSeriesKeys(rows).filter((k) => k !== "total") ||
-      [];
+    const colKeys = inferHeatmapSeriesKeys(rows);
     // Row-axis label for the corner header. `grouping` is often a placeholder for
     // dynamic EBPO charts ("dynamic"/"query"), which would mislabel the month/category
     // column as "Query". Prefer the real spec dimension, then xAxisLabel, and only fall
@@ -4151,7 +4147,7 @@ export function renderChart(
     const specMeasures = (chart.config as { spec?: { measures?: string[] } }).spec?.measures;
     const multiMeasureColumns = Array.isArray(specMeasures) && specMeasures.length > 1;
     const forceTotals = chart.config.display?.showTotals === true;
-    const showTotals = !multiMeasureColumns || forceTotals;
+    const showTotals = colKeys.length > 1 && (!multiMeasureColumns || forceTotals);
     const groupingToken = String(chart.config.grouping ?? "").split("_")[0] ?? "";
     const placeholder = /^(dynamic|query|row|name|)$/i;
     const rowAxis =
@@ -4195,7 +4191,7 @@ export function renderChart(
         return useRiskPalette ? { bg: "#dc2626", fg: "#ffffff" } : { bg: "#16a34a", fg: "#ffffff" };
       }
       const maxVal = Math.max(
-        ...rows.flatMap((row) => colKeys.map((key) => Math.abs(Number((row as any)[key]) || 0))),
+        ...rows.flatMap((row) => colKeys.map((key) => Math.abs(toFiniteNumber((row as any)[key]) ?? 0))),
         1,
       );
       const intensity = Math.min(1, Math.abs(value) / maxVal);
@@ -4379,24 +4375,24 @@ export function renderChart(
                 </tr>
               );
             })}
-            <tr>
-              <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-bold text-text-primary shadow-sm">
-                {summaryHeader}
-              </th>
-              {colTotals.map((value, index) => (
-                <td
-                  key={colKeys[index] ?? index}
-                  className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm"
-                >
-                  {amount(value)}
-                </td>
-              ))}
-              {showTotals && (
+            {showTotals && (
+              <tr>
+                <th className="sticky left-0 z-10 rounded-md border border-default bg-bg-card px-3 py-2 text-left text-[11px] font-bold text-text-primary shadow-sm">
+                  {summaryHeader}
+                </th>
+                {colTotals.map((value, index) => (
+                  <td
+                    key={colKeys[index] ?? index}
+                    className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm"
+                  >
+                    {amount(value)}
+                  </td>
+                ))}
                 <td className="rounded-md border border-default bg-bg-elevated px-3 py-3 text-center text-[12px] font-bold text-text-primary shadow-sm">
                   {amount(grandTotal)}
                 </td>
-              )}
-            </tr>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

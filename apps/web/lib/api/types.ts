@@ -114,6 +114,8 @@ export type DashboardResponse = {
     totalExpenses: number;
     netProfit: number;
     profitMargin: number;
+    grossProfit?: number;
+    grossMarginPct?: number;
     totalInvoices: number;
     avgInvoiceValue: number;
     openInvoiceAmount?: number;
@@ -148,12 +150,17 @@ export type DashboardResponse = {
     topClientName?: string | null;
     topClientRevenue?: number;
     topClientConcentrationPct?: number;
+    smallestClientName?: string | null;
+    smallestClientRevenue?: number;
+    smallestClientConcentrationPct?: number;
     topBusinessUnitName?: string | null;
     topBusinessUnitMarginPct?: number;
     businessUnits?: Array<{ name: string; revenue: number; cost: number; marginPct: number }>;
     costElements?: Array<{ name: string; value: number }>;
     headcountByDepartment?: Array<{ name: string; headcount: number; payroll: number }>;
     headcountByGeography?: Array<{ name: string; headcount: number }>;
+    smallestDepartment?: { name: string; headcount: number; payroll: number } | null;
+    smallestGeography?: { name: string; headcount: number } | null;
     deliveryCenters?: Array<{
       name: string;
       slaPct: number;
@@ -161,6 +168,10 @@ export type DashboardResponse = {
       csatPct: number;
       callsHandled: number;
     }>;
+    /** Latest-month mean handle time (minutes) across delivery centers. */
+    avgHandleTimeMinutes?: number;
+    /** Latest-month total tickets resolved across delivery centers. */
+    ticketsResolved?: number;
     /** Distinct employees active within the selected range (full set, not top-6 rows). */
     workforceHeadcount?: number;
     /** Total payroll summed over the selected range. */

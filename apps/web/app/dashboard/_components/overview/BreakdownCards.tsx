@@ -86,12 +86,33 @@ export function RankedBreakdownCard({
           </div>
 
           {footer && footer.length > 0 ? (
-            <div className="mt-5 grid gap-3 border-t border-white/8 pt-4 md:grid-cols-3">
+            <div
+              className={cn(
+                "mt-5 grid gap-3 border-t border-white/8 pt-4",
+                footer.length >= 5
+                  ? "grid-cols-2 md:grid-cols-3 xl:grid-cols-5"
+                  : footer.length === 4
+                    ? "grid-cols-2 md:grid-cols-4"
+                    : "md:grid-cols-3",
+              )}
+            >
               {footer.map((stat) => (
-                <div key={stat.label} className="rounded-[1rem] border border-white/8 bg-white/[0.03] p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#86a7d0]">{stat.label}</p>
-                  <p className="mt-1 truncate text-lg font-bold text-white">{stat.value}</p>
-                  {stat.detail ? <p className="truncate text-xs text-[#9db4d8]">{stat.detail}</p> : null}
+                <div
+                  key={stat.label}
+                  className="flex h-full min-w-0 flex-col rounded-[1rem] border border-white/8 bg-white/[0.03] p-3"
+                >
+                  {/* Reserve two label lines so single- and two-line labels ("LARGEST TEAM"
+                      vs "SMALLEST TEAM") start their value at the same height. */}
+                  <p className="min-h-[2.4em] text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.18em] text-[#86a7d0]">
+                    {stat.label}
+                  </p>
+                  {/* Full name, wraps (and breaks long words) instead of overflowing the chip. */}
+                  <p className="mt-1 break-words text-base font-bold leading-tight text-white [overflow-wrap:anywhere]">
+                    {stat.value}
+                  </p>
+                  {/* mt-auto pins the number to the bottom so it aligns across all chips
+                      in the row (grid stretches every chip to equal height). */}
+                  {stat.detail ? <p className="mt-auto pt-1.5 text-xs text-[#9db4d8]">{stat.detail}</p> : null}
                 </div>
               ))}
             </div>
@@ -117,13 +138,24 @@ export function BusinessUnitBreakdownCard({
   dashboard: DashboardResponse;
   currency: string;
 }) {
+  // Full set ranked by revenue DESC. Bars show the top 6; top/bottom unit and
+  // best/worst margin are derived from ALL units so nothing hides below the cap.
   const units = dashboard.cfo?.businessUnits ?? [];
-  const max = maxOf(units.map((u) => u.revenue));
+  const barUnits = units.slice(0, 6);
+  const max = maxOf(barUnits.map((u) => u.revenue));
   const top = units[0];
+  const bottom = units.length > 1 ? units[units.length - 1] : null;
   const bestMargin = units.reduce<(typeof units)[number] | null>(
     (best, u) => (!best || u.marginPct > best.marginPct ? u : best),
     null,
   );
+  const worstMargin =
+    units.length > 1
+      ? units.reduce<(typeof units)[number] | null>(
+          (worst, u) => (!worst || u.marginPct < worst.marginPct ? u : worst),
+          null,
+        )
+      : null;
 
   return (
     <RankedBreakdownCard
@@ -131,7 +163,7 @@ export function BusinessUnitBreakdownCard({
       title="Where revenue and margin concentrate by business unit"
       icon={Building2}
       emptyLabel="No business-unit revenue in scope yet. Once EBPO revenue is synced, this card ranks each unit by revenue and gross margin."
-      items={units.map((u) => ({
+      items={barUnits.map((u) => ({
         name: u.name,
         valueLabel: formatMoneyWithCurrency(u.revenue, currency),
         subLabel: `${formatPercentDelta(u.marginPct / 100)} gross margin`,
@@ -142,11 +174,23 @@ export function BusinessUnitBreakdownCard({
         top
           ? [
               { label: "Top unit", value: top.name, detail: formatMoneyWithCurrency(top.revenue, currency) },
+              ...(bottom
+                ? [{ label: "Bottom unit", value: bottom.name, detail: formatMoneyWithCurrency(bottom.revenue, currency) }]
+                : []),
               {
                 label: "Best margin",
                 value: bestMargin ? bestMargin.name : "—",
                 detail: bestMargin ? formatPercentDelta(bestMargin.marginPct / 100) : undefined,
               },
+              ...(worstMargin
+                ? [
+                    {
+                      label: "Worst margin",
+                      value: worstMargin.name,
+                      detail: formatPercentDelta(worstMargin.marginPct / 100),
+                    },
+                  ]
+                : []),
               { label: "Units in scope", value: formatNumber(units.length) },
             ]
           : undefined
@@ -162,33 +206,46 @@ export function CostElementsCard({
   dashboard: DashboardResponse;
   currency: string;
 }) {
+  // Elements are the payroll composition (base salary, overtime, bonus, benefits),
+  // sorted by value DESC in the backend — so [0] is the largest and the last is the
+  // smallest. Their sum is total payroll, not delivery cost.
   const elements = dashboard.cfo?.costElements ?? [];
   const total = elements.reduce((sum, e) => sum + e.value, 0);
   const max = maxOf(elements.map((e) => e.value));
   const largest = elements[0];
+  const smallest = elements.length > 1 ? elements[elements.length - 1] : null;
 
   return (
     <RankedBreakdownCard
-      eyebrow="Cost structure"
-      title="Which cost elements consume the operating budget"
+      eyebrow="Payroll structure"
+      title="Which payroll elements consume the most operating budget"
       icon={Coins}
-      emptyLabel="No cost elements in scope yet. This card breaks total operating cost into total cost, base salary, overtime, bonus and benefits."
+      emptyLabel="No payroll elements in scope yet. This card breaks total payroll into base salary, overtime, bonus and benefits."
       items={elements.map((e) => ({
         name: e.name,
         valueLabel: formatMoneyWithCurrency(e.value, currency),
-        subLabel: total > 0 ? `${((e.value / total) * 100).toFixed(1)}% of cost` : undefined,
+        subLabel: total > 0 ? `${((e.value / total) * 100).toFixed(1)}% of payroll` : undefined,
         fraction: e.value / max,
         tone: e.name === "Overtime" ? "warning" : "brand",
       }))}
       footer={
         largest
           ? [
-              { label: "Total cost", value: formatMoneyWithCurrency(total, currency) },
+              { label: "Total payroll", value: formatMoneyWithCurrency(total, currency) },
               {
                 label: "Largest element",
                 value: largest.name,
-                detail: total > 0 ? `${((largest.value / total) * 100).toFixed(1)}% of cost` : undefined,
+                detail: total > 0 ? `${((largest.value / total) * 100).toFixed(1)}% of payroll` : undefined,
               },
+              ...(smallest
+                ? [
+                    {
+                      label: "Smallest element",
+                      value: smallest.name,
+                      detail: total > 0 ? `${((smallest.value / total) * 100).toFixed(1)}% of payroll` : undefined,
+                    },
+                  ]
+                : []),
               { label: "Elements", value: formatNumber(elements.length) },
             ]
           : undefined
@@ -214,6 +271,9 @@ export function WorkforceByDepartmentCard({
     dashboard.cfo?.workforcePayroll ?? depts.reduce((sum, d) => sum + d.payroll, 0);
   const max = maxOf(depts.map((d) => d.headcount));
   const top = depts[0];
+  // True smallest team over the full set (backend-supplied); falls back to the
+  // last visible row only if the backend didn't send it.
+  const smallest = dashboard.cfo?.smallestDepartment ?? depts[depts.length - 1] ?? null;
 
   return (
     <RankedBreakdownCard
@@ -224,7 +284,10 @@ export function WorkforceByDepartmentCard({
       items={depts.map((d) => ({
         name: d.name,
         valueLabel: `${formatNumber(d.headcount)} FTE`,
-        subLabel: `${formatMoneyWithCurrency(d.payroll, currency)} payroll`,
+        subLabel:
+          totalPayroll > 0
+            ? `${formatMoneyWithCurrency(d.payroll, currency)} payroll · ${((d.payroll / totalPayroll) * 100).toFixed(1)}% of total`
+            : `${formatMoneyWithCurrency(d.payroll, currency)} payroll`,
         fraction: d.headcount / max,
       }))}
       footer={
@@ -232,6 +295,9 @@ export function WorkforceByDepartmentCard({
           ? [
               { label: "Total headcount", value: `${formatNumber(totalHeadcount)} FTE` },
               { label: "Largest team", value: top.name, detail: `${formatNumber(top.headcount)} FTE` },
+              ...(smallest
+                ? [{ label: "Smallest team", value: smallest.name, detail: `${formatNumber(smallest.headcount)} FTE` }]
+                : []),
               { label: "Total payroll", value: formatMoneyWithCurrency(totalPayroll, currency) },
             ]
           : undefined
@@ -248,6 +314,9 @@ export function WorkforceByGeographyCard({ dashboard }: { dashboard: DashboardRe
   const countryCount = dashboard.cfo?.workforceCountries ?? geos.length;
   const max = maxOf(geos.map((g) => g.headcount));
   const top = geos[0];
+  // True smallest base over ALL countries (backend-supplied) — the smallest country
+  // is typically the 7th and never appears in the top-6 bars.
+  const smallest = dashboard.cfo?.smallestGeography ?? geos[geos.length - 1] ?? null;
 
   return (
     <RankedBreakdownCard
@@ -270,6 +339,15 @@ export function WorkforceByGeographyCard({ dashboard }: { dashboard: DashboardRe
                 value: top.name,
                 detail: total > 0 ? `${((top.headcount / total) * 100).toFixed(1)}% of FTE` : undefined,
               },
+              ...(smallest
+                ? [
+                    {
+                      label: "Smallest base",
+                      value: smallest.name,
+                      detail: total > 0 ? `${((smallest.headcount / total) * 100).toFixed(1)}% of FTE` : undefined,
+                    },
+                  ]
+                : []),
               { label: "Total FTE", value: formatNumber(total) },
             ]
           : undefined
@@ -279,8 +357,13 @@ export function WorkforceByGeographyCard({ dashboard }: { dashboard: DashboardRe
 }
 
 export function DeliveryCenterScorecardCard({ dashboard }: { dashboard: DashboardResponse }) {
+  // Full set, ranked by SLA DESC. Bars show the top 6; best/worst/count/avg are
+  // derived from ALL centers so the count isn't capped at 6 and the worst center
+  // (hidden below the top 6) still surfaces.
   const centers = dashboard.cfo?.deliveryCenters ?? [];
+  const barCenters = centers.slice(0, 6);
   const best = centers[0];
+  const worst = centers.length > 1 ? centers[centers.length - 1] : null;
   const avgUtil =
     centers.length > 0 ? centers.reduce((sum, c) => sum + c.utilizationPct, 0) / centers.length : 0;
 
@@ -290,7 +373,7 @@ export function DeliveryCenterScorecardCard({ dashboard }: { dashboard: Dashboar
       title="Which delivery centers protect SLA and utilization"
       icon={Gauge}
       emptyLabel="No delivery-center operations in scope yet. Once operations data is synced, this card ranks centers by SLA with utilization and CSAT."
-      items={centers.map((c) => ({
+      items={barCenters.map((c) => ({
         name: c.name,
         valueLabel: formatPercentDelta(c.slaPct / 100),
         subLabel: `${formatPercentDelta(c.utilizationPct / 100)} util · ${formatPercentDelta(c.csatPct / 100)} CSAT`,
@@ -301,6 +384,9 @@ export function DeliveryCenterScorecardCard({ dashboard }: { dashboard: Dashboar
         best
           ? [
               { label: "Best center", value: best.name, detail: `${formatPercentDelta(best.slaPct / 100)} SLA` },
+              ...(worst
+                ? [{ label: "Worst center", value: worst.name, detail: `${formatPercentDelta(worst.slaPct / 100)} SLA` }]
+                : []),
               { label: "Avg utilization", value: formatPercentDelta(avgUtil / 100) },
               { label: "Centers", value: formatNumber(centers.length) },
             ]

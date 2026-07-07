@@ -15,6 +15,7 @@ export type GlossaryEntry = { term: string; definition: string };
 const GLOSSARY_ENTRIES: GlossaryEntry[] = [
   { term: "Revenue", definition: "Total income earned from BPO services such as customer support, back-office processing, finance & accounting, healthcare, and other outsourced operations." },
   { term: "Margin Quality", definition: "Profits over Revenue." },
+  { term: "Gross Margin", definition: "Gross profit as a percentage of revenue (gross profit ÷ revenue). Gross profit is revenue remaining after direct delivery costs." },
   { term: "Net Contribution", definition: "Net Profit: revenue remaining after direct delivery costs that contributes toward covering overheads and generating profit." },
   { term: "Open Invoices", definition: "Customer invoices that have been issued but are still awaiting payment." },
   { term: "Cash Runway", definition: "Estimated number of months/days the BPO can continue operating using its available cash if current spending continues." },
@@ -37,6 +38,7 @@ const GLOSSARY_ENTRIES: GlossaryEntry[] = [
   { term: "DSO (Days Sales Outstanding)", definition: "Average number of days clients take to pay invoices. Lower DSO improves cash flow." },
   { term: "DPO (Days Payable Outstanding)", definition: "Average number of days the company takes to pay vendors and suppliers." },
   { term: "Spend", definition: "Total operating expenses incurred by the business." },
+  { term: "Payroll Elements", definition: "Total payroll split into its components — base salary, overtime, bonus, and benefits." },
   { term: "Overdue Exposure", definition: "Total value of overdue customer invoices that have not been collected." },
   { term: "Receivables Exposure", definition: "Financial risk created by outstanding customer payments." },
   { term: "Receivables Exposure – Open Balance", definition: "Total invoice value currently awaiting payment from clients." },
@@ -106,7 +108,7 @@ type CardGlossaryMap = { primary: string; related?: string[] };
 
 const CARD_GLOSSARY: Partial<Record<OverviewCardId, CardGlossaryMap>> = {
   "revenue-command": { primary: "Revenue" },
-  "margin-quality": { primary: "Margin Quality", related: ["Net Contribution"] },
+  "margin-quality": { primary: "Gross Margin", related: ["Net Contribution"] },
   "open-invoices": { primary: "Open Invoices" },
   "cash-runway": { primary: "Cash Runway", related: ["Monthly Operating Load"] },
   "cash-discipline": { primary: "Treasury", related: ["Free Cash Flow", "Operating Cash Flow", "DSO / DPO Spread"] },
@@ -122,10 +124,9 @@ const CARD_GLOSSARY: Partial<Record<OverviewCardId, CardGlossaryMap>> = {
   "collection-risk": { primary: "Collection Risk" },
   "largest-entity": { primary: "Largest Account", related: ["Concentration Risk"] },
   "business-units": { primary: "Best Margin Unit", related: ["Revenue Share"] },
-  "cost-elements": { primary: "Spend" },
+  "cost-elements": { primary: "Payroll Elements" },
   "delivery-centers": { primary: "Delivery Pulse", related: ["SLA Compliance", "Utilization", "CSAT"] },
   "cashflow": { primary: "Operating Cash Flow", related: ["Free Cash Flow"] },
-  "invoice-status": { primary: "Aging", related: ["Open Balance", "Past Due Now"] },
 };
 
 export type CardGlossary = {

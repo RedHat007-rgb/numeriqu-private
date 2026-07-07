@@ -6,7 +6,7 @@ import { cn } from "../../../../components/ui/cn";
 import type { DashboardResponse } from "../../../../lib/api";
 import type { CardGlossary } from "../../_lib/glossary";
 import { GlossaryBackFace } from "./GlossaryBackFace";
-import { formatMoneyWithCurrency, formatPercentDelta } from "./format";
+import { formatMoneyWithCurrency, formatNumber, formatPercentDelta } from "./format";
 
 type Tone = "neutral" | "positive" | "warning";
 type FocusItem = { label: string; value: string; tone?: Tone };
@@ -186,14 +186,14 @@ export function makeServiceLevelItems(dashboard: DashboardResponse): FocusItem[]
       tone: (cfo?.csatPct ?? 0) < 80 ? "warning" : "neutral",
     },
     {
-      label: "Payroll intensity",
-      value: formatPercentDelta((cfo?.payrollToRevenuePct ?? 0) / 100),
-      tone: (cfo?.payrollToRevenuePct ?? 0) >= 60 ? "warning" : "neutral",
+      label: "Average handle time",
+      value: (cfo?.avgHandleTimeMinutes ?? 0) > 0 ? `${cfo?.avgHandleTimeMinutes} min` : "—",
+      tone: (cfo?.avgHandleTimeMinutes ?? 0) > 10 ? "warning" : "neutral",
     },
     {
-      label: "Gross margin",
-      value: formatPercentDelta((cfo?.grossMarginPct ?? 0) / 100),
-      tone: (cfo?.grossMarginPct ?? 0) < 25 ? "warning" : "positive",
+      label: "Tickets raised",
+      value: (cfo?.ticketsResolved ?? 0) > 0 ? formatNumber(cfo?.ticketsResolved) : "—",
+      tone: "neutral",
     },
     {
       label: "At-risk centers",

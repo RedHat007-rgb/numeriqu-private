@@ -28,7 +28,6 @@ import {
 import { ExecutiveBriefCard } from "../_components/overview/ExecutiveBriefCard";
 import { deriveInsights, NextActionsCard, toneFromType } from "../_components/overview/NextActionsCard";
 import { OverviewDashboardEditor } from "../_components/overview/OverviewDashboardEditor";
-import { InvoiceStatusCard } from "../_components/overview/OrgBreakdownCard";
 import { CashflowCard } from "../_components/overview/RevenueTrendCard";
 import { TimeRangeSelect } from "../_components/overview/TimeRangeSelect";
 import {
@@ -80,11 +79,6 @@ function trendDelta(current: number, previous: number): { value: string; tone: "
 
   const ratio = (current - previous) / Math.abs(previous);
   return { value: formatPercentDelta(ratio), tone: toneFromDelta(ratio) };
-}
-
-function marginRatio(revenue: number, expenses: number) {
-  if (!Number.isFinite(revenue) || revenue === 0) return null;
-  return (revenue - expenses) / revenue;
 }
 
 function OverviewSkeleton() {
@@ -636,15 +630,6 @@ export function OverviewPage() {
   const prev = trend[trend.length - 2];
   const revenueDelta = last && prev ? trendDelta(last.revenue, prev.revenue) : null;
   const invoiceDelta = last && prev ? trendDelta(last.invoices, prev.invoices) : null;
-  const marginDelta =
-    last && prev
-      ? (() => {
-          const current = marginRatio(last.revenue, last.expenses);
-          const previous = marginRatio(prev.revenue, prev.expenses);
-          if (current === null || previous === null) return null;
-          return trendDelta(current, previous);
-        })()
-      : null;
   const connectedOrgCount = dashboard.connectedOrgs.length;
   const providerCount = dashboard.kpis.providerCount;
   const topEntity = dashboard.connectedOrgs[0] ?? null;
@@ -678,10 +663,9 @@ export function OverviewPage() {
             overview={overview}
             glossary={glossary}
             interactive={!isEditing}
-            eyebrow="Net Margin Percentage"
-            value={formatPercentDelta(dashboard.kpis.profitMargin / 100)}
-            detail={`${formatMoneyWithCurrency(dashboard.kpis.netProfit, prefs.currencyDisplay)} net contribution`}
-            delta={marginDelta}
+            eyebrow="Gross Margin Percentage"
+            value={formatPercentDelta((dashboard.kpis.grossMarginPct ?? dashboard.kpis.profitMargin) / 100)}
+            detail={`${formatMoneyWithCurrency(dashboard.kpis.grossProfit ?? dashboard.kpis.netProfit, prefs.currencyDisplay)} gross profit`}
           />
         );
       case "open-invoices":
@@ -882,8 +866,6 @@ export function OverviewPage() {
         );
       case "cashflow":
         return <CashflowCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
-      case "invoice-status":
-        return <InvoiceStatusCard dashboard={dashboard} currency={prefs.currencyDisplay} />;
       case "next-actions":
         return (
           <NextActionsCard

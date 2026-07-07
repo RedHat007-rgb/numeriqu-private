@@ -187,6 +187,11 @@ export class AnalyticsController {
       ? executive.totalRevenue - executive.totalCost - executive.totalPayroll
       : profile.netProfit;
     const profitMargin = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 10000) / 100 : 0;
+    // Gross margin = gross profit / revenue over the selected range (ratio-of-sums, not
+    // avg-of-ratios). For EBPO this is revenue - direct cost (excludes payroll/overhead);
+    // generic profiles have no COGS split, so gross profit falls back to net profit.
+    const grossProfit = executive ? executive.grossMargin : netProfit;
+    const grossMarginPct = totalRevenue > 0 ? Math.round((grossProfit / totalRevenue) * 10000) / 100 : 0;
 
     const openInvoiceAmount = executive?.arOutstanding ?? profile.expenses?.totalExpenses ?? 0;
     const openInvoiceCount = executive?.arLineCount ?? profile.expenses?.totalBills ?? 0;
@@ -222,6 +227,8 @@ export class AnalyticsController {
         totalExpenses,
         netProfit,
         profitMargin,
+        grossProfit,
+        grossMarginPct,
         totalInvoices,
         avgInvoiceValue,
         openInvoiceAmount,
@@ -267,13 +274,20 @@ export class AnalyticsController {
             topClientName: executive.topClientName,
             topClientRevenue: executive.topClientRevenue,
             topClientConcentrationPct: executive.topClientConcentrationPct,
+            smallestClientName: executive.smallestClientName,
+            smallestClientRevenue: executive.smallestClientRevenue,
+            smallestClientConcentrationPct: executive.smallestClientConcentrationPct,
             topBusinessUnitName: executive.topBusinessUnitName,
             topBusinessUnitMarginPct: executive.topBusinessUnitMarginPct,
             businessUnits: executive.businessUnits,
             costElements: executive.costElements,
             headcountByDepartment: executive.headcountByDepartment,
             headcountByGeography: executive.headcountByGeography,
+            smallestDepartment: executive.smallestDepartment,
+            smallestGeography: executive.smallestGeography,
             deliveryCenters: executive.deliveryCenters,
+            avgHandleTimeMinutes: executive.avgHandleTimeMinutes,
+            ticketsResolved: executive.ticketsResolved,
             workforceHeadcount: executive.workforceHeadcount,
             workforcePayroll: executive.workforcePayroll,
             workforceCountries: executive.workforceCountries,
@@ -297,13 +311,20 @@ export class AnalyticsController {
             topClientName: null,
             topClientRevenue: 0,
             topClientConcentrationPct: 0,
+            smallestClientName: null,
+            smallestClientRevenue: 0,
+            smallestClientConcentrationPct: 0,
             topBusinessUnitName: null,
             topBusinessUnitMarginPct: 0,
             businessUnits: [],
             costElements: [],
             headcountByDepartment: [],
             headcountByGeography: [],
+            smallestDepartment: null,
+            smallestGeography: null,
             deliveryCenters: [],
+            avgHandleTimeMinutes: 0,
+            ticketsResolved: 0,
           },
       charts: {
         monthlyTrend: monthlyChart,

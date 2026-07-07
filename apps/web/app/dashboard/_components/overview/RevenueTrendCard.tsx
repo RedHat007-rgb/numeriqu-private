@@ -67,7 +67,7 @@ export function CashflowCard({
             Capital bridge
           </p>
           <h2 className="mt-2 font-display text-[1.45rem] font-bold text-white md:text-[1.55rem]">
-            How revenue survives cost and payroll
+            Revenue as a percentage of different elements
           </h2>
         </div>
         <p className="text-xs text-[#8ea9d0]">Updated {computedAt}</p>

@@ -24,7 +24,6 @@ export type OverviewCardId =
   | "avg-entity-revenue"
   | "efficiency"
   | "cashflow"
-  | "invoice-status"
   | "next-actions"
   | "business-units"
   | "cost-elements"
@@ -78,8 +77,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "margin-quality",
-    title: "Net Margin Percentage",
-    description: "Net margin percentage and contribution signal for the current scope.",
+    title: "Gross Margin Percentage",
+    description: "Gross margin percentage (gross profit ÷ revenue) for the current scope.",
     zone: ["hero", "primary"],
     defaultZone: "hero",
     defaultSize: "small",
@@ -297,17 +296,6 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
     priority: 140,
   },
   {
-    id: "invoice-status",
-    title: "Receivables Exposure",
-    description: "Open, overdue, and payable exposure by amount and pressure level.",
-    zone: ["primary", "secondary"],
-    defaultZone: "primary",
-    defaultSize: "medium",
-    allowedSizes: ["medium", "wide"],
-    defaultVisible: true,
-    priority: 130,
-  },
-  {
     id: "next-actions",
     title: "CFO Agenda",
     description: "Priority finance actions that deserve executive attention next.",
@@ -331,8 +319,8 @@ export const OVERVIEW_CARD_DEFINITIONS: OverviewCardDefinition[] = [
   },
   {
     id: "cost-elements",
-    title: "Cost Elements",
-    description: "Operating cost broken into total cost, base salary, overtime, bonus, and benefits.",
+    title: "Payroll Elements",
+    description: "Total payroll broken into base salary, overtime, bonus, and benefits.",
     zone: ["primary", "secondary"],
     defaultZone: "primary",
     defaultSize: "medium",
@@ -390,7 +378,6 @@ export function getRecommendedOverviewPlacements(showOnboardingGuide: boolean): 
     { cardId: "executive-brief", zone: "primary", position: 6, size: "wide", visible: true },
     { cardId: "cash-discipline", zone: "primary", position: 7, size: "medium", visible: true },
     { cardId: "cashflow", zone: "primary", position: 8, size: "medium", visible: true },
-    { cardId: "invoice-status", zone: "primary", position: 9, size: "medium", visible: true },
     { cardId: "client-concentration", zone: "primary", position: 10, size: "medium", visible: true },
     { cardId: "service-levels", zone: "secondary", position: 11, size: "medium", visible: true },
     { cardId: "next-actions", zone: "secondary", position: 12, size: "medium", visible: false },

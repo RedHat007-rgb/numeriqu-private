@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Activity, ArrowUpRight, Landmark, ShieldAlert } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, ShieldAlert } from "lucide-react";
 import { cn } from "../../../../components/ui/cn";
 import type { DashboardResponse } from "../../../../lib/api";
 import { formatMoneyWithCurrency, formatPercentDelta } from "./format";
@@ -125,15 +125,6 @@ function buildDecisionItems(dashboard: DashboardResponse, currency: string): Dec
     });
   }
 
-  if ((cfo?.topClientConcentrationPct ?? 0) >= 20) {
-    items.push({
-      label: "Reduce dependency",
-      summary: `${cfo?.topClientName || "Top client"} is too large in the current mix.`,
-      value: safePercent(cfo?.topClientConcentrationPct),
-      tone: "warning",
-    });
-  }
-
   if ((cfo?.payrollToRevenuePct ?? 0) > 40) {
     items.push({
       label: "High Payroll to Revenue Percentage - Protect Margin",
@@ -171,26 +162,6 @@ function buildDecisionItems(dashboard: DashboardResponse, currency: string): Dec
   }
 
   return items.slice(0, 3);
-}
-
-function MetricPill({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "positive" | "warning" | "neutral";
-}) {
-  return (
-    <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2">
-      <div className="flex items-center gap-2">
-        <span className={cn("h-2 w-2 rounded-full border", toneClass(tone))} />
-        <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#8eacd4]">{label}</span>
-      </div>
-      <p className="mt-1 text-sm font-semibold text-white">{value}</p>
-    </div>
-  );
 }
 
 function StatCard({
@@ -284,9 +255,8 @@ export function ExecutiveBriefCard({
 }) {
   const cfo = dashboard.cfo;
   const concentration = cfo?.topClientConcentrationPct ?? 0;
-  const cashBalance = safeMoney(cfo?.cashBalance ?? dashboard.venture.cashOnHand, currency);
-  const workingCapital = safeMoney(cfo?.workingCapital, currency);
   const topClientExposure = concentration > 0 ? safePercent(concentration) : "—";
+  const smallestClientRevenue = safeMoney(cfo?.smallestClientRevenue, currency);
   const headline = buildHeadline(cfo);
   const narrative = buildNarrative(cfo);
   const decisionItems = buildDecisionItems(dashboard, currency);
@@ -295,7 +265,7 @@ export function ExecutiveBriefCard({
   return (
     <section className="dashboard-command-card relative overflow-hidden p-5 md:p-6">
       <div className="relative z-[1] space-y-5">
-        <div className="flex flex-col gap-4 border-b border-white/8 pb-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-white/8 pb-5">
           <div className="max-w-[46rem]">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-[#8ad7ff]/16 bg-[#8ad7ff]/8 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-[#8ad7ff]">
@@ -312,28 +282,19 @@ export function ExecutiveBriefCard({
               {narrative}
             </p>
           </div>
-
-          <div className="grid gap-2 sm:grid-cols-2 lg:w-[25rem] lg:grid-cols-1">
-            <MetricPill
-              label="Cash balance"
-              value={cashBalance}
-              tone={(cfo?.cashBalance ?? 0) > 0 ? "positive" : "neutral"}
-            />
-            <MetricPill
-              label="Working capital"
-              value={workingCapital}
-              tone={(cfo?.workingCapital ?? 0) >= 0 ? "positive" : "warning"}
-            />
-          </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
           <StatCard
-            icon={<Landmark className="h-4 w-4" />}
-            label="Treasury"
-            value={cashBalance}
-            meta={`Working capital ${workingCapital}`}
-            tone={(cfo?.workingCapital ?? 0) >= 0 ? "positive" : "warning"}
+            icon={<ArrowDownRight className="h-4 w-4" />}
+            label="Smallest account"
+            value={smallestClientRevenue}
+            meta={
+              cfo?.smallestClientName
+                ? `${cfo.smallestClientName} is the smallest account in revenue`
+                : "Smallest-account revenue will appear once mix data is live"
+            }
+            tone="neutral"
           />
           <StatCard
             icon={<ArrowUpRight className="h-4 w-4" />}
@@ -348,7 +309,7 @@ export function ExecutiveBriefCard({
             value={topClientExposure}
             meta={
               cfo?.topClientName
-                ? `${cfo.topClientName} is the largest account in scope`
+                ? `${cfo.topClientName} is the largest account in the current revenue mix`
                 : "Largest-account dependence will appear once mix data is live"
             }
             tone={concentration >= 25 ? "warning" : "neutral"}

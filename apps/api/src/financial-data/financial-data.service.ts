@@ -787,7 +787,6 @@ export class FinancialDataService {
                 ${this.timeWhere(range, 'dates.date', anchor)}
               GROUP BY client_name
               ORDER BY total_revenue_usd DESC
-              LIMIT 1
             `,
             query_params: { tenantId, orgId },
             format: 'JSONEachRow',
@@ -821,7 +820,14 @@ export class FinancialDataService {
       const latest = ((await latestResult.json()) as any[])[0] ?? {};
       const ar = ((await arResult.json()) as any[])[0] ?? {};
       const ap = ((await apResult.json()) as any[])[0] ?? {};
-      const topClient = ((await clientResult.json()) as any[])[0] ?? {};
+      const clientRows = (await clientResult.json()) as any[];
+      const topClient = clientRows[0] ?? {};
+      // Smallest revenue-generating account (query is ordered revenue DESC), skipping
+      // zero/negative rows so an inactive client doesn't masquerade as the smallest.
+      const smallestClient =
+        [...clientRows].reverse().find((row) => (parseFloat(row.total_revenue_usd) || 0) > 0) ??
+        clientRows[clientRows.length - 1] ??
+        {};
       const topBusinessUnit = ((await unitResult.json()) as any[])[0] ?? {};
 
       const totalRevenue = parseFloat(summary.total_revenue_usd) || 0;
@@ -833,6 +839,15 @@ export class FinancialDataService {
       const topClientRevenue = parseFloat(topClient.total_revenue_usd) || 0;
       const topClientConcentrationPct =
         totalRevenue > 0 ? Math.round((topClientRevenue / totalRevenue) * 10000) / 100 : 0;
+      const smallestClientRevenue = parseFloat(smallestClient.total_revenue_usd) || 0;
+      const smallestClientConcentrationPct =
+        totalRevenue > 0 ? Math.round((smallestClientRevenue / totalRevenue) * 10000) / 100 : 0;
+
+      // Dimensional breakdowns for the CFO "lower cards". Computed here (before the service
+      // KPIs) so the org-level SLA/util/CSAT can use the range-average operations values
+      // rather than a single latest-month snapshot. Isolated internally so a failing view
+      // degrades one card to empty without nulling the whole snapshot.
+      const breakdowns = await this.getEbpoBusinessBreakdowns(tenantId, orgId, range, totalCost);
 
       const cashBalance = parseFloat(latest.cash_balance_usd) || 0;
       const workingCapital = parseFloat(latest.working_capital_usd) || 0;
@@ -840,9 +855,11 @@ export class FinancialDataService {
       const dpoDays = parseFloat(latest.dpo_days) || 0;
       const payrollToRevenuePct = parseFloat(latest.payroll_to_revenue_pct) || 0;
       const grossMarginPct = parseFloat(latest.gross_margin_pct) || 0;
-      const slaCompliancePct = parseFloat(latest.sla_compliance_pct) || 0;
-      const utilizationPct = parseFloat(latest.utilization_pct) || 0;
-      const csatPct = parseFloat(latest.csat_pct) || 0;
+      // Range averages from the operations view (match the period averages finance reports),
+      // falling back to the latest-month KPI value if operations data is unavailable.
+      const slaCompliancePct = breakdowns.avgSlaPct || parseFloat(latest.sla_compliance_pct) || 0;
+      const utilizationPct = breakdowns.avgUtilizationPct || parseFloat(latest.utilization_pct) || 0;
+      const csatPct = breakdowns.avgCsatPct || parseFloat(latest.csat_pct) || 0;
       const operatingCfToRevenuePct = parseFloat(latest.operating_cf_to_revenue_pct) || 0;
       const fcfMarginPct = parseFloat(latest.fcf_margin_pct) || 0;
       const ebitdaStyleMarginPct = parseFloat(latest.ebitda_style_margin_pct) || 0;
@@ -896,11 +913,6 @@ export class FinancialDataService {
         });
       }
 
-      // Dimensional breakdowns for the CFO "lower cards". Isolated so a failure
-      // in any single query degrades that card to an empty state and never nulls
-      // the whole executive snapshot.
-      const breakdowns = await this.getEbpoBusinessBreakdowns(tenantId, orgId, range, totalCost);
-
       return {
         mode: 'ebpo',
         orgId,
@@ -910,7 +922,11 @@ export class FinancialDataService {
         costElements: breakdowns.costElements,
         headcountByDepartment: breakdowns.headcountByDepartment,
         headcountByGeography: breakdowns.headcountByGeography,
+        smallestDepartment: breakdowns.smallestDepartment,
+        smallestGeography: breakdowns.smallestGeography,
         deliveryCenters: breakdowns.deliveryCenters,
+        avgHandleTimeMinutes: breakdowns.avgHandleTimeMinutes,
+        ticketsResolved: breakdowns.ticketsResolved,
         workforceHeadcount: breakdowns.workforceHeadcount,
         workforcePayroll: breakdowns.workforcePayroll,
         workforceCountries: breakdowns.workforceCountries,
@@ -942,6 +958,9 @@ export class FinancialDataService {
         topClientName: String(topClient.client_name ?? '') || null,
         topClientRevenue,
         topClientConcentrationPct,
+        smallestClientName: String(smallestClient.client_name ?? '') || null,
+        smallestClientRevenue,
+        smallestClientConcentrationPct,
         topBusinessUnitName: String(topBusinessUnit.business_unit ?? '') || null,
         topBusinessUnitMarginPct: parseFloat(topBusinessUnit.gross_margin_pct) || 0,
         cashflowWaterfall: [
@@ -978,7 +997,14 @@ export class FinancialDataService {
       costElements: [],
       headcountByDepartment: [],
       headcountByGeography: [],
+      smallestDepartment: null,
+      smallestGeography: null,
       deliveryCenters: [],
+      avgSlaPct: 0,
+      avgUtilizationPct: 0,
+      avgCsatPct: 0,
+      avgHandleTimeMinutes: 0,
+      ticketsResolved: 0,
       workforceHeadcount: 0,
       workforcePayroll: 0,
       workforceCountries: 0,
@@ -988,6 +1014,10 @@ export class FinancialDataService {
     const anchor = this.ebpoLatestAnchor();
     const monthWhere = this.timeWhere(range, 'period_date', anchor);
     const factDateWhere = this.timeWhere(range, 'dates.date', anchor);
+    // Roster employees with no payroll rows at all (never paid) have no date association,
+    // so they can only be counted on the all-time view. On shorter ranges headcount stays
+    // strictly payroll-driven (an unpaid employee was never "active" in any window).
+    const isAllTime = !range || range.kind === 'ALL_TIME';
 
     const runJson = async (query: string): Promise<any[]> => {
       const result = await this.clickhouse.query({
@@ -1000,8 +1030,10 @@ export class FinancialDataService {
     };
 
     try {
-      const [buRes, payrollRes, deptRes, geoRes, dcRes, workforceTotalsRes] = await Promise.allSettled([
-        // Business units — real per-BU revenue, cost and ratio-of-sums margin.
+      const [buRes, payrollRes, deptRes, geoRes, dcRes, workforceTotalsRes, rosterOnlyRes] = await Promise.allSettled([
+        // Business units — real per-BU revenue, cost and ratio-of-sums margin. Full set,
+        // ranked by revenue; the card slices the top 6 for bars but derives top/bottom
+        // unit and best/worst margin from all of them.
         runJson(`
           SELECT
             coalesce(nullIf(revenue.business_unit, ''), 'Unassigned') AS name,
@@ -1018,7 +1050,6 @@ export class FinancialDataService {
             ${factDateWhere}
           GROUP BY name
           ORDER BY revenue_usd DESC
-          LIMIT 6
         `),
         // Payroll cost elements (flow — summed over range).
         runJson(`
@@ -1051,7 +1082,6 @@ export class FinancialDataService {
             ${factDateWhere}
           GROUP BY name
           ORDER BY headcount DESC
-          LIMIT 6
         `),
         // Headcount by country — DISTINCT employees active within the selected range
         // (filter-driven). Top 6 for the bars; totals/percentages use the full-set
@@ -1070,28 +1100,26 @@ export class FinancialDataService {
             ${factDateWhere}
           GROUP BY name
           ORDER BY headcount DESC
-          LIMIT 6
         `),
-        // Delivery-center service scorecard (latest month).
+        // Delivery-center service scorecard — AVERAGED over the full selected range (not a
+        // single latest-month snapshot) so SLA/util/CSAT match the period averages finance
+        // reports. Full set, ranked by SLA; the card slices the top 6 for bars but derives
+        // best/worst/count/avg from all. Tickets are summed over the range (a flow).
         runJson(`
-          WITH latest AS (
-            SELECT max(period_date) AS pd
-            FROM ${this.dbName}.v_ebpo_operations_monthly
-            WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String} ${monthWhere}
-          )
           SELECT
             coalesce(nullIf(delivery_center, ''), 'Unassigned') AS name,
             round(avg(sla_compliance_pct), 1) AS sla_pct,
             round(avg(utilization_pct), 1) AS utilization_pct,
             round(avg(csat_pct), 1) AS csat_pct,
+            round(avg(average_handling_time_minutes), 1) AS aht_minutes,
+            round(sum(tickets_resolved), 0) AS tickets_resolved,
             sum(calls_handled) AS calls_handled
           FROM ${this.dbName}.v_ebpo_operations_monthly
           WHERE tenant_id = {tenantId:String}
             AND org_id = {orgId:String}
-            AND period_date = (SELECT pd FROM latest)
+            ${monthWhere}
           GROUP BY name
           ORDER BY sla_pct DESC
-          LIMIT 6
         `),
         // Workforce TOTALS over the full selected range (NOT limited to the top-6 rows):
         // distinct headcount, payroll summed over the range, and distinct country count.
@@ -1111,10 +1139,26 @@ export class FinancialDataService {
             AND payroll.org_id = {orgId:String}
             ${factDateWhere}
         `),
+        // Roster-only employees: on the master list but with NO payroll rows anywhere.
+        // Counted into headcount on the all-time view so it matches the true roster.
+        runJson(`
+          SELECT
+            coalesce(nullIf(department, ''), 'Unassigned') AS name,
+            coalesce(nullIf(country, ''), 'Unassigned') AS country,
+            count() AS cnt
+          FROM ${this.dbName}.ebpo_dim_employee dim
+          WHERE dim.tenant_id = {tenantId:String}
+            AND dim.org_id = {orgId:String}
+            AND dim.employee_key NOT IN (
+              SELECT employee_key FROM ${this.dbName}.ebpo_fact_payroll
+              WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String}
+            )
+          GROUP BY name, country
+        `),
       ]);
 
-      const labels = ['businessUnits', 'costElements', 'headcountByDepartment', 'headcountByGeography', 'deliveryCenters', 'workforceTotals'];
-      [buRes, payrollRes, deptRes, geoRes, dcRes, workforceTotalsRes].forEach((r, i) => {
+      const labels = ['businessUnits', 'costElements', 'headcountByDepartment', 'headcountByGeography', 'deliveryCenters', 'workforceTotals', 'rosterOnly'];
+      [buRes, payrollRes, deptRes, geoRes, dcRes, workforceTotalsRes, rosterOnlyRes].forEach((r, i) => {
         if (r.status === 'rejected') {
           this.logger.warn(`[FinancialData] EBPO breakdown "${labels[i]}" query failed: ${r.reason?.message ?? r.reason}`);
         }
@@ -1149,7 +1193,27 @@ export class FinancialDataService {
       }
       costElements.sort((a, b) => b.value - a.value);
 
-      const headcountByDepartment: EbpoDepartmentRow[] =
+      // Roster-only (never-paid) employees, aggregated by department and country. Applied
+      // ONLY on the all-time view so headcount reconciles to the full roster while shorter
+      // ranges stay payroll-driven.
+      const rosterOnlyRows = isAllTime && rosterOnlyRes.status === 'fulfilled' ? rosterOnlyRes.value : [];
+      const rosterDeptAdds = new Map<string, number>();
+      const rosterGeoAdds = new Map<string, number>();
+      let rosterOnlyTotal = 0;
+      for (const r of rosterOnlyRows) {
+        const cnt = parseInt(r.cnt) || 0;
+        if (cnt <= 0) continue;
+        const dept = String(r.name ?? 'Unassigned');
+        const country = String(r.country ?? 'Unassigned');
+        rosterDeptAdds.set(dept, (rosterDeptAdds.get(dept) ?? 0) + cnt);
+        rosterGeoAdds.set(country, (rosterGeoAdds.get(country) ?? 0) + cnt);
+        rosterOnlyTotal += cnt;
+      }
+
+      // Full ranked lists (headcount DESC). The bars show the top 6; the smallest
+      // team/base is derived from the FULL list so it isn't lost to the top-6 cap
+      // (e.g. the 7th country never appears in the bars).
+      const allDepartments: EbpoDepartmentRow[] =
         deptRes.status === 'fulfilled'
           ? deptRes.value.map((r) => ({
               name: String(r.name ?? 'Unassigned'),
@@ -1157,37 +1221,79 @@ export class FinancialDataService {
               payroll: parseFloat(r.payroll) || 0,
             }))
           : [];
+      for (const [name, add] of rosterDeptAdds) {
+        const row = allDepartments.find((d) => d.name === name);
+        if (row) row.headcount += add;
+        else allDepartments.push({ name, headcount: add, payroll: 0 });
+      }
+      allDepartments.sort((a, b) => b.headcount - a.headcount);
+      const headcountByDepartment = allDepartments.slice(0, 6);
+      const smallestDepartment =
+        [...allDepartments].reverse().find((d) => d.headcount > 0) ?? null;
 
-      const headcountByGeography: EbpoGeographyRow[] =
+      const allGeographies: EbpoGeographyRow[] =
         geoRes.status === 'fulfilled'
           ? geoRes.value.map((r) => ({
               name: String(r.name ?? 'Unassigned'),
               headcount: parseInt(r.headcount) || 0,
             }))
           : [];
+      for (const [name, add] of rosterGeoAdds) {
+        const row = allGeographies.find((g) => g.name === name);
+        if (row) row.headcount += add;
+        else allGeographies.push({ name, headcount: add });
+      }
+      allGeographies.sort((a, b) => b.headcount - a.headcount);
+      const headcountByGeography = allGeographies.slice(0, 6);
+      const smallestGeography =
+        [...allGeographies].reverse().find((g) => g.headcount > 0) ?? null;
 
-      const deliveryCenters: EbpoDeliveryCenterRow[] =
-        dcRes.status === 'fulfilled'
-          ? dcRes.value.map((r) => ({
-              name: String(r.name ?? 'Unassigned'),
-              slaPct: parseFloat(r.sla_pct) || 0,
-              utilizationPct: parseFloat(r.utilization_pct) || 0,
-              csatPct: parseFloat(r.csat_pct) || 0,
-              callsHandled: parseInt(r.calls_handled) || 0,
-            }))
-          : [];
+      const opsRows = dcRes.status === 'fulfilled' ? dcRes.value : [];
+      const deliveryCenters: EbpoDeliveryCenterRow[] = opsRows.map((r) => ({
+        name: String(r.name ?? 'Unassigned'),
+        slaPct: parseFloat(r.sla_pct) || 0,
+        utilizationPct: parseFloat(r.utilization_pct) || 0,
+        csatPct: parseFloat(r.csat_pct) || 0,
+        callsHandled: parseInt(r.calls_handled) || 0,
+      }));
+      // Org-level operations KPIs over the selected range. SLA/util/CSAT/AHT are the mean
+      // across delivery centers (each center already averaged over the range → equals the
+      // overall period average); tickets are summed (a flow). Sourced from `tickets_resolved`
+      // (the only ticket-volume column in the operations view).
+      const meanOf = (key: string) => {
+        const vals = opsRows.map((r) => parseFloat(r[key])).filter((v) => Number.isFinite(v));
+        return vals.length > 0 ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10 : 0;
+      };
+      const avgSlaPct = meanOf('sla_pct');
+      const avgUtilizationPct = meanOf('utilization_pct');
+      const avgCsatPct = meanOf('csat_pct');
+      const avgHandleTimeMinutes = meanOf('aht_minutes');
+      const ticketsResolved = opsRows.reduce((s, r) => s + (parseFloat(r.tickets_resolved) || 0), 0);
 
       const wt = workforceTotalsRes.status === 'fulfilled' ? (workforceTotalsRes.value[0] ?? {}) : {};
-      const workforceHeadcount = parseInt(wt.headcount) || 0;
+      // Add never-paid roster employees to the total on the all-time view (rosterOnlyTotal is
+      // 0 on shorter ranges). Payroll stays fact-sourced; countries reflect the merged geo
+      // list so a roster-only employee in a new country is still counted.
+      const workforceHeadcount = (parseInt(wt.headcount) || 0) + rosterOnlyTotal;
       const workforcePayroll = parseFloat(wt.payroll) || 0;
-      const workforceCountries = parseInt(wt.countries) || 0;
+      const workforceCountries = Math.max(
+        parseInt(wt.countries) || 0,
+        allGeographies.filter((g) => g.headcount > 0 && g.name !== 'Unassigned').length,
+      );
 
       return {
         businessUnits,
         costElements,
         headcountByDepartment,
         headcountByGeography,
+        smallestDepartment,
+        smallestGeography,
         deliveryCenters,
+        avgSlaPct,
+        avgUtilizationPct,
+        avgCsatPct,
+        avgHandleTimeMinutes,
+        ticketsResolved,
         workforceHeadcount,
         workforcePayroll,
         workforceCountries,
@@ -1808,13 +1914,20 @@ export interface ExecutiveSnapshot {
   topClientName?: string | null;
   topClientRevenue?: number;
   topClientConcentrationPct?: number;
+  smallestClientName?: string | null;
+  smallestClientRevenue?: number;
+  smallestClientConcentrationPct?: number;
   topBusinessUnitName?: string | null;
   topBusinessUnitMarginPct?: number;
   businessUnits: EbpoBusinessUnitRow[];
   costElements: EbpoCostElementRow[];
   headcountByDepartment: EbpoDepartmentRow[];
   headcountByGeography: EbpoGeographyRow[];
+  smallestDepartment: EbpoDepartmentRow | null;
+  smallestGeography: EbpoGeographyRow | null;
   deliveryCenters: EbpoDeliveryCenterRow[];
+  avgHandleTimeMinutes: number;
+  ticketsResolved: number;
   workforceHeadcount: number;
   workforcePayroll: number;
   workforceCountries: number;
@@ -1854,7 +1967,18 @@ export interface EbpoBreakdowns {
   costElements: EbpoCostElementRow[];
   headcountByDepartment: EbpoDepartmentRow[];
   headcountByGeography: EbpoGeographyRow[];
+  /** Smallest team/base by headcount over the full set (not limited to the top-6 bars). */
+  smallestDepartment: EbpoDepartmentRow | null;
+  smallestGeography: EbpoGeographyRow | null;
   deliveryCenters: EbpoDeliveryCenterRow[];
+  /** Range-average SLA / utilization / CSAT across delivery centers (period average). */
+  avgSlaPct: number;
+  avgUtilizationPct: number;
+  avgCsatPct: number;
+  /** Range-average handle time (minutes) across delivery centers. */
+  avgHandleTimeMinutes: number;
+  /** Total tickets resolved over the range across delivery centers. */
+  ticketsResolved: number;
   /** Distinct employees active within the selected range (full set, not top-6). */
   workforceHeadcount: number;
   /** Total payroll summed over the selected range. */

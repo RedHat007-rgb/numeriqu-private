@@ -38,7 +38,7 @@ const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon:
 ];
 
 const POWER_BI_URL =
-  "https://app.powerbi.com/view?r=eyJrIjoiODVmYzkyYzQtYjI5ZS00MjM4LWIzNjctY2I1MzQ5YzMxOWFiIiwidCI6ImYzYzVhY2ZkLTg4OGMtNGQ2Yi1hZDNiLWQyNDYwZThhMTQ0NyJ9&pageName=ebbb890dd70e7910d663";
+  "https://app.powerbi.com/view?r=eyJrIjoiM2JlYTFhMjAtNGVlNy00MjIzLWFmNGYtOGQ4NTMwOWE2Y2EzIiwidCI6ImYzYzVhY2ZkLTg4OGMtNGQ2Yi1hZDNiLWQyNDYwZThhMTQ0NyJ9&pageName=ebbb890dd70e7910d663";
 
 /**
  * PowerBI launch button with special effects: brand-amber gradient, a sweeping

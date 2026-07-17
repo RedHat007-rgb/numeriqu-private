@@ -37,6 +37,16 @@ export type {
   MessagingConversation,
   ConversationMessage,
   WorkspaceDashboardSummary,
+  SignalMetricsOverview,
+  SignalSummary,
+  SignalDetail,
+  SignalBoardPackSummary,
+  SignalActionStep,
+  SignalWatchlistSummary,
+  SignalSeverity,
+  SignalStatus,
+  SignalType,
+  SignalNarrative,
 } from "./types";
 
 export { AuthApi } from "./auth";
@@ -47,3 +57,4 @@ export { AgentApi } from "./agent";
 export { OrganizationApi } from "./organization";
 export { MessagingApi } from "./messaging";
 export { DashboardsApi } from "./dashboards";
+export { SignalIntelligenceApi } from "./signal-intelligence";

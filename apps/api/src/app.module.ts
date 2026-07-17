@@ -14,6 +14,8 @@ import { OrganizationModule } from './modules/organization/organization.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { SignalIntelligenceModule } from './modules/signal-intelligence/signal-intelligence.module';
+import { ChartEngineModule } from './modules/chart-engine/chart-engine.module';
 import { HealthModule } from './health/health.module';
 import { OrgModule } from './org/org.module';
 
@@ -30,6 +32,8 @@ import { OrgModule } from './org/org.module';
     DashboardModule,
     MessagingModule,
     AuditModule,
+    SignalIntelligenceModule,
+    ChartEngineModule,
     RagModule,
     AgentModule,
     HealthModule,

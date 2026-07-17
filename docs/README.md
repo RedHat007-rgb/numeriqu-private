@@ -10,6 +10,7 @@ This directory is the engineering source of truth for how the Numeriqu repositor
 4. [Development Workflow](/Users/basanireddy/Desktop/test-1234/docs/development-workflow.md)
 5. [Database Schema](/Users/basanireddy/Desktop/test-1234/docs/database-schema-numeriqu.md)
 6. [Architecture Log](/Users/basanireddy/Desktop/test-1234/docs/architecture-log.md)
+7. [Signal Intelligence Platform](/Users/basanireddy/Desktop/test-1234/docs/signal-platform/README.md)
 
 ## Document map
 
@@ -20,6 +21,7 @@ This directory is the engineering source of truth for how the Numeriqu repositor
 - `database-schema-numeriqu.md`: transactional data model and multi-tenant integrity rules
 - `architecture-log.md`: historical architecture decisions and migration notes
 - `cost-classification.md`: finance-domain reference data used by the product
+- `signal-platform/`: full product, UX, backend, and API design for finance signal detection and investigation
 
 ## Documentation principles
 

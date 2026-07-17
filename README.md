@@ -24,6 +24,7 @@ Recommended reading order for a new developer:
 4. [docs/development-workflow.md](/Users/basanireddy/Desktop/test-1234/docs/development-workflow.md)
 5. [docs/database-schema-numeriqu.md](/Users/basanireddy/Desktop/test-1234/docs/database-schema-numeriqu.md)
 6. [docs/architecture-log.md](/Users/basanireddy/Desktop/test-1234/docs/architecture-log.md)
+7. [docs/signal-platform/README.md](/Users/basanireddy/Desktop/test-1234/docs/signal-platform/README.md)
 
 ## Local development
 

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings,
   LayoutDashboard,
+  Radar,
   LineChart,
   Bot,
   Search,
@@ -28,6 +29,7 @@ import type { WorkspaceSummary } from "../../../lib/api/types";
 
 const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon: LucideIcon }> = [
   { href: "/dashboard", label: "Overview", description: "What changed, at a glance", icon: LayoutDashboard },
+  { href: "/dashboard/signals", label: "Signals", description: "Investigate finance changes", icon: Radar },
   { href: "/dashboard/dashboards", label: "Dashboards", description: "Saved decision surfaces", icon: LineChart },
   { href: "/dashboard/rag", label: "Prism", description: "Evidence-first answers, cited", icon: Search },
   { href: "/dashboard/agent", label: "Astra", description: "Turn questions into dashboards", icon: Bot },

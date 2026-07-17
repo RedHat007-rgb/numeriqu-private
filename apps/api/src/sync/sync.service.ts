@@ -12,8 +12,12 @@ import {
   CLICKHOUSE_ANALYTICS_TOKEN,
 } from '../database/database.module';
 import { ClickHouseClient } from '@clickhouse/client';
-import type { PrismaClient } from '@repo/db';
+import type { Prisma, PrismaClient } from '@repo/db';
 import { InlineTransformService } from './inline-transform.service';
+import {
+  buildSfinSemanticCubeDdls,
+  SFIN_SEMANTIC_CUBE_VIEWS,
+} from '../modules/chart-engine/sfin-semantic-cubes';
 
 export interface SyncJobConfig {
   syncJobId: string;
@@ -523,6 +527,79 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         }
       } catch {
         /* views optional — non-fatal */
+      }
+
+      // 9. If the registered star-finance schema is present, expose coherent
+      // semantic cubes and make the registry point to them. The old registry
+      // used narrow monthly views that dropped valid workbook dimensions (for
+      // example service_line, aging_bucket, employee grade, and geography), so
+      // Astra honestly refused questions even though the source facts existed.
+      try {
+        const requiredTables = [
+          'sfin_fact_general_ledger',
+          'sfin_fact_payroll',
+          'sfin_fact_operations',
+          'sfin_fact_attendance',
+          'sfin_fact_accounts_receivable',
+          'sfin_fact_accounts_payable',
+          'sfin_fact_cash_flow',
+          'sfin_fact_trial_balance',
+          'sfin_dim_employee',
+        ];
+        const presentResult = await this.chAnalytics.query({
+          query:
+            'SELECT count() AS n FROM system.tables ' +
+            'WHERE database = {db:String} AND name IN ({tables:Array(String)})',
+          query_params: { db, tables: requiredTables },
+          format: 'JSONEachRow',
+        });
+        const [present] = (await presentResult.json()) as Array<{ n: string | number }>;
+        if (Number(present?.n ?? 0) === requiredTables.length) {
+          const discoverValues = async (table: string, column: string): Promise<string[]> => {
+            const result = await this.chAnalytics.query({
+              query:
+                `SELECT groupUniqArray(toString(${column})) AS values FROM ${db}.${table} ` +
+                `WHERE notEmpty(toString(${column}))`,
+              format: 'JSONEachRow',
+            });
+            const [row] = (await result.json()) as Array<{ values?: unknown }>;
+            return Array.isArray(row?.values)
+              ? row.values.filter((value): value is string => typeof value === 'string')
+              : [];
+          };
+          const [cashFlowCategories, accountSubTypes, glCostCategories] = await Promise.all([
+            discoverValues('sfin_fact_cash_flow', 'cash_flow_category'),
+            discoverValues('sfin_dim_account', 'account_sub_type'),
+            discoverValues('sfin_fact_general_ledger', 'cost_category'),
+          ]);
+          for (const ddl of buildSfinSemanticCubeDdls(db, {
+            cashFlowCategories,
+            accountSubTypes,
+            glCostCategories,
+          })) await safeQuery(ddl);
+
+          const datasets = await this.prisma.dataset.findMany({ where: { kind: 'sfin' } });
+          for (const dataset of datasets) {
+            const current = (dataset.physicalSchema ?? {}) as Record<string, unknown>;
+            await this.prisma.dataset.update({
+              where: { id: dataset.id },
+              data: {
+                physicalSchema: {
+                  ...current,
+                  cubeViews: [...SFIN_SEMANTIC_CUBE_VIEWS],
+                } as Prisma.InputJsonValue,
+                introspectedAt: new Date(),
+              },
+            });
+          }
+          this.logger.log(
+            `[Bootstrap] Registered ${SFIN_SEMANTIC_CUBE_VIEWS.length} star-finance semantic cubes`,
+          );
+        }
+      } catch (error) {
+        this.logger.warn(
+          `[Bootstrap] Star-finance semantic cubes unavailable: ${(error as Error).message}`,
+        );
       }
 
       this.logger.log(

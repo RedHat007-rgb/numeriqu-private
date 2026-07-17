@@ -119,6 +119,10 @@ model User {
   agentRequests            AgentDashboardRequest[]     @relation("AgentRequestor")
   otpCodes                 OtpCode[]
   createdOrganizations     Organization[]              @relation("OrganizationCreator")
+  signalComments           SignalComment[]             @relation("SignalCommentAuthor")
+  signalWatchlistsOwned    SignalWatchlist[]           @relation("SignalWatchlistOwner")
+  signalBoardPacksCreated  SignalBoardPack[]           @relation("SignalBoardPackCreator")
+  assignedSignals          Signal[]                    @relation("SignalAssignedToUser")
 
   @@map("users")
 }
@@ -199,6 +203,15 @@ model Organization {
   agentRuns                  AgentRun[]
   agentRunEvents             AgentRunEvent[]
   membershipPermissionGrants MembershipPermissionGrant[]
+  signalMetrics              SignalMetric[]
+  signalRules                SignalRule[]
+  signals                    Signal[]
+  signalEvidence             SignalEvidence[]
+  signalComments             SignalComment[]
+  signalWatchlists           SignalWatchlist[]
+  signalWatchlistItems       SignalWatchlistItem[]
+  signalBoardPacks           SignalBoardPack[]
+  datasets                   Dataset[]
 
   @@index([createdById])
   @@map("organizations")
@@ -819,4 +832,216 @@ model AgentRunEvent {
   @@index([runId, createdAt])
   @@index([organizationId, createdAt])
   @@map("agent_run_events")
+}
+
+model SignalMetric {
+  id                  String   @id @default(uuid()) @db.Uuid
+  organizationId      String   @map("organization_id") @db.Uuid
+  metricKey           String   @map("metric_key")
+  label               String
+  unit                String?
+  description         String?
+  defaultThresholds   Json?    @map("default_thresholds")
+  supportedDimensions Json?    @map("supported_dimensions")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rules        SignalRule[]
+  signals      Signal[]
+
+  @@unique([organizationId, metricKey])
+  @@index([organizationId, isActive])
+  @@map("signal_metrics")
+}
+
+model SignalRule {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  signalMetricId String   @map("signal_metric_id") @db.Uuid
+  signalType     String   @map("signal_type")
+  severity       String
+  threshold      Json?
+  isEnabled      Boolean  @default(true) @map("is_enabled")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  signalMetric SignalMetric @relation(fields: [signalMetricId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, signalMetricId, signalType])
+  @@index([organizationId, signalMetricId])
+  @@index([organizationId, signalType, severity])
+  @@map("signal_rules")
+}
+
+model Signal {
+  id                 String    @id @default(uuid()) @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  sourceKey          String    @unique @map("source_key")
+  signalMetricId     String    @map("signal_metric_id") @db.Uuid
+  signalType         String    @map("signal_type")
+  severity           String
+  status             String    @default("NEW")
+  title              String
+  summary            String
+  impactAmount       Decimal   @default(0) @map("impact_amount") @db.Decimal(18, 2)
+  confidenceScore    Decimal   @default(0) @map("confidence_score") @db.Decimal(6, 4)
+  entityScope        Json      @map("entity_scope")
+  timeWindow         Json      @map("time_window")
+  comparisonWindow   Json      @map("comparison_window")
+  assignedToUserId   String?   @map("assigned_to_user_id") @db.Uuid
+  acknowledgedAt     DateTime? @map("acknowledged_at")
+  dismissedAt        DateTime? @map("dismissed_at")
+  dismissedReason    String?   @map("dismissed_reason")
+  evidenceComputedAt DateTime? @map("evidence_computed_at")
+  lastRefreshedAt    DateTime? @map("last_refreshed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  signalMetric   SignalMetric      @relation(fields: [signalMetricId], references: [id], onDelete: Cascade)
+  assignedToUser User?             @relation("SignalAssignedToUser", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  evidence       SignalEvidence[]
+  comments       SignalComment[]
+  boardPacks     SignalBoardPack[]
+
+  @@index([organizationId, status, severity, createdAt])
+  @@index([organizationId, signalMetricId, createdAt])
+  @@index([organizationId, assignedToUserId])
+  @@map("signals")
+}
+
+model SignalEvidence {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  signalId       String   @map("signal_id") @db.Uuid
+  evidenceType   String   @map("evidence_type")
+  title          String
+  payload        Json
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  signal       Signal       @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, signalId, sortOrder])
+  @@map("signal_evidence")
+}
+
+model SignalComment {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  signalId       String   @map("signal_id") @db.Uuid
+  authorId       String   @map("author_id") @db.Uuid
+  content        String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  signal       Signal       @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  author       User         @relation("SignalCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, signalId, createdAt])
+  @@map("signal_comments")
+}
+
+model SignalWatchlist {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  ownerId        String   @map("owner_id") @db.Uuid
+  name           String
+  description    String?
+  isDefault      Boolean  @default(false) @map("is_default")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner        User                  @relation("SignalWatchlistOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  items        SignalWatchlistItem[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, ownerId])
+  @@map("signal_watchlists")
+}
+
+model SignalWatchlistItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  watchlistId    String   @map("watchlist_id") @db.Uuid
+  metricKey      String   @map("metric_key")
+  entityId       String?  @map("entity_id") @db.Uuid
+  entityLabel    String?  @map("entity_label")
+  thresholdType  String   @map("threshold_type")
+  thresholdValue Decimal  @map("threshold_value") @db.Decimal(18, 4)
+  severity       String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  watchlist    SignalWatchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, watchlistId])
+  @@index([organizationId, metricKey])
+  @@map("signal_watchlist_items")
+}
+
+model SignalBoardPack {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  signalId       String   @map("signal_id") @db.Uuid
+  title          String
+  audience       String
+  exportFormat   String   @map("export_format")
+  payload        Json
+  createdById    String   @map("created_by_id") @db.Uuid
+  dashboardId    String?  @map("dashboard_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  signal       Signal       @relation(fields: [signalId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("SignalBoardPackCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, signalId, createdAt])
+  @@map("signal_board_packs")
+}
+
+// --- Autonomous Chart Engine (see docs/TARGET_ARCHITECTURE.md) ---
+// A Dataset replaces the hardcoded `DatasetKind = 'ebpo' | 'gl'` enum: each
+// client's dataset is a row carrying its introspected physical schema, and one
+// or more auto-derived semantic models (versioned). Adding dataset shape #N is
+// a row, not a code fork.
+
+model Dataset {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  kind           String // free label, NOT an enum: "ebpo", "gl", "acme_erp"…
+  physicalSchema Json?     @map("physical_schema")
+  introspectedAt DateTime? @map("introspected_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  semanticModels DatasetSemanticModel[]
+
+  @@unique([organizationId, kind])
+  @@index([organizationId])
+  @@map("datasets")
+}
+
+model DatasetSemanticModel {
+  id        String   @id @default(uuid()) @db.Uuid
+  datasetId String   @map("dataset_id") @db.Uuid
+  version   Int
+  model     Json
+  isActive  Boolean  @default(true) @map("is_active")
+  builtBy   String   @map("built_by") // "auto" | "auto+review"
+  createdAt DateTime @default(now()) @map("created_at")
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@unique([datasetId, version])
+  @@index([datasetId, isActive])
+  @@map("dataset_semantic_models")
 }

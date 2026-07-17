@@ -616,11 +616,11 @@ TABLE: v_ebpo_kpi_monthly
     sla_compliance_pct, csat_pct, utilization_pct, dso_days, dpo_days
   Filters always required: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
   COST vs PAYROLL — these are INDEPENDENT figures, not subset/superset: total_cost_usd is
-    cost of revenue (FactRevenue); total_payroll_usd is payroll (FactPayroll). Company payroll
-    (~$112M) EXCEEDS cost of revenue (~$88M). There is NO "non-payroll expense" measure:
-    never compute it as total_cost_usd − total_payroll_usd (goes negative), never hide that
-    with greatest(...,0), and never relabel total_cost_usd as "non-payroll". If asked for
-    "non-payroll expenses", that breakdown is NOT AVAILABLE — refuse honestly (no_data).
+    cost of revenue (FactRevenue); total_payroll_usd is payroll (FactPayroll). Their relative
+    size varies by dataset — do NOT assume one exceeds the other; read the actual numbers. There
+    is NO "non-payroll expense" measure: never compute it as total_cost_usd − total_payroll_usd,
+    never hide a negative with greatest(...,0), and never relabel total_cost_usd as "non-payroll".
+    If asked for "non-payroll expenses", that breakdown is NOT AVAILABLE — refuse honestly (no_data).
   Payroll and General-Ledger expenses CANNOT be attributed to a specific client (FactPayroll
     and FactGeneralLedger have no client key). A client's only expense figure is total_cost_usd
     (from the client revenue views). Refuse client×department / client×payroll expense splits.
@@ -900,9 +900,9 @@ TABLE analytics.sample_gl_dump  ← USE THIS for vendor, department, class, jour
   class (String — 'General'|'Marketing'|'Product')
   ALWAYS filter: WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
   account_type VALUES same as trial_balance above
-  VENDOR SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND vendor_customer != '' AND toFloat64(debit) > 0  ← ALL debits, NO filter (Power BI Total Vendor Spend = 1,307,246)
-  DEPT SPEND:   sum(toFloat64(debit)) WHERE org_id IN (...) AND department != '' AND toFloat64(debit) > 0 GROUP BY department  ← ALL debits (Power BI "Spend by Dept": Admin=374,580 Ops=716,470 Sales=216,196)
-  ⚠️ ANTI-PATTERN — NEVER DO THIS: WHERE account_type = 'Expense' AND department != '' — this gives WRONG values (Operations becomes ~$8K instead of $716K because COGS is excluded). Operations has most spend in COGS journal entries. ALWAYS use ALL debits with NO account_type filter.
+  VENDOR SPEND: sum(toFloat64(debit)) WHERE org_id IN (...) AND vendor_customer != '' AND toFloat64(debit) > 0  ← ALL debits, NO filter
+  DEPT SPEND:   sum(toFloat64(debit)) WHERE org_id IN (...) AND department != '' AND toFloat64(debit) > 0 GROUP BY department  ← ALL debits
+  ⚠️ ANTI-PATTERN — NEVER DO THIS: WHERE account_type = 'Expense' AND department != '' — this gives WRONG values (spend collapses because COGS journal entries are excluded). The heaviest-spend department usually carries most of its cost in COGS. ALWAYS use ALL debits with NO account_type filter.
   CLASS SPEND:  sum(toFloat64(debit)) WHERE org_id IN (...) AND class != '' AND toFloat64(debit) > 0 GROUP BY class  ← ALL debits
   MONTHLY DEPT: GROUP BY toStartOfMonth(date), department — use ALL debits (Power BI "Monthly spend by Department" = Total Debits)
   NOTE: GL dump has NO Income entries. For revenue, use sample_trial_balance credit column (account_type='Income')
@@ -1255,7 +1255,7 @@ INTELLIGENCE RULES:
 - For department spend → SELECT department, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND department != '' GROUP BY department
 - For class spend → SELECT class, sum(debit) FROM analytics.sample_gl_dump WHERE org_id IN ({externalOrgIds:Array(String)}) AND class != '' GROUP BY class
 - For "by department": departments are EXACTLY 'Admin', 'Operations', 'Sales' — no Finance, no Other
-- CRITICAL: "department spend" / "operating spend by dept" / "spend contribution by dept" = sum(debit) from sample_gl_dump with NO account_type filter. Operations=$716,470 is the LARGEST dept. If your dept totals don't match Admin~$374K, Ops~$716K, Sales~$216K, your SQL is WRONG — you likely added an account_type filter that excludes COGS.
+- CRITICAL: "department spend" / "operating spend by dept" / "spend contribution by dept" = sum(debit) from sample_gl_dump with NO account_type filter. If a department that should be the heaviest spender comes out unexpectedly small, your SQL is WRONG — you likely added an account_type filter that excludes COGS.
 - For "by vendor": use vendor_customer from analytics.sample_gl_dump NOT vendor_name from journal lines
 - For "by account": GROUP BY account_name ORDER BY value DESC LIMIT 20
 - For revenue+expense comparison: multi-series with two value columns

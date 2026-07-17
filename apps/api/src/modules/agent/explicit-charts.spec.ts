@@ -210,7 +210,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -239,7 +239,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
 
     const refusal = svc.detectUnavailableData(
@@ -256,7 +256,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const probedViews: string[] = [];
     svc.queryRows = async (sql: string) => {
       probedViews.push(sql);
@@ -299,7 +299,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.queryRows = async (sql: string) => {
       if (sql.includes('AS movement'))
         return [{ account_name: 'Accounts Payable', movement: 900 }];
@@ -348,7 +348,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'AT&T', 'Total Revenue': 4843090, 'Total Cost': 3009796.24 },
@@ -421,7 +421,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -451,7 +451,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -479,7 +479,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -507,7 +507,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -535,7 +535,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.queryRows = async (sql: string) => {
       if (sql.includes(' AS v,'))
         return [
@@ -575,7 +575,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
@@ -622,7 +622,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     // Ranked by revenue (DAX TOPN([Total Revenue], DESC)): largest, then second-largest.
     svc.listTopClientsForScope = async () => ['JP Morgan', 'AT&T'];
@@ -686,7 +686,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     // resolveSpecClientFilters resolves the superlative pair to real names.
     svc.listTopClientsForScope = async () => ['JP Morgan', 'AT&T'];
@@ -739,7 +739,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     // "gross margin" = the ratio (gross_margin_pct), NOT gross-profit dollars.
     const margin = svc.buildEbpoComboEditSpec(
       { measure: 'total_revenue', dimension: 'client', chartType: 'bar' },
@@ -775,7 +775,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const spec = svc.buildEbpoComboEditSpec(
       {
         measure: 'total_revenue',
@@ -796,7 +796,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const spec = svc.buildEbpoComboEditSpec(
       {
         measure: 'cost_to_income_pct',
@@ -817,7 +817,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2024', total_revenue: 1000, payroll_to_revenue_pct: 85.1 }],
       error: null,
@@ -860,7 +860,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Client A', total_revenue: 1000, collection_rate_pct: 84.3 }],
       error: null,
@@ -903,7 +903,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2024', total_revenue: 1000, dso_days: 37.0 }],
       error: null,
@@ -946,7 +946,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.queryRows = async () => [];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Client A', value: 40, 'Total Revenue Label': 100 }],
@@ -987,7 +987,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         {
@@ -1029,7 +1029,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         {
@@ -1072,7 +1072,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Client A', value: 40, 'Gross Margin % Average': 38 }],
@@ -1113,7 +1113,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
@@ -1176,7 +1176,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
@@ -1236,7 +1236,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.specToPlan = async (_spec: any) => ({
       kind: 'build',
@@ -1292,7 +1292,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     expect(
       svc.detectEbpoMeasureMentions(
@@ -1312,7 +1312,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'USA', total_payroll: 1000, avg_monthly_salary: 2500 }],
       error: null,
@@ -1356,7 +1356,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     const plan = await svc.buildEbpoMetricEdit(
       {
@@ -1393,7 +1393,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'Server', 'Asset Cost': 29.1, 'Net Book Value': 24.6 },
@@ -1445,7 +1445,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'Telecom Support', value: 27.3 },
@@ -1485,7 +1485,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     let capturedSpec: any = null;
     svc.specToPlan = async (spec: any) => {
       capturedSpec = spec;
@@ -1548,7 +1548,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.buildEbpoMetricEdit = async () => ({
       summary: 'Updated the donut chart.',
@@ -1602,7 +1602,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'Mumbai Delivery Center / Server', value: 35800, depreciation_pct: 52.4 },
@@ -1658,7 +1658,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async (_sql: string, _scope: unknown, expectedType: string) => ({
       rows: [
         { name: 'NY HQ', value: 31.8, 'Net Book Value Label': 24300 },
@@ -1707,7 +1707,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Center A', x: 12, y: 88 }],
       error: null,
@@ -1766,7 +1766,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     expect(
       svc.detectEbpoMeasureMentions('Create a stacked column chart showing revenue by country'),
     ).not.toContain('allocated_revenue');
@@ -1781,7 +1781,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     expect(
       svc.detectEbpoMeasureMentions('In the same chart, show cumulative revenue.'),
     ).toContain('revenue_ytd');
@@ -1793,7 +1793,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     expect(
       svc.buildEbpoComboEditSpec(
@@ -1839,7 +1839,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     expect(
       svc.buildEbpoComboEditSpec(
@@ -1859,7 +1859,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'Client A', gross_margin: 100 },
@@ -1903,7 +1903,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     expect(
       svc.referencesExistingChart('In the same chart, add average SLA as a benchmark line.'),
@@ -1919,7 +1919,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     const plan = await svc.generateSmartPlan(
       'Generate a bar chart showing EBITDA by business unit',
@@ -1936,7 +1936,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
 
     const plan = await svc.generateSmartPlan(
@@ -1959,7 +1959,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Dell', x: 54132993.54, y: 1056451 }],
       error: null,
@@ -1993,7 +1993,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.listTopClientsForScope = async () => ['AT&T'];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 5000 }],
@@ -2032,7 +2032,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.listTopClientsForScope = async () => ['JP Morgan'];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', GrossMargin: 4000, TotalExpenses: 7000 }],
@@ -2065,7 +2065,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.listTopClientsForScope = async () => ['JP Morgan'];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 700, GrossMargin: 300 }],
@@ -2099,7 +2099,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.listTopClientsForScope = async () => ['JP Morgan'];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 700, GrossMargin: 300 }],
@@ -2138,7 +2138,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
 
     const plan = await svc.generateSmartPlan(
@@ -2157,7 +2157,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', value: -1200000 }],
       error: null,
@@ -2181,7 +2181,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     const message = svc.negativePieDonutMessage('pie', [
       { name: 'Operating Cash Flow', value: 83500000 },
@@ -2217,7 +2217,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     expect(
       svc.sameChartAxisConflict(
@@ -2251,7 +2251,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     expect(
       svc.sameChartAxisConflict(
@@ -2285,7 +2285,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Center A', x: 82, y: 95 }],
       error: null,
@@ -2319,7 +2319,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         {
@@ -2361,7 +2361,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const semanticResult = {
       kind: 'build',
       plan: {
@@ -2393,7 +2393,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const semanticResult = {
       kind: 'build',
       plan: {
@@ -2425,7 +2425,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const quartileSql = 'SELECT name, min, q1, median, q3, max FROM salary_quartiles';
     const plan = await svc.generateEditPlan(
       {
@@ -2466,7 +2466,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Gross Margin %', label: 'Gross Margin %', value: 42, format: 'percent' }],
@@ -2529,7 +2529,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', value: 1 }],
       error: null,
@@ -2562,7 +2562,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.queryRows = async () => [
       { v: 'Fresh', m: 10 },
       { v: 'Severely Late', m: 90 },
@@ -2599,7 +2599,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'USA', value: 92.7 }],
       error: null,
@@ -2623,7 +2623,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', value: 82.1 }],
       error: null,
@@ -2647,7 +2647,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', 'Payroll Expense': 586052 }],
       error: null,
@@ -2675,7 +2675,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'LA Delivery Center', x: 92.7, y: 84.1 }],
       error: null,
@@ -2700,7 +2700,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.buildEbpoSemanticPlan(
       'Generate a donut chart showing CSAT distribution',
       { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
@@ -2716,7 +2716,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Operations', value: 92.7 }],
       error: null,
@@ -2741,7 +2741,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Payroll Expense', value: 1200 }],
       error: null,
@@ -2763,7 +2763,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.specToPlan = async (spec: any) => ({
       kind: 'build',
@@ -2830,7 +2830,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const fixed = svc.repairClickHouseSql(`
       SELECT
         formatDateTime(period_date, '%b %Y') AS name,
@@ -2849,7 +2849,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async (sql: string) => ({
       rows: sql.includes('Monthly Average')
         ? [{ name: 'Jan 2025', value: 10, 'value | Monthly Average': 9 }]
@@ -2892,7 +2892,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Gross Margin', value: 40, is_total: 1, 'Gross Margin % Label': 40 }],
@@ -2935,7 +2935,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async (sql: string) => ({
       rows: sql.includes('cumulative_value')
@@ -2984,7 +2984,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async (sql: string) => ({
       rows: sql.includes('Cumulative Cash Flow')
@@ -3033,7 +3033,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
 
     const plan = await svc.generateEditPlan(
@@ -3070,7 +3070,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
 
     const plan = await svc.generateEditPlan(
       {
@@ -3106,7 +3106,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Center A', value: 12, asset_intensity: 12, csat_pct: 91 }],
@@ -3158,7 +3158,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Center A', x: 82, y: 120, z: 900000 }],
       error: null,
@@ -3208,7 +3208,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const dashboard = {
       id: 'dash',
       title: 'Dashboard',
@@ -3251,7 +3251,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -3288,7 +3288,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -3308,7 +3308,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const widget = {
       id: 'w1',
       title: 'Monthly Revenue',
@@ -3346,7 +3346,7 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { AgentService } = require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any) as any;
+    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
     const widget = {
       id: 'w1',
       title: 'Collection Rate',

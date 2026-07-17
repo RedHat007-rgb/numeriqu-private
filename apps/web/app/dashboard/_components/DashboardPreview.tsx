@@ -47,6 +47,14 @@ import {
   RadialBarChart,
   RadialBar,
   LabelList,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  FunnelChart,
+  Funnel,
+  Sankey as RechartsSankey,
 } from "recharts";
 import { ApiError, type ChatMessage, type TimeRange } from "../../../lib/api";
 import type { FigureEvidence } from "../../../lib/api/types";
@@ -1245,12 +1253,41 @@ function ZoomableChartFrame({
   );
 }
 
+/** Convert the engine's generic long-form multi-dimensional result
+ * (`name`, `series`, `value`) into the wide rows consumed by Recharts and the
+ * heatmap renderer. Series names come from live dimension values; nothing is
+ * enumerated or hardcoded here. */
+function pivotLongSeries(rows: DataRow[]): DataRow[] {
+  if (
+    rows.length === 0 ||
+    !rows.every(
+      (row) =>
+        typeof (row as Record<string, unknown>).series === "string" &&
+        Object.prototype.hasOwnProperty.call(row, "value"),
+    )
+  ) {
+    return rows;
+  }
+  const byName = new Map<string, DataRow>();
+  for (const row of rows) {
+    const source = row as Record<string, unknown>;
+    const name = String(source.name ?? "");
+    const series = String(source.series ?? "");
+    if (!series) continue;
+    const target = byName.get(name) ?? ({ name } as DataRow);
+    target[series] = source.value as never;
+    byName.set(name, target);
+  }
+  return [...byName.values()];
+}
+
 export function renderChart(
   chart: Chart,
   data: DataRow[],
   isExpanded: boolean,
   onFigureClick?: (arg: FigureClickArg) => void,
 ) {
+  data = pivotLongSeries(data);
   const h = isExpanded ? 480 : 240;
   // Expanded charts live inside a flex-1 modal container that is taller than 480px, so a
   // fixed-height wrapper leaves dead space below and mis-aligns the plot. When expanded we
@@ -1625,6 +1662,40 @@ export function renderChart(
   const expandedXAxisHeight = isExpanded ? 34 : 24;
   const expandedLegendHeight = isExpanded ? 36 : 28;
   const expandedBottomChartMargin = isExpanded ? 44 : 8;
+  // Axis TITLES ("Department" under x, "USD" beside y) so the chart explains itself.
+  // Only rendered when the backend supplied them (chart.config.xAxisLabel/yAxisLabel),
+  // so charts that don't set them look exactly as before. Copies the scatter branch's
+  // `label` prop pattern. The pad/width additions keep the titles from clipping ticks.
+  const xAxisTitle = chart.config.xAxisLabel?.trim() || "";
+  const yAxisTitle = chart.config.yAxisLabel?.trim() || "";
+  const axisTitleFill = "rgb(var(--color-text-muted))";
+  const axisTitleFontSize = isExpanded ? 12 : 11;
+  const xAxisTitlePad = xAxisTitle ? (isExpanded ? 22 : 18) : 0;
+  const yAxisTitleWidth = yAxisTitle ? (isExpanded ? 22 : 18) : 0;
+  const xAxisTitleProp = xAxisTitle
+    ? {
+        label: {
+          value: xAxisTitle,
+          position: "insideBottom" as const,
+          offset: isExpanded ? -8 : -6,
+          fontSize: axisTitleFontSize,
+          fill: axisTitleFill,
+        },
+      }
+    : {};
+  const yAxisTitleProp = yAxisTitle
+    ? {
+        label: {
+          value: yAxisTitle,
+          angle: -90,
+          position: "insideLeft" as const,
+          offset: 6,
+          fontSize: axisTitleFontSize,
+          fill: axisTitleFill,
+          style: { textAnchor: "middle" as const },
+        },
+      }
+    : {};
   // LabelList `content` renderer that skips off-stride points (formatter can't see the
   // index, so thinning must happen in a custom content renderer).
   const thinnedLabel =
@@ -1827,6 +1898,80 @@ export function renderChart(
     );
   }
 
+  if (chart.type === "radar") {
+    const radarData = data.length === 1
+      ? Object.entries(data[0] ?? {}).filter(([key, value]) => key !== "name" && Number.isFinite(Number(value)))
+          .map(([name, value]) => ({ name: prettySeriesName(name), value: Number(value) }))
+      : data;
+    const series = Array.from(
+      new Set(radarData.flatMap((row) => Object.keys(row).filter((key) => key !== "name" && Number.isFinite(Number((row as any)[key]))))),
+    );
+    return (
+      <div style={{ height: wrapH, width: "100%" }} className="flex justify-center overflow-x-auto">
+          <RadarChart width={isExpanded ? 980 : 640} height={isExpanded ? 480 : 240} data={radarData} margin={{ top: 24, right: 52, bottom: 24, left: 52 }}>
+            <PolarGrid stroke="rgba(var(--color-text-muted)/0.25)" />
+            <PolarAngleAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-secondary))", fontSize: isExpanded ? 11 : 9 }} />
+            <PolarRadiusAxis tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 9 }} tickFormatter={(v) => fmtVal(Number(v) || 0)} />
+            {series.slice(0, 6).map((key, index) => (
+              <Radar key={key} name={prettySeriesName(key)} dataKey={key} stroke={PIE_COLORS[index % PIE_COLORS.length]}
+                fill={PIE_COLORS[index % PIE_COLORS.length]} fillOpacity={0.12} strokeWidth={2} isAnimationActive={false} />
+            ))}
+            <Tooltip formatter={(v, name) => [fmtVal(Number(v) || 0), String(name)]} />
+            {series.length > 1 && <Legend wrapperStyle={{ fontSize: isExpanded ? 11 : 9 }} />}
+          </RadarChart>
+      </div>
+    );
+  }
+
+  if (chart.type === "funnel") {
+    const rawStages = data.length === 1 && !Object.prototype.hasOwnProperty.call(data[0] ?? {}, "value")
+      ? Object.entries(data[0] ?? {}).filter(([key, value]) => key !== "name" && Number.isFinite(Number(value)))
+          .map(([name, value]) => ({ name: prettySeriesName(name), value: Number(value) }))
+      : data.map((row, index) => ({
+          name: String((row as any).name ?? `Stage ${index + 1}`),
+          value: Number((row as any).value ?? 0),
+        }));
+    const funnelData = rawStages.filter((row) => Number.isFinite(row.value)).map((row, index) => ({
+      ...row, fill: PIE_COLORS[index % PIE_COLORS.length],
+    }));
+    return (
+      <div style={{ height: wrapH, width: "100%" }} className="flex justify-center overflow-x-auto">
+          <FunnelChart width={isExpanded ? 980 : 640} height={isExpanded ? 480 : 240} margin={{ top: 12, right: 80, bottom: 12, left: 80 }}>
+            <Tooltip formatter={(v) => fmtVal(Number(v) || 0)} />
+            <Funnel dataKey="value" data={funnelData} isAnimationActive={false}>
+              <LabelList position="right" fill="rgb(var(--color-text-primary))" stroke="none"
+                dataKey="name" fontSize={isExpanded ? 12 : 10} />
+              <LabelList position="center" fill="#fff" stroke="none" dataKey="value"
+                formatter={(v: unknown) => fmtVal(Number(v) || 0)} fontSize={isExpanded ? 11 : 9} />
+            </Funnel>
+          </FunnelChart>
+      </div>
+    );
+  }
+
+  if (chart.type === "sankey") {
+    const nodeIndex = new Map<string, number>();
+    const nodes: Array<{ name: string }> = [];
+    const node = (name: string) => {
+      if (!nodeIndex.has(name)) { nodeIndex.set(name, nodes.length); nodes.push({ name }); }
+      return nodeIndex.get(name)!;
+    };
+    const links = data.flatMap((row) => {
+      const sourceName = String((row as any).name ?? "Source");
+      return Object.entries(row).filter(([key, value]) => key !== "name" && Number(value) > 0).map(([key, value]) => ({
+        source: node(sourceName), target: node(key), value: Number(value),
+      }));
+    });
+    return (
+      <div style={{ height: wrapH, width: "100%" }} className="flex justify-center overflow-x-auto">
+          <RechartsSankey width={isExpanded ? 980 : 640} height={isExpanded ? 480 : 240} data={{ nodes, links }} nodePadding={18} margin={{ top: 20, right: 100, bottom: 20, left: 100 }}
+            link={{ stroke: "rgb(var(--color-accent-cyan))", strokeOpacity: 0.25 }}>
+            <Tooltip formatter={(v) => fmtVal(Number(v) || 0)} />
+          </RechartsSankey>
+      </div>
+    );
+  }
+
   if (chart.type === "metric") {
     if (chart.config.metric === "venture") {
       const raw = data[0] as VentureData | undefined;
@@ -1993,7 +2138,7 @@ export function renderChart(
 
     return (
       <div style={{ height: wrapH, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
 	          <AreaChart
               data={areaData}
               margin={{ top: isExpanded ? 28 : 16, right: isExpanded ? 54 : 30, left: 12, bottom: isMultiSeries ? expandedBottomChartMargin : 12 }}
@@ -2014,15 +2159,17 @@ export function renderChart(
               minTickGap={14}
               interval="preserveStartEnd"
               tickMargin={8}
-              height={expandedXAxisHeight}
+              height={expandedXAxisHeight + xAxisTitlePad}
+              {...xAxisTitleProp}
             />
             <YAxis
               tick={tickStyle}
               tickLine={false}
               axisLine={false}
               tickFormatter={yTick}
-              width={56}
+              width={56 + yAxisTitleWidth}
               tickMargin={8}
+              {...yAxisTitleProp}
             />
             {refOnRightAxis && refValue != null && Number.isFinite(refValue) && (
               <YAxis
@@ -2379,7 +2526,7 @@ export function renderChart(
 
 	    return (
 	      <div style={{ height: wrapH, width: "100%" }}>
-	        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
 	          <BarChart data={wf} margin={{ top: 16, right: 4, left: 12, bottom: manyBars ? 28 : 4 }} onClick={emitFromActive}>
 	            <CartesianGrid {...gridStyle} vertical={false} />
 	            <XAxis dataKey="name" tick={tickStyle} tickLine={false} axisLine={false} interval={0}
@@ -2627,7 +2774,7 @@ export function renderChart(
 
     return (
       <div style={{ height: wrapH, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <ComposedChart
             data={comboData}
             margin={{ top: 8, right: 12, left: 12, bottom: expandedBottomChartMargin }}
@@ -2648,7 +2795,8 @@ export function renderChart(
               minTickGap={14}
               interval="preserveStartEnd"
               tickMargin={8}
-              height={expandedXAxisHeight}
+              height={expandedXAxisHeight + xAxisTitlePad}
+              {...xAxisTitleProp}
             />
             <YAxis
               yAxisId="left"
@@ -2656,8 +2804,9 @@ export function renderChart(
               tickLine={false}
               axisLine={false}
               tickFormatter={(v: number) => fmtFor(leftFmt)(Number(v) || 0)}
-              width={56}
+              width={56 + yAxisTitleWidth}
               tickMargin={8}
+              {...yAxisTitleProp}
             />
             {usesRight && (
               <YAxis
@@ -2667,8 +2816,21 @@ export function renderChart(
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(v: number) => fmtFor(rightFmt)(Number(v) || 0)}
-                width={44}
+                width={chart.config.display?.secondaryLabel ? 60 : 44}
                 tickMargin={8}
+                {...(chart.config.display?.secondaryLabel
+                  ? {
+                      label: {
+                        value: String(chart.config.display.secondaryLabel),
+                        angle: 90,
+                        position: "insideRight" as const,
+                        offset: 6,
+                        fontSize: axisTitleFontSize,
+                        fill: axisTitleFill,
+                        style: { textAnchor: "middle" as const },
+                      },
+                    }
+                  : {})}
               />
             )}
             <Tooltip
@@ -2825,9 +2987,13 @@ export function renderChart(
       barData.length >= 3 &&
       (barNameMaxLen > 14 || (chart.config.grouping === "client" && data.length > 6));
 
-    const trimmed = useHorizontalBars
-      ? barData.slice(0, isExpanded ? 15 : 8)
-      : barData;
+    // Horizontal bars have vertical room, so show the WHOLE set for any realistic
+    // categorical breakdown (departments, business units, countries…). The old cap
+    // of 8 silently hid rows while the footer still counted them all — e.g. a
+    // 10-department chart rendered 8 bars but read "10 points". This higher cap
+    // covers every realistic breakdown; only genuinely huge sets are trimmed.
+    const HBAR_CAP = isExpanded ? 40 : 20;
+    const trimmed = useHorizontalBars ? barData.slice(0, HBAR_CAP) : barData;
 
     const seriesKeys = (
       isActuallyMultiSeries ? rawSeriesKeys : inferNumericSeriesKeys(trimmed)
@@ -2931,7 +3097,7 @@ export function renderChart(
 
     return (
       <div style={{ height: barHeight, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <BarChart data={chartData} margin={barMargin} layout={useHorizontalBars ? "vertical" : "horizontal"}>
             <defs>
               <linearGradient id={`grad-bar-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
@@ -2955,6 +3121,18 @@ export function renderChart(
                     fmtVal(Number(v) || 0)
                   }
                   tickMargin={8}
+                  height={expandedXAxisHeight + (yAxisTitle ? xAxisTitlePad || (isExpanded ? 22 : 18) : 0)}
+                  {...(yAxisTitle
+                    ? {
+                        label: {
+                          value: yAxisTitle,
+                          position: "insideBottom" as const,
+                          offset: isExpanded ? -8 : -6,
+                          fontSize: axisTitleFontSize,
+                          fill: axisTitleFill,
+                        },
+                      }
+                    : {})}
                 />
                 <YAxis
                   type="category"
@@ -3012,15 +3190,17 @@ export function renderChart(
                   axisLine={false}
                   interval={needsRotatedLabels ? 0 : "preserveStartEnd"}
                   tickMargin={8}
-                  height={needsRotatedLabels ? (isExpanded ? 68 : 56) : expandedXAxisHeight}
+                  height={(needsRotatedLabels ? (isExpanded ? 68 : 56) : expandedXAxisHeight) + xAxisTitlePad}
+                  {...xAxisTitleProp}
                 />
                 <YAxis
                   tick={tickStyle}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={yTick}
-                  width={56}
+                  width={56 + yAxisTitleWidth}
                   tickMargin={8}
+                  {...yAxisTitleProp}
                   {...(dispNormalized ||
                   (shouldStackBreakdownBars &&
                     chart.config.display?.valueFormat === "percent")
@@ -3381,7 +3561,7 @@ export function renderChart(
             <span>{fmtColorMetric(maxColorValue)}</span>
           </div>
         )}
-        <ResponsiveContainer width="100%" height={hasColorMetric ? Math.max(80, h - 24) : "100%"}>
+        <ResponsiveContainer width="100%" height={hasColorMetric ? Math.max(80, h - 24) : "100%"} minWidth={0} minHeight={0}>
           <Treemap
             data={nodes}
             dataKey="size"
@@ -3473,7 +3653,7 @@ export function renderChart(
         }
       >
         {(view) => (
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <ScatterChart margin={{ top: 24, right: isExpanded ? 40 : 24, left: 12, bottom: 24 }} onClick={emitFromActive}>
             <CartesianGrid {...gridStyle} />
             <XAxis
@@ -3623,7 +3803,7 @@ export function renderChart(
 
     return (
       <div style={{ height: wrapH, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <PieChart>
             <Pie data={enriched} cx="45%" cy="50%" innerRadius={0}
               outerRadius={isExpanded ? "65%" : "58%"} paddingAngle={3}
@@ -3826,7 +4006,7 @@ export function renderChart(
 
     return (
       <div style={{ height: isExpanded ? "100%" : h + 20, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <PieChart>
             {donutTotal > 0 && !donutHasSignedSlices && (
               <text x="50%" y={isExpanded ? "50%" : "46%"} textAnchor="middle" dominantBaseline="central"
@@ -3869,7 +4049,7 @@ export function renderChart(
     const sorted = [...data].sort((a, b) => (Number((b as any).value) || 0) - (Number((a as any).value) || 0));
     return (
       <div style={{ height: isExpanded ? "100%" : Math.max(h, sorted.length * 32 + 40), width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <BarChart data={sorted} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" horizontal={false} />
             <XAxis type="number" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 10 }}
@@ -3903,7 +4083,7 @@ export function renderChart(
   if (chart.type === "histogram") {
     return (
       <div style={{ height: wrapH, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 16 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
             <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 9 }}
@@ -3936,7 +4116,7 @@ export function renderChart(
     });
     return (
       <div style={{ height: wrapH, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <ComposedChart data={paretoData} margin={{ top: 8, right: 40, left: 8, bottom: 16 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
             <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 9 }}
@@ -3969,7 +4149,7 @@ export function renderChart(
     const gaugeData = [{ name: "Score", value: score, fill: color }, { name: "Remaining", value: 100 - score, fill: "transparent" }];
     return (
       <div style={{ height: wrapH, width: "100%" }} className="flex flex-col items-center justify-center">
-        <ResponsiveContainer width="100%" height={isExpanded ? 300 : 200}>
+        <ResponsiveContainer width="100%" height={isExpanded ? 300 : 200} minWidth={0} minHeight={0}>
           <RadialBarChart cx="50%" cy="70%" innerRadius="60%" outerRadius="90%"
             startAngle={180} endAngle={0} data={gaugeData}>
             <RadialBar dataKey="value" background={{ fill: "rgba(var(--color-text-muted)/0.1)" }}
@@ -4048,7 +4228,7 @@ export function renderChart(
         }
       >
         {(view) => (
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
           <ScatterChart margin={{ top: 14, right: 12, left: 8, bottom: 24 }} onClick={emitFromActive}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--color-text-muted)/0.12)" />
             <XAxis type="number" dataKey="x" name={xLabel}
@@ -4401,7 +4581,7 @@ export function renderChart(
 
   return (
     <div style={{ height: wrapH, width: "100%" }}>
-      <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
         {(() => {
           const seriesKeys = inferNumericSeriesKeys(data);
           const hasValueSeries = hasFiniteValueKey(data, "value");

@@ -6,6 +6,9 @@ import {
 } from '../../database/database.module';
 import type { ClickHouseClient } from '@clickhouse/client';
 import { OrganizationContextService } from '../org-context/org-context.service';
+import { ChartEngineService, type EngineAnswer } from '../chart-engine/chart-engine.service';
+import type { EngineChartSpec } from '../chart-engine/semantic-model.types';
+import { chooseEngine, parseRouterConfig } from '../chart-engine/engine-router';
 import { parseQuerySpec, type QuerySpec, type TimeRange } from './query-spec';
 import {
   injectTenantScopePredicate,
@@ -140,6 +143,7 @@ export class AgentService {
     @Inject(CLICKHOUSE_ANALYTICS_TOKEN)
     private readonly clickhouse: ClickHouseClient,
     private readonly orgContext: OrganizationContextService,
+    private readonly chartEngine: ChartEngineService,
   ) {
     const llm = resolveLlmRuntimeConfig('llama3:latest');
     this.llmProvider = llm.provider;
@@ -7340,6 +7344,226 @@ export class AgentService {
         data: { organizationId, userId, title: userQuery.slice(0, 80) },
       }));
 
+    // ── Autonomous chart engine (strangler switch; DEFAULT OFF) ──────────────
+    // Enabled per-org via CHART_ENGINE_NEW_ORGS. On refusal or ANY error we fall
+    // through to the legacy pipeline below, so flipping the flag can never break
+    // the chat — worst case it behaves exactly like today.
+    if (chooseEngine(organizationId, parseRouterConfig(process.env)) === 'new') {
+      let engineUnanswered = false;
+      try {
+        const engineScope = await this.getOrgScope(organizationId, role);
+        const scope = {
+          organizationId,
+          tenantId: engineScope.tenantId,
+          externalOrgIds: engineScope.externalOrgIds ?? [],
+        };
+
+        // Is there a chart WE already built in this session? If so, and the message
+        // reads like a refinement ("add gross margin on another axis", "make it a
+        // line chart", "break it down by department"), EDIT that chart in place —
+        // ChatGPT-style — instead of spawning a brand-new one.
+        const active = await this.getActiveSessionDashboard(currentSession.id, organizationId);
+        const activeWidget = active?.widgets?.[0];
+        const activeQc = (activeWidget?.queryConfig ?? {}) as Record<string, unknown>;
+        const priorSpec = activeQc.spec as EngineChartSpec | undefined;
+        const priorView = typeof activeQc.routedView === 'string' ? (activeQc.routedView as string) : undefined;
+        const canEdit = !!active && !!activeWidget && !!priorSpec && !!priorView;
+        const wantsEdit = canEdit && this.detectIntent(queryText, true) === 'EDIT_DASHBOARD';
+
+        // Did the user explicitly ask for a separate/second axis (a dual-axis combo)?
+        const wantsSeparateAxis =
+          /\b(another|second|separate|secondary|right|dual)\s+(axis|axes)\b/i.test(queryText) ||
+          /\bdual[-\s]?axis\b/i.test(queryText) ||
+          /\bcombo\b/i.test(queryText);
+        let built: EngineAnswer = wantsEdit
+          ? await this.chartEngine.answerEdit(scope, priorView!, priorSpec!, queryText, { wantsSeparateAxis })
+          : await this.chartEngine.answer(scope, queryText);
+        // An edit its cube can't satisfy shouldn't dead-end — build a fresh chart.
+        if (wantsEdit && !built.ok) built = await this.chartEngine.answer(scope, queryText);
+
+        if (built.ok) {
+          const isEdit = built.mode === 'edit' && canEdit;
+          const intent: QueryIntent = isEdit ? 'EDIT_DASHBOARD' : 'CREATE_DASHBOARD';
+          yield this.chunk('intent', {
+            intent,
+            activeDashboardId: isEdit ? active!.id : null,
+            activeDashboardTitle: isEdit ? active!.title : null,
+            engine: 'chart-engine',
+          });
+          yield this.chunk('phase', { phase: 'execution', label: 'Autonomous engine' });
+
+          // One widget config, whether we create or edit — single-series (name,value)
+          // for one measure or multi-series (name + a column per measure) for several,
+          // plus the display/axis hints the combo renderer reads.
+          const queryConfig = {
+            metric: 'dynamic',
+            grouping: 'query',
+            dynamicSql: built.dynamicSql,
+            display: built.display,
+            spec: built.spec,
+            routedView: built.routedView,
+            // Top-level axis TITLES so the chart explains itself (x = category/time,
+            // y = unit). The renderer reads chart.config.xAxisLabel/yAxisLabel.
+            ...(built.display.xAxisLabel ? { xAxisLabel: built.display.xAxisLabel } : {}),
+            ...(built.display.yAxisLabel ? { yAxisLabel: built.display.yAxisLabel } : {}),
+          } as unknown as Prisma.InputJsonValue;
+
+          let dashId: string;
+          if (isEdit) {
+            // Update the existing chart in place — a new VERSION of the same widget.
+            await this.prisma.dashboardWidget.update({
+              where: { id: activeWidget!.id },
+              data: { title: built.title, chartType: built.widgetChartType, queryConfig },
+            });
+            await this.prisma.dashboard.update({
+              where: { id: active!.id },
+              data: { title: built.title, description: built.title },
+            });
+            dashId = active!.id;
+          } else {
+            // Persist a fresh dashboard + one dynamic widget, reusing the SAME
+            // snapshot builder + event shape the legacy path uses so the frontend
+            // renders it identically.
+            const dash = await this.prisma.dashboard.create({
+              data: {
+                organizationId,
+                ownerId: userId,
+                title: built.title,
+                description: built.title,
+                config: { source: 'chart-engine', query: queryText, routedView: built.routedView } as Prisma.InputJsonValue,
+                permissions: { shared: false } as Prisma.InputJsonValue,
+              },
+            });
+            await this.prisma.dashboardWidget.create({
+              data: {
+                organizationId,
+                dashboardId: dash.id,
+                title: built.title,
+                chartType: built.widgetChartType,
+                queryConfig,
+                chartConfig: { description: '' } as Prisma.InputJsonValue,
+                displayOrder: 0,
+              },
+            });
+            dashId = dash.id;
+          }
+
+          // Link (or re-link) session → dashboard so the persistent dashboard panel
+          // (dashboardForSession / getActiveSessionDashboard) resolves it as current.
+          await this.prisma.agentDashboardRequest.create({
+            data: {
+              organizationId,
+              requestedById: userId,
+              agentSessionId: currentSession.id,
+              prompt: userQuery,
+              status: 'SUCCEEDED',
+              generatedDashboardId: dashId,
+              completedAt: new Date(),
+            },
+          });
+
+          const persisted = await this.prisma.dashboardWidget.findMany({
+            where: { dashboardId: dashId },
+            orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          });
+          const widgetSnapshots = await this.buildChartTurnWidgetSnapshots(
+            organizationId,
+            role,
+            persisted.map((w) => ({
+              id: w.id,
+              title: w.title,
+              chartType: w.chartType,
+              queryConfig: w.queryConfig as Record<string, unknown>,
+              chartConfig: w.chartConfig as Record<string, unknown>,
+              displayOrder: w.displayOrder,
+            })),
+          );
+          const versionNumber = await this.nextChartTurnVersion(currentSession.id, organizationId);
+          const chartTurn: ChartTurnMetadata = {
+            kind: 'chart_turn',
+            mode: isEdit ? 'edit' : 'create',
+            versionNumber,
+            previousVersionNumber: isEdit && versionNumber > 1 ? versionNumber - 1 : null,
+            sessionId: currentSession.id,
+            dashboardId: dashId,
+            dashboardTitle: built.title,
+            widgetCount: widgetSnapshots.length,
+            prompt: queryText,
+            summary: `${built.title} — ready to explore.`,
+            widgetSnapshots,
+            intent,
+          };
+
+          // Persist the turn (user + assistant-with-chart_turn metadata), exactly
+          // like the legacy path. WITHOUT this the version history has nothing to
+          // read (previous versions unreachable) and nextChartTurnVersion never
+          // advances — every chart stayed stuck at "v1". Each saved chart_turn
+          // carries its own widgetSnapshots, which IS the reviewable version.
+          const replyText = await this.narrateEngineAnswer(built);
+          await this.prisma.agentChatMessage.create({
+            data: { sessionId: currentSession.id, organizationId, role: 'user', content: userQuery },
+          });
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+              content: replyText,
+              metadata: chartTurn as unknown as Prisma.InputJsonValue,
+            },
+          });
+
+          yield this.chunk('dashboard_created', {
+            dashboardId: dashId,
+            title: built.title,
+            description: chartTurn.summary,
+            widgetCount: widgetSnapshots.length,
+            chartTurn,
+          });
+          yield this.chunk('system', { action: 'DASHBOARD_REFRESH' });
+          yield this.chunk('token', { content: replyText });
+          yield this.chunk('done', {
+            metrics: {
+              sessionId: currentSession.id,
+              engine: 'chart-engine',
+              routedView: built.routedView,
+              dashboardId: dashId,
+              intent,
+            },
+          });
+          return;
+        }
+        this.logger.warn(`[chart-engine] not answerable, falling back to legacy: ${built.reason}`);
+        engineUnanswered = true;
+      } catch (e) {
+        this.logger.error(`[chart-engine] error, falling back to legacy: ${(e as Error).message}`);
+        engineUnanswered = true;
+      }
+
+      // Registry-only datasets have NO legacy ebpo/gl data, so falling through
+      // would run the legacy path against empty tables and answer nonsense. Keep
+      // the reply an honest, business-facing redirect instead (no tech leak).
+      if (engineUnanswered && (await this.chartEngine.isEngineOnlyOrg(organizationId))) {
+        const refusal =
+          "I wasn't able to pull that one together from the numbers I have. I can dig into revenue, " +
+          'costs and margins, cash flow, receivables and payables, headcount and delivery operations — ' +
+          'ask me about any of those, or rephrase it and I\'ll take another pass.';
+        await this.prisma.agentChatMessage.create({
+          data: { sessionId: currentSession.id, organizationId, role: 'user', content: userQuery },
+        });
+        await this.prisma.agentChatMessage.create({
+          data: { sessionId: currentSession.id, organizationId, role: 'assistant', content: refusal },
+        });
+        yield this.chunk('intent', { intent: 'CREATE_DASHBOARD', activeDashboardId: null, activeDashboardTitle: null, engine: 'chart-engine' });
+        yield this.chunk('message', { message: refusal });
+        yield this.chunk('token', { content: refusal });
+        yield this.chunk('done', {
+          metrics: { sessionId: currentSession.id, engine: 'chart-engine', refused: true },
+        });
+        return;
+      }
+    }
+
     // ── Audit trail setup ──────────────────────────────────────────────────
     const request = await this.prisma.agentDashboardRequest.create({
       data: {
@@ -9966,6 +10190,169 @@ export class AgentService {
     return value.toLocaleString();
   }
 
+  /**
+   * Astra's spoken reply for an autonomous-engine chart. The LLM does the
+   * PHRASING (warm, varied, conversational) but never the ARITHMETIC: we extract
+   * the exact figures from the real result rows here, hand them to the model as a
+   * grounded fact sheet, and forbid it from inventing or recomputing numbers.
+   * On any LLM failure we fall back to the deterministic sentence so the chat
+   * never stalls — same strangler-safety principle as the engine seam itself.
+   */
+  private async narrateEngineAnswer(built: Extract<EngineAnswer, { ok: true }>): Promise<string> {
+    const { sheet, fallback } = this.buildEngineFacts(built);
+    const system =
+      "You are Astra, a world-class CFO-grade financial analysis assistant — warm, sharp, and genuinely helpful. " +
+      "You just built or updated a chart for the user (see Action in FACTS). If it was an update, briefly acknowledge " +
+      "what changed (e.g. a measure added on a second axis, a re-slice, a chart-type switch). Write a short spoken reply " +
+      "(1–2 sentences) that surfaces the single most interesting takeaway, then offers ONE specific, natural next step.\n" +
+      'Hard rules:\n' +
+      '- Use ONLY the numbers, names, and periods listed under FACTS, copied EXACTLY as written. Never invent, ' +
+      're-round, or compute a new figure. If a number is not in FACTS, do not state it.\n' +
+      '- Be conversational and confident, never robotic. No "Sure"/"Certainly"/"Here is" filler openings are required, ' +
+      'but a natural lead-in is welcome.\n' +
+      '- Wrap the chart title and every figure in **bold**.\n' +
+      '- End with one concrete follow-up the user could ask for.\n' +
+      'Return STRICTLY JSON: {"reply": "<your reply>"}';
+    try {
+      const raw = await this.chartEngine.chat(system, `FACTS:\n${sheet}`);
+      const reply = this.parseNarrationReply(raw);
+      if (reply) return reply;
+    } catch (e) {
+      this.logger.warn(`[chart-engine] narration LLM failed, using grounded fallback: ${(e as Error).message}`);
+    }
+    return fallback;
+  }
+
+  /** Extract a "{reply}" string from the JSON-mode LLM output, or null. */
+  private parseNarrationReply(raw: string): string | null {
+    if (!raw) return null;
+    try {
+      const obj = JSON.parse(raw) as { reply?: unknown };
+      const reply = typeof obj.reply === 'string' ? obj.reply.trim() : '';
+      return reply.length >= 2 ? reply : null;
+    } catch {
+      const t = raw.trim();
+      // Some providers may return bare prose instead of JSON — accept that too.
+      return t.length >= 2 && !t.startsWith('{') ? t : null;
+    }
+  }
+
+  /**
+   * Deterministically read the result rows into (a) a grounded FACT SHEET the LLM
+   * phrases from and (b) a ready-to-send FALLBACK sentence. Both carry the SAME
+   * pre-formatted figures, so whichever path is used, the numbers are correct.
+   */
+  private buildEngineFacts(built: Extract<EngineAnswer, { ok: true }>): { sheet: string; fallback: string } {
+    const fmt = (n: number) => this.formatFigure(n, built.valueFormat);
+    const title = built.title;
+    const valueKey = built.spec.measureKeys[0];
+    const nameKey = built.spec.dimensionKey ?? (built.spec.timeGrain ? 'period' : null);
+    const lines = [
+      `Action: ${built.mode === 'edit' ? 'updated the existing chart per the request' : 'created a new chart'}`,
+      `Chart title: ${title}`,
+      `Chart type: ${built.widgetChartType}`,
+      `Value unit: ${built.valueFormat}`,
+    ];
+    // When there are multiple series (e.g. a dual-axis combo), spell out each one's
+    // axis + style so the reply can say "added X on a second axis".
+    const seriesInfo = built.display.series;
+    if (seriesInfo && seriesInfo.length > 1) {
+      lines.push(
+        `Series: ${seriesInfo
+          .map((s) => `${s.key} (${s.axis} axis, ${s.role})`)
+          .join('; ')}`,
+      );
+    }
+
+    let points = (built.rows ?? [])
+      .map((r) => ({
+        name: String((nameKey ? r[nameKey] : 'Total') ?? '').trim(),
+        value: this.num(r[valueKey as string]),
+      }))
+      .filter((p) => Number.isFinite(p.value));
+
+    // Time + dimension results are long-form (one row per period/category).
+    // Describe each distinct category over the requested period instead of
+    // counting every raw cell as a separate category.
+    if (built.spec.timeGrain && built.spec.dimensionKey) {
+      const totals = new Map<string, number>();
+      for (const point of points) {
+        totals.set(point.name, (totals.get(point.name) ?? 0) + point.value);
+      }
+      points = Array.from(totals, ([name, value]) => ({ name, value }));
+    }
+
+    if (points.length === 0) {
+      return {
+        sheet: [...lines, 'Result: no matching rows were found.'].join('\n'),
+        fallback: `Here's **${title}**. I couldn't find any matching rows in your data just yet — want me to try a different metric or timeframe?`,
+      };
+    }
+
+    // Single headline number (KPI).
+    if (!built.spec.dimensionKey && !built.spec.timeGrain) {
+      const v = fmt(points[0]!.value);
+      return {
+        sheet: [...lines, 'Kind: single headline value', `Value: ${v}`].join('\n'),
+        fallback: `**${title}** comes out to **${v}**. Want me to break that down by client or department, or show how it's trended over time?`,
+      };
+    }
+
+    // Time series — the trend.
+    if (built.spec.timeGrain && !built.spec.dimensionKey) {
+      // compileSpec emits the raw date bucket ("2025-01-01") as `period`.
+      const prettyPeriod = (raw: string): string => {
+        const m = raw.match(/^((?:19|20)\d{2})-(\d{2})/);
+        if (!m) return raw;
+        const month = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1));
+        return new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(month);
+      };
+      const first = points[0]!;
+      const last = points[points.length - 1]!;
+      const delta = last.value - first.value;
+      const dir = delta > 0 ? 'climbed' : delta < 0 ? 'eased' : 'held steady';
+      const pct = first.value !== 0 ? Math.round((delta / Math.abs(first.value)) * 100) : null;
+      const arc =
+        delta === 0
+          ? `holding steady around ${fmt(last.value)}`
+          : `${dir} ${pct !== null ? `${Math.abs(pct)}% ` : ''}from ${fmt(first.value)} (${prettyPeriod(first.name)}) to ${fmt(last.value)} (${prettyPeriod(last.name)})`;
+      return {
+        sheet: [
+          ...lines,
+          `Kind: time series over ${points.length} periods`,
+          `First period: ${prettyPeriod(first.name)} = ${fmt(first.value)}`,
+          `Last period: ${prettyPeriod(last.name)} = ${fmt(last.value)}`,
+          `Direction: ${dir}${pct !== null ? ` (${Math.abs(pct)}% change)` : ''}`,
+        ].join('\n'),
+        fallback: `Here's **${title}** — it's ${arc} across ${points.length} periods. Want a year-over-year comparison or a tighter date range?`,
+      };
+    }
+
+    // Dimension breakdown — leader, runner-up, total.
+    const sorted = [...points].sort((a, b) => b.value - a.value);
+    const top = sorted[0]!;
+    const second = sorted[1];
+    const isCurrency = built.valueFormat === 'currency';
+    const total = points.reduce((s, p) => s + p.value, 0);
+    const share = isCurrency && total !== 0 ? Math.round((top.value / total) * 100) : null;
+    const lead =
+      share !== null
+        ? `**${top.name}** leads at **${fmt(top.value)}** — about ${share}% of the total.`
+        : `**${top.name}** is on top at **${fmt(top.value)}**.`;
+    const totalNote = isCurrency ? ` All ${points.length} together come to ${fmt(total)}.` : '';
+    const factLines = [
+      ...lines,
+      `Kind: breakdown across ${points.length} categories`,
+      `Leader: ${top.name} = ${fmt(top.value)}${share !== null ? ` (${share}% of total)` : ''}`,
+    ];
+    if (second) factLines.push(`Runner-up: ${second.name} = ${fmt(second.value)}`);
+    if (isCurrency) factLines.push(`Total of all ${points.length}: ${fmt(total)}`);
+    return {
+      sheet: factLines.join('\n'),
+      fallback: `Here's **${title}**. ${lead}${totalNote} I can rank the rest, break any of these down further, or switch up the chart style — just say the word.`,
+    };
+  }
+
   // ─── Conversation History ────────────────────────────────────────────────
 
   private async getConversationHistory(
@@ -10066,7 +10453,10 @@ export class AgentService {
       displayOrder: number;
     }>,
   ): Promise<ChartTurnWidgetSnapshot[]> {
-    const MAX_SNAPSHOT_ROWS = 100;
+    // Keep the complete chart result up to the chart engine's own deterministic
+    // query cap. Truncating long-form multi-series data at 100 raw cells can cut
+    // through an x-axis bucket and render a false drop at the chart edge.
+    const MAX_SNAPSHOT_ROWS = 5000;
 
     const snapshots = await Promise.all(
       widgets.map(async (widget) => {

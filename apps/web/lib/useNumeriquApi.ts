@@ -10,6 +10,7 @@ import {
   MessagingApi,
   OrganizationApi,
   RagApi,
+  SignalIntelligenceApi,
   type CurrentUserResponse,
   ApiError,
 } from "./api";
@@ -38,6 +39,7 @@ export function useNumeriquApi() {
   const organization = useMemo(() => new OrganizationApi(getToken), [getToken]);
   const messaging = useMemo(() => new MessagingApi(getToken), [getToken]);
   const dashboards = useMemo(() => new DashboardsApi(getToken), [getToken]);
+  const signals = useMemo(() => new SignalIntelligenceApi(getToken), [getToken]);
 
   const [authState, setAuthState] = useState<"loading" | "authenticated" | "unauthenticated">(
     sessionKnown ? (sessionCache ? "authenticated" : "unauthenticated") : "loading",
@@ -167,6 +169,7 @@ export function useNumeriquApi() {
     organization,
     messaging,
     dashboards,
+    signals,
     loading: authState === "loading",
     manualToken,
     isAuthenticated: authState === "authenticated",

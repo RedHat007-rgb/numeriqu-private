@@ -34,6 +34,7 @@ const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter
 function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number {
   const qt = tokens(question);
   let score = 0;
+  score += fieldMatchScore(question, cube.view, cube.view);
   if (spec.dimensionKey) {
     const dim = cube.model.dimensions.find((d) => d.key === spec.dimensionKey);
     score += dim

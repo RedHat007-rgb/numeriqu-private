@@ -16,7 +16,7 @@ export const SFIN_SEMANTIC_CUBE_VIEWS = [
   'v_sfin_cashflow_semantic',
   'v_sfin_trial_balance_semantic',
   'v_sfin_employee_semantic',
-  'v_sfin_client_scorecard_semantic',
+  'v_sfin_client_service_performance_semantic',
   'v_sfin_delivery_scorecard_semantic',
   'v_sfin_service_line_scorecard_semantic',
   'v_sfin_balance_ratio_semantic',
@@ -432,7 +432,7 @@ export function buildSfinSemanticCubeDdls(
         if(e.end_date < today(), 1, 0) AS employee_exit_count
       FROM ${db}.sfin_dim_employee e`,
 
-    `CREATE OR REPLACE VIEW ${db}.v_sfin_client_scorecard_semantic AS
+    `CREATE OR REPLACE VIEW ${db}.v_sfin_client_service_performance_semantic AS
       SELECT
         b.*,
         if(

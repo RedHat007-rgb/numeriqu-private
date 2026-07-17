@@ -1,3 +1,4 @@
+// Deploy trigger: 2026-07-17 — no-op change to rebuild the API image from latest main.
 import { config as loadEnvFile } from 'dotenv';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';

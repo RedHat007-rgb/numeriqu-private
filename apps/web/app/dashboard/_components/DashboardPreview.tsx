@@ -70,6 +70,12 @@ import { toFiniteNumber } from "../_lib/parse-number";
 interface ChartConfig {
   metric: string;
   grouping: string;
+  // Autonomous chart widgets retain their validated engine spec alongside the
+  // display hints. The renderer uses the original requested type when a stacked
+  // chart is promoted to a combo for a secondary-axis overlay.
+  spec?: {
+    chartType?: string | null;
+  } | null;
   description?: string;
   timeRange?: TimeRange | null;
   providerHint?: string | null;

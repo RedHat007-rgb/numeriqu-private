@@ -441,6 +441,9 @@ export type ChatSessionDetail = {
 export type ChartConfig = {
   metric: string;
   grouping: string;
+  spec?: {
+    chartType?: string | null;
+  } | null;
   timeRange?: TimeRange | null;
   providerHint?: string | null;
   clientName?: string | null;

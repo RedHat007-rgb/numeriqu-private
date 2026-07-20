@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
+import localFont from "next/font/local";
 import { Providers } from "./providers";
 import "./globals.css";
 
-const bodyFont = IBM_Plex_Sans({
-  weight: ["300", "400", "500", "600", "700"],
-  subsets: ["latin"],
+const bodyFont = localFont({
+  src: "./fonts/GeistVF.woff",
+  weight: "100 900",
   display: "swap",
   variable: "--font-roboto",
 });
 
-const displayFont = Space_Grotesk({
-  weight: ["400", "500", "600", "700"],
-  subsets: ["latin"],
+const displayFont = localFont({
+  src: "./fonts/GeistVF.woff",
+  weight: "100 900",
   display: "swap",
   variable: "--font-nunito",
 });

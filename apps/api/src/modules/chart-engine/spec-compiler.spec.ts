@@ -739,6 +739,82 @@ describe('buildEngineDisplay axis assignment', () => {
     expect(display.secondaryAxisFormat).toBe('currency');
     expect(display.secondaryLabel).toBe('Average Billing Rate');
   });
+
+  it('draws scheduled capacity as a same-axis line over stacked attendance components', () => {
+    const attendanceModel: SemanticModel = {
+      ...model,
+      measures: [
+        {
+          key: 'present',
+          label: 'Present Days',
+          unit: 'count',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'present_days' },
+        },
+        {
+          key: 'paid_leave',
+          label: 'Paid Leave Days',
+          unit: 'count',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'paid_leave_days' },
+        },
+        {
+          key: 'scheduled',
+          label: 'Scheduled Work Days',
+          unit: 'count',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'scheduled_work_days' },
+        },
+      ],
+    };
+    const display = buildEngineDisplay(
+      {
+        chartType: 'stacked_bar',
+        measureKeys: ['present', 'paid_leave', 'scheduled'],
+        timeGrain: 'month',
+        title: 'Attendance',
+      },
+      attendanceModel,
+    );
+    expect(display.chartType).toBe('combo');
+    expect(display.series).toEqual([
+      { key: 'Present Days', role: 'bar', axis: 'left', format: 'number' },
+      { key: 'Paid Leave Days', role: 'bar', axis: 'left', format: 'number' },
+      { key: 'Scheduled Work Days', role: 'line', axis: 'left', format: 'number' },
+    ]);
+  });
+
+  it('keeps mixed-format measures as bars when clustered columns were explicit', () => {
+    const display = buildEngineDisplay(
+      {
+        chartType: 'bar',
+        clustered: true,
+        measureKeys: ['revenue', 'gross_margin_pct'],
+        dimensionKey: 'business_unit',
+        title: 'Clustered KPIs',
+      },
+      model,
+    );
+    expect(display.chartType).toBe('combo');
+    expect(display.series).toEqual([
+      { key: 'Revenue', role: 'bar', axis: 'left', format: 'currency' },
+      { key: 'Gross Margin %', role: 'bar', axis: 'right', format: 'percent' },
+    ]);
+  });
+
+  it('promotes a three-measure scatter to a bubble so the third metric is visible', () => {
+    const display = buildEngineDisplay(
+      {
+        chartType: 'scatter',
+        measureKeys: ['revenue', 'gross_margin_pct', 'clients'],
+        dimensionKey: 'business_unit',
+        title: 'Three-variable point chart',
+      },
+      model,
+    );
+    expect(display.chartType).toBe('bubble');
+    expect(display.secondaryLabel).toBe('Clients');
+  });
 });
 
 describe('SpecCompiler honest refusals', () => {

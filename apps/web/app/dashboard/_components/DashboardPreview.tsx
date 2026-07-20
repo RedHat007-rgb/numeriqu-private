@@ -3389,8 +3389,10 @@ export function renderChart(
                       const index = Number(props.index ?? 0);
                       if (
                         comboDenseTimeAxis &&
-                        index % comboTimeTickStep !== 0 &&
-                        index !== comboData.length - 1
+                        index !== 0 &&
+                        index !== comboData.length - 1 &&
+                        (index % comboTimeTickStep !== 0 ||
+                          comboData.length - 1 - index < comboTimeTickStep)
                       )
                         return null;
                       const x = Number(props.x ?? 0);
@@ -3403,7 +3405,14 @@ export function renderChart(
                             y={0}
                             dy={8}
                             textAnchor={
-                              comboNeedsRotatedLabels ? "end" : "middle"
+                              comboNeedsRotatedLabels
+                                ? "end"
+                                : comboDenseTimeAxis && index === 0
+                                  ? "start"
+                                  : comboDenseTimeAxis &&
+                                      index === comboData.length - 1
+                                    ? "end"
+                                    : "middle"
                             }
                             transform={
                               comboNeedsRotatedLabels
@@ -4559,7 +4568,12 @@ export function renderChart(
         : (numKeys[1] ?? numKeys[0] ?? "y");
     const points = data.map((d: any) => ({
       ...d,
-      [xKey]: singleCat ? d[xKey] : (num(d[xKey]) ?? 0),
+      ...(nameKey
+        ? { [nameKey]: humanizeCategoryLabel(d[nameKey]) }
+        : {}),
+      [xKey]: singleCat
+        ? humanizeCategoryLabel(d[xKey])
+        : (num(d[xKey]) ?? 0),
       [yKey]: num(d[yKey]) ?? 0,
     }));
 
@@ -4603,7 +4617,7 @@ export function renderChart(
         footer={
           nameKey && !singleCatClean ? (
             <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
-              {data.map((d, i) => (
+              {points.map((d, i) => (
                 <span
                   key={i}
                   className="inline-flex items-center gap-1 text-[9px] text-text-secondary"
@@ -5067,6 +5081,20 @@ export function renderChart(
     const donutHasSignedSlices = donutDataWithTotal.some(
       (d) => (Number(d.rawValue) || 0) < 0,
     );
+    const normalizedDonutHighlights = (
+      chart.config.display?.highlightNames ?? []
+    )
+      .map((name) => String(name).trim().toLocaleLowerCase())
+      .filter(Boolean);
+    const isNamedDonutHighlight = (name: string) => {
+      const normalizedName = name.trim().toLocaleLowerCase();
+      return normalizedDonutHighlights.some(
+        (highlight) =>
+          normalizedName === highlight ||
+          normalizedName.startsWith(`${highlight} `) ||
+          normalizedName.startsWith(`${highlight}-`),
+      );
+    };
     // "Highlight the highest/lowest" → ring the extreme slice (gold max / blue min).
     const donutExtremes = chart.config.display?.highlightExtremes ?? null;
     let donutMaxIdx = -1;
@@ -5086,6 +5114,8 @@ export function renderChart(
       });
     }
     const donutRing = (i: number): string | null => {
+      if (isNamedDonutHighlight(donutDataWithTotal[i]?.name ?? ""))
+        return "#f59e0b";
       if (!donutExtremes) return null;
       if (
         (donutExtremes === "max" || donutExtremes === "both") &&
@@ -5183,12 +5213,17 @@ export function renderChart(
               }
               isAnimationActive={false}
             >
-              {donutDataWithTotal.map((_, i) => {
+              {donutDataWithTotal.map((slice, i) => {
                 const ring = donutRing(i);
+                const hasNamedHighlight = normalizedDonutHighlights.length > 0;
+                const isNamedHighlight = isNamedDonutHighlight(slice.name);
                 return (
                   <Cell
                     key={i}
                     fill={COLORS[i % COLORS.length]}
+                    fillOpacity={
+                      hasNamedHighlight && !isNamedHighlight ? 0.38 : 1
+                    }
                     stroke={ring ?? undefined}
                     strokeWidth={ring ? 4 : undefined}
                   />
@@ -5550,6 +5585,9 @@ export function renderChart(
       const norm = z === null || zSpan <= 0 ? 0.5 : (z - minZ) / zSpan;
       return {
         ...(d as any),
+        ...(typeof (d as any).name === "string"
+          ? { name: humanizeCategoryLabel((d as any).name) }
+          : {}),
         x: num((d as any).x) ?? 0,
         y: num((d as any).y) ?? 0,
         _zsize: norm,
@@ -5563,10 +5601,12 @@ export function renderChart(
     const yLabel = chart.config.yAxisLabel?.trim() || "y";
     const xFmt = resolveAxisFormatFromMetadata(xLabel, "x", "number");
     const yFmt = resolveAxisFormatFromMetadata(yLabel, "y", "number");
-    const zFmt = resolveAxisFormatFromMetadata(
+    const zLabel =
       chart.config.display?.secondaryLabel ??
-        chart.config.display?.colorMetricLabel ??
-        "value",
+      chart.config.display?.colorMetricLabel ??
+      "Bubble Size";
+    const zFmt = resolveAxisFormatFromMetadata(
+      zLabel,
       "z",
       chart.config.display?.valueFormat ?? "number",
     );
@@ -5682,7 +5722,7 @@ export function renderChart(
                       </p>
                       {d._zval !== null && d._zval !== undefined && (
                         <p className="text-text-muted">
-                          Size: {fmtByUnit(Number(d._zval) || 0, zFmt)}
+                          {zLabel}: {fmtByUnit(Number(d._zval) || 0, zFmt)}
                         </p>
                       )}
                     </div>

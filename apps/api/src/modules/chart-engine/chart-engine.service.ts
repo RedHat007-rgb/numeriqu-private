@@ -331,13 +331,24 @@ export class ChartEngineService {
         this.llmCaller(),
       );
       if (!rerouted.ok) return { ok: false, reason: plan.reason };
-      const reroutedSpec = opts.wantsSeparateAxis
+      const plannedReroutedSpec = opts.wantsSeparateAxis
         ? preferDistinctAxisMeasure(
             rerouted.spec,
             priorSpec.measureKeys,
             rerouted.cube.model,
           )
         : rerouted.spec;
+      // Cross-cube re-planning rebuilds the data intent, but an additive metric
+      // follow-up must not discard an explicitly requested presentation mode.
+      // Preserve clustered/grouped columns when the reroute retained the same
+      // base chart type; a genuine chart-type change still wins.
+      const reroutedSpec: EngineChartSpec = {
+        ...plannedReroutedSpec,
+        ...(priorSpec.clustered &&
+        plannedReroutedSpec.chartType === priorSpec.chartType
+          ? { clustered: true }
+          : {}),
+      };
       return this.shapeAnswer(
         scope,
         rerouted.cube,

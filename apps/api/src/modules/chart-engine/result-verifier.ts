@@ -63,6 +63,7 @@ export function reconcileForExpr(
 ): Reconciliation | { skipped: string } {
   switch (expr.kind) {
     case 'sum':
+    case 'sum_if':
       return data.parts ? reconcileAdditive(data.parts, data.charted) : { skipped: 'no parts to reconcile' };
     case 'ratio_of_sums':
       return typeof data.sumNumerator === 'number' && typeof data.sumDenominator === 'number'

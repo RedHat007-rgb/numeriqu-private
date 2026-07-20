@@ -95,6 +95,13 @@ export interface ColumnProfile {
 /** A compilable measure expression, resolved from a measure's AggSemantics. */
 export type MeasureExpr =
   | { kind: 'sum'; column: string }
+  | {
+      kind: 'sum_if';
+      column: string;
+      conditionColumn: string;
+      gt?: number;
+      lte?: number;
+    }
   | { kind: 'count_distinct'; column: string }
   /** Point-in-time level: last value by the time column within the grain. */
   | { kind: 'last_value'; column: string; orderBy: string }
@@ -177,6 +184,8 @@ export interface EngineChartSpec {
     | 'matrix'
     | 'table'
     | 'kpi';
+  /** Preserve an explicit clustered/grouped-column request across follow-ups. */
+  clustered?: boolean;
   /** Measure keys, resolved against SemanticModel.measures. */
   measureKeys: string[];
   /** Optional grouping dimension key (categorical) — resolved against dimensions. */

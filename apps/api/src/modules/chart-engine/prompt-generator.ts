@@ -15,6 +15,8 @@ function aggWord(expr: MeasureExpr): string {
   switch (expr.kind) {
     case 'sum':
       return 'additive total (SUM)';
+    case 'sum_if':
+      return 'additive conditional total (SUMIF)';
     case 'ratio_of_sums':
       return 'ratio — computed as SUM/SUM, never averaged';
     case 'last_value':

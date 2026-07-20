@@ -224,6 +224,75 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
         expr: derived.expr,
       });
     }
+
+    // Accounts-receivable aging bands are conditional additive measures, not
+    // separate physical amount columns. Derive them from the catalog whenever
+    // the source exposes both outstanding balance and days past due. This keeps
+    // the definitions reusable and auditable while avoiding query-specific SQL.
+    const columns = new Set(profiles.map((profile) => profile.column));
+    const outstandingColumn = columns.has('outstanding_receivable_usd')
+      ? 'outstanding_receivable_usd'
+      : columns.has('outstanding_balance_usd')
+        ? 'outstanding_balance_usd'
+        : null;
+    if (outstandingColumn && columns.has('days_past_due')) {
+      const agingMeasures: SemanticMeasure[] = [
+        {
+          key: 'ar_over_30_days_usd',
+          label: 'AR Over 30 Days',
+          unit: 'USD',
+          sourceTable: table,
+          expr: {
+            kind: 'sum_if',
+            column: outstandingColumn,
+            conditionColumn: 'days_past_due',
+            gt: 30,
+            lte: 60,
+          },
+        },
+        {
+          key: 'ar_over_60_days_usd',
+          label: 'AR Over 60 Days',
+          unit: 'USD',
+          sourceTable: table,
+          expr: {
+            kind: 'sum_if',
+            column: outstandingColumn,
+            conditionColumn: 'days_past_due',
+            gt: 60,
+            lte: 90,
+          },
+        },
+        {
+          key: 'ar_over_90_days_usd',
+          label: 'AR Over 90 Days',
+          unit: 'USD',
+          sourceTable: table,
+          expr: {
+            kind: 'sum_if',
+            column: outstandingColumn,
+            conditionColumn: 'days_past_due',
+            gt: 90,
+          },
+        },
+        {
+          key: 'total_overdue_balance_usd',
+          label: 'Total Overdue Balance',
+          unit: 'USD',
+          sourceTable: table,
+          expr: {
+            kind: 'sum_if',
+            column: outstandingColumn,
+            conditionColumn: 'days_past_due',
+            gt: 30,
+          },
+        },
+      ];
+      for (const measure of agingMeasures) {
+        if (!measures.some((existing) => existing.key === measure.key))
+          measures.push(measure);
+      }
+    }
   }
 
   const model: SemanticModel = {

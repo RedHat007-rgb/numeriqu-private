@@ -50,6 +50,76 @@ const model: SemanticModel = {
 };
 
 describe('ChartPlanner.parsePlannerResponse', () => {
+  it('matches a one-word attendance metric when its Days suffix is generic', () => {
+    const question =
+      'Create a stacked column chart showing Present, Paid Leave, Sick Leave, and Unpaid Absent by month.';
+    expect(fieldMatchScore(question, 'present_days', 'Present Days')).toBeGreaterThanOrEqual(8);
+  });
+
+  it('does not match a non-productive metric from a productive-hours request', () => {
+    const question = 'Create a bar chart showing productive hours by department.';
+    expect(
+      fieldMatchScore(question, 'productive_hours', 'Productive Hours'),
+    ).toBeGreaterThanOrEqual(8);
+    expect(
+      fieldMatchScore(
+        question,
+        'non_productive_hours',
+        'Non Productive Hours',
+      ),
+    ).toBe(0);
+  });
+
+  it('strongly matches standard KPI acronyms and percentage wording', () => {
+    expect(
+      fieldMatchScore('SLA', 'sla_attainment_pct', 'SLA Attainment %'),
+    ).toBeGreaterThanOrEqual(8);
+    expect(
+      fieldMatchScore('occupancy percentage', 'occupancy_pct', 'Occupancy %'),
+    ).toBeGreaterThanOrEqual(8);
+    expect(
+      fieldMatchScore('average handle time', 'aht_minutes', 'AHT Minutes'),
+    ).toBeGreaterThanOrEqual(8);
+  });
+
+  it('matches invoiced wording to the invoice amount catalog measure', () => {
+    expect(
+      fieldMatchScore(
+        'monthly invoiced amount and collected amount',
+        'invoice_amount_usd',
+        'Invoice Amount',
+      ),
+    ).toBeGreaterThanOrEqual(8);
+  });
+
+  it('does not match a days KPI for a payable balance request', () => {
+    expect(
+      fieldMatchScore(
+        'add monthly payable outstanding balance',
+        'days_payable_outstanding',
+        'Days Payable Outstanding',
+      ),
+    ).toBe(0);
+    expect(
+      fieldMatchScore(
+        'add average DPO by vendor',
+        'days_payable_outstanding',
+        'Days Payable Outstanding',
+      ),
+    ).toBeGreaterThanOrEqual(8);
+  });
+
+  it('does not select an unrelated average percentage from aggregation words alone', () => {
+    const question = 'Create a bar chart showing average SLA compliance percentage by client.';
+    expect(
+      fieldMatchScore(
+        question,
+        'average_revenue_growth_pct',
+        'Average Revenue Growth %',
+      ),
+    ).toBeLessThan(8);
+  });
+
   it('prefers a distinctive qualified metric over a generic cost measure', () => {
     expect(
       fieldMatchScore('monthly SG&A cost', 'total_sga_usd', 'Total SG&A'),
@@ -749,6 +819,54 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     // The model must see the chart it's editing + the request.
     expect(seenUser).toContain('Monthly Revenue');
     expect(seenUser).toContain('add gross margin on another axis');
+  });
+
+  it('keeps all donut slices when a named aging bucket is highlighted', async () => {
+    const prior = {
+      chartType: 'donut' as const,
+      measureKeys: ['total_revenue_usd'],
+      dimensionKey: 'client_name',
+      title: 'Receivables by aging bucket',
+    };
+    const fakeLlm = async () =>
+      JSON.stringify({
+        ...prior,
+        topN: 1,
+        highlightNames: ['90+'],
+      });
+    const r = await planEdit(
+      'In the same chart, highlight the 90+ days bucket.',
+      prior,
+      model,
+      fakeLlm,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.spec.topN).toBeUndefined();
+      expect(r.spec.highlightNames).toEqual(['90+']);
+    }
+  });
+
+  it('changes the grouping for an explicit drill-down edit', async () => {
+    const prior = {
+      chartType: 'treemap' as const,
+      measureKeys: ['total_revenue_usd'],
+      dimensionKey: 'business_unit',
+      title: 'Revenue by Business Unit',
+    };
+    const fakeLlm = async () => JSON.stringify(prior);
+    const r = await planEdit(
+      'In the same visual, drill down to client.',
+      prior,
+      model,
+      fakeLlm,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.spec.dimensionKey).toBe('client_name');
+      expect(r.spec.breakdownKey).toBeUndefined();
+      expect(r.spec.title).toBe('Revenue by Client');
+    }
   });
 
   it('still REFUSES an edit that invents a measure', async () => {

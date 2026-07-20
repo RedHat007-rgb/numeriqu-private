@@ -74,6 +74,7 @@ export type CompileResult =
 function distributionColumn(measure: SemanticMeasure): string | null {
   switch (measure.expr.kind) {
     case 'sum':
+    case 'sum_if':
     case 'mean':
     case 'last_value':
     case 'max':
@@ -97,6 +98,19 @@ function compileMeasureExpr(expr: MeasureExpr): string {
   switch (expr.kind) {
     case 'sum':
       return `sum(${ident(expr.column)})`;
+    case 'sum_if': {
+      const condition = [
+        expr.gt == null
+          ? null
+          : `${ident(expr.conditionColumn)} > ${Number(expr.gt)}`,
+        expr.lte == null
+          ? null
+          : `${ident(expr.conditionColumn)} <= ${Number(expr.lte)}`,
+      ]
+        .filter(Boolean)
+        .join(' AND ');
+      return `sumIf(${ident(expr.column)}, ${condition})`;
+    }
     case 'count_distinct':
       return `uniqExact(${ident(expr.column)})`;
     case 'max':
@@ -186,6 +200,19 @@ function measureValueExprIf(m: SemanticMeasure, condition: string): string {
   switch (m.expr.kind) {
     case 'sum':
       return `sumIf(${ident(m.expr.column)}, ${condition})`;
+    case 'sum_if': {
+      const bandCondition = [
+        m.expr.gt == null
+          ? null
+          : `${ident(m.expr.conditionColumn)} > ${Number(m.expr.gt)}`,
+        m.expr.lte == null
+          ? null
+          : `${ident(m.expr.conditionColumn)} <= ${Number(m.expr.lte)}`,
+      ]
+        .filter(Boolean)
+        .join(' AND ');
+      return `sumIf(${ident(m.expr.column)}, (${bandCondition}) AND (${condition}))`;
+    }
     case 'count_distinct':
       return `uniqExactIf(${ident(m.expr.column)}, ${condition})`;
     case 'max':
@@ -324,7 +351,7 @@ export function buildEngineDisplay(
     measures.length >= 2
   ) {
     return decorate({
-      chartType: spec.chartType,
+      chartType: measures[2] ? 'bubble' : spec.chartType,
       valueFormat: primaryFmt,
       xAxisLabel: measures[0]!.label,
       yAxisLabel: measures[1]!.label,
@@ -357,16 +384,33 @@ export function buildEngineDisplay(
     // shared axis. Keep genuinely comparable aggregations together, but give a
     // differently aggregated measure its own line/right axis.
     const sameScale = fmt === primaryFmt && m.expr.kind === primaryAggregation;
+    // Scheduled/target/capacity measures are comparison envelopes, not another
+    // component of an additive stack. Draw them as a line on the same unit axis;
+    // stacking scheduled work days on top of present/leave days would double-count
+    // capacity and visually overstate the total.
+    const isStackReference =
+      spec.chartType === 'stacked_bar' &&
+      i > 0 &&
+      !spec.componentMode &&
+      /\b(?:scheduled|target|capacity)\b/i.test(m.label);
     return {
       key: m.label,
-      role: i === 0 || sameScale ? baseRole : 'line',
+      role: spec.clustered
+        ? 'bar'
+        : isStackReference
+          ? 'line'
+          : i === 0 || sameScale
+            ? baseRole
+            : 'line',
       axis: i === 0 || sameScale ? 'left' : 'right',
       format: fmt,
     };
   });
   const right = series.find((s) => s.axis === 'right');
+  const hasBarOverlay =
+    baseRole === 'bar' && series.some((item) => item.role === 'line');
   return decorate({
-    chartType: right ? 'combo' : spec.chartType,
+    chartType: right || hasBarOverlay ? 'combo' : spec.chartType,
     valueFormat: primaryFmt,
     series,
     ...(xAxisLabel ? { xAxisLabel } : {}),

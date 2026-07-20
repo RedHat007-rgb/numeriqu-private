@@ -275,6 +275,7 @@ const INTENT_STOP_WORDS = new Set([
   'amount',
   'balance',
   'count',
+  'day',
   'days',
   'number',
   'usd',
@@ -333,6 +334,7 @@ export function meaningfulWords(value: string): string[] {
 
 function intentWords(value: string): string[] {
   return value
+    .replace(/\baverage\s+handl(?:e|ing)\s+time\b/gi, 'aht')
     .replace(/\b([A-Za-z]{1,3})\s*&\s*([A-Za-z])\b/g, '$1$2')
     .replace(/&/g, ' and ')
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
@@ -340,6 +342,11 @@ function intentWords(value: string): string[] {
     .split(/[^a-z0-9+]+/)
     .filter(Boolean)
     .map((word) => {
+      if (word === 'percent' || word === 'percentage') return 'pct';
+      // Normalize common business-language inflections to the semantic catalog
+      // noun. Without this, "invoiced amount" did not match `invoice_amount`
+      // and the planner silently returned only the collected series.
+      if (word === 'invoiced' || word === 'invoicing') return 'invoice';
       if (word.length > 4 && word.endsWith('ies'))
         return word.slice(0, -3) + 'y';
       if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss'))
@@ -366,8 +373,43 @@ export function fieldMatchScore(
 ): number {
   const queryTokens = intentWords(text);
   const query = new Set(queryTokens);
+  if (
+    (query.has('dpo') && /days?_payable_outstanding|days? payable outstanding/i.test(`${key} ${label}`)) ||
+    (query.has('dso') && /days?_sales_outstanding|days? sales outstanding/i.test(`${key} ${label}`))
+  )
+    return 18;
+  // A monetary balance/amount request must not resolve to a duration KPI merely
+  // because both share words such as "payable outstanding". Duration measures
+  // remain eligible when the user explicitly says days, DSO, or DPO.
+  if (
+    /\bdays?\b/i.test(`${key} ${label}`.replace(/_/g, ' ')) &&
+    /\b(?:balance|amount)\b/i.test(text) &&
+    !/\b(?:days?|dso|dpo)\b/i.test(text)
+  )
+    return 0;
   const vocab = fieldVocabulary(key, label);
   if (!vocab.meaningful.length) return 0;
+  // Negation is semantically essential in metric names. "Productive hours"
+  // must not also select "Non Productive Hours" merely because two remaining
+  // words overlap; the `non` qualifier has to be present in the request.
+  if (vocab.meaningful.includes('non') && !query.has('non')) return 0;
+  const standardAcronyms = new Set([
+    'sla',
+    'qa',
+    'csat',
+    'nps',
+    'aht',
+    'dso',
+    'dpo',
+    'cogs',
+    'ebitda',
+  ]);
+  if (
+    vocab.meaningful.some(
+      (word) => standardAcronyms.has(word) && query.has(word),
+    )
+  )
+    return 18;
   const compact = vocab.meaningful.join('');
   // Compact-name matching supports "cashflow" ↔ "cash flow", but must never
   // span arbitrary word boundaries. Concatenating the whole query made
@@ -385,15 +427,11 @@ export function fieldMatchScore(
     return 20 + vocab.meaningful.length;
   if (vocab.acronym.length >= 2 && query.has(vocab.acronym))
     return 18 + vocab.meaningful.length;
-  const overlap = vocab.meaningful.filter((word) => query.has(word));
-  if (overlap.length === vocab.meaningful.length) return 12 + overlap.length;
-  if (overlap.length >= 2) return overlap.length * 4;
-  // "total" is often a catalog aggregation qualifier the user naturally omits
-  // ("SG&A cost" → total_sga_usd). Let a distinctive remaining metric token
-  // match strongly, while a generic noun such as "cost" or "revenue" alone
-  // stays weak so it cannot steal a more specific metric.
-  const qualifierFree = vocab.meaningful.filter(
-    (word) => !['total', 'average', 'avg', 'mean'].includes(word),
+  // Aggregation/unit qualifiers are useful for an exact phrase but must not
+  // create partial matches by themselves. "average SLA percentage" should not
+  // also select "Average Revenue Growth %" just because both contain average/%.
+  const partialVocabulary = vocab.meaningful.filter(
+    (word) => !['total', 'average', 'avg', 'mean', 'pct'].includes(word),
   );
   const genericMetricWords = new Set([
     'cost',
@@ -405,6 +443,21 @@ export function fieldMatchScore(
     'balance',
     'count',
   ]);
+  const overlap = partialVocabulary.filter((word) => query.has(word));
+  if (
+    overlap.length === partialVocabulary.length &&
+    overlap.length > 0 &&
+    (overlap.length > 1 || !genericMetricWords.has(overlap[0]!))
+  )
+    return 12 + overlap.length;
+  if (overlap.length >= 2) return overlap.length * 4;
+  // "total" is often a catalog aggregation qualifier the user naturally omits
+  // ("SG&A cost" → total_sga_usd). Let a distinctive remaining metric token
+  // match strongly, while a generic noun such as "cost" or "revenue" alone
+  // stays weak so it cannot steal a more specific metric.
+  const qualifierFree = vocab.meaningful.filter(
+    (word) => !['total', 'average', 'avg', 'mean', 'pct'].includes(word),
+  );
   if (
     qualifierFree.length === 1 &&
     query.has(qualifierFree[0]!) &&
@@ -551,6 +604,8 @@ function applyCatalogIntent(
   const explicitType = requestedChartType(text);
   const timeGrain = requestedTimeGrain(text, model);
   const isEdit = !!priorSpec;
+  const requestsClustered =
+    /\b(?:clustered|grouped)\s+(?:column|bar)s?\b/i.test(text);
 
   let spec: EngineChartSpec = planned.spec;
 
@@ -627,16 +682,39 @@ function applyCatalogIntent(
     if (addedTotal) spec = { ...spec, labelMeasureKey: addedTotal };
   }
 
+  if (
+    isEdit &&
+    priorSpec &&
+    (priorSpec.chartType === 'stacked_bar' ||
+      priorSpec.chartType === 'stacked_area')
+  ) {
+    const addedTotal = spec.measureKeys.find(
+      (key) =>
+        !priorSpec.measureKeys.includes(key) &&
+        /\btotal\b[^\n]*\boverdue\b|\boverdue\b[^\n]*\bbalance\b/i.test(
+          `${key} ${model.measures.find((measure) => measure.key === key)?.label ?? ''}`,
+        ),
+    );
+    if (addedTotal) {
+      spec = {
+        ...spec,
+        measureKeys: [addedTotal, ...priorSpec.measureKeys],
+        labelMeasureKey: addedTotal,
+        sort: 'desc',
+      };
+    }
+  }
+
   // On an EDIT, only re-group when the user EXPLICITLY names a new grouping
   // ("by department", "per client", "for each region"). A bare word that happens
   // to match a dimension ("add EMPLOYEE headcount") names a measure, not a
   // "by employee" regroup — keep the chart's existing grouping. On CREATE, a
   // matched dimension is the intended grouping as before.
   const explicitGrouping =
-    /\b(?:by|per|across|group(?:ed)?\s+by|broken\s+down\s+by|split\s+by|for\s+each)\b/i.test(
+    /\b(?:by|per|across|group(?:ed)?\s+by|broken\s+down\s+by|split\s+by|for\s+each|drill(?:ed|ing)?\s+down\s+(?:to|into))\b/i.test(
       text,
     );
-  if (isEdit && !explicitGrouping) {
+  if (isEdit && (!explicitGrouping || !dimensionMatches.length)) {
     // Adding/removing a MEASURE must not silently regroup the chart. The edit LLM
     // (or a bare word like "employee" in "add employee headcount") often drifts
     // the grouping; restore the chart's existing grouping when the user didn't ask
@@ -647,20 +725,70 @@ function applyCatalogIntent(
       const { dimensionKey: _drop, ...rest } = spec;
       spec = rest;
     }
+    if (priorSpec?.breakdownKey)
+      spec = { ...spec, breakdownKey: priorSpec.breakdownKey };
+    else if (spec.breakdownKey && !priorSpec?.breakdownKey) {
+      const { breakdownKey: _dropBreakdown, ...rest } = spec;
+      spec = rest;
+    }
   } else if (dimensionMatches.length) {
+    const isDrillDown =
+      isEdit && /\bdrill(?:ed|ing)?\s+down\s+(?:to|into)\b/i.test(text);
+    const chosenDimension = model.dimensions.find(
+      (dimension) => dimension.key === dimensionMatches[0]!.key,
+    );
+    const groupingBase = isDrillDown
+      ? (({ breakdownKey: _dropDrillBreakdown, ...rest }) => rest)(spec)
+      : spec;
     spec = {
-      ...spec,
+      ...groupingBase,
       dimensionKey: dimensionMatches[0]!.key,
       ...(dimensionMatches[1] &&
+      !isDrillDown &&
+      dimensionMatches[1]!.key !== dimensionMatches[0]!.key &&
       (explicitType === 'heatmap' ||
         explicitType === 'sankey' ||
         /\bby\b.+\band\b/i.test(text))
         ? { breakdownKey: dimensionMatches[1]!.key }
         : {}),
+      ...(isDrillDown
+        ? {
+            title: `${model.measures.find((measure) => measure.key === spec.measureKeys[0])?.label ?? 'Value'} by ${chosenDimension?.label ?? dimensionMatches[0]!.key}`,
+          }
+        : {}),
     };
   }
 
+  // "by month" is a complete time grouping. Words inside metric names (for
+  // example "invoice" in "AP invoice amount") must not leak into a categorical
+  // dimension such as invoice_status unless that dimension is explicitly named
+  // after a grouping preposition.
+  if (timeGrain && spec.dimensionKey) {
+    const chosenDimension = model.dimensions.find(
+      (dimension) => dimension.key === spec.dimensionKey,
+    );
+    const groupingTail = text.match(
+      /\b(?:by|per|across|for\s+each)\s+([^.!?]+)/i,
+    )?.[1];
+    const explicitlyGroupsDimension =
+      !!chosenDimension &&
+      !!groupingTail &&
+      fieldMatchScore(
+        groupingTail,
+        chosenDimension.key,
+        chosenDimension.label,
+        chosenDimension.sampleValues,
+      ) >= 4;
+    if (!explicitlyGroupsDimension) {
+      const { dimensionKey: _dropTimeLeak, breakdownKey: _dropBreakdown, ...rest } =
+        spec;
+      spec = rest;
+    }
+  }
+
   if (explicitType) spec = { ...spec, chartType: explicitType };
+  if (requestsClustered) spec = { ...spec, clustered: true };
+  else if (priorSpec?.clustered) spec = { ...spec, clustered: true };
   if (timeGrain) spec = { ...spec, timeGrain };
   else if (isEdit && priorSpec) {
     if (priorSpec.timeGrain) spec = { ...spec, timeGrain: priorSpec.timeGrain };
@@ -707,6 +835,28 @@ function applyCatalogIntent(
   } else if (top) spec = { ...spec, topN: Number(top[1]), sort: 'desc' };
   else if (/\b(?:biggest|largest|highest|lowest|rank)\b/i.test(text)) {
     spec = { ...spec, sort: /\blowest\b/i.test(text) ? 'asc' : 'desc' };
+    const rankTail = text.match(/\brank\b[^.]*\bby\s+([^.!?]+)/i)?.[1];
+    if (rankTail) {
+      const rankedKey = spec.measureKeys
+        .map((key) => ({
+          key,
+          score: fieldMatchScore(
+            rankTail,
+            key,
+            model.measures.find((measure) => measure.key === key)?.label ?? key,
+          ),
+        }))
+        .sort((a, b) => b.score - a.score)[0];
+      if (rankedKey && rankedKey.score >= 8) {
+        spec = {
+          ...spec,
+          measureKeys: [
+            rankedKey.key,
+            ...spec.measureKeys.filter((key) => key !== rankedKey.key),
+          ],
+        };
+      }
+    }
     if (!measureMatches.length) {
       const fallback = defaultMeasure(model);
       if (fallback) spec = { ...spec, measureKeys: [fallback] };
@@ -726,7 +876,14 @@ function applyCatalogIntent(
   }
 
   const highlight = text.match(/\b(\d+\+)\s*(?:days?)?\b/i)?.[1];
-  if (highlight) spec = { ...spec, highlightNames: [highlight] };
+  if (highlight) {
+    // A named highlight is presentation-only. Some edit-model responses infer
+    // `topN: 1` from "highlight the 90+ bucket", which silently removes every
+    // other slice and changes the meaning of the chart. Keep the full result set
+    // and let the renderer emphasize the requested category when it is present.
+    const { topN: _dropTopN, ...rest } = spec;
+    spec = { ...rest, highlightNames: [highlight] };
+  }
   if (
     /\bhighlight\b[^.]*\b(?:negative|below\s+zero|loss|losses|deficit|deficits)\b|\b(?:negative|below\s+zero|loss|losses|deficit|deficits)\b[^.]*\bhighlight\b/i.test(
       text,
@@ -816,6 +973,14 @@ function applyCatalogIntent(
       const dimension = spec.dimensionKey
         ? model.dimensions.find((item) => item.key === spec.dimensionKey)
         : undefined;
+      const addedLabels = addedKeys.map(
+        (key) =>
+          model.measures.find((measure) => measure.key === key)?.label ?? key,
+      );
+      const compactPriorTitle = priorSpec.title
+        .replace(/\s+by\s+(?:day|month|quarter|year)$/i, '')
+        .replace(/\s+by\s+.+$/i, '')
+        .trim();
       const title = asksShareOfTotal
         ? `Share of Total ${labels.map((label) => label.replace(/^Total\s+/i, '')).join(' and ')}${dimension ? ` by ${dimension.label}` : ''}`
         : spec.componentMode
@@ -826,7 +991,9 @@ function applyCatalogIntent(
                 key,
             )
             .join(' and ')}${dimension ? ` by ${dimension.label}` : ''}`
-        : `${labels.join(' and ')}${dimension ? ` by ${dimension.label}` : spec.timeGrain ? ` by ${spec.timeGrain}` : ''}`;
+        : labels.length > 3
+          ? `${compactPriorTitle} and ${addedLabels.join(' and ')}${dimension ? ` by ${dimension.label}` : spec.timeGrain ? ` by ${spec.timeGrain}` : ''}`
+          : `${labels.join(' and ')}${dimension ? ` by ${dimension.label}` : spec.timeGrain ? ` by ${spec.timeGrain}` : ''}`;
       spec = {
         ...spec,
         title,

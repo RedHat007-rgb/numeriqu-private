@@ -186,12 +186,27 @@ export interface EngineChartSpec {
   /** Optional time grain when the user wants a trend. */
   timeGrain?: 'day' | 'month' | 'quarter' | 'year';
   /** Optional aligned comparison series derived from the same measure. */
-  comparison?: 'previous_year';
+  comparison?: 'previous_year' | 'yoy_growth_pct';
+  /**
+   * Render each series as its PERCENTAGE CONTRIBUTION to the per-axis total
+   * (100%-stacked): value → 100 * value / sum(value) over the same axis bucket.
+   * For "each category's % contribution", "share of total", "% of revenue by X".
+   * Only meaningful with a breakdown/series; forces a percent value format.
+   */
+  normalize?: boolean;
   /** Optional top-N over the first measure. */
   topN?: number;
   /** Sort direction for top-N / ranking. */
   sort?: 'asc' | 'desc';
   /** Optional category labels to emphasize visually (derived from user text). */
   highlightNames?: string[];
+  /** Preserve all categories while emphasizing the highest N values. */
+  highlightTopN?: number;
+  /** The measures are additive components requested as a stacked composition. */
+  componentMode?: boolean;
+  /** A queried total used only as the stack label, never as another segment. */
+  labelMeasureKey?: string;
+  /** Emphasize values below zero and render a zero reference line. */
+  highlightNegative?: boolean;
   title: string;
 }

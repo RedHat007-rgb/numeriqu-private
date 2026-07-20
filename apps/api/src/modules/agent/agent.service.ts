@@ -1,4 +1,10 @@
-import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import type { PrismaClient, Prisma } from '@repo/db';
 import {
   CLICKHOUSE_ANALYTICS_TOKEN,
@@ -6,7 +12,10 @@ import {
 } from '../../database/database.module';
 import type { ClickHouseClient } from '@clickhouse/client';
 import { OrganizationContextService } from '../org-context/org-context.service';
-import { ChartEngineService, type EngineAnswer } from '../chart-engine/chart-engine.service';
+import {
+  ChartEngineService,
+  type EngineAnswer,
+} from '../chart-engine/chart-engine.service';
 import type { EngineChartSpec } from '../chart-engine/semantic-model.types';
 import { chooseEngine, parseRouterConfig } from '../chart-engine/engine-router';
 import { parseQuerySpec, type QuerySpec, type TimeRange } from './query-spec';
@@ -392,7 +401,9 @@ export class AgentService {
     return null;
   }
 
-  private detectUnsupportedFeature(queryText: string): UnsupportedFeature | null {
+  private detectUnsupportedFeature(
+    queryText: string,
+  ): UnsupportedFeature | null {
     const q = String(queryText ?? '').toLowerCase();
     if (!q.trim()) return null;
 
@@ -480,7 +491,10 @@ export class AgentService {
   // headcount, no cash-flow statement. Follow-ups that need those must be refused
   // clearly (never answered with fabricated columns). Returns a ready refusal
   // message, or null when the ask is satisfiable from real data.
-  private detectUnavailableData(queryText: string, hasEbpo = false): string | null {
+  private detectUnavailableData(
+    queryText: string,
+    hasEbpo = false,
+  ): string | null {
     const q = String(queryText ?? '').toLowerCase();
     if (!q.trim()) return null;
 
@@ -495,11 +509,23 @@ export class AgentService {
 
     // Genuinely absent in BOTH datasets — budget/forecast/target are not recorded
     // anywhere (EBPO holds actuals only, no plan/target tables).
-    if (/\b(budget|budgeted|plan(?:ned)?\s+(?:vs|versus|amount|figure)|vs\.?\s*plan|over\/under\s+budget)\b/.test(q))
+    if (
+      /\b(budget|budgeted|plan(?:ned)?\s+(?:vs|versus|amount|figure)|vs\.?\s*plan|over\/under\s+budget)\b/.test(
+        q,
+      )
+    )
       return `I can't add a budget comparison — there's no budget or plan data in this dataset, only actuals.${tail}`;
-    if (/\b(forecast|projection|projected|run\s*rate\s+forecast|expected\s+future|predict(?:ed|ion)?|next\s+\d+\s+(?:months|quarters))\b/.test(q))
+    if (
+      /\b(forecast|projection|projected|run\s*rate\s+forecast|expected\s+future|predict(?:ed|ion)?|next\s+\d+\s+(?:months|quarters))\b/.test(
+        q,
+      )
+    )
       return `I can't add a forecast — this dataset only holds recorded actuals, with no forward-looking or projection data.${tail}`;
-    if (/\b(target|goal|quota|benchmark\s+target|against\s+target|vs\.?\s*target|performance\s+against)\b/.test(q))
+    if (
+      /\b(target|goal|quota|benchmark\s+target|against\s+target|vs\.?\s*target|performance\s+against)\b/.test(
+        q,
+      )
+    )
       return `I can't compare against targets — there are no target or goal figures in this dataset.${tail}`;
 
     // The categories below DO exist in the EBPO dataset (multi-year data, cash-flow
@@ -507,15 +533,35 @@ export class AgentService {
     // Only the single-year GL sample lacks them, so skip these refusals for EBPO and
     // let the data-aware editor build them.
     if (!hasEbpo) {
-      if (/\b(year[\s-]*over[\s-]*year|yoy|year[\s-]*on[\s-]*year|prior[\s-]*year|previous\s+year|last\s+year|vs\.?\s*\d{4})\b/.test(q))
+      if (
+        /\b(year[\s-]*over[\s-]*year|yoy|year[\s-]*on[\s-]*year|prior[\s-]*year|previous\s+year|last\s+year|vs\.?\s*\d{4})\b/.test(
+          q,
+        )
+      )
         return `I can't add a year-over-year or prior-year comparison — this dataset only covers a single year, so there's no earlier period to compare against.${tail}`;
-      if (/\b(region|regional|geograph|country|countries|location|territory|by\s+state|by\s+city|map\b)\b/.test(q))
+      if (
+        /\b(region|regional|geograph|country|countries|location|territory|by\s+state|by\s+city|map\b)\b/.test(
+          q,
+        )
+      )
         return `I can't break this down by region or geography — there's no location/region field in this dataset.${tail}`;
-      if (/\b(segment|customer\s+segment|market\s+segment|tier|cohort|persona|industry\s+vertical)\b/.test(q))
+      if (
+        /\b(segment|customer\s+segment|market\s+segment|tier|cohort|persona|industry\s+vertical)\b/.test(
+          q,
+        )
+      )
         return `I can't split this by segment — there's no customer or market-segment field in this dataset.${tail}`;
-      if (/\b(headcount|head\s+count|fte|employee\s+count|number\s+of\s+employees|staff\s+count|per\s+employee)\b/.test(q))
+      if (
+        /\b(headcount|head\s+count|fte|employee\s+count|number\s+of\s+employees|staff\s+count|per\s+employee)\b/.test(
+          q,
+        )
+      )
         return `I can't add headcount or per-employee metrics — there's no employee/headcount data in this dataset.${tail}`;
-      if (/\b(cash\s*flow|cash\s+runway|runway|burn\s+rate|liquidity\s+forecast|months\s+of\s+(?:operating|opex|cash))\b/.test(q))
+      if (
+        /\b(cash\s*flow|cash\s+runway|runway|burn\s+rate|liquidity\s+forecast|months\s+of\s+(?:operating|opex|cash))\b/.test(
+          q,
+        )
+      )
         return `I can't compute cash flow or runway — this dataset has GL transactions and balances, not a cash-flow statement.${tail}`;
     }
 
@@ -998,13 +1044,22 @@ export class AgentService {
       charts: (dashboard.widgets ?? []).map((w: any) => {
         const baseConfig =
           typeof w.queryConfig === 'object' && w.queryConfig
-            ? ({ ...(w.queryConfig as Record<string, unknown>) } as Record<string, unknown>)
-            : ({ metric: 'revenue', grouping: 'month' } as Record<string, unknown>);
+            ? ({ ...(w.queryConfig as Record<string, unknown>) } as Record<
+                string,
+                unknown
+              >)
+            : ({ metric: 'revenue', grouping: 'month' } as Record<
+                string,
+                unknown
+              >);
         const display =
           baseConfig.display &&
           typeof baseConfig.display === 'object' &&
           !Array.isArray(baseConfig.display)
-            ? ({ ...(baseConfig.display as Record<string, unknown>) } as Record<string, unknown>)
+            ? ({ ...(baseConfig.display as Record<string, unknown>) } as Record<
+                string,
+                unknown
+              >)
             : null;
         const spec = (baseConfig.spec ?? null) as ChartSpec | null;
         if (!Array.isArray(display?.series)) {
@@ -1067,7 +1122,8 @@ export class AgentService {
           'nov',
           'dec',
         ].indexOf((monthYear[1] ?? '').slice(0, 3).toLowerCase());
-        if (month >= 0) return new Date(Date.UTC(Number(monthYear[2]), month, 1));
+        if (month >= 0)
+          return new Date(Date.UTC(Number(monthYear[2]), month, 1));
       }
 
       const short = text.match(/^(\d{1,2})\/(\d{2}|\d{4})$/);
@@ -1075,7 +1131,8 @@ export class AgentService {
         const month = Number(short[1]);
         const rawYear = Number(short[2]);
         const year = rawYear < 100 ? 2000 + rawYear : rawYear;
-        if (month >= 1 && month <= 12) return new Date(Date.UTC(year, month - 1, 1));
+        if (month >= 1 && month <= 12)
+          return new Date(Date.UTC(year, month - 1, 1));
       }
 
       const quarter = text.match(/^Q[1-4]\s+((?:19|20)\d{2})$/i);
@@ -1103,7 +1160,8 @@ export class AgentService {
     if (range.kind === 'LAST_N_MONTHS') return `last ${range.months} months`;
     if (range.kind === 'LAST_N_DAYS') return `last ${range.days} days`;
     if (range.kind === 'LAST_N_WEEKS') return `last ${range.weeks} weeks`;
-    if (range.kind === 'LAST_N_QUARTERS') return `last ${range.quarters} quarters`;
+    if (range.kind === 'LAST_N_QUARTERS')
+      return `last ${range.quarters} quarters`;
     if (range.kind === 'LAST_N_YEARS') return `last ${range.years} years`;
     if (range.kind === 'BETWEEN_DATES') return `${range.start} to ${range.end}`;
     if (range.kind === 'SINCE_DATE') return `since ${range.start}`;
@@ -1121,9 +1179,12 @@ export class AgentService {
     // ("No data is available for ytd"). Anchoring to the data max makes "last 6 months"
     // mean the last 6 months that actually exist.
     const now = anchor ?? new Date();
-    const currentMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const currentMonth = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
     const key = (date: Date) => this.metricMonthKey(date);
-    if (range.kind === 'MTD') return { start: key(currentMonth), end: key(currentMonth) };
+    if (range.kind === 'MTD')
+      return { start: key(currentMonth), end: key(currentMonth) };
     if (range.kind === 'QTD') {
       const quarterMonth = Math.floor(now.getUTCMonth() / 3) * 3;
       return {
@@ -1139,34 +1200,57 @@ export class AgentService {
     }
     if (range.kind === 'LAST_N_MONTHS') {
       return {
-        start: key(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - Math.max(1, range.months) + 1, 1))),
+        start: key(
+          new Date(
+            Date.UTC(
+              now.getUTCFullYear(),
+              now.getUTCMonth() - Math.max(1, range.months) + 1,
+              1,
+            ),
+          ),
+        ),
         end: key(currentMonth),
       };
     }
     if (range.kind === 'LAST_N_QUARTERS') {
       const months = Math.max(1, range.quarters) * 3;
       return {
-        start: key(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - months + 1, 1))),
+        start: key(
+          new Date(
+            Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - months + 1, 1),
+          ),
+        ),
         end: key(currentMonth),
       };
     }
     if (range.kind === 'LAST_N_YEARS') {
       return {
-        start: key(new Date(Date.UTC(now.getUTCFullYear() - Math.max(1, range.years) + 1, 0, 1))),
+        start: key(
+          new Date(
+            Date.UTC(now.getUTCFullYear() - Math.max(1, range.years) + 1, 0, 1),
+          ),
+        ),
         end: key(currentMonth),
       };
     }
     if (range.kind === 'LAST_N_WEEKS' || range.kind === 'LAST_N_DAYS') {
-      const days = range.kind === 'LAST_N_WEEKS' ? Math.max(1, range.weeks) * 7 : Math.max(1, range.days);
+      const days =
+        range.kind === 'LAST_N_WEEKS'
+          ? Math.max(1, range.weeks) * 7
+          : Math.max(1, range.days);
       const start = new Date(now);
       start.setUTCDate(start.getUTCDate() - days + 1);
       return {
-        start: key(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1))),
+        start: key(
+          new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)),
+        ),
         end: key(currentMonth),
       };
     }
-    if (range.kind === 'SINCE_DATE') return { start: range.start.slice(0, 7), end: key(currentMonth) };
-    if (range.kind === 'BETWEEN_DATES') return { start: range.start.slice(0, 7), end: range.end.slice(0, 7) };
+    if (range.kind === 'SINCE_DATE')
+      return { start: range.start.slice(0, 7), end: key(currentMonth) };
+    if (range.kind === 'BETWEEN_DATES')
+      return { start: range.start.slice(0, 7), end: range.end.slice(0, 7) };
     return null;
   }
 
@@ -1181,11 +1265,17 @@ export class AgentService {
   } {
     const dated = rows
       .map((row) => ({ row, date: this.parseMetricRowDate(row) }))
-      .filter((item): item is { row: Record<string, unknown>; date: Date } => !!item.date);
+      .filter(
+        (item): item is { row: Record<string, unknown>; date: Date } =>
+          !!item.date,
+      );
     if (dated.length === 0) return { data: rows };
 
     const months = dated.map((item) => this.metricMonthKey(item.date)).sort();
-    const availableRange = { start: months[0]!, end: months[months.length - 1]! };
+    const availableRange = {
+      start: months[0]!,
+      end: months[months.length - 1]!,
+    };
     // Anchor relative ranges to the latest month that actually has data (handles
     // historical datasets where the wall clock is past the data).
     const maxDate = dated.reduce(
@@ -6485,9 +6575,7 @@ export class AgentService {
       const hasMaxDate = /^\d{4}-\d{2}-\d{2}$/.test(maxDate);
 
       const isoDate = (d: Date) =>
-        `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(
-          d.getUTCDate(),
-        ).padStart(2, '0')}`;
+        `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 
       const addMonthsUtc = (yyyyMmDd: string, deltaMonths: number) => {
         const [y, m, day] = yyyyMmDd.split('-').map((n) => Number(n));
@@ -6637,13 +6725,20 @@ export class AgentService {
           const row: Record<string, any> = { name: month };
           for (const d of depts) row[d] = vals[d] ?? 0;
           return row;
-      });
+        });
       return { data, keys: [...depts] };
     }
 
     // ── expense/department_vendor (matrix — departments as rows, vendors as cols) ─────────
     if (metric === 'expense' && grouping === 'department_vendor') {
-      return this.buildExpensePivot('department', 'vendor', scope, entityParam, range, 40);
+      return this.buildExpensePivot(
+        'department',
+        'vendor',
+        scope,
+        entityParam,
+        range,
+        40,
+      );
     }
 
     // ── generic expense pivots for heatmap/matrix/line comparisons ──────────
@@ -6662,14 +6757,30 @@ export class AgentService {
         'class_month',
       ]);
       if (pivotGroupings.has(grouping)) {
-        const [rowAxis, colAxis] = grouping.split('_') as [PivotAxis, PivotAxis];
-        return this.buildExpensePivot(rowAxis, colAxis, scope, entityParam, range);
+        const [rowAxis, colAxis] = grouping.split('_') as [
+          PivotAxis,
+          PivotAxis,
+        ];
+        return this.buildExpensePivot(
+          rowAxis,
+          colAxis,
+          scope,
+          entityParam,
+          range,
+        );
       }
     }
 
     // ── expense/month_vendor (multi-series line — top vendors by month) ─────────
     if (metric === 'expense' && grouping === 'month_vendor') {
-      return this.buildExpensePivot('month', 'vendor', scope, entityParam, range, 24);
+      return this.buildExpensePivot(
+        'month',
+        'vendor',
+        scope,
+        entityParam,
+        range,
+        24,
+      );
     }
 
     // ── vendor_transactions/vendor (scatter, bubble) — falls back to account ───
@@ -6835,7 +6946,8 @@ export class AgentService {
         const vendor = String(r.vendor);
         if (!vendors.includes(vendor)) continue;
         const month = String(r.month);
-        if (!monthMap.has(month)) monthMap.set(month, { sort: String(r.month_start) });
+        if (!monthMap.has(month))
+          monthMap.set(month, { sort: String(r.month_start) });
         monthMap.get(month)![vendor] = this.num(r.value);
       }
       const data = [...monthMap.entries()]
@@ -6887,12 +6999,26 @@ export class AgentService {
 
     // ── expense/month_class (multi-series line/stacked_bar by class) ────────
     if (metric === 'expense' && grouping === 'month_class') {
-      return this.buildExpensePivot('month', 'class', scope, entityParam, range, 10);
+      return this.buildExpensePivot(
+        'month',
+        'class',
+        scope,
+        entityParam,
+        range,
+        10,
+      );
     }
 
     // ── expense/dept_class (stacked bar: dept × class breakdown) ────────────
     if (metric === 'expense' && grouping === 'dept_class') {
-      return this.buildExpensePivot('department', 'class', scope, entityParam, range, 10);
+      return this.buildExpensePivot(
+        'department',
+        'class',
+        scope,
+        entityParam,
+        range,
+        10,
+      );
     }
 
     // ── expense/dept_stats (scatter: dept total spend vs vendor count) ───────
@@ -7348,7 +7474,9 @@ export class AgentService {
     // Enabled per-org via CHART_ENGINE_NEW_ORGS. On refusal or ANY error we fall
     // through to the legacy pipeline below, so flipping the flag can never break
     // the chat — worst case it behaves exactly like today.
-    if (chooseEngine(organizationId, parseRouterConfig(process.env)) === 'new') {
+    if (
+      chooseEngine(organizationId, parseRouterConfig(process.env)) === 'new'
+    ) {
       let engineUnanswered = false;
       try {
         const engineScope = await this.getOrgScope(organizationId, role);
@@ -7362,35 +7490,60 @@ export class AgentService {
         // reads like a refinement ("add gross margin on another axis", "make it a
         // line chart", "break it down by department"), EDIT that chart in place —
         // ChatGPT-style — instead of spawning a brand-new one.
-        const active = await this.getActiveSessionDashboard(currentSession.id, organizationId);
+        const active = await this.getActiveSessionDashboard(
+          currentSession.id,
+          organizationId,
+        );
         const activeWidget = active?.widgets?.[0];
-        const activeQc = (activeWidget?.queryConfig ?? {}) as Record<string, unknown>;
+        const activeQc = (activeWidget?.queryConfig ?? {}) as Record<
+          string,
+          unknown
+        >;
         const priorSpec = activeQc.spec as EngineChartSpec | undefined;
-        const priorView = typeof activeQc.routedView === 'string' ? (activeQc.routedView as string) : undefined;
-        const canEdit = !!active && !!activeWidget && !!priorSpec && !!priorView;
-        const wantsEdit = canEdit && this.detectIntent(queryText, true) === 'EDIT_DASHBOARD';
+        const priorView =
+          typeof activeQc.routedView === 'string'
+            ? (activeQc.routedView as string)
+            : undefined;
+        const canEdit =
+          !!active && !!activeWidget && !!priorSpec && !!priorView;
+        const wantsEdit =
+          canEdit && this.detectIntent(queryText, true) === 'EDIT_DASHBOARD';
 
         // Did the user explicitly ask for a separate/second axis (a dual-axis combo)?
         const wantsSeparateAxis =
-          /\b(another|second|separate|secondary|right|dual)\s+(axis|axes)\b/i.test(queryText) ||
+          /\b(another|second|separate|secondary|right|dual)\s+(axis|axes)\b/i.test(
+            queryText,
+          ) ||
           /\bdual[-\s]?axis\b/i.test(queryText) ||
           /\bcombo\b/i.test(queryText);
         let built: EngineAnswer = wantsEdit
-          ? await this.chartEngine.answerEdit(scope, priorView!, priorSpec!, queryText, { wantsSeparateAxis })
+          ? await this.chartEngine.answerEdit(
+              scope,
+              priorView!,
+              priorSpec!,
+              queryText,
+              { wantsSeparateAxis },
+            )
           : await this.chartEngine.answer(scope, queryText);
         // An edit its cube can't satisfy shouldn't dead-end — build a fresh chart.
-        if (wantsEdit && !built.ok) built = await this.chartEngine.answer(scope, queryText);
+        if (wantsEdit && !built.ok)
+          built = await this.chartEngine.answer(scope, queryText);
 
         if (built.ok) {
           const isEdit = built.mode === 'edit' && canEdit;
-          const intent: QueryIntent = isEdit ? 'EDIT_DASHBOARD' : 'CREATE_DASHBOARD';
+          const intent: QueryIntent = isEdit
+            ? 'EDIT_DASHBOARD'
+            : 'CREATE_DASHBOARD';
           yield this.chunk('intent', {
             intent,
             activeDashboardId: isEdit ? active!.id : null,
             activeDashboardTitle: isEdit ? active!.title : null,
             engine: 'chart-engine',
           });
-          yield this.chunk('phase', { phase: 'execution', label: 'Autonomous engine' });
+          yield this.chunk('phase', {
+            phase: 'execution',
+            label: 'Autonomous engine',
+          });
 
           // One widget config, whether we create or edit — single-series (name,value)
           // for one measure or multi-series (name + a column per measure) for several,
@@ -7404,8 +7557,12 @@ export class AgentService {
             routedView: built.routedView,
             // Top-level axis TITLES so the chart explains itself (x = category/time,
             // y = unit). The renderer reads chart.config.xAxisLabel/yAxisLabel.
-            ...(built.display.xAxisLabel ? { xAxisLabel: built.display.xAxisLabel } : {}),
-            ...(built.display.yAxisLabel ? { yAxisLabel: built.display.yAxisLabel } : {}),
+            ...(built.display.xAxisLabel
+              ? { xAxisLabel: built.display.xAxisLabel }
+              : {}),
+            ...(built.display.yAxisLabel
+              ? { yAxisLabel: built.display.yAxisLabel }
+              : {}),
           } as unknown as Prisma.InputJsonValue;
 
           let dashId: string;
@@ -7413,7 +7570,11 @@ export class AgentService {
             // Update the existing chart in place — a new VERSION of the same widget.
             await this.prisma.dashboardWidget.update({
               where: { id: activeWidget!.id },
-              data: { title: built.title, chartType: built.widgetChartType, queryConfig },
+              data: {
+                title: built.title,
+                chartType: built.widgetChartType,
+                queryConfig,
+              },
             });
             await this.prisma.dashboard.update({
               where: { id: active!.id },
@@ -7430,7 +7591,11 @@ export class AgentService {
                 ownerId: userId,
                 title: built.title,
                 description: built.title,
-                config: { source: 'chart-engine', query: queryText, routedView: built.routedView } as Prisma.InputJsonValue,
+                config: {
+                  source: 'chart-engine',
+                  query: queryText,
+                  routedView: built.routedView,
+                } as Prisma.InputJsonValue,
                 permissions: { shared: false } as Prisma.InputJsonValue,
               },
             });
@@ -7478,12 +7643,16 @@ export class AgentService {
               displayOrder: w.displayOrder,
             })),
           );
-          const versionNumber = await this.nextChartTurnVersion(currentSession.id, organizationId);
+          const versionNumber = await this.nextChartTurnVersion(
+            currentSession.id,
+            organizationId,
+          );
           const chartTurn: ChartTurnMetadata = {
             kind: 'chart_turn',
             mode: isEdit ? 'edit' : 'create',
             versionNumber,
-            previousVersionNumber: isEdit && versionNumber > 1 ? versionNumber - 1 : null,
+            previousVersionNumber:
+              isEdit && versionNumber > 1 ? versionNumber - 1 : null,
             sessionId: currentSession.id,
             dashboardId: dashId,
             dashboardTitle: built.title,
@@ -7501,7 +7670,12 @@ export class AgentService {
           // carries its own widgetSnapshots, which IS the reviewable version.
           const replyText = await this.narrateEngineAnswer(built);
           await this.prisma.agentChatMessage.create({
-            data: { sessionId: currentSession.id, organizationId, role: 'user', content: userQuery },
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'user',
+              content: userQuery,
+            },
           });
           await this.prisma.agentChatMessage.create({
             data: {
@@ -7533,32 +7707,58 @@ export class AgentService {
           });
           return;
         }
-        this.logger.warn(`[chart-engine] not answerable, falling back to legacy: ${built.reason}`);
+        this.logger.warn(
+          `[chart-engine] not answerable, falling back to legacy: ${built.reason}`,
+        );
         engineUnanswered = true;
       } catch (e) {
-        this.logger.error(`[chart-engine] error, falling back to legacy: ${(e as Error).message}`);
+        this.logger.error(
+          `[chart-engine] error, falling back to legacy: ${(e as Error).message}`,
+        );
         engineUnanswered = true;
       }
 
       // Registry-only datasets have NO legacy ebpo/gl data, so falling through
       // would run the legacy path against empty tables and answer nonsense. Keep
       // the reply an honest, business-facing redirect instead (no tech leak).
-      if (engineUnanswered && (await this.chartEngine.isEngineOnlyOrg(organizationId))) {
+      if (
+        engineUnanswered &&
+        (await this.chartEngine.isEngineOnlyOrg(organizationId))
+      ) {
         const refusal =
           "I wasn't able to pull that one together from the numbers I have. I can dig into revenue, " +
           'costs and margins, cash flow, receivables and payables, headcount and delivery operations — ' +
-          'ask me about any of those, or rephrase it and I\'ll take another pass.';
+          "ask me about any of those, or rephrase it and I'll take another pass.";
         await this.prisma.agentChatMessage.create({
-          data: { sessionId: currentSession.id, organizationId, role: 'user', content: userQuery },
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'user',
+            content: userQuery,
+          },
         });
         await this.prisma.agentChatMessage.create({
-          data: { sessionId: currentSession.id, organizationId, role: 'assistant', content: refusal },
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'assistant',
+            content: refusal,
+          },
         });
-        yield this.chunk('intent', { intent: 'CREATE_DASHBOARD', activeDashboardId: null, activeDashboardTitle: null, engine: 'chart-engine' });
+        yield this.chunk('intent', {
+          intent: 'CREATE_DASHBOARD',
+          activeDashboardId: null,
+          activeDashboardTitle: null,
+          engine: 'chart-engine',
+        });
         yield this.chunk('message', { message: refusal });
         yield this.chunk('token', { content: refusal });
         yield this.chunk('done', {
-          metrics: { sessionId: currentSession.id, engine: 'chart-engine', refused: true },
+          metrics: {
+            sessionId: currentSession.id,
+            engine: 'chart-engine',
+            refused: true,
+          },
         });
         return;
       }
@@ -7823,50 +8023,50 @@ export class AgentService {
           intent = this.detectIntent(queryText, false);
           // fall through to the normal create flow below.
         } else {
-        const noChartMessage =
-          "There isn't an existing chart in this session to modify. The previous request did not produce a chart, so I left the dashboard unchanged.";
-        await this.prisma.agentChatMessage.create({
-          data: {
-            sessionId: currentSession.id,
-            organizationId,
-            role: 'assistant',
-            content: noChartMessage,
-          },
-        });
-        await this.prisma.agentDashboardRequest.update({
-          where: { id: request.id },
-          data: { status: 'SUCCEEDED', completedAt: new Date() },
-        });
-        await this.prisma.agentRun.update({
-          where: { id: run.id },
-          data: {
-            status: 'SUCCEEDED',
-            completedAt: new Date(),
-            latencyMs: Date.now() - runStartedAt,
-          },
-        });
+          const noChartMessage =
+            "There isn't an existing chart in this session to modify. The previous request did not produce a chart, so I left the dashboard unchanged.";
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+              content: noChartMessage,
+            },
+          });
+          await this.prisma.agentDashboardRequest.update({
+            where: { id: request.id },
+            data: { status: 'SUCCEEDED', completedAt: new Date() },
+          });
+          await this.prisma.agentRun.update({
+            where: { id: run.id },
+            data: {
+              status: 'SUCCEEDED',
+              completedAt: new Date(),
+              latencyMs: Date.now() - runStartedAt,
+            },
+          });
 
-        yield this.chunk('intent', {
-          intent,
-          activeDashboardId: null,
-          activeDashboardTitle: null,
-        });
-        yield this.chunk('message', { message: noChartMessage });
-        yield this.chunk('done', {
-          metrics: {
-            sessionId: currentSession.id,
-            mode: 'agent',
-            totalMs: Date.now() - runStartedAt,
-            tokens: 0,
-            runId: run.id,
-            requestId: request.id,
-            dashboardId: null,
-            toolsExecuted: 0,
-            model: 'deterministic',
+          yield this.chunk('intent', {
             intent,
-          },
-        });
-        return;
+            activeDashboardId: null,
+            activeDashboardTitle: null,
+          });
+          yield this.chunk('message', { message: noChartMessage });
+          yield this.chunk('done', {
+            metrics: {
+              sessionId: currentSession.id,
+              mode: 'agent',
+              totalMs: Date.now() - runStartedAt,
+              tokens: 0,
+              runId: run.id,
+              requestId: request.id,
+              dashboardId: null,
+              toolsExecuted: 0,
+              model: 'deterministic',
+              intent,
+            },
+          });
+          return;
         }
       }
 
@@ -8967,7 +9167,8 @@ export class AgentService {
           await logEvent('DASHBOARD_UPDATED', {
             dashboardId,
             summary: editPlan.summary,
-            versionNumber: (chartTurnMetadata as ChartTurnMetadata).versionNumber,
+            versionNumber: (chartTurnMetadata as ChartTurnMetadata)
+              .versionNumber,
           });
           yield this.chunk('dashboard_updated', {
             dashboardId,
@@ -9192,7 +9393,8 @@ export class AgentService {
           await logEvent('DASHBOARD_CREATED', {
             dashboardId,
             widgetCount: widgets.length,
-            versionNumber: (chartTurnMetadata as ChartTurnMetadata).versionNumber,
+            versionNumber: (chartTurnMetadata as ChartTurnMetadata)
+              .versionNumber,
           });
           yield this.chunk('dashboard_created', {
             dashboardId,
@@ -9377,7 +9579,8 @@ export class AgentService {
       /\b(chart|graph|barchart|bar\s*chart|line\s*chart|pie\s*chart|table)\b/.test(
         q,
       ) || /\b(as|in)\s+a?\s*(bar|line|pie)\s*chart\b/.test(q);
-    if (asksForChart) return hasActiveDashboard ? 'EDIT_DASHBOARD' : 'CREATE_DASHBOARD';
+    if (asksForChart)
+      return hasActiveDashboard ? 'EDIT_DASHBOARD' : 'CREATE_DASHBOARD';
 
     // Active dashboard exists + no signals → default to edit (follow-up refinement).
     return 'EDIT_DASHBOARD';
@@ -9385,10 +9588,14 @@ export class AgentService {
 
   private referencesExistingChart(query: string): boolean {
     const q = String(query ?? '').toLowerCase();
-    return /\b(?:in|on)\s+the\s+same\s+chart\b/.test(q) ||
-      /\b(?:this|that|the)\s+same\s+(?:chart|graph|visual|visualization)\b/.test(q) ||
+    return (
+      /\b(?:in|on)\s+the\s+same\s+chart\b/.test(q) ||
+      /\b(?:this|that|the)\s+same\s+(?:chart|graph|visual|visualization)\b/.test(
+        q,
+      ) ||
       /\bexisting\s+(?:chart|graph|visual|visualization)\b/.test(q) ||
-      /\bkeep\s+this\s+chart\b/.test(q);
+      /\bkeep\s+this\s+chart\b/.test(q)
+    );
   }
 
   // ─── Active Dashboard Lookup ──────────────────────────────────────────────
@@ -9694,9 +9901,13 @@ export class AgentService {
             : rawEntity || 'This client';
           let reconciled: FigureEvidence['reconciled'] = 'unchecked';
           let reconcileNote = `Recomputed ${share.toFixed(1)}% from ${this.formatFigure(num, 'currency')} ÷ ${this.formatFigure(den, 'currency')}.`;
-          if (typeof expectedValue === 'number' && Number.isFinite(expectedValue)) {
+          if (
+            typeof expectedValue === 'number' &&
+            Number.isFinite(expectedValue)
+          ) {
             const drift =
-              Math.abs(share - expectedValue) / Math.max(1, Math.abs(expectedValue));
+              Math.abs(share - expectedValue) /
+              Math.max(1, Math.abs(expectedValue));
             if (drift <= 0.02) {
               reconciled = 'match';
               reconcileNote = `${entityLabel} billed ${this.formatFigure(num, 'currency')} of the company's ${this.formatFigure(den, 'currency')} that ${primaryDimDef.label.toLowerCase()} — ${share.toFixed(1)}%, matching the chart.`;
@@ -9736,12 +9947,19 @@ export class AgentService {
     const breakdownDim = String(spec.breakdown ?? '').trim();
     const breakdownDimDef = breakdownDim ? EBPO_DIMENSIONS[breakdownDim] : null;
     const seriesIsEntity =
-      !!wantLabel && !matchedMeasureId && !!breakdownDimDef && !breakdownDimDef.isTime;
+      !!wantLabel &&
+      !matchedMeasureId &&
+      !!breakdownDimDef &&
+      !breakdownDimDef.isTime;
 
     // Assemble the scope (which slice) + the detail dimension (how to break it down).
     const scopeFilters: SpecFilter[] = [...(spec.filters ?? [])];
     if (seriesIsEntity)
-      scopeFilters.push({ dimension: breakdownDim, op: 'in', values: [wantLabel] });
+      scopeFilters.push({
+        dimension: breakdownDim,
+        op: 'in',
+        values: [wantLabel],
+      });
 
     let detailDim: string;
     let recentMonths: number | null = spec.recentMonths ?? null;
@@ -9753,7 +9971,8 @@ export class AgentService {
       // and decompose it over time — the monthly rows behind the aggregate bar.
       scopeFilters.push({ dimension: primaryDim, op: 'in', values: [cat] });
       detailDim = 'month';
-      scopeLabel = cat + (spec.recentMonths ? `, last ${spec.recentMonths} months` : '');
+      scopeLabel =
+        cat + (spec.recentMonths ? `, last ${spec.recentMonths} months` : '');
       dimensionLabel = primaryDimDef.label;
     } else {
       // Time primary (month / quarter / year): scope to the exact clicked PERIOD and
@@ -9817,7 +10036,8 @@ export class AgentService {
     // Trust stamp. A flow/stock $ measure must reconcile: our independent sum of the
     // detail rows should equal the number the chart drew. A ratio/percent can't be
     // summed, so we don't fake a check.
-    const isPercent = measureDef.format === 'percent' || measureDef.kind === 'ratio';
+    const isPercent =
+      measureDef.format === 'percent' || measureDef.kind === 'ratio';
     // The chart applies a transform (growth %, normalize, cumulative, moving average…)
     // that we did NOT specially reconstruct above, so the raw detail rows are the inputs
     // to that transform — NOT the plotted value. Comparing their $ sum to the plotted
@@ -9829,7 +10049,8 @@ export class AgentService {
     if (hasUnhandledTransform) {
       reconciled = 'not_applicable';
       const kindWord =
-        transformKinds.includes('normalize') || transformKinds.includes('company_share')
+        transformKinds.includes('normalize') ||
+        transformKinds.includes('company_share')
           ? 'a share'
           : transformKinds.includes('growth_pct')
             ? 'a growth-rate'
@@ -9843,7 +10064,10 @@ export class AgentService {
       reconciled = 'not_applicable';
       reconcileNote =
         'This is a ratio, so its parts can’t simply be added — the rows show how it breaks down.';
-    } else if (typeof expectedValue === 'number' && Number.isFinite(expectedValue)) {
+    } else if (
+      typeof expectedValue === 'number' &&
+      Number.isFinite(expectedValue)
+    ) {
       const denom = Math.max(1, Math.abs(expectedValue));
       const drift = Math.abs(total - expectedValue) / denom;
       if (drift <= 0.01) {
@@ -9890,7 +10114,11 @@ export class AgentService {
     role: MembershipRole,
     orgId: string | undefined,
     widgetId: string,
-    widget: { queryConfig: unknown; chartType: string | null; title: string | null },
+    widget: {
+      queryConfig: unknown;
+      chartType: string | null;
+      title: string | null;
+    },
     category: string,
     seriesLabel?: string,
     expectedValue?: number,
@@ -9917,7 +10145,9 @@ export class AgentService {
     const metric = String(cfg.metric ?? '').trim();
     const grouping = String(cfg.grouping ?? '').trim();
     if (!metric || !grouping)
-      return genericFail('Drill-down provenance isn’t available for this chart yet.');
+      return genericFail(
+        'Drill-down provenance isn’t available for this chart yet.',
+      );
 
     // Re-run the chart's own query with its saved parameters. For dynamic charts this
     // re-executes the stored SQL (via widgetId); for GL charts it re-runs the
@@ -9966,7 +10196,10 @@ export class AgentService {
     if (data.length === 0)
       return genericFail('Could not read the underlying rows for this figure.');
 
-    const norm = (s: unknown) => String(s ?? '').trim().toLowerCase();
+    const norm = (s: unknown) =>
+      String(s ?? '')
+        .trim()
+        .toLowerCase();
     const catLower = norm(cat);
     const matched =
       data.find((r) => norm((r as any).name) === catLower) ??
@@ -9974,7 +10207,8 @@ export class AgentService {
       (catLower
         ? data.find((r) => norm((r as any).name).includes(catLower))
         : undefined);
-    if (!matched) return genericFail(`Couldn’t find “${cat}” in this chart’s data.`);
+    if (!matched)
+      return genericFail(`Couldn’t find “${cat}” in this chart’s data.`);
 
     // Format hints from the saved display config: per-series formats, then the chart's
     // primary value unit, then a keyword heuristic — so a percent series never renders
@@ -10055,7 +10289,9 @@ export class AgentService {
       clickedKey === 'value'
         ? want || String(widget.title ?? 'Value')
         : want || prettifyKey(clickedKey);
-    const format = inferFormat(clickedKey === 'value' ? want || metric : clickedKey);
+    const format = inferFormat(
+      clickedKey === 'value' ? want || metric : clickedKey,
+    );
 
     // Rows behind it: for a multi-series category, show every series value that shares
     // the clicked unit (the real breakdown for that category). For a single-series
@@ -10065,7 +10301,10 @@ export class AgentService {
     const rows = multiSeries
       ? numericKeys
           .filter((k) => inferFormat(k) === format)
-          .map((k) => ({ label: prettifyKey(k), value: Number((matched as any)[k]) }))
+          .map((k) => ({
+            label: prettifyKey(k),
+            value: Number((matched as any)[k]),
+          }))
       : [{ label: cat, value: clickedValue }];
 
     let reconciled: FigureEvidence['reconciled'];
@@ -10179,13 +10418,15 @@ export class AgentService {
     value: number,
     format: 'currency' | 'number' | 'percent',
   ): string {
-    if (format === 'percent') return `${(value * (Math.abs(value) <= 1 ? 100 : 1)).toFixed(1)}%`;
+    if (format === 'percent')
+      return `${(value * (Math.abs(value) <= 1 ? 100 : 1)).toFixed(1)}%`;
     if (format === 'currency') {
       const abs = Math.abs(value);
-      if (abs >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
-      if (abs >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
-      if (abs >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
-      return `$${value.toFixed(0)}`;
+      const sign = value < 0 ? '-' : '';
+      if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+      if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
+      if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
+      return `${sign}$${abs.toFixed(0)}`;
     }
     return value.toLocaleString();
   }
@@ -10198,16 +10439,19 @@ export class AgentService {
    * On any LLM failure we fall back to the deterministic sentence so the chat
    * never stalls — same strangler-safety principle as the engine seam itself.
    */
-  private async narrateEngineAnswer(built: Extract<EngineAnswer, { ok: true }>): Promise<string> {
+  private async narrateEngineAnswer(
+    built: Extract<EngineAnswer, { ok: true }>,
+  ): Promise<string> {
     const { sheet, fallback } = this.buildEngineFacts(built);
     const system =
-      "You are Astra, a world-class CFO-grade financial analysis assistant — warm, sharp, and genuinely helpful. " +
-      "You just built or updated a chart for the user (see Action in FACTS). If it was an update, briefly acknowledge " +
-      "what changed (e.g. a measure added on a second axis, a re-slice, a chart-type switch). Write a short spoken reply " +
-      "(1–2 sentences) that surfaces the single most interesting takeaway, then offers ONE specific, natural next step.\n" +
+      'You are Astra, a world-class CFO-grade financial analysis assistant — warm, sharp, and genuinely helpful. ' +
+      'You just built or updated a chart for the user (see Action in FACTS). If it was an update, briefly acknowledge ' +
+      'what changed (e.g. a measure added on a second axis, a re-slice, a chart-type switch). Write a short spoken reply ' +
+      '(1–2 sentences) that surfaces the single most interesting takeaway, then offers ONE specific, natural next step.\n' +
       'Hard rules:\n' +
       '- Use ONLY the numbers, names, and periods listed under FACTS, copied EXACTLY as written. Never invent, ' +
       're-round, or compute a new figure. If a number is not in FACTS, do not state it.\n' +
+      '- If FACTS lists highlighted negative periods, explicitly mention them.\n' +
       '- Be conversational and confident, never robotic. No "Sure"/"Certainly"/"Here is" filler openings are required, ' +
       'but a natural lead-in is welcome.\n' +
       '- Wrap the chart title and every figure in **bold**.\n' +
@@ -10218,7 +10462,9 @@ export class AgentService {
       const reply = this.parseNarrationReply(raw);
       if (reply) return reply;
     } catch (e) {
-      this.logger.warn(`[chart-engine] narration LLM failed, using grounded fallback: ${(e as Error).message}`);
+      this.logger.warn(
+        `[chart-engine] narration LLM failed, using grounded fallback: ${(e as Error).message}`,
+      );
     }
     return fallback;
   }
@@ -10242,11 +10488,15 @@ export class AgentService {
    * phrases from and (b) a ready-to-send FALLBACK sentence. Both carry the SAME
    * pre-formatted figures, so whichever path is used, the numbers are correct.
    */
-  private buildEngineFacts(built: Extract<EngineAnswer, { ok: true }>): { sheet: string; fallback: string } {
+  private buildEngineFacts(built: Extract<EngineAnswer, { ok: true }>): {
+    sheet: string;
+    fallback: string;
+  } {
     const fmt = (n: number) => this.formatFigure(n, built.valueFormat);
     const title = built.title;
     const valueKey = built.spec.measureKeys[0];
-    const nameKey = built.spec.dimensionKey ?? (built.spec.timeGrain ? 'period' : null);
+    const nameKey =
+      built.spec.dimensionKey ?? (built.spec.timeGrain ? 'period' : null);
     const lines = [
       `Action: ${built.mode === 'edit' ? 'updated the existing chart per the request' : 'created a new chart'}`,
       `Chart title: ${title}`,
@@ -10258,13 +10508,31 @@ export class AgentService {
     const seriesInfo = built.display.series;
     if (seriesInfo && seriesInfo.length > 1) {
       lines.push(
-        `Series: ${seriesInfo
-          .map((s) => `${s.key} (${s.axis} axis, ${s.role})`)
-          .join('; ')}`,
+        `Series: ${seriesInfo.map((s) => `${s.key} (${s.axis} axis, ${s.role})`).join('; ')}`,
       );
     }
 
-    let points = (built.rows ?? [])
+    let factRows = built.rows ?? [];
+    if (
+      built.spec.comparison === 'yoy_growth_pct' &&
+      built.spec.timeGrain &&
+      built.spec.dimensionKey
+    ) {
+      // For a multi-category YoY trend, narrate the latest plotted value per
+      // category. Summing percentage points across 36 months is meaningless.
+      // Engine rows are chronologically ordered, so overwriting per category
+      // leaves the latest available period without inventing an aggregation.
+      const latestByCategory = new Map<string, Record<string, unknown>>();
+      for (const row of factRows) {
+        const category = String(row[built.spec.dimensionKey] ?? '').trim();
+        if (category) latestByCategory.set(category, row);
+      }
+      factRows = Array.from(latestByCategory.values());
+      const latestPeriod = String(factRows[0]?.period ?? '').trim();
+      if (latestPeriod) lines.push(`Latest period: ${latestPeriod}`);
+    }
+
+    let points = factRows
       .map((r) => ({
         name: String((nameKey ? r[nameKey] : 'Total') ?? '').trim(),
         value: this.num(r[valueKey as string]),
@@ -10282,6 +10550,19 @@ export class AgentService {
       points = Array.from(totals, ([name, value]) => ({ name, value }));
     }
 
+    // Percentage-contribution charts: the headline rows are still the raw $ totals,
+    // but the chart (and valueFormat) speak in shares. Convert each category to its
+    // % of the grand total so the narration says "Voice Revenue at 32%", not the
+    // dollar figure with a stray "%" ("$156,764,582.7%").
+    if (built.spec.normalize) {
+      const grand = points.reduce((sum, p) => sum + p.value, 0);
+      if (grand > 0)
+        points = points.map((p) => ({
+          name: p.name,
+          value: (p.value / grand) * 100,
+        }));
+    }
+
     if (points.length === 0) {
       return {
         sheet: [...lines, 'Result: no matching rows were found.'].join('\n'),
@@ -10293,7 +10574,9 @@ export class AgentService {
     if (!built.spec.dimensionKey && !built.spec.timeGrain) {
       const v = fmt(points[0]!.value);
       return {
-        sheet: [...lines, 'Kind: single headline value', `Value: ${v}`].join('\n'),
+        sheet: [...lines, 'Kind: single headline value', `Value: ${v}`].join(
+          '\n',
+        ),
         fallback: `**${title}** comes out to **${v}**. Want me to break that down by client or department, or show how it's trended over time?`,
       };
     }
@@ -10305,17 +10588,37 @@ export class AgentService {
         const m = raw.match(/^((?:19|20)\d{2})-(\d{2})/);
         if (!m) return raw;
         const month = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 1));
-        return new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(month);
+        return new Intl.DateTimeFormat('en-US', {
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'UTC',
+        }).format(month);
       };
       const first = points[0]!;
       const last = points[points.length - 1]!;
       const delta = last.value - first.value;
       const dir = delta > 0 ? 'climbed' : delta < 0 ? 'eased' : 'held steady';
-      const pct = first.value !== 0 ? Math.round((delta / Math.abs(first.value)) * 100) : null;
+      const rawPct =
+        first.value !== 0
+          ? Math.round((delta / Math.abs(first.value)) * 100)
+          : null;
+      // A tiny baseline can produce technically correct but decision-useless
+      // five-digit growth percentages. In that case report the exact endpoints
+      // and absolute direction without amplifying baseline noise.
+      const pct =
+        rawPct !== null && Math.abs(rawPct) <= 1000 ? rawPct : null;
       const arc =
         delta === 0
           ? `holding steady around ${fmt(last.value)}`
           : `${dir} ${pct !== null ? `${Math.abs(pct)}% ` : ''}from ${fmt(first.value)} (${prettyPeriod(first.name)}) to ${fmt(last.value)} (${prettyPeriod(last.name)})`;
+      const negativePoints = built.spec.highlightNegative
+        ? points.filter((point) => point.value < 0)
+        : [];
+      const negativeFact = negativePoints.length
+        ? `Highlighted negative periods: ${negativePoints.map((point) => `${prettyPeriod(point.name)} = ${fmt(point.value)}`).join('; ')}`
+        : built.spec.highlightNegative
+          ? 'Highlighted negative periods: none'
+          : null;
       return {
         sheet: [
           ...lines,
@@ -10323,8 +10626,9 @@ export class AgentService {
           `First period: ${prettyPeriod(first.name)} = ${fmt(first.value)}`,
           `Last period: ${prettyPeriod(last.name)} = ${fmt(last.value)}`,
           `Direction: ${dir}${pct !== null ? ` (${Math.abs(pct)}% change)` : ''}`,
+          ...(negativeFact ? [negativeFact] : []),
         ].join('\n'),
-        fallback: `Here's **${title}** — it's ${arc} across ${points.length} periods. Want a year-over-year comparison or a tighter date range?`,
+        fallback: `Here's **${title}** — it's ${arc} across ${points.length} periods.${negativePoints.length ? ` The highlighted negative period is ${negativePoints.map((point) => `**${prettyPeriod(point.name)} = ${fmt(point.value)}**`).join(', ')}.` : ''} Want a year-over-year comparison or a tighter date range?`,
       };
     }
 
@@ -10334,19 +10638,24 @@ export class AgentService {
     const second = sorted[1];
     const isCurrency = built.valueFormat === 'currency';
     const total = points.reduce((s, p) => s + p.value, 0);
-    const share = isCurrency && total !== 0 ? Math.round((top.value / total) * 100) : null;
+    const share =
+      isCurrency && total !== 0 ? Math.round((top.value / total) * 100) : null;
     const lead =
       share !== null
         ? `**${top.name}** leads at **${fmt(top.value)}** — about ${share}% of the total.`
         : `**${top.name}** is on top at **${fmt(top.value)}**.`;
-    const totalNote = isCurrency ? ` All ${points.length} together come to ${fmt(total)}.` : '';
+    const totalNote = isCurrency
+      ? ` All ${points.length} together come to ${fmt(total)}.`
+      : '';
     const factLines = [
       ...lines,
       `Kind: breakdown across ${points.length} categories`,
       `Leader: ${top.name} = ${fmt(top.value)}${share !== null ? ` (${share}% of total)` : ''}`,
     ];
-    if (second) factLines.push(`Runner-up: ${second.name} = ${fmt(second.value)}`);
-    if (isCurrency) factLines.push(`Total of all ${points.length}: ${fmt(total)}`);
+    if (second)
+      factLines.push(`Runner-up: ${second.name} = ${fmt(second.value)}`);
+    if (isCurrency)
+      factLines.push(`Total of all ${points.length}: ${fmt(total)}`);
     return {
       sheet: factLines.join('\n'),
       fallback: `Here's **${title}**. ${lead}${totalNote} I can rank the rest, break any of these down further, or switch up the chart style — just say the word.`,
@@ -10378,7 +10687,9 @@ export class AgentService {
           role === 'ASSISTANT'
             ? this.formatChartTurnHistoryLine((m as any).metadata ?? null)
             : null;
-        return chartLine ? `${role}: ${preview}\n${chartLine}` : `${role}: ${preview}`;
+        return chartLine
+          ? `${role}: ${preview}\n${chartLine}`
+          : `${role}: ${preview}`;
       })
       .join('\n');
   }
@@ -10420,7 +10731,10 @@ export class AgentService {
     // The summary the user sees is the CHANGE itself — never internal mechanics
     // ("new version", "preserved in chat"). Strip trailing punctuation so it
     // composes cleanly with the surrounding sentence.
-    const clean = input.rawSummary.trim().replace(/\s+/g, ' ').replace(/[.\s]+$/, '');
+    const clean = input.rawSummary
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/[.\s]+$/, '');
 
     if (input.mode === 'edit') {
       return clean || `Updated the ${chartLabel}`;
@@ -10429,13 +10743,21 @@ export class AgentService {
   }
 
   private humanizeChartType(chartType?: string): string | null {
-    const value = String(chartType ?? '').trim().toLowerCase();
+    const value = String(chartType ?? '')
+      .trim()
+      .toLowerCase();
     if (!value) return null;
     if (value === 'donut' || value === 'pie') return `${value} chart`;
     if (value === 'stacked_bar') return 'stacked bar chart';
     if (value === 'horizontal_bar') return 'horizontal bar chart';
-    if (value === 'heatmap' || value === 'matrix' || value === 'treemap') return value;
-    if (value === 'line' || value === 'bar' || value === 'area' || value === 'scatter') {
+    if (value === 'heatmap' || value === 'matrix' || value === 'treemap')
+      return value;
+    if (
+      value === 'line' ||
+      value === 'bar' ||
+      value === 'area' ||
+      value === 'scatter'
+    ) {
       return `${value} chart`;
     }
     return `${value} chart`;
@@ -10460,32 +10782,36 @@ export class AgentService {
 
     const snapshots = await Promise.all(
       widgets.map(async (widget) => {
-        const snapshotDisplay =
-          (() => {
-            const current =
-              (widget.queryConfig as any)?.display &&
-              typeof (widget.queryConfig as any).display === 'object' &&
-              !Array.isArray((widget.queryConfig as any).display)
-                ? ((widget.queryConfig as any).display as Record<string, unknown>)
-                : null;
-            if (Array.isArray(current?.series)) return current;
-            const derived = this.deriveEbpoDisplayFromSpec(
-              ((widget.queryConfig as any)?.spec ?? null) as ChartSpec | null,
-            );
-            return derived ? { ...(current ?? {}), ...derived } : current;
-          })();
+        const snapshotDisplay = (() => {
+          const current =
+            (widget.queryConfig as any)?.display &&
+            typeof (widget.queryConfig as any).display === 'object' &&
+            !Array.isArray((widget.queryConfig as any).display)
+              ? ((widget.queryConfig as any).display as Record<string, unknown>)
+              : null;
+          if (Array.isArray(current?.series)) return current;
+          const derived = this.deriveEbpoDisplayFromSpec(
+            ((widget.queryConfig as any)?.spec ?? null) as ChartSpec | null,
+          );
+          return derived ? { ...(current ?? {}), ...derived } : current;
+        })();
         const metric = String(widget.queryConfig.metric ?? '').trim();
         const grouping = String(widget.queryConfig.grouping ?? '').trim();
-        const timeRange = (widget.queryConfig.timeRange ?? null) as TimeRange | null;
+        const timeRange = (widget.queryConfig.timeRange ??
+          null) as TimeRange | null;
         const providerHint = (widget.queryConfig.providerHint ?? null) as
           | string
           | null;
-        const clientName = (widget.queryConfig.clientName ?? null) as string | null;
+        const clientName = (widget.queryConfig.clientName ?? null) as
+          | string
+          | null;
         const clientNames = Array.isArray(widget.queryConfig.clientNames)
           ? (widget.queryConfig.clientNames as string[])
           : null;
         const orgId = (widget.queryConfig.orgId ?? null) as string | null;
-        const breakdown = (widget.queryConfig.breakdown ?? null) as string | null;
+        const breakdown = (widget.queryConfig.breakdown ?? null) as
+          | string
+          | null;
         const topNRaw = widget.queryConfig.topN ?? null;
         const topN =
           typeof topNRaw === 'number'
@@ -10585,14 +10911,19 @@ export class AgentService {
 
     const aliasesByExpr = new Map<string, Set<string>>();
     for (const item of items) {
-      const am = /^([\s\S]+?)\s+as\s+["'`]?([A-Za-z0-9_ %().-]+?)["'`]?\s*$/i.exec(
-        item.trim(),
-      );
+      const am =
+        /^([\s\S]+?)\s+as\s+["'`]?([A-Za-z0-9_ %().-]+?)["'`]?\s*$/i.exec(
+          item.trim(),
+        );
       if (!am) continue;
       const expr = am[1].replace(/\s+/g, ' ').trim().toLowerCase();
       const alias = am[2].replace(/\s+/g, ' ').trim().toLowerCase();
       // Only real aggregate measures matter; dimension/name columns may legitimately repeat.
-      if (!/\b(sum|sumif|avg|avgif|count|countif|max|min|median|quantile)\s*\(/.test(expr))
+      if (
+        !/\b(sum|sumif|avg|avgif|count|countif|max|min|median|quantile)\s*\(/.test(
+          expr,
+        )
+      )
         continue;
       if (!aliasesByExpr.has(expr)) aliasesByExpr.set(expr, new Set());
       aliasesByExpr.get(expr)!.add(alias);
@@ -10611,11 +10942,19 @@ export class AgentService {
   private wantsValueLabelIntent(query: string): boolean {
     const q = String(query ?? '').toLowerCase();
     if (!q) return false;
-    if (/\b(?:values?|numbers?|amounts?)\s+instead\s+of\s+percent/.test(q)) return true;
-    if (/\b(?:remove|without|no|hide)\s+percent(?:age|ages)?/.test(q)) return true;
-    if (/\bpercent(?:age|ages)?\s+to\s+(?:values?|numbers?|amounts?)\b/.test(q)) return true;
+    if (/\b(?:values?|numbers?|amounts?)\s+instead\s+of\s+percent/.test(q))
+      return true;
+    if (/\b(?:remove|without|no|hide)\s+percent(?:age|ages)?/.test(q))
+      return true;
+    if (/\bpercent(?:age|ages)?\s+to\s+(?:values?|numbers?|amounts?)\b/.test(q))
+      return true;
     // "actual / real / absolute / raw / exact / whole / dollar … value(s)" (allow words between).
-    if (/\b(?:actual|real|absolute|raw|exact|whole|dollar)\b[^.]*\bvalues?\b/.test(q)) return true;
+    if (
+      /\b(?:actual|real|absolute|raw|exact|whole|dollar)\b[^.]*\bvalues?\b/.test(
+        q,
+      )
+    )
+      return true;
     // A show/display/add request that targets value(s)/number(s)/amount(s) and is NOT about percent.
     if (
       /\b(?:show|display|add|include|put|label|labelled|labeled)\b[^.]*\b(?:values?|numbers?|amounts?)\b/.test(
@@ -10648,14 +10987,20 @@ export class AgentService {
     const wantsValueLabels = this.wantsValueLabelIntent(query);
     const wantsPercentLabels = this.wantsPercentLabelIntent(query);
 
-    const labelMode = wantsValueLabels ? 'value' : wantsPercentLabels ? 'percent' : null;
+    const labelMode = wantsValueLabels
+      ? 'value'
+      : wantsPercentLabels
+        ? 'percent'
+        : null;
     if (!labelMode) return widgets;
 
     return widgets.map((widget) => {
       const chartType = String(widget.type ?? '').toLowerCase();
       if (chartType !== 'pie' && chartType !== 'donut') return widget;
       const existingDisplay =
-        widget.display && typeof widget.display === 'object' && !Array.isArray(widget.display)
+        widget.display &&
+        typeof widget.display === 'object' &&
+        !Array.isArray(widget.display)
           ? (widget.display as Record<string, unknown>)
           : {};
       return {
@@ -10727,7 +11072,8 @@ export class AgentService {
         .map((l) => l.match(/^\d+\)\s+(.*)$/)?.[1]?.trim())
         .filter((x): x is string => !!x);
       picked =
-        optionLabels.find((lab) => lab.toLowerCase() === q.toLowerCase()) ?? null;
+        optionLabels.find((lab) => lab.toLowerCase() === q.toLowerCase()) ??
+        null;
     }
     if (!picked) return null;
 
@@ -10956,8 +11302,12 @@ export class AgentService {
     ];
 
     const hasExecutiveDashboardIntent =
-      has(/\b(dashboard|report|overview|summary|scorecard|board\s+pack|pack|suite)\b/) &&
-      has(/\b(cfo|executive|financial\s+position|operating\s+performance|profitability|liquidity|cash\s+position|financial\s+health|balance\s+sheet|p&l|income\s+statement|net\s+income)\b/);
+      has(
+        /\b(dashboard|report|overview|summary|scorecard|board\s+pack|pack|suite)\b/,
+      ) &&
+      has(
+        /\b(cfo|executive|financial\s+position|operating\s+performance|profitability|liquidity|cash\s+position|financial\s+health|balance\s+sheet|p&l|income\s+statement|net\s+income)\b/,
+      );
 
     if (hasExecutiveDashboardIntent) {
       return executiveDashboardWidgets();
@@ -11732,7 +12082,9 @@ export class AgentService {
             'dso',
             'month',
             0,
-            { breakdown: 'client' },
+            {
+              breakdown: 'client',
+            },
           ),
         ];
       }
@@ -11753,7 +12105,10 @@ export class AgentService {
               'revenue',
               'month',
               0,
-              { breakdown: 'client', topN: n },
+              {
+                breakdown: 'client',
+                topN: n,
+              },
             ),
           ];
         }
@@ -12044,14 +12399,17 @@ export class AgentService {
     candidate: string | null | undefined,
     query: string,
   ): string {
-    const cleaned = String(candidate ?? '').replace(/\s+/g, ' ').trim();
+    const cleaned = String(candidate ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!cleaned) return this.deriveQueryTitle(query);
 
     const queryCleaned = query.replace(/\s+/g, ' ').trim().toLowerCase();
     const titleCleaned = cleaned.toLowerCase();
-    const promptLike = /^(can you|could you|please|build|create|give me|show me|i[' ]?d like|i want)/i.test(
-      cleaned,
-    );
+    const promptLike =
+      /^(can you|could you|please|build|create|give me|show me|i[' ]?d like|i want)/i.test(
+        cleaned,
+      );
 
     if (promptLike || titleCleaned === queryCleaned) {
       return this.deriveQueryTitle(query);
@@ -12328,7 +12686,11 @@ export class AgentService {
     }
     if (!range || this.num(range.n) === 0) return null;
 
-    const distinct = async (col: string, view: string, extra = ''): Promise<string[]> => {
+    const distinct = async (
+      col: string,
+      view: string,
+      extra = '',
+    ): Promise<string[]> => {
       try {
         const rows = await this.queryRows<any>(
           `SELECT DISTINCT ${col} AS v FROM ${db}.${view}
@@ -12412,29 +12774,32 @@ export class AgentService {
           `SLA ${this.num(k.sla_compliance_pct).toFixed(1)}%, CSAT ${this.num(k.csat_pct).toFixed(1)}%, util ${this.num(k.utilization_pct).toFixed(1)}%`,
       );
     }
-    if (businessUnits.length) lines.push(`• Business units: ${businessUnits.join(', ')}`);
-    if (contractTypes.length) lines.push(`• Contract types: ${contractTypes.join(', ')}`);
-    if (industries.length) lines.push(`• Client industries: ${industries.join(', ')}`);
+    if (businessUnits.length)
+      lines.push(`• Business units: ${businessUnits.join(', ')}`);
+    if (contractTypes.length)
+      lines.push(`• Contract types: ${contractTypes.join(', ')}`);
+    if (industries.length)
+      lines.push(`• Client industries: ${industries.join(', ')}`);
     if ((topClients as any[]).length) {
       lines.push(
-        `• Top clients by revenue: ${(topClients as any[])
-          .map((c) => `${c.client_name} ($${this.fmtK(this.num(c.rev))})`)
-          .join(' | ')}`,
+        `• Top clients by revenue: ${(topClients as any[]).map((c) => `${c.client_name} ($${this.fmtK(this.num(c.rev))})`).join(' | ')}`,
       );
     }
-    if (departments.length) lines.push(`• Payroll departments: ${departments.join(', ')}`);
+    if (departments.length)
+      lines.push(`• Payroll departments: ${departments.join(', ')}`);
     if (countries.length) lines.push(`• Countries: ${countries.join(', ')}`);
-    if (deliveryCenters.length) lines.push(`• Delivery centers: ${deliveryCenters.join(', ')}`);
+    if (deliveryCenters.length)
+      lines.push(`• Delivery centers: ${deliveryCenters.join(', ')}`);
     if (regions.length) lines.push(`• Regions: ${regions.join(', ')}`);
-    if (arBuckets.length) lines.push(`• AR/AP aging buckets: ${arBuckets.join(', ')}`);
+    if (arBuckets.length)
+      lines.push(`• AR/AP aging buckets: ${arBuckets.join(', ')}`);
     if ((topVendors as any[]).length) {
       lines.push(
-        `• Top AP vendors by outstanding: ${(topVendors as any[])
-          .map((v) => `${v.vendor_name} ($${this.fmtK(this.num(v.bal))})`)
-          .join(' | ')}`,
+        `• Top AP vendors by outstanding: ${(topVendors as any[]).map((v) => `${v.vendor_name} ($${this.fmtK(this.num(v.bal))})`).join(' | ')}`,
       );
     }
-    if (glAccounts.length) lines.push(`• GL account names: ${glAccounts.slice(0, 20).join(', ')}`);
+    if (glAccounts.length)
+      lines.push(`• GL account names: ${glAccounts.slice(0, 20).join(', ')}`);
     lines.push(
       'VIEWS (all require: tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})): ' +
         'v_ebpo_kpi_monthly, v_ebpo_revenue_monthly (includes revenue_yoy_pct — pre-computed YoY growth %, null for the first 12 months; use it directly for YoY-growth charts), v_ebpo_revenue_by_client, v_ebpo_revenue_by_business_unit, ' +
@@ -12522,7 +12887,10 @@ export class AgentService {
    * client in 2022" ranks all-time (JP Morgan) while the chart shows 2022 (AT&T leads) —
    * the two disagree. Returns '' when there are no time filters.
    */
-  private clientRankTimeWhere(timeFilters: any[] | undefined, dateCol: string): string {
+  private clientRankTimeWhere(
+    timeFilters: any[] | undefined,
+    dateCol: string,
+  ): string {
     const parts: string[] = [];
     for (const f of timeFilters ?? []) {
       const dim = String((f as any)?.dimension ?? '');
@@ -12535,7 +12903,8 @@ export class AgentService {
         const years = values
           .map((v) => Number(v))
           .filter((v) => Number.isInteger(v) && v >= 1900 && v <= 2100);
-        if (years.length) parts.push(`toYear(${dateCol}) ${op} (${years.join(', ')})`);
+        if (years.length)
+          parts.push(`toYear(${dateCol}) ${op} (${years.join(', ')})`);
       } else if (dim === 'quarter') {
         const qs = values
           .map((v) => {
@@ -12543,17 +12912,26 @@ export class AgentService {
             return m ? Number(m[1]) : null;
           })
           .filter((v): v is number => v != null && v >= 1 && v <= 4);
-        if (qs.length) parts.push(`toQuarter(${dateCol}) ${op} (${Array.from(new Set(qs)).join(', ')})`);
+        if (qs.length)
+          parts.push(
+            `toQuarter(${dateCol}) ${op} (${Array.from(new Set(qs)).join(', ')})`,
+          );
       } else if (dim === 'month') {
         const months = values
           .map((v) => {
             const direct = Number(v);
-            if (Number.isInteger(direct) && direct >= 1 && direct <= 12) return direct;
+            if (Number.isInteger(direct) && direct >= 1 && direct <= 12)
+              return direct;
             const parsed = Date.parse(`${v} 1, 2000`);
-            return Number.isNaN(parsed) ? null : new Date(parsed).getUTCMonth() + 1;
+            return Number.isNaN(parsed)
+              ? null
+              : new Date(parsed).getUTCMonth() + 1;
           })
           .filter((v): v is number => v != null && v >= 1 && v <= 12);
-        if (months.length) parts.push(`toMonth(${dateCol}) ${op} (${Array.from(new Set(months)).join(', ')})`);
+        if (months.length)
+          parts.push(
+            `toMonth(${dateCol}) ${op} (${Array.from(new Set(months)).join(', ')})`,
+          );
       }
     }
     return parts.length ? ` AND ${parts.join(' AND ')}` : '';
@@ -12572,13 +12950,16 @@ export class AgentService {
     // window ("last 8 months") OR a calendar scope (year/quarter/month filter, e.g. 2022 →
     // AT&T) narrows the ranking. Both use the time-aware client view.
     const win = profile.client.windowedView;
-    const calWhere = win ? this.clientRankTimeWhere(timeFilters ?? undefined, win.dateCol) : '';
+    const calWhere = win
+      ? this.clientRankTimeWhere(timeFilters ?? undefined, win.dateCol)
+      : '';
     // An explicit calendar scope (year/quarter/month, e.g. "in 2024") WINS over a
     // recent-months window: applying both intersects "last N months" (anchored at the
     // latest data, e.g. 2025) with the named year (2024) → empty → no clients → the
     // superlative filter is silently dropped and the chart falls back company-wide. When a
     // calendar scope is present, rank within it ONLY.
-    const useRecent = !!win && !!windowMonths && windowMonths > 0 && calWhere === '';
+    const useRecent =
+      !!win && !!windowMonths && windowMonths > 0 && calWhere === '';
     const useWindow = !!win && (useRecent || calWhere !== '');
     const src = useWindow ? win! : profile.client;
     const view = useWindow ? win!.view : profile.client.view;
@@ -12597,19 +12978,22 @@ export class AgentService {
        LIMIT ${Math.max(1, Math.min(500, Math.floor(limit) || 1))}`,
       { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds },
     );
-    return rows
-      .map((r) => String(r.client_name ?? '').trim())
-      .filter(Boolean);
+    return rows.map((r) => String(r.client_name ?? '').trim()).filter(Boolean);
   }
 
   // Map ordinal words/abbreviations to a 1-based rank. Used to turn a planner's
   // superlative client reference ("second-largest client") into a concrete rank.
   private static readonly ORDINAL_RANK: Record<string, number> = {
-    first: 1, '1st': 1,
-    second: 2, '2nd': 2,
-    third: 3, '3rd': 3,
-    fourth: 4, '4th': 4,
-    fifth: 5, '5th': 5,
+    first: 1,
+    '1st': 1,
+    second: 2,
+    '2nd': 2,
+    third: 3,
+    '3rd': 3,
+    fourth: 4,
+    '4th': 4,
+    fifth: 5,
+    '5th': 5,
   };
 
   /**
@@ -12620,21 +13004,28 @@ export class AgentService {
    *   "top 5 clients" / "top 5"                           → [1,2,3,4,5]
    */
   private parseClientSuperlative(raw: string): number[] | null {
-    const v = String(raw ?? '').toLowerCase().trim();
+    const v = String(raw ?? '')
+      .toLowerCase()
+      .trim();
     if (!v) return null;
     const topN = v.match(/\btop\s+(\d+)\b/);
     if (topN) {
       const n = Math.max(1, Math.min(50, parseInt(topN[1]!, 10)));
       return Array.from({ length: n }, (_, i) => i + 1);
     }
-    const ord = v.match(/\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/);
+    const ord = v.match(
+      /\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\b/,
+    );
     if (ord && /\b(largest|biggest|highest|top)\b/.test(v)) {
       const rank = AgentService.ORDINAL_RANK[ord[1]!];
       if (rank) return [rank];
     }
     // Bare superlative referring to a client ("largest client", "the biggest client",
     // "top client") — but NOT "top N" (handled above) and not a real name.
-    if (/\b(largest|biggest|highest)\b/.test(v) && /\b(client|customer|account)\b/.test(v))
+    if (
+      /\b(largest|biggest|highest)\b/.test(v) &&
+      /\b(client|customer|account)\b/.test(v)
+    )
       return [1];
     if (/^(largest|biggest|highest|top)\s+client$/.test(v)) return [1];
     return null;
@@ -12660,7 +13051,10 @@ export class AgentService {
    * PHRASE is passed through; resolveSpecClientFilters turns it into real names. This is
    * intent-general (any superlative form), not tied to specific question wording.
    */
-  private repairMissingEntityFilter(spec: ChartSpec, queryLower: string): ChartSpec {
+  private repairMissingEntityFilter(
+    spec: ChartSpec,
+    queryLower: string,
+  ): ChartSpec {
     const m = queryLower.match(
       /\b(?:for|of)\s+(?:the\s+)?((?:second|third|fourth|fifth|2nd|3rd|4th|5th)?[\s-]*(?:largest|biggest|top|smallest|highest|lowest)\s+(?:client|customer))\b/,
     );
@@ -12669,7 +13063,10 @@ export class AgentService {
       /client|customer/i.test(String((f as any)?.dimension ?? '')),
     );
     if (hasClientFilter) return spec;
-    const phrase = m[1]!.replace(/customers?/g, 'client').replace(/\s+/g, ' ').trim();
+    const phrase = m[1]!
+      .replace(/customers?/g, 'client')
+      .replace(/\s+/g, ' ')
+      .trim();
     const next: ChartSpec = {
       ...spec,
       filters: [
@@ -12683,7 +13080,11 @@ export class AgentService {
     // month distributions.
     if (
       next.dimension === 'client' &&
-      this.superlativeClientAskImpliesTimeAxis(queryLower, next.chartType, next.dimension)
+      this.superlativeClientAskImpliesTimeAxis(
+        queryLower,
+        next.chartType,
+        next.dimension,
+      )
     )
       next.dimension = 'month';
     return next;
@@ -12694,7 +13095,11 @@ export class AgentService {
     chartType?: string | null,
     dimension?: string | null,
   ): boolean {
-    if (/(?:^|\b)(month|monthly|trend|over\s+time|growth|ytd|mtd|qtd|yoy|mom|rolling|cumulative)(?:\b|$)/.test(queryLower))
+    if (
+      /(?:^|\b)(month|monthly|trend|over\s+time|growth|ytd|mtd|qtd|yoy|mom|rolling|cumulative)(?:\b|$)/.test(
+        queryLower,
+      )
+    )
       return true;
     const ct = String(chartType ?? '').toLowerCase();
     if (['line', 'area', 'combo', 'waterfall'].includes(ct)) return true;
@@ -12711,9 +13116,9 @@ export class AgentService {
     if (String(spec.dimension ?? '').toLowerCase() !== 'month') return false;
     const topN = Number((spec as { topN?: number | null }).topN ?? NaN);
     if (!Number.isFinite(topN) || topN < 2) return false;
-    const measures = (spec.measures ?? (spec.measure ? [spec.measure] : [])).filter(
-      Boolean,
-    );
+    const measures = (
+      spec.measures ?? (spec.measure ? [spec.measure] : [])
+    ).filter(Boolean);
     if (measures.length < 2) return false;
     if (
       /\b(month|monthly|trend|over\s+time|by\s+month|per\s+month|mom|yoy|rolling|cumulative)\b/.test(
@@ -12726,7 +13131,9 @@ export class AgentService {
       return false;
     return (
       /\bcompare|comparison|versus|\bvs\b/.test(queryLower) ||
-      /\brevenue\s+and\s+expenses?\b|\bexpenses?\s+and\s+revenue\b/.test(queryLower)
+      /\brevenue\s+and\s+expenses?\b|\bexpenses?\s+and\s+revenue\b/.test(
+        queryLower,
+      )
     );
   }
 
@@ -12741,7 +13148,9 @@ export class AgentService {
     let changed = false;
     const nextFilters = [] as NonNullable<ChartSpec['filters']>;
     for (const f of filters) {
-      const isClientDim = /client|customer/i.test(String((f as any)?.dimension ?? ''));
+      const isClientDim = /client|customer/i.test(
+        String((f as any)?.dimension ?? ''),
+      );
       const values = Array.isArray((f as any)?.values) ? (f as any).values : [];
       if (!isClientDim || values.length === 0) {
         nextFilters.push(f);
@@ -12780,7 +13189,11 @@ export class AgentService {
               ),
             );
             if (years.length)
-              timeFilters.push({ dimension: 'year', op: 'in', values: years.map(String) });
+              timeFilters.push({
+                dimension: 'year',
+                op: 'in',
+                values: years.map(String),
+              });
           }
           ranked = await this.listTopClientsForScope(
             scope,
@@ -12810,7 +13223,9 @@ export class AgentService {
     // Degenerate single-client breakdown → drop it so the compiler builds a clean
     // name/value series (the right shape for a single client's monthly waterfall/line).
     const clientFilterValues = nextFilters
-      .filter((f) => /client|customer/i.test(String((f as any)?.dimension ?? '')))
+      .filter((f) =>
+        /client|customer/i.test(String((f as any)?.dimension ?? '')),
+      )
       .flatMap((f) => ((f as any)?.values ?? []) as string[]);
     if (
       /client|customer/i.test(String(out.breakdown ?? '')) &&
@@ -12875,7 +13290,11 @@ export class AgentService {
     const profile = await this.getDatasetProfile(scope);
     const win = profile.client.windowedView;
     if (!win) return [];
-    const rows = await this.queryRows<{ yr: number; client_name: string; w: number }>(
+    const rows = await this.queryRows<{
+      yr: number;
+      client_name: string;
+      w: number;
+    }>(
       `SELECT toYear(${win.dateCol}) AS yr, ${win.nameCol} AS client_name, ${win.weightExpr} AS w
        FROM ${this.analyticsDb}.${win.view}
        WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})
@@ -12906,7 +13325,10 @@ export class AgentService {
   private async buildPerYearLargestClientSql(
     scope: OrgScope,
     measures: string[],
-  ): Promise<{ sql: string; perYearClient: Array<{ year: number; client: string }> } | null> {
+  ): Promise<{
+    sql: string;
+    perYearClient: Array<{ year: number; client: string }>;
+  } | null> {
     const perYearClient = await this.resolveLargestClientByYear(scope);
     if (perYearClient.length === 0) return null;
     const cols = measures
@@ -12918,9 +13340,7 @@ export class AgentService {
     const selectCols = cols
       .map((c) =>
         c.ratio
-          ? `round(${
-              c.ratio.numExpr ?? `sum(${c.ratio.num})`
-            } / nullIf(sum(${c.ratio.den}), 0) * ${
+          ? `round(${c.ratio.numExpr ?? `sum(${c.ratio.num})`} / nullIf(sum(${c.ratio.den}), 0) * ${
               c.alias === 'Gross Margin %' ? '1' : '100'
             }, 1) AS "${c.alias}"`
           : `round(sum(${c.col}), 0) AS "${c.alias}"`,
@@ -12970,7 +13390,8 @@ export class AgentService {
     const wantsBar = /\bas (?:a |)?(?:column|bar)s?\b/.test(ql);
     const isStacked = /stacked/.test(ql);
     const fallbackType = (baseChartType ?? 'stacked_bar') as ChartType;
-    if (stitchableMeasures.length <= 1 || isStacked) return { type: fallbackType };
+    if (stitchableMeasures.length <= 1 || isStacked)
+      return { type: fallbackType };
     const sameUnitCombo =
       reqCombo &&
       !wantsBar &&
@@ -12978,7 +13399,11 @@ export class AgentService {
         stitchableMeasures.map((m) => EBPO_MEASURES[m]?.format).filter(Boolean),
       ).size === 1;
     const roles = ebpoComboSeriesRoles(stitchableMeasures, {
-      baseType: reqLine ? 'line' : reqBar ? 'bar' : String(baseChartType ?? 'combo'),
+      baseType: reqLine
+        ? 'line'
+        : reqBar
+          ? 'bar'
+          : String(baseChartType ?? 'combo'),
       forceLine:
         wantsLine && !wantsBar
           ? stitchableMeasures.slice(1)
@@ -12990,15 +13415,19 @@ export class AgentService {
       // The stitched SQL names its columns with the per-client-monthly aliases, so the
       // series key must match those, not the generic measure label.
       ...r,
-      key: AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[stitchableMeasures[i]!]?.alias ?? r.key,
+      key:
+        AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[stitchableMeasures[i]!]
+          ?.alias ?? r.key,
     }));
     // A same-unit overlay line (gross profit promoted from an all-$ combo) is an order of
     // magnitude smaller than the bars — move it to the right axis so it stays visible.
     if (sameUnitCombo) {
       const li = roles.length - 1;
-      if (roles[li]?.role === 'line') roles[li] = { ...roles[li]!, axis: 'right' };
+      if (roles[li]?.role === 'line')
+        roles[li] = { ...roles[li]!, axis: 'right' };
     }
-    const series = new Set(roles.map((r) => r.role)).size > 1 ? roles : undefined;
+    const series =
+      new Set(roles.map((r) => r.role)).size > 1 ? roles : undefined;
     const secondary = series?.find((r) => r.axis === 'right');
     const type = series
       ? (ebpoComboChartType(series, { forceCombo: reqCombo }) as ChartType)
@@ -13007,7 +13436,10 @@ export class AgentService {
       series,
       type,
       ...(secondary
-        ? { secondaryAxisFormat: secondary.format, secondaryLabel: secondary.key }
+        ? {
+            secondaryAxisFormat: secondary.format,
+            secondaryLabel: secondary.key,
+          }
         : {}),
     };
   }
@@ -13025,7 +13457,12 @@ export class AgentService {
     // EBPO sample org → use the dedicated semantic-view introspection so the
     // planner writes SQL against v_ebpo_* and matches the reference dashboard.
     // (GL-shaped introspection below returns nothing for an EBPO-only org.)
-    const ebpoContext = await this.introspectEbpoSchema(scope, db, params, orgWhere);
+    const ebpoContext = await this.introspectEbpoSchema(
+      scope,
+      db,
+      params,
+      orgWhere,
+    );
     if (ebpoContext) return ebpoContext;
 
     try {
@@ -13238,12 +13675,10 @@ export class AgentService {
         for (const r of tbAc) {
           const at = String(r.account_type);
           if (!byType.has(at)) byType.set(at, []);
-          byType
-            .get(at)!
-            .push({
-              name: String(r.account_name),
-              balance: this.num(r.balance),
-            });
+          byType.get(at)!.push({
+            name: String(r.account_name),
+            balance: this.num(r.balance),
+          });
         }
         const typeLines: string[] = [];
         for (const [at, accts] of byType.entries()) {
@@ -13465,12 +13900,7 @@ export class AgentService {
     // (waterfall → name/value, the renderer cumulates; specCanModelChart defers the
     // multi-measure bridge form to the deterministic bridge / legacy). gauge/funnel/
     // sunburst remain legacy (the compiler doesn't model them).
-    if (
-      /\b(sun\s*burst|gauge|funnel)\b/.test(
-        q,
-      )
-    )
-      return false;
+    if (/\b(sun\s*burst|gauge|funnel)\b/.test(q)) return false;
     return true;
   }
 
@@ -13499,7 +13929,9 @@ export class AgentService {
     }).catch(() => null);
     if (!check || check.error || check.rows.length === 0) return null;
 
-    const title = /\bscorecard\b/i.test(query) ? 'EBPO Scorecard' : 'EBPO KPI Cards';
+    const title = /\bscorecard\b/i.test(query)
+      ? 'EBPO Scorecard'
+      : 'EBPO KPI Cards';
     this.logger.log(
       `[SpecPlan:EBPO-scorecard] built "${title}" from measures ${scorecardMeasures.join(',')}`,
     );
@@ -13523,8 +13955,12 @@ export class AgentService {
               _spec: spec,
               display: {
                 valueFormat: compiled.measure.format,
-                ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
-                  ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
+                ...(typeof (compiled.measure as { decimals?: number })
+                  .decimals === 'number'
+                  ? {
+                      valueDecimals: (compiled.measure as { decimals?: number })
+                        .decimals,
+                    }
                   : {}),
               },
             } as any,
@@ -13548,7 +13984,7 @@ export class AgentService {
     const qLow = query.toLowerCase();
     const hasExplicitBreakdown = /\bby\b|\bacross\b|\bper\b/.test(qLow);
     if (
-      (/\bpie\b|\bdonut\b|\bdoughnut\b/.test(qLow)) &&
+      /\bpie\b|\bdonut\b|\bdoughnut\b/.test(qLow) &&
       /\bdistribution\b/.test(qLow) &&
       /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/.test(qLow) &&
       !hasExplicitBreakdown
@@ -13559,9 +13995,8 @@ export class AgentService {
           "I can't build this as a pie/donut because CSAT, SLA, and utilization are average rates, not additive parts of a whole. If you want a real breakdown, ask for one explicitly, such as CSAT by country, delivery center, or month.",
       };
     }
-    const forcedChartType = this.parseExplicitChartConstraints(query)?.requiredTypes?.[0] as
-      | ChartType
-      | undefined;
+    const forcedChartType = this.parseExplicitChartConstraints(query)
+      ?.requiredTypes?.[0] as ChartType | undefined;
     const runRows = (sql: string) =>
       this.queryRows<Record<string, unknown>>(sql, {
         tenantId: scope.tenantId,
@@ -13610,7 +14045,8 @@ export class AgentService {
               }
             : {
                 xAxisLabel:
-                  (spec.dimension && EBPO_DIMENSIONS[spec.dimension]?.label) || undefined,
+                  (spec.dimension && EBPO_DIMENSIONS[spec.dimension]?.label) ||
+                  undefined,
                 yAxisLabel: EBPO_MEASURES[specMeasures[0]!]?.label ?? undefined,
               }
           : {};
@@ -13622,8 +14058,12 @@ export class AgentService {
       // pie/donut asks, do not silently swap the visual to a bar in the create path:
       // that makes the browser claim success while rendering a different chart than
       // the user asked for. Refuse honestly instead and name the negative components.
-      const negativePieDonut = this.negativePieDonutMessage(chartType, check.rows);
-      if (negativePieDonut) return { kind: 'no_data', message: negativePieDonut };
+      const negativePieDonut = this.negativePieDonutMessage(
+        chartType,
+        check.rows,
+      );
+      if (negativePieDonut)
+        return { kind: 'no_data', message: negativePieDonut };
       if (this.detectBadChartShape(check.rows, chartType)) return null;
       // Net Profit family: title from the resolved measure ("Net Profit" / "Operating
       // Profit" / their margins), never the raw echo (which could read "EBITDA by Month").
@@ -13655,15 +14095,24 @@ export class AgentService {
                 display_order: 0,
                 ...scatterAxis,
                 _sql: compiled.sql,
-                _spec: { ...spec, chartType: chartType as ChartSpec['chartType'] },
+                _spec: {
+                  ...spec,
+                  chartType: chartType as ChartSpec['chartType'],
+                },
                 display: {
                   ...riskHeatmapDisplay,
                   // Percent format follows what the compiler actually produced.
-                  valueFormat: (compiled as { outputPercent?: boolean }).outputPercent
+                  valueFormat: (compiled as { outputPercent?: boolean })
+                    .outputPercent
                     ? 'percent'
                     : compiled.measure.format,
-                  ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
-                    ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
+                  ...(typeof (compiled.measure as { decimals?: number })
+                    .decimals === 'number'
+                    ? {
+                        valueDecimals: (
+                          compiled.measure as { decimals?: number }
+                        ).decimals,
+                      }
                     : {}),
                 },
               } as any,
@@ -13694,14 +14143,20 @@ export class AgentService {
         const liquidity = await buildWidget(
           {
             measure: 'cash_balance',
-            measures: ['cash_balance', 'working_capital', 'ar_outstanding', 'ap_outstanding'],
+            measures: [
+              'cash_balance',
+              'working_capital',
+              'ar_outstanding',
+              'ap_outstanding',
+            ],
             dimension: 'month',
             chartType: 'line',
           },
           'Monthly Liquidity',
           'Monthly cash balance, working capital, receivables, and payables',
         );
-        if (liquidity) widgets.push({ ...liquidity, display_order: widgets.length });
+        if (liquidity)
+          widgets.push({ ...liquidity, display_order: widgets.length });
       }
       if (/\bprofitability\b/.test(qLow)) {
         const profitability = await buildWidget(
@@ -13718,7 +14173,8 @@ export class AgentService {
           'Monthly Profitability',
           'Monthly gross margin, EBITDA-style margin, and free cash flow margin',
         );
-        if (profitability) widgets.push({ ...profitability, display_order: widgets.length });
+        if (profitability)
+          widgets.push({ ...profitability, display_order: widgets.length });
       }
       if (/\befficiency\b|\bemployee\s+efficiency\b/.test(qLow)) {
         const efficiency = await buildWidget(
@@ -13734,7 +14190,8 @@ export class AgentService {
           'Monthly Employee Efficiency',
           'Monthly revenue per employee and payroll per employee',
         );
-        if (efficiency) widgets.push({ ...efficiency, display_order: widgets.length });
+        if (efficiency)
+          widgets.push({ ...efficiency, display_order: widgets.length });
       }
       if (/\bcash\s+conversion\b/.test(qLow)) {
         const cashConversion = await buildWidget(
@@ -13747,7 +14204,8 @@ export class AgentService {
           'Monthly Cash Conversion',
           'Monthly operating cash flow and payroll as a percentage of revenue',
         );
-        if (cashConversion) widgets.push({ ...cashConversion, display_order: widgets.length });
+        if (cashConversion)
+          widgets.push({ ...cashConversion, display_order: widgets.length });
       }
       const requestedSections = [
         /\bliquidity\b|\bcash\s+position\b/.test(qLow),
@@ -13763,7 +14221,8 @@ export class AgentService {
             should_generate_dashboard: true,
             dashboard: {
               title: 'EBPO Executive Dashboard',
-              description: 'Liquidity, profitability, efficiency, and cash conversion from verified EBPO measures',
+              description:
+                'Liquidity, profitability, efficiency, and cash conversion from verified EBPO measures',
               widgets,
             },
             analysis_focus: query,
@@ -13778,11 +14237,16 @@ export class AgentService {
       }
     }
 
-    const explicitTypes = this.parseExplicitChartConstraints(query)?.requiredTypes ?? [];
+    const explicitTypes =
+      this.parseExplicitChartConstraints(query)?.requiredTypes ?? [];
     const chartType =
       (explicitTypes[0] as ChartType | undefined) ??
       (/\b(heat\s*map|heatmap|matrix|treemap)\b/.test(qLow)
-        ? (/matrix/.test(qLow) ? 'matrix' : /\btreemap\b/.test(qLow) ? 'treemap' : 'heatmap')
+        ? /matrix/.test(qLow)
+          ? 'matrix'
+          : /\btreemap\b/.test(qLow)
+            ? 'treemap'
+            : 'heatmap'
         : /\bscatter\b/.test(qLow)
           ? 'scatter'
           : /\bbubble\b/.test(qLow)
@@ -13795,7 +14259,7 @@ export class AgentService {
                   ? 'line'
                   : /\bbar\b|\bcolumn\b/.test(qLow)
                     ? 'bar'
-                  : null);
+                    : null);
     if (
       /\bbox\s+plot\b/.test(qLow) &&
       /\bsalary\b/.test(qLow) &&
@@ -13831,11 +14295,13 @@ export class AgentService {
             should_generate_dashboard: true,
             dashboard: {
               title,
-              description: 'Department salary quartiles from employee-level salary data',
+              description:
+                'Department salary quartiles from employee-level salary data',
               widgets: [
                 {
                   title,
-                  description: 'Min, quartiles, median, and max monthly salary by department',
+                  description:
+                    'Min, quartiles, median, and max monthly salary by department',
                   type: 'box_plot',
                   metric: 'dynamic',
                   grouping: 'dynamic',
@@ -13927,7 +14393,8 @@ export class AgentService {
               widgets: [
                 {
                   title,
-                  description: 'Net book value divided by calls handled at delivery-center grain',
+                  description:
+                    'Net book value divided by calls handled at delivery-center grain',
                   type: 'bar',
                   metric: 'dynamic',
                   grouping: 'dynamic',
@@ -13991,12 +14458,11 @@ export class AgentService {
       /\bmonth\b/.test(qLow) &&
       /\b(line|bar|column|area)\b/.test(qLow)
     ) {
-      const explicitType =
-        /\barea\b/.test(qLow)
-          ? 'area'
-          : /\bbar\b|\bcolumn\b/.test(qLow)
-            ? 'bar'
-            : 'line';
+      const explicitType = /\barea\b/.test(qLow)
+        ? 'area'
+        : /\bbar\b|\bcolumn\b/.test(qLow)
+          ? 'bar'
+          : 'line';
       const built = await build(
         {
           measure: 'opening_balance',
@@ -14054,9 +14520,13 @@ export class AgentService {
         )
         ORDER BY seq
       `;
-      const check = await this.executeDynamicSqlChecked(bridgeSql.trim(), scope, {
-        chartType: 'waterfall',
-      }).catch(() => null);
+      const check = await this.executeDynamicSqlChecked(
+        bridgeSql.trim(),
+        scope,
+        {
+          chartType: 'waterfall',
+        },
+      ).catch(() => null);
       if (check && !check.error && check.rows.length > 0) {
         const title = wantsYear
           ? 'Cash Flow Movement (Latest Year)'
@@ -14068,11 +14538,13 @@ export class AgentService {
             should_generate_dashboard: true,
             dashboard: {
               title,
-              description: 'Operating, investing, and financing cash-flow bridge to net cash movement',
+              description:
+                'Operating, investing, and financing cash-flow bridge to net cash movement',
               widgets: [
                 {
                   title,
-                  description: 'Operating, investing, and financing cash-flow bridge to net cash movement',
+                  description:
+                    'Operating, investing, and financing cash-flow bridge to net cash movement',
                   type: 'waterfall',
                   metric: 'dynamic',
                   grouping: 'dynamic',
@@ -14098,7 +14570,9 @@ export class AgentService {
     // Keep this catalog-backed so wording like "concentration" stays matrix-shaped.
     if (
       (chartType === 'heatmap' || chartType === 'matrix') &&
-      /\b(concentrat|risk|overdue|aging|bucket|receivable|payable|ar\b|ap\b)\b/.test(qLow) &&
+      /\b(concentrat|risk|overdue|aging|bucket|receivable|payable|ar\b|ap\b)\b/.test(
+        qLow,
+      ) &&
       /\b(receivables?|ar\b|a\/r|clients?|customers?)\b/.test(qLow)
     ) {
       const built = await build(
@@ -14134,7 +14608,10 @@ export class AgentService {
 
     const measureIds = this.detectEbpoMeasureMentions(query);
     const uniqueMeasures = [...new Set(measureIds)];
-    const detectDims = (): { dimension: string; breakdown?: string | null } | null => {
+    const detectDims = (): {
+      dimension: string;
+      breakdown?: string | null;
+    } | null => {
       const dimChecks: Array<[string, RegExp]> = [
         ['delivery_center', /\bdelivery\s+center\b/],
         ['business_unit', /\bbusiness\s+unit\b/],
@@ -14150,10 +14627,13 @@ export class AgentService {
         ['aging_bucket', /\baging\s+bucket\b|\bbucket\b/],
         ['account', /\baccount\b|\bgl\b/],
       ];
-      const wantsYear = /\bby\s+year\b|\byearly\b|\bannual(?:ly)?\b|\byearly\s+trend\b/.test(
+      const wantsYear =
+        /\bby\s+year\b|\byearly\b|\bannual(?:ly)?\b|\byearly\s+trend\b/.test(
+          qLow,
+        );
+      const wantsQuarter = /\bby\s+quarter\b|\bquarterly\b|\bq[1-4]\b/.test(
         qLow,
       );
-      const wantsQuarter = /\bby\s+quarter\b|\bquarterly\b|\bq[1-4]\b/.test(qLow);
       const wantsMonth =
         /\bmonth\b|\bmonthly\b|\bover\s+time\b|\btrend\b|\bthis\s+year\b|\bytd\b|\bmovement\b/.test(
           qLow,
@@ -14164,7 +14644,13 @@ export class AgentService {
         : wantsQuarter
           ? 'quarter'
           : 'month';
-      const cashFlowMeasures = ['operating_cf', 'investing_cf', 'financing_cf', 'free_cash_flow', 'cash_balance'];
+      const cashFlowMeasures = [
+        'operating_cf',
+        'investing_cf',
+        'financing_cf',
+        'free_cash_flow',
+        'cash_balance',
+      ];
       const allMeasuresAreCashFlow =
         uniqueMeasures.length > 0 &&
         uniqueMeasures.every((id) => cashFlowMeasures.includes(id));
@@ -14181,9 +14667,13 @@ export class AgentService {
           const other = hits.find((d) => d !== 'month') ?? hits[0]!;
           return { dimension: 'month', breakdown: other };
         }
-        if (hits.length >= 2) return { dimension: hits[0]!, breakdown: hits[1]! };
+        if (hits.length >= 2)
+          return { dimension: hits[0]!, breakdown: hits[1]! };
       }
-      if ((chartType === 'scatter' || chartType === 'bubble') && hits.length === 0) {
+      if (
+        (chartType === 'scatter' || chartType === 'bubble') &&
+        hits.length === 0
+      ) {
         const operationsScatter =
           uniqueMeasures.includes('sla_compliance_pct') &&
           uniqueMeasures.includes('csat_pct');
@@ -14191,13 +14681,17 @@ export class AgentService {
         if (allMeasuresAreCashFlow) return { dimension: defaultTimeDimension };
       }
       if ((chartType === 'pie' || chartType === 'donut') && hits.length === 0) {
-        if (uniqueMeasures.includes('account_expense')) return { dimension: 'account' };
+        if (uniqueMeasures.includes('account_expense'))
+          return { dimension: 'account' };
       }
       if (
         hits.length === 0 &&
         uniqueMeasures.length > 1 &&
         allMeasuresAreCashFlow &&
-        (chartType === 'combo' || chartType === 'bar' || chartType === 'line' || chartType === 'area')
+        (chartType === 'combo' ||
+          chartType === 'bar' ||
+          chartType === 'line' ||
+          chartType === 'area')
       ) {
         return { dimension: defaultTimeDimension };
       }
@@ -14217,9 +14711,7 @@ export class AgentService {
       const built = await build(
         spec,
         uniqueMeasures.length > 1
-          ? `${uniqueMeasures
-              .map((id) => EBPO_MEASURES[id]?.label ?? id.replace(/_/g, ' '))
-              .join(' vs ')} by ${axes.dimension.replace(/_/g, ' ')}`
+          ? `${uniqueMeasures.map((id) => EBPO_MEASURES[id]?.label ?? id.replace(/_/g, ' ')).join(' vs ')} by ${axes.dimension.replace(/_/g, ' ')}`
           : `${(uniqueMeasures[0] ?? 'EBPO').replace(/_/g, ' ')} by ${axes.dimension.replace(/_/g, ' ')}`,
         query.slice(0, 160),
       );
@@ -14291,7 +14783,11 @@ export class AgentService {
       if (built) return built;
     }
 
-    if (/\bcost[\s-]*to[\s-]*income\b|\btotal\s+cost\s+divided\s+by\s+revenue\b/.test(qLow)) {
+    if (
+      /\bcost[\s-]*to[\s-]*income\b|\btotal\s+cost\s+divided\s+by\s+revenue\b/.test(
+        qLow,
+      )
+    ) {
       const built = await build(
         {
           measure: 'cost_to_income_pct',
@@ -14310,7 +14806,8 @@ export class AgentService {
       /\bmonth\b/.test(qLow)
     ) {
       const measures = ['cash_balance', 'ar_outstanding'];
-      if (/\boutstanding\s+payables?\b/.test(qLow)) measures.push('ap_outstanding');
+      if (/\boutstanding\s+payables?\b/.test(qLow))
+        measures.push('ap_outstanding');
       const built = await build(
         {
           measure: measures[0]!,
@@ -14324,15 +14821,16 @@ export class AgentService {
       if (built) return built;
     }
 
-    if (/\bpayroll\s+cost\s+per\s+employee\b|\bcost\s+per\s+employee\b/.test(qLow)) {
-      const dim =
-        /\bmonth\b|\bmonthly\b/.test(qLow)
-          ? 'month'
-          : /\bcountry\b/.test(qLow)
-            ? 'country'
-            : /\bdepartment\b/.test(qLow)
-              ? 'department'
-              : null;
+    if (
+      /\bpayroll\s+cost\s+per\s+employee\b|\bcost\s+per\s+employee\b/.test(qLow)
+    ) {
+      const dim = /\bmonth\b|\bmonthly\b/.test(qLow)
+        ? 'month'
+        : /\bcountry\b/.test(qLow)
+          ? 'country'
+          : /\bdepartment\b/.test(qLow)
+            ? 'department'
+            : null;
       if (dim) {
         const built = await build(
           {
@@ -14450,7 +14948,9 @@ export class AgentService {
         conversationHistory && !conversationHistory.includes('(No prior')
           ? `\nCONVERSATION SO FAR:\n${conversationHistory.slice(0, 600)}\n`
           : '';
-      const catalogText = useEbpo ? ebpoCatalogPromptText() : catalogPromptText();
+      const catalogText = useEbpo
+        ? ebpoCatalogPromptText()
+        : catalogPromptText();
       const userMsg = `${catalogText}\n${history}\nUSER REQUEST: "${query}"\nReturn the JSON now.`;
 
       const resp = await fetch(`${this.OLLAMA_URL}/api/chat`, {
@@ -14469,7 +14969,9 @@ export class AgentService {
       });
       if (!resp.ok) return null;
       const body = (await resp.json()) as { message?: { content?: string } };
-      const raw = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
+      const raw = (body.message?.content ?? '')
+        .replace(/```json|```/g, '')
+        .trim();
       let parsed: any;
       try {
         parsed = JSON.parse(raw);
@@ -14496,18 +14998,33 @@ export class AgentService {
       // type, or the compile can't satisfy it — DEFER (return null) so the proven
       // legacy planner handles it (including its own honest refusals). Never
       // short-circuit legacy with a spec-mode refusal/no_data.
-      if (typeof parsed?.refusal === 'string' && parsed.refusal.trim() && !parsed?.spec)
+      if (
+        typeof parsed?.refusal === 'string' &&
+        parsed.refusal.trim() &&
+        !parsed?.spec
+      )
         return null;
       const spec = parsed?.spec as ChartSpec | undefined;
       if (!spec || typeof spec !== 'object') return null;
       if (!this.specCanModelChart(spec)) return null;
 
       const title = typeof parsed?.title === 'string' ? parsed.title : '';
-      const builtPlan = await this.specToPlan(spec, title, useEbpo, scope, query);
+      const builtPlan = await this.specToPlan(
+        spec,
+        title,
+        useEbpo,
+        scope,
+        query,
+      );
       if (!builtPlan) return null;
       // Cache only specs that actually built with data, so the offline/replay path
       // never serves a spec that can't produce a chart.
-      this.specPlanCache.set(cacheKey, { spec, title, useEbpo, at: Date.now() });
+      this.specPlanCache.set(cacheKey, {
+        spec,
+        title,
+        useEbpo,
+        at: Date.now(),
+      });
       if (builtPlan.kind === 'build') {
         this.logger.log(
           `[SpecPlan] built "${builtPlan.plan.dashboard.title}" from spec ${JSON.stringify(spec).slice(0, 120)}`,
@@ -14531,7 +15048,10 @@ export class AgentService {
     query: string,
   ): Promise<SmartPlanResult | null> {
     if (useEbpo) {
-      spec = this.rewriteEbpoGenericExpenseSpec(spec, String(query).toLowerCase());
+      spec = this.rewriteEbpoGenericExpenseSpec(
+        spec,
+        String(query).toLowerCase(),
+      );
     }
     const invalidPieDonut = this.invalidPieDonutPercentMessage(spec);
     if (invalidPieDonut) {
@@ -14559,7 +15079,9 @@ export class AgentService {
       // Either replaces the LLM's fragile single-month snapshot AND the spec compiler's
       // unreadable 48-month time-series waterfall.
       const toNetProfit =
-        /\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(ql);
+        /\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(
+          ql,
+        );
       const toGrossMargin =
         /\bcost\b/.test(ql) || /\bgross\s+(?:margin|profit)\b/.test(ql);
       if (
@@ -14574,8 +15096,15 @@ export class AgentService {
           ql,
         ).catch(() => spec);
         const clientFilterValues = (filteredSpec.filters ?? [])
-          .filter((f) => String((f as any)?.dimension ?? '').toLowerCase() === 'client')
-          .flatMap((f) => (((f as any)?.values ?? []) as string[]).map((v) => String(v).trim()))
+          .filter(
+            (f) =>
+              String((f as any)?.dimension ?? '').toLowerCase() === 'client',
+          )
+          .flatMap((f) =>
+            (((f as any)?.values ?? []) as string[]).map((v) =>
+              String(v).trim(),
+            ),
+          )
           .filter(Boolean);
         const sc =
           'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
@@ -14621,11 +15150,12 @@ export class AgentService {
           // Don't let an echoed "Net Profit / Operating Profit" title overclaim — prefer the
           // honest defaultTitle when the planner's title used those terms.
           const titleOverclaims =
-            /\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b/i.test(title);
-          const finalTitle = ((titleOverclaims ? defaultTitle : title) || defaultTitle).slice(
-            0,
-            80,
-          );
+            /\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b/i.test(
+              title,
+            );
+          const finalTitle = (
+            (titleOverclaims ? defaultTitle : title) || defaultTitle
+          ).slice(0, 80);
           return {
             kind: 'build',
             plan: {
@@ -14675,7 +15205,10 @@ export class AgentService {
           ql,
         ).catch(() => spec);
         if (this.isClientPairComparisonSpec(resolved)) {
-          const combo = await this.buildClientPairVarianceCombo(resolved, scope);
+          const combo = await this.buildClientPairVarianceCombo(
+            resolved,
+            scope,
+          );
           if (combo) {
             const { sql, a, b, fmt, measure } = combo;
             const finalTitle = (
@@ -14719,7 +15252,9 @@ export class AgentService {
     // Scatter/bubble: "X versus Y" is a measure-vs-measure plot. Force the type BEFORE
     // compile so the EBPO compiler emits x/y/z columns (not measure-named series), and
     // so the combo helper below never converts a scatter into a bar/combo.
-    const isScatterReq = /\b(scatter|bubble)\b/.test(String(query).toLowerCase());
+    const isScatterReq = /\b(scatter|bubble)\b/.test(
+      String(query).toLowerCase(),
+    );
     const queryLower = String(query).toLowerCase();
     if (useEbpo) {
       spec = this.rewriteEbpoGenericExpenseSpec(spec, queryLower);
@@ -14753,7 +15288,10 @@ export class AgentService {
         chartType: 'box_plot',
       }).catch(() => null);
       if (check && !check.error && check.rows.length > 0) {
-        const finalTitle = (title || 'Salary Distribution by Department').slice(0, 80);
+        const finalTitle = (title || 'Salary Distribution by Department').slice(
+          0,
+          80,
+        );
         return {
           kind: 'build',
           plan: {
@@ -14765,7 +15303,8 @@ export class AgentService {
               widgets: [
                 {
                   title: finalTitle,
-                  description: 'Min, quartiles, median, and max monthly salary by department',
+                  description:
+                    'Min, quartiles, median, and max monthly salary by department',
                   type: 'box_plot',
                   metric: 'dynamic',
                   grouping: 'dynamic',
@@ -14796,7 +15335,11 @@ export class AgentService {
     // mapping (cumulative / growth / difference / avg-monthly) and entity-as-filter are
     // now taught to the planner LLM directly (SPEC_PLANNER_SYSTEM) so they generalize
     // across phrasings — no per-phrase regexes here.
-    if (/\breceivables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/.test(queryLower)) {
+    if (
+      /\breceivables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/.test(
+        queryLower,
+      )
+    ) {
       spec = {
         ...spec,
         measure: 'ar_to_revenue_pct',
@@ -14823,7 +15366,9 @@ export class AgentService {
         primaryMeta &&
         (primaryKind === 'ratio' || primaryKind === 'avg')
       ) {
-        const existingTransforms = Array.isArray(spec.transforms) ? spec.transforms : [];
+        const existingTransforms = Array.isArray(spec.transforms)
+          ? spec.transforms
+          : [];
         const withoutNormalize = existingTransforms.filter((t) => {
           const kind = typeof t === 'string' ? t : (t as any)?.kind;
           return kind !== 'normalize' && kind !== 'company_share';
@@ -14841,7 +15386,9 @@ export class AgentService {
       }
     }
     const mentionsDeliveryCenter = /\bdelivery\s+center\b/.test(queryLower);
-    const mentionsMonth = /\bmonth\b|\bmonthly\b|\bover\s+time\b/.test(queryLower);
+    const mentionsMonth = /\bmonth\b|\bmonthly\b|\bover\s+time\b/.test(
+      queryLower,
+    );
     // Operations scatter/bubble (utilization, SLA, CSAT, AHT, calls, tickets) is plotted
     // per delivery center. Earlier code HARD-OVERWROTE the measures to a fixed canonical
     // PAIR here, which silently dropped any third (size) measure AND any other measure the
@@ -14858,7 +15405,9 @@ export class AgentService {
       'tickets_resolved',
     ];
     const chosenOps = (
-      (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean) as string[]
+      (spec.measures?.length ? spec.measures : [spec.measure]).filter(
+        Boolean,
+      ) as string[]
     ).filter((m) => opsMeasureIds.includes(m));
     const operationsScatterContext = isScatterReq && !mentionsMonth;
     // Resolve the entity dimension: keep a VALID categorical entity dim the planner chose
@@ -14875,7 +15424,9 @@ export class AgentService {
     const hasValidEntityDim =
       !!spec.dimension && opsEntityDims.includes(spec.dimension);
     const resolvedScatterDim =
-      mentionsDeliveryCenter || !hasValidEntityDim ? 'delivery_center' : spec.dimension!;
+      mentionsDeliveryCenter || !hasValidEntityDim
+        ? 'delivery_center'
+        : spec.dimension!;
     if (operationsScatterContext && chosenOps.length >= 2) {
       // Preserve ALL chosen ops measures (the 3rd becomes the bubble size below); only
       // pin the entity dimension.
@@ -14955,8 +15506,18 @@ export class AgentService {
       );
       if (wm) {
         const words: Record<string, number> = {
-          one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
-          seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+          one: 1,
+          two: 2,
+          three: 3,
+          four: 4,
+          five: 5,
+          six: 6,
+          seven: 7,
+          eight: 8,
+          nine: 9,
+          ten: 10,
+          eleven: 11,
+          twelve: 12,
         };
         const n = words[wm[1]!] ?? parseInt(wm[1]!, 10);
         const mult = wm[2] === 'year' ? 12 : wm[2] === 'quarter' ? 3 : 1;
@@ -15021,7 +15582,8 @@ export class AgentService {
         const fb = DERIVE_BY_ENTITY[m];
         return fb && fallbackResolvesBetter(m, fb) ? fb : m;
       };
-      const measuresList = spec.measures ?? (spec.measure ? [spec.measure] : []);
+      const measuresList =
+        spec.measures ?? (spec.measure ? [spec.measure] : []);
       if (measuresList.some((m) => DERIVE_BY_ENTITY[m] && swap(m) !== m)) {
         spec = {
           ...spec,
@@ -15085,7 +15647,8 @@ export class AgentService {
         breakdown: undefined,
         filters: [
           ...((spec.filters ?? []).filter(
-            (f) => !/client|customer/i.test(String((f as any)?.dimension ?? '')),
+            (f) =>
+              !/client|customer/i.test(String((f as any)?.dimension ?? '')),
           ) as NonNullable<ChartSpec['filters']>),
           {
             dimension: 'client',
@@ -15098,7 +15661,10 @@ export class AgentService {
     // "Compare revenue and expenses for the top 10 clients over the last 8 months"
     // uses the time window as a FILTER, not as the chart axis. Keep this as a
     // categorical client ranking instead of exploding it into monthly client pivots.
-    if (useEbpo && this.topNClientComparisonShouldStayCategorical(queryLower, spec)) {
+    if (
+      useEbpo &&
+      this.topNClientComparisonShouldStayCategorical(queryLower, spec)
+    ) {
       spec = {
         ...spec,
         dimension: 'client',
@@ -15124,13 +15690,19 @@ export class AgentService {
       );
       const mentionsYear = /\b(20\d{2})\b/.test(queryLower);
       const hasSuperlativeClientFilter = (spec.filters ?? []).some((f) => {
-        if (!/client|customer/i.test(String((f as any)?.dimension ?? ''))) return false;
-        const values = Array.isArray((f as any)?.values) ? (f as any).values : [];
-        return values.some((v: unknown) => this.parseClientSuperlative(String(v)) !== null);
+        if (!/client|customer/i.test(String((f as any)?.dimension ?? '')))
+          return false;
+        const values = Array.isArray((f as any)?.values)
+          ? (f as any).values
+          : [];
+        return values.some(
+          (v: unknown) => this.parseClientSuperlative(String(v)) !== null,
+        );
       });
       const rawMeasures = spec.measures ?? (spec.measure ? [spec.measure] : []);
       const stitchableMeasures = rawMeasures.filter(
-        (m): m is string => !!m && !!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[m],
+        (m): m is string =>
+          !!m && !!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[m],
       );
       if (
         hasSuperlativeClientFilter &&
@@ -15140,16 +15712,24 @@ export class AgentService {
         (spec.dimension ?? 'month') === 'month' &&
         stitchableMeasures.length > 0 &&
         stitchableMeasures.length === rawMeasures.length &&
-        this.superlativeClientAskImpliesTimeAxis(queryLower, spec.chartType, spec.dimension)
+        this.superlativeClientAskImpliesTimeAxis(
+          queryLower,
+          spec.chartType,
+          spec.dimension,
+        )
       ) {
         const stitched = await this.buildPerYearLargestClientSql(
           scope,
           stitchableMeasures,
         ).catch(() => null);
         if (stitched) {
-          const check = await this.executeDynamicSqlChecked(stitched.sql, scope, {
-            chartType: (spec.chartType ?? 'stacked_bar') as any,
-          }).catch(() => null);
+          const check = await this.executeDynamicSqlChecked(
+            stitched.sql,
+            scope,
+            {
+              chartType: (spec.chartType ?? 'stacked_bar') as any,
+            },
+          ).catch(() => null);
           if (check && !check.error && check.rows.length > 0) {
             const finalTitle = (title || 'Largest Client Trend').slice(0, 80);
             // Attach per-series combo roles so the largest-client chart renders with the
@@ -15160,7 +15740,9 @@ export class AgentService {
               spec.chartType ?? 'stacked_bar',
             );
             const stitchedSeries = combo.series;
-            const stitchedSecondary = combo.series?.find((r) => r.axis === 'right');
+            const stitchedSecondary = combo.series?.find(
+              (r) => r.axis === 'right',
+            );
             const stitchedType = combo.type;
             return {
               kind: 'build',
@@ -15192,7 +15774,8 @@ export class AgentService {
                               series: stitchedSeries,
                               ...(stitchedSecondary
                                 ? {
-                                    secondaryAxisFormat: stitchedSecondary.format,
+                                    secondaryAxisFormat:
+                                      stitchedSecondary.format,
                                     secondaryLabel: stitchedSecondary.key,
                                   }
                                 : {}),
@@ -15266,7 +15849,10 @@ export class AgentService {
     // outstanding" → three columns, not one bar + two lines).
     const measureList = (spec.measures ?? []).filter((m): m is string => !!m);
     const ql = ` ${query.toLowerCase()} `;
-    const wantsLine = /\bas (?:a |another )?(?:comparison |trend )?line\b|\bcomparison line\b|\btrend line\b/.test(ql);
+    const wantsLine =
+      /\bas (?:a |another )?(?:comparison |trend )?line\b|\bcomparison line\b|\btrend line\b/.test(
+        ql,
+      );
     const wantsBar = /\bas (?:a |)?(?:column|bar)s?\b/.test(ql);
     // The planner often defaults multi-measure creates to "combo"; honor the
     // EXPLICIT requested type so "line chart showing X and Y" → two lines (not a
@@ -15283,7 +15869,11 @@ export class AgentService {
       !!spec.dimension &&
       String(spec.chartType).toLowerCase() !== 'kpi'
     ) {
-      const baseForRoles = reqLine ? 'line' : reqBar ? 'bar' : String(chartType);
+      const baseForRoles = reqLine
+        ? 'line'
+        : reqBar
+          ? 'bar'
+          : String(chartType);
       // An explicit "combo" must actually mix bars + a line. When every measure
       // shares one unit (e.g. revenue, expenses, gross margin all in $), the
       // format-based default makes them ALL bars → a grouped bar mislabeled as a
@@ -15301,11 +15891,12 @@ export class AgentService {
         baseType: baseForRoles,
         // On create the phrasing usually targets the trailing measure(s); the
         // format-based default already handles %-vs-$, so only steer the non-primary.
-        forceLine: wantsLine && !wantsBar
-          ? measureList.slice(1)
-          : sameUnitCombo
-            ? measureList.slice(-1)
-            : [],
+        forceLine:
+          wantsLine && !wantsBar
+            ? measureList.slice(1)
+            : sameUnitCombo
+              ? measureList.slice(-1)
+              : [],
         forceBar: wantsBar && !wantsLine ? measureList : [],
       });
     }
@@ -15339,16 +15930,16 @@ export class AgentService {
       ? chartType
       : breakdownMultiMeasureType
         ? breakdownMultiMeasureType
-      : comboSeries
-        ? (ebpoComboChartType(comboSeries, {
-            forceStacked: /stacked/.test(` ${query.toLowerCase()} `)
-              ? /\barea\b/.test(query.toLowerCase())
-                ? 'area'
-                : 'bar'
-              : null,
-            forceCombo: /\bcombo\b|combination/.test(query.toLowerCase()),
-          }) as ChartType)
-        : chartType;
+        : comboSeries
+          ? (ebpoComboChartType(comboSeries, {
+              forceStacked: /stacked/.test(` ${query.toLowerCase()} `)
+                ? /\barea\b/.test(query.toLowerCase())
+                  ? 'area'
+                  : 'bar'
+                : null,
+              forceCombo: /\bcombo\b|combination/.test(query.toLowerCase()),
+            }) as ChartType)
+          : chartType;
     // Pareto: a single ranked measure → the web renderer adds the cumulative-% line.
     // Force it deterministically so "Create a Pareto chart …" never degrades to a
     // plain bar (the planner can't always be trusted to pick it).
@@ -15366,7 +15957,10 @@ export class AgentService {
       !(isScatterReq && widgetType === 'scatter')
     )
       widgetType = 'bar' as ChartType;
-    const negativePieDonut = this.negativePieDonutMessage(widgetType, check.rows);
+    const negativePieDonut = this.negativePieDonutMessage(
+      widgetType,
+      check.rows,
+    );
     if (negativePieDonut) {
       return { kind: 'no_data', message: negativePieDonut };
     }
@@ -15374,8 +15968,7 @@ export class AgentService {
     // Scatter/bubble axis labels = the x/y measure labels, so the plot's axes (and
     // the renderer's tooltip) name the real measures instead of "x"/"y" — the
     // "x and y axis labels are wrong" tester complaint on EBPO bubble/scatter.
-    const isScatterType =
-      widgetType === 'scatter' || widgetType === 'bubble';
+    const isScatterType = widgetType === 'scatter' || widgetType === 'bubble';
     const scatterAxis =
       isScatterType && useEbpo
         ? measureList.length >= 2
@@ -15391,7 +15984,8 @@ export class AgentService {
                 (spec.dimension && EBPO_DIMENSIONS[spec.dimension]?.label) ||
                 undefined,
               yAxisLabel:
-                EBPO_MEASURES[measureList[0] ?? spec.measure!]?.label ?? undefined,
+                EBPO_MEASURES[measureList[0] ?? spec.measure!]?.label ??
+                undefined,
             }
         : {};
     return {
@@ -15415,7 +16009,10 @@ export class AgentService {
               // Store the ACCURATE type on the spec too, so a later "add another
               // line" follow-up inherits the real base type (line stays line) instead
               // of the planner's blanket "combo".
-              _spec: { ...spec, chartType: widgetType as ChartSpec['chartType'] },
+              _spec: {
+                ...spec,
+                chartType: widgetType as ChartSpec['chartType'],
+              },
               // Carry the measure's unit so the web formats values correctly
               // (percent measures render as % not $).
               display: {
@@ -15429,11 +16026,20 @@ export class AgentService {
                 ...(useEbpo && spec.breakdown && measureList.length > 1
                   ? { showAllSeries: true }
                   : {}),
-                ...(typeof (compiled.measure as { decimals?: number }).decimals === 'number'
-                  ? { valueDecimals: (compiled.measure as { decimals?: number }).decimals }
+                ...(typeof (compiled.measure as { decimals?: number })
+                  .decimals === 'number'
+                  ? {
+                      valueDecimals: (compiled.measure as { decimals?: number })
+                        .decimals,
+                    }
                   : {}),
                 ...(this.requestedChartLabel(query, widgetType)
-                  ? { requestedChartLabel: this.requestedChartLabel(query, widgetType) }
+                  ? {
+                      requestedChartLabel: this.requestedChartLabel(
+                        query,
+                        widgetType,
+                      ),
+                    }
                   : {}),
                 ...(comboSeries && comboSeries.length > 1
                   ? {
@@ -15541,7 +16147,9 @@ export class AgentService {
     // split (e.g. relabeling one contract type as "direct cost") or collapse both
     // parts into a single mislabeled series.
     if (
-      /\b(?:in)?direct\s+(?:and\s+(?:in)?direct\s+)?(?:cost|expense)s?\b/.test(q) ||
+      /\b(?:in)?direct\s+(?:and\s+(?:in)?direct\s+)?(?:cost|expense)s?\b/.test(
+        q,
+      ) ||
       /\b(?:fixed|variable)\s+(?:and\s+(?:fixed|variable)\s+)?(?:cost|expense)s?\b/.test(
         q,
       )
@@ -15554,7 +16162,9 @@ export class AgentService {
     }
     if (
       /\bdepartments?\b/.test(q) &&
-      /\b(revenue|sales|gross\s+(?:margin|profit)|total\s+cost|cost\s+of\s+revenue)\b/.test(q) &&
+      /\b(revenue|sales|gross\s+(?:margin|profit)|total\s+cost|cost\s+of\s+revenue)\b/.test(
+        q,
+      ) &&
       !/\bpayroll\b/.test(q) &&
       !/\brevenue\s+per\s+employee\b|\bcost\s+per\s+employee\b/.test(q)
     ) {
@@ -15586,7 +16196,9 @@ export class AgentService {
     }
     if (
       /\b(?:largest|biggest|top|second[-\s]?largest)\s+client\b/i.test(q) &&
-      /\b(?:ebitda|ebit\b|operating\s+(?:profit|income)|net\s+(?:profit|income))\b/i.test(q)
+      /\b(?:ebitda|ebit\b|operating\s+(?:profit|income)|net\s+(?:profit|income))\b/i.test(
+        q,
+      )
     ) {
       return (
         'I can’t calculate net profit for a specific client in this dataset because payroll is not ' +
@@ -15595,7 +16207,9 @@ export class AgentService {
       );
     }
     if (
-      /\b(?:ebitda|ebit\b|operating\s+(?:profit|income)|net\s+(?:profit|income))\b/i.test(q) &&
+      /\b(?:ebitda|ebit\b|operating\s+(?:profit|income)|net\s+(?:profit|income))\b/i.test(
+        q,
+      ) &&
       /\bby\s+(?:business\s+unit|client|contract\s+type|industry)\b/i.test(q)
     ) {
       return (
@@ -15612,7 +16226,9 @@ export class AgentService {
     return null;
   }
 
-  private async latestTwoDataYears(scope: OrgScope): Promise<[number, number] | null> {
+  private async latestTwoDataYears(
+    scope: OrgScope,
+  ): Promise<[number, number] | null> {
     const profile = await this.getDatasetProfile(scope);
     const rows = await this.queryRows<{ y: number }>(
       `SELECT DISTINCT toYear(${profile.yearSource.dateCol}) AS y
@@ -15754,11 +16370,13 @@ export class AgentService {
           options: [
             {
               label: 'Company expenses by department',
-              value: 'Create a stacked bar chart showing company-wide expenses by department.',
+              value:
+                'Create a stacked bar chart showing company-wide expenses by department.',
             },
             {
               label: 'Payroll by department',
-              value: 'Create a stacked bar chart showing payroll by department.',
+              value:
+                'Create a stacked bar chart showing payroll by department.',
             },
             {
               label: 'Largest client revenue and cost',
@@ -15821,8 +16439,15 @@ export class AgentService {
           query,
         ).catch(() => baseSpec);
         const clientFilterValues = (resolvedSpec.filters ?? [])
-          .filter((f) => String((f as any)?.dimension ?? '').toLowerCase() === 'client')
-          .flatMap((f) => (((f as any)?.values ?? []) as string[]).map((v) => String(v).trim()))
+          .filter(
+            (f) =>
+              String((f as any)?.dimension ?? '').toLowerCase() === 'client',
+          )
+          .flatMap((f) =>
+            (((f as any)?.values ?? []) as string[]).map((v) =>
+              String(v).trim(),
+            ),
+          )
           .filter(Boolean);
         const v = clientFilterValues.length
           ? `${this.analyticsDb}.v_ebpo_revenue_by_client_contract_monthly`
@@ -15907,7 +16532,8 @@ export class AgentService {
             widgets: [
               {
                 title,
-                description: 'Revenue, payroll, and gross margin by business unit',
+                description:
+                  'Revenue, payroll, and gross margin by business unit',
                 type: 'bar',
                 metric: 'dynamic',
                 grouping: 'dynamic',
@@ -15915,9 +16541,24 @@ export class AgentService {
                 _sql: sql.trim(),
                 display: {
                   series: [
-                    { key: 'revenue', role: 'bar', axis: 'left', format: 'currency' },
-                    { key: 'payroll', role: 'bar', axis: 'left', format: 'currency' },
-                    { key: 'gross_margin', role: 'bar', axis: 'left', format: 'currency' },
+                    {
+                      key: 'revenue',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'currency',
+                    },
+                    {
+                      key: 'payroll',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'currency',
+                    },
+                    {
+                      key: 'gross_margin',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'currency',
+                    },
                   ],
                   valueFormat: 'currency',
                 },
@@ -15955,12 +16596,16 @@ export class AgentService {
       // fallback instead of letting the free planner invent a stray dimension.
       (/\bwaterfall\b/i.test(query) &&
         /\bmovement\b/i.test(query) &&
-        /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/i.test(query)) ||
+        /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/i.test(
+          query,
+        )) ||
       // Operations-metric comparisons like "SLA vs CSAT" are semantically grounded
       // at delivery-center / geography grain. The free planner is inconsistent
       // about choosing a valid entity (or any entity), so route them through the
       // deterministic measure×dimension resolver too.
-      ((/\bscatter\b|\bbubble\b|\bcompare|comparison|versus|\bvs\b/i.test(query)) &&
+      (/\bscatter\b|\bbubble\b|\bcompare|comparison|versus|\bvs\b/i.test(
+        query,
+      ) &&
         /\bsla\b/i.test(query) &&
         /\bcsat\b|\bcustomer\s+satisfaction\b/i.test(query)) ||
       // Client-scoped finance scatters like "gross margin % versus revenue by client"
@@ -15969,19 +16614,27 @@ export class AgentService {
       // these through the deterministic resolver first so the chart compiler derives
       // the correct x/y pair from the catalog instead of falling through to a false
       // refusal.
-      ((/\bscatter\b|\bbubble\b|\bcompare|comparison|versus|\bvs\b/i.test(query)) &&
+      (/\bscatter\b|\bbubble\b|\bcompare|comparison|versus|\bvs\b/i.test(
+        query,
+      ) &&
         /\bclient\b|\bcustomer\b/i.test(query) &&
         /\b(?:revenue|cost|gross\s+margin|gross\s+profit|collection\s+rate|receivables?|a\/?r)\b/i.test(
           query,
         )) ||
-      ((/\bpie\b|\bdonut\b|\bdoughnut\b/i.test(query)) &&
+      (/\bpie\b|\bdonut\b|\bdoughnut\b/i.test(query) &&
         /\bdistribution\b/i.test(query) &&
-        /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/i.test(query)) ||
-      ((/\bpie\b|\bdonut\b|\bdoughnut\b/i.test(query)) &&
+        /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/i.test(
+          query,
+        )) ||
+      (/\bpie\b|\bdonut\b|\bdoughnut\b/i.test(query) &&
         /\bdistribution\b/i.test(query) &&
-        /\b(?:sg\s*&?\s*a|selling,\s*general\s+and\s+administrative)\b/i.test(query)) ||
+        /\b(?:sg\s*&?\s*a|selling,\s*general\s+and\s+administrative)\b/i.test(
+          query,
+        )) ||
       (/\bdepartment\b/i.test(query) &&
-        /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/i.test(query)) ||
+        /\b(?:sla|csat|customer\s+satisfaction|utili[sz]ation)\b/i.test(
+          query,
+        )) ||
       /\bgeograph(?:y|ic(?:al)?)\b/i.test(query) ||
       (/\bdashboard\b/i.test(query) &&
         /\bliquidity\b/i.test(query) &&
@@ -15991,9 +16644,10 @@ export class AgentService {
     if (needsEbpoSemanticExtension) {
       const hasEbpo = await this.orgHasEbpoData(scope).catch(() => false);
       if (hasEbpo) {
-        const semanticPlan = await this.buildEbpoSemanticPlan(query, scope).catch(
-          () => null,
-        );
+        const semanticPlan = await this.buildEbpoSemanticPlan(
+          query,
+          scope,
+        ).catch(() => null);
         if (semanticPlan) {
           this.logger.log(
             `[planner] served=ebpo-semantic source=catalog query=${JSON.stringify(query.slice(0, 80))}`,
@@ -16013,7 +16667,9 @@ export class AgentService {
     {
       const ql = query.toLowerCase();
       const toNetProfit =
-        /\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(ql);
+        /\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(
+          ql,
+        );
       const toGrossMargin =
         /\bcost\b/.test(ql) || /\bgross\s+(?:margin|profit)\b/.test(ql);
       if (
@@ -16199,31 +16855,31 @@ export class AgentService {
           )
           .slice(0, 4);
         // Only surface the clarification if the question and options are clean.
-      if (options.length >= 1 && !looksLikeSql(question)) {
-        this.logger.log(`[SmartPlan] CLARIFY for: "${query.slice(0, 80)}"`);
-        const result: SmartPlanResult = {
-          kind: 'clarify',
-          clarification: {
-            reason: 'PLANNER_NEEDS_INPUT',
-            question,
-            options,
-          },
-        };
-        this.setCachedSmartPlan(cacheKey, result);
-        return result;
-      }
+        if (options.length >= 1 && !looksLikeSql(question)) {
+          this.logger.log(`[SmartPlan] CLARIFY for: "${query.slice(0, 80)}"`);
+          const result: SmartPlanResult = {
+            kind: 'clarify',
+            clarification: {
+              reason: 'PLANNER_NEEDS_INPUT',
+              question,
+              options,
+            },
+          };
+          this.setCachedSmartPlan(cacheKey, result);
+          return result;
+        }
         // Malformed/SQL-tainted clarify — fall through to build/none.
       }
 
       // ── NO DATA ───────────────────────────────────────────────────────────
       if (verdict === 'no_data' && parsed?.message) {
         const message = String(parsed.message).slice(0, 600).trim();
-      if (!looksLikeSql(message)) {
-        this.logger.log(`[SmartPlan] NO_DATA for: "${query.slice(0, 80)}"`);
-        const result: SmartPlanResult = { kind: 'no_data', message };
-        this.setCachedSmartPlan(cacheKey, result);
-        return result;
-      }
+        if (!looksLikeSql(message)) {
+          this.logger.log(`[SmartPlan] NO_DATA for: "${query.slice(0, 80)}"`);
+          const result: SmartPlanResult = { kind: 'no_data', message };
+          this.setCachedSmartPlan(cacheKey, result);
+          return result;
+        }
         // SQL-tainted message — fall through rather than show SQL to the user.
       }
 
@@ -16329,7 +16985,9 @@ export class AgentService {
             /month/i.test(String(c.title ?? query));
           if (grossMarginMonthly) {
             widgets.push({
-              title: String(c.title ?? 'Monthly Revenue, Cost, and Gross Margin').slice(0, 80),
+              title: String(
+                c.title ?? 'Monthly Revenue, Cost, and Gross Margin',
+              ).slice(0, 80),
               description: String(
                 c.description ??
                   'Monthly revenue, cost, and gross margin values for the waterfall',
@@ -17188,20 +17846,30 @@ export class AgentService {
       /\bchart\b|\bgraph\b/.test(q)
     )
       addType('line');
-    if (/\bstacked\s+column(?:s)?\b|\bstacked\s+bar\s*charts?\b|\bstacked\s+bars?\b/.test(q))
+    if (
+      /\bstacked\s+column(?:s)?\b|\bstacked\s+bar\s*charts?\b|\bstacked\s+bars?\b/.test(
+        q,
+      )
+    )
       addType('stacked_bar');
     if (
       /\barea\s*charts?\b|\barea\s*graphs?\b|\barea\b/.test(q) &&
       /\bchart\b|\bgraph\b/.test(q)
     )
       addType('area');
-    if (/\bhorizontal\s+bars?\b|\branked\s+bars?\b|\branked\s+bar\s*charts?\b/.test(q))
+    if (
+      /\bhorizontal\s+bars?\b|\branked\s+bars?\b|\branked\s+bar\s*charts?\b/.test(
+        q,
+      )
+    )
       addType('horizontal_bar');
     if (
       /\bbar\s*charts?\b|\bbarcharts?\b|\bbar\s*graphs?\b|\bcolumn\s*charts?\b|\bcolumn\s*graphs?\b|\bstacked\s+bars?\b/.test(
         q,
       ) &&
-      !/\bhorizontal\s+bars?\b|\branked\s+bars?\b|\branked\s+bar\s*charts?\b|\bstacked\s+column(?:s)?\b|\bstacked\s+bar\s*charts?\b|\bstacked\s+bars?\b/.test(q)
+      !/\bhorizontal\s+bars?\b|\branked\s+bars?\b|\branked\s+bar\s*charts?\b|\bstacked\s+column(?:s)?\b|\bstacked\s+bar\s*charts?\b|\bstacked\s+bars?\b/.test(
+        q,
+      )
     )
       addType(
         /\bstacked\s+bar\s*charts?\b|\bstacked\s+bars?\b/.test(q)
@@ -17213,8 +17881,7 @@ export class AgentService {
     if (/\btable\b|\btables\b|\btabular\b/.test(q)) addType('table');
     if (/\bmetric\s+tile\b|\bmetric\b/.test(q) && /\btile\b/.test(q))
       addType('metric');
-    if (/\bwaterfall\s+charts?\b|\bwaterfall\b/.test(q))
-      addType('waterfall');
+    if (/\bwaterfall\s+charts?\b|\bwaterfall\b/.test(q)) addType('waterfall');
     if (/\btreemap\b/.test(q)) addType('treemap');
     if (/\bscatter\s*plots?\b|\bscatter\b/.test(q)) addType('scatter');
     if (/\bheat\s*maps?\b|\bheatmaps?\b/.test(q)) addType('heatmap');
@@ -17263,7 +17930,9 @@ export class AgentService {
     return out.exactCount || out.requiredTypes ? out : null;
   }
 
-  private detectPureChartTypeEditRequest(editRequest: string): ChartType | null {
+  private detectPureChartTypeEditRequest(
+    editRequest: string,
+  ): ChartType | null {
     const explicitTypes =
       this.parseExplicitChartConstraints(editRequest)?.requiredTypes ?? [];
     if (explicitTypes.length !== 1) return null;
@@ -17308,7 +17977,8 @@ export class AgentService {
     const s = labels.filter(Boolean).join(' ').toLowerCase();
     if (!s) return null;
     if (/\busd\b|\(\s*\$\s*\)|dollars?/.test(s)) return null; // explicit currency → leave as-is
-    if (/%|\bpercent(age)?\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(s)) return 'percent';
+    if (/%|\bpercent(age)?\b|\bsla\b|\bcsat\b|utili[sz]ation/.test(s))
+      return 'percent';
     return null;
   }
 
@@ -17797,12 +18467,17 @@ export class AgentService {
     // A duration count may be a digit ("2") OR a spelled-out word ("two") — CFOs say
     // "over the past two years" as often as "last 2 years". Treat both as concrete so
     // we don't ask "what time window?" when the window is already stated.
-    const COUNT = '(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+    const COUNT =
+      '(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
     const concreteWindow = new RegExp(
       `\\b(?:last|past|previous|trailing|this|current)\\s+(?:year|month|quarter|week|fortnight|half[\\s-]*year|decade|${COUNT}\\s*(?:day|week|month|quarter|year)s?)\\b|\\b${COUNT}\\s*(?:day|week|month|quarter|year)s?\\b|\\b(?:ytd|mtd|qtd|year[\\s-]*to[\\s-]*date|month[\\s-]*to[\\s-]*date|quarter[\\s-]*to[\\s-]*date)\\b|\\bsince\\s+\\S`,
       'i',
     );
-    if (impliesTime.test(query) && !concreteWindow.test(query) && !spec.timeRange) {
+    if (
+      impliesTime.test(query) &&
+      !concreteWindow.test(query) &&
+      !spec.timeRange
+    ) {
       return {
         reason: 'TIME_RANGE_AMBIGUOUS',
         question: 'What time window should this dashboard cover?',
@@ -17867,11 +18542,11 @@ export class AgentService {
     widget: ActiveDashboard['widgets'][number],
     mod: DashboardEditPlan['modify'][number],
   ): boolean {
-    const existingConfig = (widget.queryConfig as Record<string, unknown>) ?? {};
+    const existingConfig =
+      (widget.queryConfig as Record<string, unknown>) ?? {};
     const existingChartConfig =
-      ((widget as unknown as { chartConfig?: Record<string, unknown> }).chartConfig as
-        | Record<string, unknown>
-        | undefined) ?? {};
+      ((widget as unknown as { chartConfig?: Record<string, unknown> })
+        .chartConfig as Record<string, unknown> | undefined) ?? {};
     const nextConfig: Record<string, unknown> = { ...existingConfig };
 
     const nextMetric =
@@ -17882,21 +18557,24 @@ export class AgentService {
       typeof mod.grouping === 'string' && mod.grouping.trim()
         ? mod.grouping.trim()
         : String(existingConfig.grouping ?? '').trim();
-    const preferredType = mod.type ?? (widget.chartType as ChartType | undefined);
+    const preferredType =
+      mod.type ?? (widget.chartType as ChartType | undefined);
     const hasNewSql =
       typeof mod.dynamicSql === 'string' && mod.dynamicSql.trim().length > 0;
     const nextType = hasNewSql
       ? (preferredType ?? (widget.chartType as ChartType))
       : this.resolveWidgetTypeForEdit(nextMetric, nextGrouping, preferredType);
 
-    if (typeof mod.title === 'string' && mod.title !== widget.title) return true;
+    if (typeof mod.title === 'string' && mod.title !== widget.title)
+      return true;
     if (nextType !== widget.chartType) return true;
 
     if (hasNewSql) {
       nextConfig.dynamicSql = mod.dynamicSql!.trim();
       nextConfig.metric = 'dynamic';
       nextConfig.grouping = 'query';
-      if (mod.spec) nextConfig.spec = mod.spec as unknown as Prisma.InputJsonValue;
+      if (mod.spec)
+        nextConfig.spec = mod.spec as unknown as Prisma.InputJsonValue;
     }
     if (!hasNewSql && typeof mod.metric === 'string' && mod.metric.trim()) {
       nextConfig.metric = mod.metric.trim();
@@ -17925,7 +18603,8 @@ export class AgentService {
       }
     }
 
-    if (JSON.stringify(nextConfig) !== JSON.stringify(existingConfig)) return true;
+    if (JSON.stringify(nextConfig) !== JSON.stringify(existingConfig))
+      return true;
 
     if (typeof mod.description === 'string') {
       const existingDescription = String(existingChartConfig.description ?? '');
@@ -18021,7 +18700,9 @@ export class AgentService {
       clearTimeout(timer);
       if (!response.ok) return null;
 
-      const body = (await response.json()) as { message?: { content?: string } };
+      const body = (await response.json()) as {
+        message?: { content?: string };
+      };
       const rawText = (body.message?.content ?? '')
         .replace(/```json|```/g, '')
         .trim();
@@ -18078,7 +18759,9 @@ export class AgentService {
         }
         if (
           /v_ebpo_department_efficiency_monthly/i.test(cleaned) &&
-          /\b(total_revenue_usd|total_cost_usd|gross_margin_usd)\b/i.test(cleaned)
+          /\b(total_revenue_usd|total_cost_usd|gross_margin_usd)\b/i.test(
+            cleaned,
+          )
         ) {
           this.logger.warn(
             '[SmartEdit] rejected edit SQL — department_efficiency revenue/cost columns are replicated company totals',
@@ -18100,16 +18783,17 @@ export class AgentService {
         // — the render layer then honestly shows a bar instead of a misleading pie.
         if (chartType === 'pie' || chartType === 'donut') {
           cleaned = cleaned
-            .replace(/\babs\s*\(\s*(round\(\s*sum\([^()]*\)\s*,\s*\d+\s*\))\s*\)/gi, '$1')
+            .replace(
+              /\babs\s*\(\s*(round\(\s*sum\([^()]*\)\s*,\s*\d+\s*\))\s*\)/gi,
+              '$1',
+            )
             .replace(/\babs\s*\(\s*(sum\([^()]*\))\s*\)/gi, '$1');
         }
         let scoped: string;
         try {
-          scoped = this.validateAndScopeDynamicSql(
-            cleaned,
-            scope,
-            { chartType },
-          );
+          scoped = this.validateAndScopeDynamicSql(cleaned, scope, {
+            chartType,
+          });
         } catch {
           return null;
         }
@@ -18122,7 +18806,11 @@ export class AgentService {
         else problem = this.detectBadChartShape(r1.rows, chartType);
         if (!problem) return scoped;
 
-        const repaired = await this.repairSqlViaLLM(scoped, problem, liveContext);
+        const repaired = await this.repairSqlViaLLM(
+          scoped,
+          problem,
+          liveContext,
+        );
         if (!repaired) return null;
         let scoped2: string;
         try {
@@ -18212,7 +18900,9 @@ export class AgentService {
           mod.display = { ...(mod.display ?? {}), valueFormat: 'percent' };
         }
 
-        if (this.widgetEditHasMaterialChange(activeDashboard.widgets[index]!, mod))
+        if (
+          this.widgetEditHasMaterialChange(activeDashboard.widgets[index]!, mod)
+        )
           plan.modify.push(mod);
       }
 
@@ -18249,8 +18939,7 @@ export class AgentService {
         });
       }
 
-      if (!this.planHasMaterialEffect(activeDashboard, plan))
-        return null;
+      if (!this.planHasMaterialEffect(activeDashboard, plan)) return null;
 
       this.logger.log(
         `[SmartEdit] ${plan.modify.length} modified, ${plan.add.length} added, ${plan.remove_indices.length} removed for: "${editRequest.slice(0, 60)}"`,
@@ -18272,7 +18961,13 @@ export class AgentService {
   // data can't satisfy (YoY/prior-year with a single year) are refused clearly.
   private parseSecondMeasure(q: string): SecondMeasure | null {
     if (/\binvoice/.test(q))
-      return { measure: 'invoices', alias: 'invoice_count', label: 'Invoice count', format: 'number', expr: '' };
+      return {
+        measure: 'invoices',
+        alias: 'invoice_count',
+        label: 'Invoice count',
+        format: 'number',
+        expr: '',
+      };
     if (
       /\baverage\s+transaction\s+value\b|\bavg\s+transaction\b|\baverage\s+(invoice|transaction)\s+value\b|\baverage\s+value\b/.test(
         q,
@@ -18322,9 +19017,23 @@ export class AgentService {
   // generic "company-wide average" ask (no specific measure named), which correctly
   // keeps the row-total behavior.
   private static readonly AVERAGE_MEASURE_KEYWORDS = [
-    'revenue', 'expense', 'expenses', 'cost', 'margin', 'profit', 'payroll',
-    'salary', 'cash', 'balance', 'income', 'ebitda', 'headcount', 'sla', 'csat',
-    'utilization', 'utilisation',
+    'revenue',
+    'expense',
+    'expenses',
+    'cost',
+    'margin',
+    'profit',
+    'payroll',
+    'salary',
+    'cash',
+    'balance',
+    'income',
+    'ebitda',
+    'headcount',
+    'sla',
+    'csat',
+    'utilization',
+    'utilisation',
   ];
   private detectAverageMeasureHint(q: string): string | undefined {
     const m = q.match(
@@ -18342,7 +19051,9 @@ export class AgentService {
   private detectFollowUpTransform(req: string): FollowUpTransform | null {
     const q = (req ?? '').toLowerCase();
     if (!q.trim()) return null;
-    if (/\byear[\s-]*over[\s-]*year\b|\byoy\b|\byear[\s-]*on[\s-]*year\b/.test(q))
+    if (
+      /\byear[\s-]*over[\s-]*year\b|\byoy\b|\byear[\s-]*on[\s-]*year\b/.test(q)
+    )
       return { kind: 'yoy' };
     if (/\bcompare\b[^.]*\byear\b[^.]*\b20\d{2}\b[^.]*\b20\d{2}\b/.test(q))
       return { kind: 'prior_year' };
@@ -18353,9 +19064,16 @@ export class AgentService {
       !/\bpercent(?:age)?\b|%/.test(q)
     )
       return { kind: 'cumulative' };
-    if (/\bmoving[\s-]*average\b|\brolling[\s-]*average\b|\bmoving[\s-]*avg\b/.test(q)) {
+    if (
+      /\bmoving[\s-]*average\b|\brolling[\s-]*average\b|\bmoving[\s-]*avg\b/.test(
+        q,
+      )
+    ) {
       const m = q.match(/(\d+)[\s-]*(?:month|day|period|week)/);
-      return { kind: 'moving_average', window: m ? Math.max(2, Math.min(12, Number(m[1]))) : 3 };
+      return {
+        kind: 'moving_average',
+        window: m ? Math.max(2, Math.min(12, Number(m[1]))) : 3,
+      };
     }
     // Period-over-period growth % (replace each value with its % change vs the
     // previous period). Distinct from normalize (% of total) and variance ($
@@ -18382,7 +19100,9 @@ export class AgentService {
     if (
       /\bvariance\s+column\b|\badd\s+a\s+variance\b/.test(q) ||
       (/\bvariance\b|\$?\s*change\b|\bdelta\b/.test(q) &&
-        /\b(prior|previous|last)\s+(?:period|quarter|month)\b|\bprior[\s-]?period\b/.test(q))
+        /\b(prior|previous|last)\s+(?:period|quarter|month)\b|\bprior[\s-]?period\b/.test(
+          q,
+        ))
     )
       return { kind: 'variance' };
     // Second axis / second series with an explicit additional measure. Checked
@@ -18391,7 +19111,8 @@ export class AgentService {
       /\bsecond(?:ary)?\s+(?:axis|y-?axis|bar|series|line)\b/.test(q) ||
       /\badd\s+a\s+(?:second\s+)?(?:bar|line|axis)\b/.test(q) ||
       /\bon\s+(?:a|the)\s+(?:second|secondary)\s+axis\b/.test(q) ||
-      (/\balong\s+with\b|\bfor\s+comparison\b/.test(q) && /\b(bar|line|axis|show)/.test(q));
+      (/\balong\s+with\b|\bfor\s+comparison\b/.test(q) &&
+        /\b(bar|line|axis|show)/.test(q));
     if (secondIntent) {
       const second = this.parseSecondMeasure(q);
       if (second) return { kind: 'second_axis', second };
@@ -18402,7 +19123,8 @@ export class AgentService {
     // by the anchor period, not by the column sum. Checked before normalize so an
     // "index … 100" ask is never silently turned into a share-of-total chart.
     if (
-      ((/\bre-?bas(?:e|ed|ing)\b|\bindex(?:ed|ing)?\b/.test(q) && /\b100\b/.test(q)) ||
+      ((/\bre-?bas(?:e|ed|ing)\b|\bindex(?:ed|ing)?\b/.test(q) &&
+        /\b100\b/.test(q)) ||
         /\b(?:jan(?:uary)?|first\s+month|start(?:ing)?|baseline|base\s+period)\b[^.]*\b(?:=|equals?|to|at)\s*100\b/.test(
           q,
         )) &&
@@ -18428,7 +19150,10 @@ export class AgentService {
         !/\b(company[\s-]*wide|overall|grand|across\s+all)\b/i.test(q)
       );
     if (asksAverageOverlay)
-      return { kind: 'reference_line', measure: this.detectAverageMeasureHint(q) };
+      return {
+        kind: 'reference_line',
+        measure: this.detectAverageMeasureHint(q),
+      };
     if (
       /\bnormali[sz]e\b|\b100\s*%|\bas a (?:percentage|percent|%)\s+of\s+(?:the\s+)?(?:company\s+|grand\s+)?total\b|\b%\s*of\s*(?:the\s+)?(?:company\s+)?total\b|\bshare of (?:the\s+)?total\b|\bpercentage of (?:the\s+)?(?:company\s+)?total\b|\bproportion of (?:the\s+)?total\b|\bcontribution(?:s)?\b[^.]*\b(?:%|percent(?:age)?s?)\b|\b(?:%|percent(?:age)?)\s+contribution\b/.test(
         q,
@@ -18438,7 +19163,9 @@ export class AgentService {
       // of the total (e.g. "show expense percentages" on expense-by-account). Plural
       // "percentages" reads as composition; exclude measure-specific percentage phrases
       // (growth/margin/change/YoY/variance/rate) so those still resolve as their measure.
-      ((/\b(?:show|display|view|express|present|see)\b[^.]*\bpercentages?\b/.test(q) ||
+      ((/\b(?:show|display|view|express|present|see)\b[^.]*\bpercentages?\b/.test(
+        q,
+      ) ||
         /\bas\s+(?:a\s+)?percentages?\b/.test(q) ||
         /\bin\s+percentages?\b/.test(q) ||
         /\bpercentage\s+breakdown\b/.test(q)) &&
@@ -18456,8 +19183,12 @@ export class AgentService {
       !/\b(company[\s-]*wide|overall|grand|across\s+all)\b/i.test(q);
     if (
       !isGroupedAverageSeries &&
-      (/\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b[^.]*\bline\b/.test(q) ||
-        /\bline\b[^.]*\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b/.test(q) ||
+      (/\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b[^.]*\bline\b/.test(
+        q,
+      ) ||
+        /\bline\b[^.]*\b(company[\s-]*wide|overall|average|mean|reference|benchmark|target)\b/.test(
+          q,
+        ) ||
         /\boverlay\b[^.]*\baverage\b/.test(q) ||
         /\btrend\s+indicators?\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
         // NOTE the group: bare "compare" must NOT trigger an average line — that
@@ -18466,7 +19197,10 @@ export class AgentService {
         /\b(?:compare|comparing)\b[^.]*\b(?:monthly\s+)?average\b/.test(q) ||
         /\breference\s+line\b/.test(q))
     )
-      return { kind: 'reference_line', measure: this.detectAverageMeasureHint(q) };
+      return {
+        kind: 'reference_line',
+        measure: this.detectAverageMeasureHint(q),
+      };
     return null;
   }
 
@@ -18481,16 +19215,49 @@ export class AgentService {
     const s = String(raw ?? '').trim();
     if (!s) return s;
     const small = new Set([
-      'by', 'of', 'and', 'or', 'the', 'a', 'an', 'to', 'vs', 'per', 'for',
-      'in', 'on', 'as', 'with', 'at',
+      'by',
+      'of',
+      'and',
+      'or',
+      'the',
+      'a',
+      'an',
+      'to',
+      'vs',
+      'per',
+      'for',
+      'in',
+      'on',
+      'as',
+      'with',
+      'at',
     ]);
     // Domain tokens that should render as an acronym / symbol rather than Title Case, so a
     // planner-emitted "csat pct by country" reads "CSAT % by Country" (not "Csat Pct").
     const acronyms: Record<string, string> = {
-      csat: 'CSAT', sla: 'SLA', kpi: 'KPI', ebitda: 'EBITDA', ebit: 'EBIT',
-      sga: 'SG&A', ar: 'AR', ap: 'AP', dso: 'DSO', dpo: 'DPO', roi: 'ROI',
-      yoy: 'YoY', ytd: 'YTD', mtd: 'MTD', qtd: 'QTD', fte: 'FTE', bpo: 'BPO',
-      it: 'IT', hr: 'HR', cfo: 'CFO', gl: 'GL', cf: 'CF', pct: '%',
+      csat: 'CSAT',
+      sla: 'SLA',
+      kpi: 'KPI',
+      ebitda: 'EBITDA',
+      ebit: 'EBIT',
+      sga: 'SG&A',
+      ar: 'AR',
+      ap: 'AP',
+      dso: 'DSO',
+      dpo: 'DPO',
+      roi: 'ROI',
+      yoy: 'YoY',
+      ytd: 'YTD',
+      mtd: 'MTD',
+      qtd: 'QTD',
+      fte: 'FTE',
+      bpo: 'BPO',
+      it: 'IT',
+      hr: 'HR',
+      cfo: 'CFO',
+      gl: 'GL',
+      cf: 'CF',
+      pct: '%',
     };
     return s
       .split(/(\s+)/)
@@ -18514,22 +19281,32 @@ export class AgentService {
   // Swap the ranking word in a chart title when the sort DIRECTION flips, so the heading
   // matches the data (e.g. "Least 2 Clients…" → "Top 2 Clients…"). Returns null if there's
   // nothing to swap.
-  private retitleForSortDirection(title: string, sort?: string | null): string | null {
+  private retitleForSortDirection(
+    title: string,
+    sort?: string | null,
+  ): string | null {
     if (sort === 'value_desc') {
-      const t = title.replace(/\b(least|bottom|smallest|lowest|worst)\b/i, 'Top');
+      const t = title.replace(
+        /\b(least|bottom|smallest|lowest|worst)\b/i,
+        'Top',
+      );
       return t !== title ? t : null;
     }
     if (sort === 'value_asc') {
-      const t = title.replace(/\b(top|largest|biggest|highest|best)\b/i, 'Least');
+      const t = title.replace(
+        /\b(top|largest|biggest|highest|best)\b/i,
+        'Least',
+      );
       return t !== title ? t : null;
     }
     return null;
   }
 
   private ebpoSpecTitle(spec: ChartSpec): string {
-    const measures = Array.isArray((spec as any).measures) && (spec as any).measures.length
-      ? ((spec as any).measures as string[])
-      : [spec.measure].filter(Boolean);
+    const measures =
+      Array.isArray((spec as any).measures) && (spec as any).measures.length
+        ? ((spec as any).measures as string[])
+        : [spec.measure].filter(Boolean);
     const measureLabel = measures
       .map((m) => EBPO_MEASURES[m as string]?.label ?? m)
       .filter(Boolean)
@@ -18539,18 +19316,27 @@ export class AgentService {
     if (!measureLabel) return 'Chart';
     if (!dim) return this.prettifyChartTitle(`${measureLabel} Trend`);
     if (isTime) {
-      const bd = spec.breakdown ? EBPO_DIMENSIONS[spec.breakdown]?.label ?? spec.breakdown : null;
-      return this.prettifyChartTitle(`${measureLabel} Trend${bd ? ` by ${bd}` : ''}`);
+      const bd = spec.breakdown
+        ? (EBPO_DIMENSIONS[spec.breakdown]?.label ?? spec.breakdown)
+        : null;
+      return this.prettifyChartTitle(
+        `${measureLabel} Trend${bd ? ` by ${bd}` : ''}`,
+      );
     }
     const dimLabel = EBPO_DIMENSIONS[dim]?.label ?? dim;
     return this.prettifyChartTitle(`${measureLabel} by ${dimLabel}`);
   }
 
-  private ebpoProfitAliasTitle(sourceText: string, spec: ChartSpec): string | null {
+  private ebpoProfitAliasTitle(
+    sourceText: string,
+    spec: ChartSpec,
+  ): string | null {
     const q = String(sourceText ?? '').toLowerCase();
     const dim = spec.dimension ?? null;
-    const isTime = dim === 'month' || dim === 'quarter' || dim === 'year' || !dim;
-    const dimLabel = dim && !isTime ? EBPO_DIMENSIONS[dim]?.label ?? dim : null;
+    const isTime =
+      dim === 'month' || dim === 'quarter' || dim === 'year' || !dim;
+    const dimLabel =
+      dim && !isTime ? (EBPO_DIMENSIONS[dim]?.label ?? dim) : null;
 
     if (spec.measure === 'ebitda') {
       // "operating profit/income" keeps its name; everything else on this measure
@@ -18610,7 +19396,8 @@ export class AgentService {
     if (this.wantsValueLabelIntent(q)) return 'value';
     if (this.wantsPercentLabelIntent(q)) return 'percent';
     // Bare "contribution" / "share of total" (no explicit value ask) implies % labels.
-    if (/\bcontribution(?:s)?\b|\bshare\s+of\s+(?:the\s+)?total\b/i.test(q)) return 'percent';
+    if (/\bcontribution(?:s)?\b|\bshare\s+of\s+(?:the\s+)?total\b/i.test(q))
+      return 'percent';
     return null;
   }
 
@@ -18619,7 +19406,9 @@ export class AgentService {
   // measure, convert type, percentage, reference line…) so combined asks still
   // flow to the richer editors. Renders per-point labels even past the auto-cap.
   private detectDataLabelsToggle(req: string): 'on' | 'off' | null {
-    const q = String(req ?? '').toLowerCase().trim();
+    const q = String(req ?? '')
+      .toLowerCase()
+      .trim();
     if (!q) return null;
     // Broad enough to catch the many ways a user asks for point labels:
     // "data labels", "value labels", "show the values", "show total revenue labels
@@ -18654,12 +19443,26 @@ export class AgentService {
     const q = String(req ?? '').toLowerCase();
     if (!/\b(?:last|past|previous|trailing)\b/.test(q)) return null;
     const w2n: Record<string, number> = {
-      a: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
-      eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+      a: 1,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+      seven: 7,
+      eight: 8,
+      nine: 9,
+      ten: 10,
+      eleven: 11,
+      twelve: 12,
     };
-    const num = '(\\d+|a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+    const num =
+      '(\\d+|a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
     const m = q.match(
-      new RegExp(`\\b(?:last|past|previous|trailing)\\s+${num}\\s*(month|quarter|year|week)s?\\b`),
+      new RegExp(
+        `\\b(?:last|past|previous|trailing)\\s+${num}\\s*(month|quarter|year|week)s?\\b`,
+      ),
     );
     if (m) {
       const n = /^\d+$/.test(m[1]!) ? parseInt(m[1]!, 10) : (w2n[m[1]!] ?? 0);
@@ -18673,7 +19476,9 @@ export class AgentService {
               ? Math.max(1, Math.round(n / 4))
               : n;
     }
-    const m2 = q.match(/\b(?:last|past|previous)\s+(month|quarter|year|week)\b/);
+    const m2 = q.match(
+      /\b(?:last|past|previous)\s+(month|quarter|year|week)\b/,
+    );
     if (m2) {
       const u = m2[1];
       return u === 'year' ? 12 : u === 'quarter' ? 3 : 1;
@@ -18684,22 +19489,38 @@ export class AgentService {
   private detectMatrixDisplayEdit(req: string): DisplayHints | null {
     const q = (req ?? '').toLowerCase();
     if (!q.trim()) return null;
-    const mentionsMatrixLike = /\b(matrix|heat\s*map|heatmap|grid|cell|cells?|row|rows|column|columns)\b/.test(q);
-    const wantsTotals = /\b(row|rows|column|columns|grand)\s+totals?\b|\btotals?\b/.test(q);
+    const mentionsMatrixLike =
+      /\b(matrix|heat\s*map|heatmap|grid|cell|cells?|row|rows|column|columns)\b/.test(
+        q,
+      );
+    const wantsTotals =
+      /\b(row|rows|column|columns|grand)\s+totals?\b|\btotals?\b/.test(q);
     const wantsHighlight =
-      /\bhighlight|color|colour|shade|conditional\s+format|conditional\s+formatting\b/.test(q);
+      /\bhighlight|color|colour|shade|conditional\s+format|conditional\s+formatting\b/.test(
+        q,
+      );
     if (!mentionsMatrixLike && !wantsTotals && !wantsHighlight) return null;
 
     const thresholdMatch =
-      q.match(/\b(?:above|over|greater\s+than|more\s+than|>=)\s+\$?\s*([\d,.]+)\s*([kmb])?\b/) ??
-      q.match(/\$?\s*([\d,.]+)\s*([kmb])?\s*(?:and\s+)?(?:above|over|plus|\+)\b/);
+      q.match(
+        /\b(?:above|over|greater\s+than|more\s+than|>=)\s+\$?\s*([\d,.]+)\s*([kmb])?\b/,
+      ) ??
+      q.match(
+        /\$?\s*([\d,.]+)\s*([kmb])?\s*(?:and\s+)?(?:above|over|plus|\+)\b/,
+      );
     const parseThreshold = (): number | null => {
       if (!thresholdMatch?.[1]) return null;
       const base = Number(thresholdMatch[1].replace(/,/g, ''));
       if (!Number.isFinite(base)) return null;
       const suffix = thresholdMatch[2];
       const multiplier =
-        suffix === 'b' ? 1_000_000_000 : suffix === 'm' ? 1_000_000 : suffix === 'k' ? 1_000 : 1;
+        suffix === 'b'
+          ? 1_000_000_000
+          : suffix === 'm'
+            ? 1_000_000
+            : suffix === 'k'
+              ? 1_000
+              : 1;
       return base * multiplier;
     };
     const threshold = parseThreshold();
@@ -18710,30 +19531,41 @@ export class AgentService {
       /\b(above|over|exceed(?:ing|s)?|greater\s+than|more\s+than|higher\s+than)\b/.test(
         q,
       ) && /\baverage|\bmean\b/.test(q);
-    const avgMode: DisplayHints['conditionalThresholdMode'] | null = wantsAvgCompare
-      ? /\brow\s+average\b/.test(q)
-        ? 'rowAverage'
-        : /\b(column|columns)\s+average\b/.test(q) ||
-            /\b(department|dept|class|account|vendor|month|category|each)\b[^.]*\baverage\b/.test(
-              q,
-            )
-          ? 'columnAverage'
-          : 'overallAverage'
-      : null;
+    const avgMode: DisplayHints['conditionalThresholdMode'] | null =
+      wantsAvgCompare
+        ? /\brow\s+average\b/.test(q)
+          ? 'rowAverage'
+          : /\b(column|columns)\s+average\b/.test(q) ||
+              /\b(department|dept|class|account|vendor|month|category|each)\b[^.]*\baverage\b/.test(
+                q,
+              )
+            ? 'columnAverage'
+            : 'overallAverage'
+        : null;
 
     // "highlight the highest / lowest" (no threshold, no average) → ring the extreme
     // cell(s). This was previously dropped (green color set but no rule), so nothing
     // got highlighted ("not highlighting highest value").
-    const wantsHighest = /\b(highest|largest|max(?:imum)?|biggest|top|peak|most|best|strongest)\b/.test(q);
-    const wantsLowest = /\b(lowest|smallest|min(?:imum)?|bottom|least|weakest|worst|poorest)\b/.test(q);
+    const wantsHighest =
+      /\b(highest|largest|max(?:imum)?|biggest|top|peak|most|best|strongest)\b/.test(
+        q,
+      );
+    const wantsLowest =
+      /\b(lowest|smallest|min(?:imum)?|bottom|least|weakest|worst|poorest)\b/.test(
+        q,
+      );
     // "abnormal / anomalous / unusual / outlier / irregular / spike" periods → highlight
     // the extreme cells at BOTH ends (highest and lowest). True statistical anomaly
     // detection isn't available, so ringing the global extremes is the honest, general
     // approximation — far better than the old silent "highlight" no-op.
     const wantsAnomaly =
-      /\babnormal|\banomal(?:y|ies|ous)|\bunusual|\boutliers?\b|\birregular|\bspikes?\b/.test(q);
+      /\babnormal|\banomal(?:y|ies|ous)|\bunusual|\boutliers?\b|\birregular|\bspikes?\b/.test(
+        q,
+      );
     const extremes: DisplayHints['highlightExtremes'] =
-      threshold === null && !avgMode && (wantsHighest || wantsLowest || wantsAnomaly)
+      threshold === null &&
+      !avgMode &&
+      (wantsHighest || wantsLowest || wantsAnomaly)
         ? wantsAnomaly || (wantsHighest && wantsLowest)
           ? 'both'
           : wantsHighest
@@ -18744,7 +19576,9 @@ export class AgentService {
     // "highlight periods with negative cash flow / losses / below zero / deficits"
     const wantsNegative =
       wantsHighlight &&
-      /\bnegative\b|\bbelow\s+zero\b|\bloss(?:es)?\b|\bdeficits?\b|\bshortfalls?\b/.test(q);
+      /\bnegative\b|\bbelow\s+zero\b|\bloss(?:es)?\b|\bdeficits?\b|\bshortfalls?\b/.test(
+        q,
+      );
     const conditionalColor = this.inferMatrixConditionalColor(q);
 
     const hints: DisplayHints = {};
@@ -18794,8 +19628,7 @@ export class AgentService {
     return (
       /\bin\s+the\s+same\s+chart\b|\bon\s+the\s+same\s+chart\b|\bwithin\s+the\s+same\s+chart\b/.test(
         text,
-      ) ||
-      /\bthe\s+same\s+chart\b/.test(text)
+      ) || /\bthe\s+same\s+chart\b/.test(text)
     );
   }
 
@@ -18835,16 +19668,18 @@ export class AgentService {
     const breakdown = new Set<string>();
     for (const [dim, rx] of dimChecks) {
       if (!rx.test(q)) continue;
-      const breakdownLike =
-        new RegExp(
-          `\\b(?:breakdown|split|stack|stacked|segment|segmentation|color|colour|series)\\b[^.]*${rx.source}|${rx.source}[^.]*\\b(?:breakdown|split|stack|stacked|segment|segmentation|color|colour|series)\\b`,
-          'i',
-        ).test(q);
+      const breakdownLike = new RegExp(
+        `\\b(?:breakdown|split|stack|stacked|segment|segmentation|color|colour|series)\\b[^.]*${rx.source}|${rx.source}[^.]*\\b(?:breakdown|split|stack|stacked|segment|segmentation|color|colour|series)\\b`,
+        'i',
+      ).test(q);
       const rankLike =
         dim !== 'month' &&
         dim !== 'quarter' &&
         dim !== 'year' &&
-        new RegExp(`\\b(?:rank|ranked|top|bottom)\\b[^.]*${rx.source}`, 'i').test(q);
+        new RegExp(
+          `\\b(?:rank|ranked|top|bottom)\\b[^.]*${rx.source}`,
+          'i',
+        ).test(q);
       const byLike = new RegExp(`\\bby\\s+${rx.source}`, 'i').test(q);
       if (breakdownLike) breakdown.add(dim);
       else if (rankLike || byLike) primary.add(dim);
@@ -18869,7 +19704,10 @@ export class AgentService {
     activeDashboard: ActiveDashboard,
     req: string,
   ): string | null {
-    if (!this.isSameChartFollowUp(req) || activeDashboard.widgets.length === 0) {
+    if (
+      !this.isSameChartFollowUp(req) ||
+      activeDashboard.widgets.length === 0
+    ) {
       return null;
     }
     const requested = this.detectRequestedChartAxes(req);
@@ -18913,7 +19751,8 @@ export class AgentService {
     if (hasCompatibleTarget) return null;
 
     const first = widgets[0]?.axes;
-    const currentAxis = first?.dimension?.replace(/_/g, ' ') ?? 'current grouping';
+    const currentAxis =
+      first?.dimension?.replace(/_/g, ' ') ?? 'current grouping';
     const requestedAxis =
       requested.primary[0]?.replace(/_/g, ' ') ??
       requested.breakdown[0]?.replace(/_/g, ' ');
@@ -18927,13 +19766,14 @@ export class AgentService {
   ): boolean {
     const q = String(req ?? '').toLowerCase();
     if (!this.isSameChartFollowUp(req)) return false;
-    if (!/\bmonth\b|\bmonthly\b|\btrend\b|\bover\s+time\b/.test(q)) return false;
+    if (!/\bmonth\b|\bmonthly\b|\btrend\b|\bover\s+time\b/.test(q))
+      return false;
     return activeDashboard.widgets.some((widget) => {
       const spec = (widget.queryConfig as any)?.spec as ChartSpec | undefined;
       if (!spec?.dimension || spec.dimension === 'month') return false;
-      const measures = (spec?.measures?.length ? spec.measures : [spec?.measure]).filter(
-        Boolean,
-      );
+      const measures = (
+        spec?.measures?.length ? spec.measures : [spec?.measure]
+      ).filter(Boolean);
       // Multi-measure combo → monthly trend of those measures.
       if (measures.length >= 2) return true;
       // Single-measure RANKED / top-N comparison (e.g. "top 2 clients by expenses",
@@ -18962,13 +19802,18 @@ export class AgentService {
     const title = String(widget.title ?? '').toLowerCase();
     const sql = String(cfg.dynamicSql ?? '').toLowerCase();
     const measures = (
-      spec?.measures?.length ? spec.measures : spec?.measure ? [spec.measure] : []
+      spec?.measures?.length
+        ? spec.measures
+        : spec?.measure
+          ? [spec.measure]
+          : []
     ).filter(Boolean);
     if (measures.includes('revenue_ytd')) return true;
     if (metric === 'revenue_cumulative') return true;
     if (
       /\brevenue\b/.test(title) &&
-      (/\bytd\b/.test(title) || /\bcumulative\b|\brunning\s+total\b/.test(title))
+      (/\bytd\b/.test(title) ||
+        /\bcumulative\b|\brunning\s+total\b/.test(title))
     )
       return true;
     if (
@@ -18985,13 +19830,21 @@ export class AgentService {
     if (!text.trim()) return [];
     const asksAccountLevelExpenses =
       /\bexpense(?:s)?\b/.test(text) &&
-      /\baccount(?:s)?\b|\baccount\s+(?:category|categories|type|types)\b/.test(text);
+      /\baccount(?:s)?\b|\baccount\s+(?:category|categories|type|types)\b/.test(
+        text,
+      );
     const asksSgaExpenses =
-      /\bsg\s*&?\s*a\b|\bselling,\s*general\s+and\s+administrative\b/.test(text);
+      /\bsg\s*&?\s*a\b|\bselling,\s*general\s+and\s+administrative\b/.test(
+        text,
+      );
     const asksArToRevenue =
-      /\breceivables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/.test(text);
+      /\breceivables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/.test(
+        text,
+      );
     const asksApToCost =
-      /\bpayables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+(?:total\s+)?cost\b/.test(text);
+      /\bpayables?\s+as\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+(?:total\s+)?cost\b/.test(
+        text,
+      );
     const asksCumulativeRevenue =
       /\b(cumulative|running\s+total)\b/.test(text) &&
       /\b(revenue|sales|income)\b/.test(text);
@@ -19001,11 +19854,14 @@ export class AgentService {
     // the "profit" alternative would otherwise swallow "gross PROFIT margin" and route it
     // to Net Profit Margin %, which then falsely refuses per-entity groupings.
     const asksNetProfitMargin =
-      /\b(?:net\s+profit|net|profit|operating(?:\s+profit)?|ebitda)\s+margin\b/.test(text) &&
-      !/\bgross\s+(?:profit\s+)?margin\b/.test(text);
+      /\b(?:net\s+profit|net|profit|operating(?:\s+profit)?|ebitda)\s+margin\b/.test(
+        text,
+      ) && !/\bgross\s+(?:profit\s+)?margin\b/.test(text);
     const asksNetProfit =
       !asksNetProfitMargin &&
-      (/\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(text) ||
+      (/\bnet\s+(?:profit|income)\b|\boperating\s+(?:profit|income)\b|\bebitda\b/.test(
+        text,
+      ) ||
         (/\bprofit\b/.test(text) && !/\bgross\s+profit\b/.test(text)));
     const out: string[] = [];
     const add = (id: string) => {
@@ -19019,19 +19875,34 @@ export class AgentService {
     if (asksNetProfitMargin) add('ebitda_style_margin_pct');
     if (asksNetProfit) add('ebitda');
     const checks: Array<[RegExp, string]> = [
-      [/\byear[-\s]+over[-\s]+year\s+revenue\s+growth\b|\brevenue\s+yoy\s+growth\b|\byoy\s+revenue\s+growth\b/, 'revenue_yoy_pct'],
+      [
+        /\byear[-\s]+over[-\s]+year\s+revenue\s+growth\b|\brevenue\s+yoy\s+growth\b|\byoy\s+revenue\s+growth\b/,
+        'revenue_yoy_pct',
+      ],
       // "gross profit margin" / "gross profit %" is the gross-margin RATIO booked on the
       // revenue fact (gross_margin / revenue). It must NOT fall through to the bare
       // "margin" alias (gross_margin_pct, a revenue-minus-total-expenses net-ish ratio) or
       // to Net Profit Margin %. Keep it on gross_profit_pct, which derives as a
       // ratio-of-sums and is available at every revenue grouping (BU, client, geography…).
-      [/\bgross\s+profit\s+margin\b|\bgross\s+profit\s*(?:percentage|percent|%|pct)\b/, 'gross_profit_pct'],
-      [/\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/, 'gross_margin_pct'],
+      [
+        /\bgross\s+profit\s+margin\b|\bgross\s+profit\s*(?:percentage|percent|%|pct)\b/,
+        'gross_profit_pct',
+      ],
+      [
+        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/,
+        'gross_margin_pct',
+      ],
       [/\bgross\s+margin\b/, 'gross_margin'],
       [/\btotal\s+revenue\b|\brevenue\b/, 'total_revenue'],
-      [/\btotal\s+expenses?\b|\boperating\s+expenses?\b|\boverheads?\b|\bexpenses?\b/, 'total_expenses'],
+      [
+        /\btotal\s+expenses?\b|\boperating\s+expenses?\b|\boverheads?\b|\bexpenses?\b/,
+        'total_expenses',
+      ],
       [/\btotal\s+cost\b|\bcost\b/, 'total_cost'],
-      [/\bpayroll\s*(?:to|\/)\s*revenue\b|\bpayroll\s+ratio\b/, 'payroll_to_revenue_pct'],
+      [
+        /\bpayroll\s*(?:to|\/)\s*revenue\b|\bpayroll\s+ratio\b/,
+        'payroll_to_revenue_pct',
+      ],
       [/\btotal\s+payroll\b|\bpayroll\b/, 'total_payroll'],
       [/\bbase\s+salary\b|\bbase\s+pay\b/, 'total_base_salary'],
       [/\bovertime\b|\bovertime\s+cost\b/, 'total_overtime'],
@@ -19042,8 +19913,14 @@ export class AgentService {
       [/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/, 'financing_cf'],
       [/\bfree\s+cash\s+flow\b|\bfree\s+cf\b|\bfcf\b/, 'free_cash_flow'],
       [/\bcash\s+balance\b/, 'cash_balance'],
-      [/\boverdue\s+receivables?\b|\boutstanding\s+receivables?\b|\bar\s+outstanding\b|\breceivables?\b|\ba\/?r\b/, 'ar_outstanding'],
-      [/\boverdue\s+payables?\b|\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b|\ba\/?p\b/, 'ap_outstanding'],
+      [
+        /\boverdue\s+receivables?\b|\boutstanding\s+receivables?\b|\bar\s+outstanding\b|\breceivables?\b|\ba\/?r\b/,
+        'ar_outstanding',
+      ],
+      [
+        /\boverdue\s+payables?\b|\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b|\ba\/?p\b/,
+        'ap_outstanding',
+      ],
       [/\bcollection\s+rate\b/, 'collection_rate_pct'],
       [/\bdso\b/, 'dso_days'],
       [/\bdpo\b/, 'dpo_days'],
@@ -19054,11 +19931,17 @@ export class AgentService {
       [/\btickets?\s+resolved\b/, 'tickets_resolved'],
       [/\bhandling\s+time\b|\baht\b/, 'avg_aht_minutes'],
       [/\bemployee\s+count\b|\bheadcount\b/, 'employee_count'],
-      [/\baverage\s+salary\b|\bavg\s+salary\b|\bmonthly\s+salary\b/, 'avg_monthly_salary'],
+      [
+        /\baverage\s+salary\b|\bavg\s+salary\b|\bmonthly\s+salary\b/,
+        'avg_monthly_salary',
+      ],
       [/\brevenue\s+per\s+employee\b/, 'revenue_per_employee'],
       [/\bcost\s+per\s+employee\b/, 'cost_per_employee'],
       [/\basset\s+cost\b/, 'asset_cost'],
-      [/\baccumulated\s+depreciation\b|\bdepreciation\b/, 'accumulated_depreciation'],
+      [
+        /\baccumulated\s+depreciation\b|\bdepreciation\b/,
+        'accumulated_depreciation',
+      ],
       [/\bnet\s+book\s+value\b|\bnbv\b/, 'net_book_value'],
       [/\basset\s+count\b/, 'asset_count'],
       [/\bclosing\s+balance\b/, 'closing_balance'],
@@ -19067,11 +19950,17 @@ export class AgentService {
 
     const shouldPreferGrossMarginPercent = () => {
       const asksGrossMarginPercent =
-        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(text);
+        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(
+          text,
+        );
       const separatelyAsksGrossMarginDollars =
         /\bgross\s+profit\b/.test(text) ||
-        /\bgross\s+margin\b[\s\S]{0,32}\b(?:dollars?|usd|amount|value)\b/.test(text) ||
-        /\b(?:dollars?|usd|amount|value)\b[\s\S]{0,32}\bgross\s+margin\b/.test(text);
+        /\bgross\s+margin\b[\s\S]{0,32}\b(?:dollars?|usd|amount|value)\b/.test(
+          text,
+        ) ||
+        /\b(?:dollars?|usd|amount|value)\b[\s\S]{0,32}\bgross\s+margin\b/.test(
+          text,
+        );
       return asksGrossMarginPercent && !separatelyAsksGrossMarginDollars;
     };
     const dropGrossMarginDollarWhenPercentOnly = () => {
@@ -19101,30 +19990,43 @@ export class AgentService {
     const haystack = normalize(text);
     for (const [id, measure] of Object.entries(EBPO_MEASURES)) {
       const candidates = [measure.label, ...(measure.aliases ?? [])];
-      if (candidates.some((candidate) => haystack.includes(normalize(candidate)))) add(id);
+      if (
+        candidates.some((candidate) => haystack.includes(normalize(candidate)))
+      )
+        add(id);
     }
     dropGrossMarginDollarWhenPercentOnly();
     // Collapse "gross profit margin"/"gross profit %" onto the single gross-margin ratio
     // so an add-a-line follow-up plots exactly one % series (see note above).
     if (asksGrossProfitPct) {
       if (!out.includes('gross_profit_pct')) out.push('gross_profit_pct');
-      for (const spurious of ['gross_margin_pct', 'ebitda_style_margin_pct', 'gross_margin']) {
+      for (const spurious of [
+        'gross_margin_pct',
+        'ebitda_style_margin_pct',
+        'gross_margin',
+      ]) {
         const idx = out.indexOf(spurious);
         if (idx !== -1) out.splice(idx, 1);
       }
     }
     return out.filter(
       (id) =>
-        !((asksAccountLevelExpenses || asksSgaExpenses) &&
-          (id === 'total_cost' || id === 'total_expenses')) &&
-        !(asksArToRevenue && (id === 'ar_outstanding' || id === 'total_revenue')) &&
+        !(
+          (asksAccountLevelExpenses || asksSgaExpenses) &&
+          (id === 'total_cost' || id === 'total_expenses')
+        ) &&
+        !(
+          asksArToRevenue &&
+          (id === 'ar_outstanding' || id === 'total_revenue')
+        ) &&
         !(asksApToCost && (id === 'ap_outstanding' || id === 'total_cost')),
     );
   }
 
   private detectEbpoScorecardMeasures(q: string): string[] {
     const text = String(q ?? '').toLowerCase();
-    if (!/\b(scorecard|kpis?|kpi\s+cards?|metric\s+cards?|cards?)\b/.test(text)) return [];
+    if (!/\b(scorecard|kpis?|kpi\s+cards?|metric\s+cards?|cards?)\b/.test(text))
+      return [];
     const measures = this.detectEbpoMeasureMentions(text);
     if (measures.length < 2) return [];
     return measures;
@@ -19144,9 +20046,16 @@ export class AgentService {
       )
     )
       add('overtime_to_payroll_pct');
-    if (/\binvesting\s+cash\s+flow\b|\binvesting\s+cf\b/.test(text)) add('investing_cf');
-    if (/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/.test(text)) add('financing_cf');
-    if (/\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(text)) add('ap_outstanding');
+    if (/\binvesting\s+cash\s+flow\b|\binvesting\s+cf\b/.test(text))
+      add('investing_cf');
+    if (/\bfinancing\s+cash\s+flow\b|\bfinancing\s+cf\b/.test(text))
+      add('financing_cf');
+    if (
+      /\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(
+        text,
+      )
+    )
+      add('ap_outstanding');
 
     for (const mid of this.detectEbpoMeasureMentions(text)) add(mid);
     return out;
@@ -19160,9 +20069,13 @@ export class AgentService {
    * from the wording — and the reverse for an explicit "gross profit" ask. General
    * semantic rule keyed on the word, not on any specific question.
    */
-  private disambiguateGrossMarginVsProfit(spec: ChartSpec, queryLower: string): ChartSpec {
+  private disambiguateGrossMarginVsProfit(
+    spec: ChartSpec,
+    queryLower: string,
+  ): ChartSpec {
     const wantsMarginPct =
-      /\bgross\s+margins?\b/.test(queryLower) && !/\bgross\s+profits?\b/.test(queryLower);
+      /\bgross\s+margins?\b/.test(queryLower) &&
+      !/\bgross\s+profits?\b/.test(queryLower);
     const wantsProfit = /\bgross\s+profits?\b/.test(queryLower);
     if (!wantsMarginPct && !wantsProfit) return spec;
     const fix = (id: string | undefined): string | undefined => {
@@ -19172,12 +20085,15 @@ export class AgentService {
     };
     const next: ChartSpec = { ...spec };
     if (Array.isArray(spec.measures))
-      next.measures = spec.measures.map((m) => (m ? fix(m) ?? m : m));
+      next.measures = spec.measures.map((m) => (m ? (fix(m) ?? m) : m));
     if (spec.measure) next.measure = fix(spec.measure) ?? spec.measure;
     return next;
   }
 
-  private rewriteEbpoGenericExpenseSpec(spec: ChartSpec, queryLower: string): ChartSpec {
+  private rewriteEbpoGenericExpenseSpec(
+    spec: ChartSpec,
+    queryLower: string,
+  ): ChartSpec {
     const asksGenericExpenses =
       /\b(expense|expenses|operating\s+expense|operating\s+expenses|overhead|overheads)\b/.test(
         queryLower,
@@ -19191,10 +20107,14 @@ export class AgentService {
     const swap = (measureId: string | undefined): string | undefined =>
       measureId === 'total_cost' ? 'total_expenses' : measureId;
     const nextMeasure = swap(spec.measure);
-    const nextMeasures = spec.measures?.map((measureId) => swap(measureId) as string);
+    const nextMeasures = spec.measures?.map(
+      (measureId) => swap(measureId) as string,
+    );
     const changed =
       nextMeasure !== spec.measure ||
-      !!spec.measures?.some((measureId, index) => nextMeasures?.[index] !== measureId);
+      !!spec.measures?.some(
+        (measureId, index) => nextMeasures?.[index] !== measureId,
+      );
     if (!changed) return spec;
     return {
       ...spec,
@@ -19207,7 +20127,12 @@ export class AgentService {
     spec: ChartSpec,
     extraMeasureIds: string[],
     scope: OrgScope,
-  ): Promise<{ sql: string; type: ChartType; display?: DisplayHints; yAxisLabel?: string } | null> {
+  ): Promise<{
+    sql: string;
+    type: ChartType;
+    display?: DisplayHints;
+    yAxisLabel?: string;
+  } | null> {
     const baseMeasure = spec.measure;
     const dim = spec.dimension || null;
     if (!baseMeasure || !dim) return null;
@@ -19275,9 +20200,9 @@ export class AgentService {
       spec.chartType === 'heatmap' || spec.chartType === 'matrix'
         ? 'heatmap'
         : 'combo';
-    const check = await this.executeDynamicSqlChecked(sql, scope, { chartType: type }).catch(
-      () => null,
-    );
+    const check = await this.executeDynamicSqlChecked(sql, scope, {
+      chartType: type,
+    }).catch(() => null);
     if (!check || check.error || check.rows.length === 0) return null;
     if (this.detectBadChartShape(check.rows, type)) return null;
     // Build per-series display from each measure's CATALOG format so a measure added in
@@ -19293,12 +20218,16 @@ export class AgentService {
     let display: DisplayHints | undefined;
     if (roleDefs.length >= 2) {
       const leftFormat = roleDefs[0]!.def.format;
-      const baseIsLine = /line|area/.test(String(spec.chartType ?? '').toLowerCase());
+      const baseIsLine = /line|area/.test(
+        String(spec.chartType ?? '').toLowerCase(),
+      );
       const series = roleDefs.map(({ id, def }) => {
         const differs = def.format !== leftFormat;
         return {
           key: id,
-          role: (differs ? 'line' : baseIsLine ? 'line' : 'bar') as 'bar' | 'line',
+          role: (differs ? 'line' : baseIsLine ? 'line' : 'bar') as
+            | 'bar'
+            | 'line',
           axis: (differs ? 'right' : 'left') as 'left' | 'right',
           format: def.format,
           decimals: def.decimals ?? undefined,
@@ -19350,8 +20279,17 @@ export class AgentService {
     transform: FollowUpTransform,
     baseSql: string,
     numeric: string[],
-    opts: { chartType?: ChartType; valueIsChange?: boolean; cumulativeAlias?: string } = {},
-  ): { sql: string; display?: DisplayHints; yAxisLabel?: string; type?: ChartType } | null {
+    opts: {
+      chartType?: ChartType;
+      valueIsChange?: boolean;
+      cumulativeAlias?: string;
+    } = {},
+  ): {
+    sql: string;
+    display?: DisplayHints;
+    yAxisLabel?: string;
+    type?: ChartType;
+  } | null {
     const id = (c: string) => '`' + c.replace(/`/g, '') + '`';
     const wrap = (proj: string) =>
       `WITH _base AS (\n${baseSql.replace(/;+\s*$/, '')}\n)\nSELECT ${proj}\nFROM _base\nLIMIT 1000`;
@@ -19363,11 +20301,16 @@ export class AgentService {
       // second measure as a line on a secondary axis (a combo chart).
       if (!numeric.includes('value')) return null;
       const table = baseSql.match(/\bfrom\s+(`?\w+`?\.`?\w+`?)/i)?.[1];
-      const nameExpr = baseSql.match(/select\s+([\s\S]*?)\s+as\s+name\b/i)?.[1]?.trim();
-      const whereInner = baseSql
-        .match(/\bwhere\b([\s\S]*?)(\bgroup\s+by\b|\border\s+by\b|\blimit\b|$)/i)?.[1]
+      const nameExpr = baseSql
+        .match(/select\s+([\s\S]*?)\s+as\s+name\b/i)?.[1]
         ?.trim();
-      if (!table || !/sample_gl_dump/i.test(table) || !nameExpr || !whereInner) return null;
+      const whereInner = baseSql
+        .match(
+          /\bwhere\b([\s\S]*?)(\bgroup\s+by\b|\border\s+by\b|\blimit\b|$)/i,
+        )?.[1]
+        ?.trim();
+      if (!table || !/sample_gl_dump/i.test(table) || !nameExpr || !whereInner)
+        return null;
       const proj = [
         '_base.name AS name',
         '_base.value AS value',
@@ -19386,7 +20329,10 @@ export class AgentService {
     }
 
     if (transform.kind === 'normalize') {
-      if (numeric.length === 1 && !/client_name\s+IN|vendor_name\s+IN/i.test(baseSql)) {
+      if (
+        numeric.length === 1 &&
+        !/client_name\s+IN|vendor_name\s+IN/i.test(baseSql)
+      ) {
         return null;
       }
       // CRITICAL: qualify source columns with `_base.`. The output alias reuses the
@@ -19400,22 +20346,33 @@ export class AgentService {
         const total = numeric.map(q).join(' + ');
         const proj = [
           'name',
-          ...numeric.map((c) => `round(${q(c)} / nullIf(${total}, 0) * 100, 1) AS ${id(c)}`),
+          ...numeric.map(
+            (c) => `round(${q(c)} / nullIf(${total}, 0) * 100, 1) AS ${id(c)}`,
+          ),
         ].join(', ');
-        return { sql: wrap(proj), display: { normalized: true, valueFormat: 'percent' }, yAxisLabel: '% of total' };
+        return {
+          sql: wrap(proj),
+          display: { normalized: true, valueFormat: 'percent' },
+          yAxisLabel: '% of total',
+        };
       }
       const c0 = numeric[0]!;
       const proj = `name, round(${q(c0)} / nullIf(sum(${q(c0)}) OVER (), 0) * 100, 1) AS ${id(c0)}`;
       return {
         sql: wrap(proj),
-        display: { normalized: true, labelMode: 'percent', valueFormat: 'percent' },
+        display: {
+          normalized: true,
+          labelMode: 'percent',
+          valueFormat: 'percent',
+        },
         yAxisLabel: '% of total',
       };
     }
 
     if (transform.kind === 'cumulative') {
       if (!numeric.includes('value')) return null;
-      const cumulativeAlias = opts.cumulativeAlias?.trim() || 'cumulative_value';
+      const cumulativeAlias =
+        opts.cumulativeAlias?.trim() || 'cumulative_value';
       const cumulativeExprAlias = `"${cumulativeAlias.replace(/"/g, '""')}"`;
       // When the base chart's `value` is a period-over-period CHANGE (a `difference`
       // transform — e.g. a month-over-month-changes waterfall), the running sum of
@@ -19483,13 +20440,18 @@ export class AgentService {
       // row total IS the value, so this reduces to avg(value). Averaging just one
       // series (e.g. Admin) would be wrong — that was the "different in Power BI" bug.
       const rowTotal =
-        numeric.length >= 2 ? `(${numeric.map(id).join(' + ')})` : id(numeric[0]!);
+        numeric.length >= 2
+          ? `(${numeric.map(id).join(' + ')})`
+          : id(numeric[0]!);
       const proj = [
         'name',
         ...numeric.map(id),
         `round((SELECT avg(${rowTotal}) FROM _base), 2) AS company_average`,
       ].join(', ');
-      return { sql: wrap(proj), display: { referenceSeries: 'company_average' } };
+      return {
+        sql: wrap(proj),
+        display: { referenceSeries: 'company_average' },
+      };
     }
 
     if (transform.kind === 'moving_average') {
@@ -19527,7 +20489,11 @@ export class AgentService {
       const proj = ['name', ...numeric.map(pct)].join(', ');
       return {
         sql: wrap(proj),
-        display: { normalized: true, valueFormat: 'percent', ...(numeric.length === 1 ? { labelMode: 'percent' } : {}) },
+        display: {
+          normalized: true,
+          valueFormat: 'percent',
+          ...(numeric.length === 1 ? { labelMode: 'percent' } : {}),
+        },
         yAxisLabel: '% change vs prior period',
       };
     }
@@ -19546,7 +20512,10 @@ export class AgentService {
       const proj = ['name', ...numeric.map(idx)].join(', ');
       return {
         sql: wrap(proj),
-        display: { valueFormat: 'number', ...(numeric.length > 1 ? { showAllSeries: true } : {}) },
+        display: {
+          valueFormat: 'number',
+          ...(numeric.length > 1 ? { showAllSeries: true } : {}),
+        },
         yAxisLabel: 'Index (first period = 100)',
       };
     }
@@ -19563,7 +20532,10 @@ export class AgentService {
     if (transform.kind === 'yoy' || transform.kind === 'prior_year') {
       const years = await this.dataYearCount(scope);
       if (years < 2) {
-        const label = transform.kind === 'yoy' ? 'year-over-year growth' : 'a prior-year comparison';
+        const label =
+          transform.kind === 'yoy'
+            ? 'year-over-year growth'
+            : 'a prior-year comparison';
         return {
           summary: '',
           add: [],
@@ -19582,12 +20554,16 @@ export class AgentService {
       if (transform.kind === 'prior_year' || transform.kind === 'yoy') {
         const requestedYears = Array.from(
           new Set(
-            Array.from(editRequest.matchAll(/\b(20\d{2})\b/g)).map((m) => Number(m[1])),
+            Array.from(editRequest.matchAll(/\b(20\d{2})\b/g)).map((m) =>
+              Number(m[1]),
+            ),
           ),
         )
           .filter((year) => Number.isFinite(year))
           .sort((a, b) => b - a);
-        const latestYears = await this.latestTwoDataYears(scope).catch(() => null);
+        const latestYears = await this.latestTwoDataYears(scope).catch(
+          () => null,
+        );
         if (!latestYears) return null;
         const [defaultCurrentYear, defaultPreviousYear] = latestYears;
         const currentYear = requestedYears[0] ?? defaultCurrentYear;
@@ -19600,14 +20576,19 @@ export class AgentService {
           // is stable across years (month → Jan…Dec, quarter → Q1…Q4). Both strip a
           // trailing year and join on the bare period, so support both grains; a
           // year-grain chart has no within-year period to overlay, so skip it.
-          if (!spec?.measure || (spec.dimension !== 'month' && spec.dimension !== 'quarter'))
+          if (
+            !spec?.measure ||
+            (spec.dimension !== 'month' && spec.dimension !== 'quarter')
+          )
             continue;
           const measures = (
             spec.measures?.length ? spec.measures : [spec.measure]
           ).filter((m): m is string => !!m);
           if (measures.length === 0) continue;
           const measureFormats = Array.from(
-            new Set(measures.map((m) => EBPO_MEASURES[m]?.format).filter(Boolean)),
+            new Set(
+              measures.map((m) => EBPO_MEASURES[m]?.format).filter(Boolean),
+            ),
           );
           if (measureFormats.length !== 1) continue;
           const keepFilters = (spec.filters ?? []).filter(
@@ -19628,26 +20609,37 @@ export class AgentService {
           });
           const [cy, py] = await Promise.all([
             compileEbpoSpec(mkYearSpec(currentYear), this.analyticsDb, runRows),
-            compileEbpoSpec(mkYearSpec(previousYear), this.analyticsDb, runRows),
+            compileEbpoSpec(
+              mkYearSpec(previousYear),
+              this.analyticsDb,
+              runRows,
+            ),
           ]);
           if (!cy.ok || !py.ok) continue;
           const cyCheck = await this.executeDynamicSqlChecked(cy.sql, scope, {
             chartType: 'line',
           }).catch(() => null);
           if (!cyCheck || cyCheck.error || cyCheck.rows.length === 0) continue;
-          const cols = Object.keys(cyCheck.rows[0] ?? {}).filter((c) => c !== 'name');
+          const cols = Object.keys(cyCheck.rows[0] ?? {}).filter(
+            (c) => c !== 'name',
+          );
           if (cols.length === 0) continue;
           const ident = (value: string) => `"${value.replace(/"/g, '""')}"`;
           const labelForColumn = (column: string, index: number) => {
-            const measureId = measures.length === cols.length ? measures[index] : null;
+            const measureId =
+              measures.length === cols.length ? measures[index] : null;
             return (
               (measureId ? EBPO_MEASURES[measureId]?.label : null) ??
               EBPO_MEASURES[column]?.label ??
               column
             );
           };
-          const currentKeys = cols.map((c, idx) => `${labelForColumn(c, idx)} ${currentYear}`);
-          const priorKeys = cols.map((c, idx) => `${labelForColumn(c, idx)} ${previousYear}`);
+          const currentKeys = cols.map(
+            (c, idx) => `${labelForColumn(c, idx)} ${currentYear}`,
+          );
+          const priorKeys = cols.map(
+            (c, idx) => `${labelForColumn(c, idx)} ${previousYear}`,
+          );
           const projections = cols.flatMap((c, idx) => [
             `_cy.${ident(c)} AS ${ident(currentKeys[idx]!)}`,
             `_py.${ident(c)} AS ${ident(priorKeys[idx]!)}`,
@@ -19688,7 +20680,9 @@ export class AgentService {
             chartType: 'line',
           }).catch(() => null);
           if (!check || check.error || check.rows.length === 0) continue;
-          const baseFormat = measureFormats[0] as NonNullable<DisplayHints['valueFormat']>;
+          const baseFormat = measureFormats[0] as NonNullable<
+            DisplayHints['valueFormat']
+          >;
           const series = [
             ...currentKeys.map((key) => ({
               key,
@@ -19732,7 +20726,10 @@ export class AgentService {
       return null; // multi-year data exists → let the SQL editor handle it
     }
     // The dataset has no invoice-level records, so an invoice count can't be added.
-    if (transform.kind === 'second_axis' && transform.second.measure === 'invoices') {
+    if (
+      transform.kind === 'second_axis' &&
+      transform.second.measure === 'invoices'
+    ) {
       return {
         summary: '',
         add: [],
@@ -19747,7 +20744,9 @@ export class AgentService {
     // unrelated rows.
     const baseIsTimeSeries = (s: string) =>
       !/sample_trial_balance/i.test(s) &&
-      /toStartOf(?:Month|Quarter|Year)|formatDateTime|journal_date|\bdate\b/i.test(s);
+      /toStartOf(?:Month|Quarter|Year)|formatDateTime|journal_date|\bdate\b/i.test(
+        s,
+      );
     // variance ($ change) and growth_pct (% change) both need a time-ordered base.
     const needsPeriod =
       transform.kind === 'variance' ||
@@ -19792,14 +20791,20 @@ export class AgentService {
       }
       const cfg = (w.queryConfig as any) ?? {};
       let sql =
-        typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim() ? cfg.dynamicSql.trim() : null;
+        typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim()
+          ? cfg.dynamicSql.trim()
+          : null;
       if (!sql) continue;
       const chartType = w.chartType as ChartType;
       // QoQ on a non-quarter time base → recompile the spec at quarter grain so the
       // growth is computed over 4 quarterly buckets, not the original monthly rows.
       if (wantsQuarterPeriod) {
         const qSpec = cfg.spec as ChartSpec | undefined;
-        if (qSpec?.measure && qSpec.dimension && qSpec.dimension !== 'quarter') {
+        if (
+          qSpec?.measure &&
+          qSpec.dimension &&
+          qSpec.dimension !== 'quarter'
+        ) {
           const runRows = (s: string) =>
             this.queryRows<Record<string, unknown>>(s, {
               tenantId: scope.tenantId,
@@ -19820,9 +20825,9 @@ export class AgentService {
         noPriorPeriod = true;
         continue;
       }
-      const probe = await this.executeDynamicSqlChecked(sql, scope, { chartType }).catch(
-        () => null,
-      );
+      const probe = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType,
+      }).catch(() => null);
       if (!probe || probe.error || probe.rows.length === 0) continue;
       const cols = Object.keys(probe.rows[0] ?? {});
       if (!cols.includes('name')) continue;
@@ -19845,7 +20850,8 @@ export class AgentService {
         (cfg.spec as ChartSpec | undefined)?.dimension ?? '',
       ).toLowerCase();
       const primaryDimIsTime =
-        !normalizeSpecDim || /\b(month|quarter|year|date|period)\b/.test(normalizeSpecDim);
+        !normalizeSpecDim ||
+        /\b(month|quarter|year|date|period)\b/.test(normalizeSpecDim);
 
       // "Contribution percentages of each cash flow COMPONENT" on a single cash-flow
       // series (e.g. a financing-cash-flow column). The components live as separate
@@ -19853,7 +20859,11 @@ export class AgentService {
       // we expand to the whole family. Re-plan to the 3-component stacked series by
       // month and normalize — the way Power BI shows the components' share — instead of
       // refusing because the ORIGINAL chart was a single series.
-      const CASH_FLOW_COMPONENTS = ['operating_cf', 'investing_cf', 'financing_cf'];
+      const CASH_FLOW_COMPONENTS = [
+        'operating_cf',
+        'investing_cf',
+        'financing_cf',
+      ];
       const baseMeasureId = String(
         (cfg.spec as ChartSpec | undefined)?.measure ?? '',
       ).toLowerCase();
@@ -19862,9 +20872,11 @@ export class AgentService {
         transform.kind === 'normalize' &&
         numeric.length === 1 &&
         /\bcomponent/.test(reqLc) &&
-        (CASH_FLOW_COMPONENTS.includes(baseMeasureId) || /\bcash\s*flow\b/.test(reqLc));
+        (CASH_FLOW_COMPONENTS.includes(baseMeasureId) ||
+          /\bcash\s*flow\b/.test(reqLc));
       if (asksComponentContribution) {
-        const baseSpec = (cfg.spec as ChartSpec | undefined) ?? ({} as ChartSpec);
+        const baseSpec =
+          (cfg.spec as ChartSpec | undefined) ?? ({} as ChartSpec);
         const ct = String(baseSpec.chartType ?? '').toLowerCase();
         const nextSpec: ChartSpec = {
           ...baseSpec,
@@ -19872,7 +20884,10 @@ export class AgentService {
           measures: [...CASH_FLOW_COMPONENTS],
           breakdown: undefined,
           dimension: 'month',
-          chartType: ct === 'area' || ct === 'stacked_area' ? 'stacked_area' : 'stacked_bar',
+          chartType:
+            ct === 'area' || ct === 'stacked_area'
+              ? 'stacked_area'
+              : 'stacked_bar',
           transforms: [{ kind: 'normalize' }],
         };
         const built = await this.specToPlan(
@@ -19883,7 +20898,9 @@ export class AgentService {
           editRequest,
         ).catch(() => null);
         const wd =
-          built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+          built?.kind === 'build'
+            ? (built.plan.dashboard.widgets[0] as any)
+            : null;
         if (wd?._sql) {
           return {
             summary:
@@ -19927,7 +20944,8 @@ export class AgentService {
       // Does the base chart's `value` already represent a period-over-period change?
       // (a `difference` transform — its running sum is a LEVEL, so a cumulative
       // follow-up must cumulate twice to reach cumulative revenue.)
-      const baseTransforms = (cfg.spec as ChartSpec | undefined)?.transforms ?? [];
+      const baseTransforms =
+        (cfg.spec as ChartSpec | undefined)?.transforms ?? [];
       const valueIsChange = baseTransforms.some(
         (t) => (typeof t === 'string' ? t : (t as any)?.kind) === 'difference',
       );
@@ -19946,7 +20964,9 @@ export class AgentService {
       const built = this.buildTransformSql(transform, sql, numeric, {
         chartType,
         valueIsChange,
-        ...(cumulativeBaseLabel ? { cumulativeAlias: `Cumulative ${cumulativeBaseLabel}` } : {}),
+        ...(cumulativeBaseLabel
+          ? { cumulativeAlias: `Cumulative ${cumulativeBaseLabel}` }
+          : {}),
       });
       if (!built) continue;
       if (wantsNegativeHighlight) {
@@ -19967,7 +20987,11 @@ export class AgentService {
         ...(built.display ? { display: built.display } : {}),
         ...(built.yAxisLabel ? { yAxisLabel: built.yAxisLabel } : {}),
       });
-      if (transform.kind === 'cumulative' && cumulativeBaseLabel && !cumulativeLabelForSummary) {
+      if (
+        transform.kind === 'cumulative' &&
+        cumulativeBaseLabel &&
+        !cumulativeLabelForSummary
+      ) {
         cumulativeLabelForSummary = cumulativeBaseLabel;
       }
     }
@@ -20055,7 +21079,9 @@ export class AgentService {
           column !== 'name' &&
           probe.rows.some((row) => {
             const value = (row as any)[column];
-            return value !== null && value !== '' && Number.isFinite(Number(value));
+            return (
+              value !== null && value !== '' && Number.isFinite(Number(value))
+            );
           }),
       );
       if (numeric.length === 0) continue;
@@ -20098,7 +21124,8 @@ export class AgentService {
       };
     }
     return {
-      summary: 'Added a monthly-average comparison indicator for every metric in every dashboard chart.',
+      summary:
+        'Added a monthly-average comparison indicator for every metric in every dashboard chart.',
       add: [],
       remove_indices: [],
       modify,
@@ -20120,12 +21147,17 @@ export class AgentService {
     if (!this.isSameChartFollowUp(editRequest)) return null;
     const asksRevenueYoyGrowth =
       /\brevenue\b/.test(q) &&
-      /\byoy\b|\byear[\s-]*over[\s-]*year\b|\byear[\s-]*on[\s-]*year\b/.test(q) &&
+      /\byoy\b|\byear[\s-]*over[\s-]*year\b|\byear[\s-]*on[\s-]*year\b/.test(
+        q,
+      ) &&
       /\bgrowth\b/.test(q);
     if (!asksRevenueYoyGrowth) return null;
 
     const db = this.analyticsDb;
-    const bind = { tenantId: scope.tenantId, externalOrgIds: scope.externalOrgIds };
+    const bind = {
+      tenantId: scope.tenantId,
+      externalOrgIds: scope.externalOrgIds,
+    };
     const tenantWhere =
       'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
     const buView = `${db}.v_ebpo_revenue_by_business_unit_monthly`;
@@ -20175,7 +21207,12 @@ export class AgentService {
             spec: { ...(spec ?? {}), chartType: 'combo' },
             display: {
               series: [
-                { key: 'Gross Margin %', role: 'bar', axis: 'left', format: 'percent' },
+                {
+                  key: 'Gross Margin %',
+                  role: 'bar',
+                  axis: 'left',
+                  format: 'percent',
+                },
                 {
                   key: 'Revenue YoY Growth %',
                   role: 'line',
@@ -20205,7 +21242,9 @@ export class AgentService {
     if (
       this.isSameChartFollowUp(editRequest) &&
       /\bhighlight\b/.test(q) &&
-      /\bnegative\b|\bbelow\s+zero\b|\bloss(?:es)?\b|\bdeficits?\b|\bshortfalls?\b/.test(q)
+      /\bnegative\b|\bbelow\s+zero\b|\bloss(?:es)?\b|\bdeficits?\b|\bshortfalls?\b/.test(
+        q,
+      )
     ) {
       const modify = activeDashboard.widgets
         .map((widget, index) => ({ widget, index }))
@@ -20223,9 +21262,8 @@ export class AgentService {
           ]).has(t);
         })
         .map(({ widget, index }) => {
-          const existingDisplay = ((widget.queryConfig as any)?.display ?? null) as
-            | DisplayHints
-            | null;
+          const existingDisplay = ((widget.queryConfig as any)?.display ??
+            null) as DisplayHints | null;
           return {
             index,
             display: {
@@ -20247,9 +21285,9 @@ export class AgentService {
     }
 
     const verify = async (sql: string, type: ChartType) => {
-      const check = await this.executeDynamicSqlChecked(sql, scope, { chartType: type }).catch(
-        () => null,
-      );
+      const check = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType: type,
+      }).catch(() => null);
       if (!check || check.error || check.rows.length === 0) return false;
       return !this.detectBadChartShape(check.rows, type);
     };
@@ -20273,7 +21311,9 @@ export class AgentService {
         ).filter((id): id is string => !!id);
         if (measures.length >= 2) {
           const nextType =
-            String(spec.chartType ?? '').toLowerCase() === 'bubble' ? 'bubble' : 'line';
+            String(spec.chartType ?? '').toLowerCase() === 'bubble'
+              ? 'bubble'
+              : 'line';
           const nextSpec: ChartSpec = {
             ...spec,
             dimension: 'month',
@@ -20287,13 +21327,17 @@ export class AgentService {
             scope,
             editRequest,
           ).catch(() => null);
-          const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+          const wd =
+            built?.kind === 'build'
+              ? (built.plan.dashboard.widgets[0] as any)
+              : null;
           if (wd?._sql) {
             const nextTitle =
               this.ebpoProfitAliasTitle(editRequest, nextSpec) ||
               this.ebpoSpecTitle(nextSpec);
             return {
-              summary: 'Changed the chart to a monthly trend for the same measures.',
+              summary:
+                'Changed the chart to a monthly trend for the same measures.',
               add: [],
               remove_indices: [],
               modify: [
@@ -20308,7 +21352,11 @@ export class AgentService {
               ],
             };
           }
-        } else if (typeof spec.topN === 'number' && spec.topN > 0 && !spec.breakdown) {
+        } else if (
+          typeof spec.topN === 'number' &&
+          spec.topN > 0 &&
+          !spec.breakdown
+        ) {
           // Single-measure ranked bar ("top N clients by expenses") → "change it to
           // monthly": the topN ranks the CATEGORICAL dimension (client), not a count of
           // months. Naively swapping dimension→month while leaving topN in place gets
@@ -20337,7 +21385,10 @@ export class AgentService {
             scope,
             editRequest,
           ).catch(() => null);
-          const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+          const wd =
+            built?.kind === 'build'
+              ? (built.plan.dashboard.widgets[0] as any)
+              : null;
           if (wd?._sql) {
             return {
               summary: `Changed the chart to a monthly ${String(spec.chartType ?? '').toLowerCase() === 'bar' ? 'comparison' : 'trend'}, keeping the top ${spec.topN} ${spec.dimension}s compared over time.`,
@@ -20360,7 +21411,9 @@ export class AgentService {
 
       const wantsCountryComparison =
         this.isSameChartFollowUp(editRequest) &&
-        /\bcompare\b[^.]*\bcountr(?:y|ies)\b|\bcountr(?:y|ies)\b[^.]*\bcompare\b/.test(q);
+        /\bcompare\b[^.]*\bcountr(?:y|ies)\b|\bcountr(?:y|ies)\b[^.]*\bcompare\b/.test(
+          q,
+        );
       if (
         wantsCountryComparison &&
         spec?.measure &&
@@ -20385,7 +21438,10 @@ export class AgentService {
           scope,
           editRequest,
         ).catch(() => null);
-        const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+        const wd =
+          built?.kind === 'build'
+            ? (built.plan.dashboard.widgets[0] as any)
+            : null;
         if (wd?._sql) {
           return {
             summary: 'Changed the chart to compare countries over time.',
@@ -20435,11 +21491,25 @@ export class AgentService {
         !/\bby\s+[a-z]/.test(q)
       ) {
         const entityDims = new Set([
-          'client', 'vendor', 'business_unit', 'department', 'country', 'region',
-          'delivery_center', 'industry', 'account', 'asset_type', 'contract_type', 'grade',
+          'client',
+          'vendor',
+          'business_unit',
+          'department',
+          'country',
+          'region',
+          'delivery_center',
+          'industry',
+          'account',
+          'asset_type',
+          'contract_type',
+          'grade',
         ]);
         let next: ChartSpec = { ...spec, recentMonths: winMonths };
-        if (spec.dimension && entityDims.has(spec.dimension) && !spec.breakdown) {
+        if (
+          spec.dimension &&
+          entityDims.has(spec.dimension) &&
+          !spec.breakdown
+        ) {
           next = {
             ...next,
             dimension: 'month',
@@ -20457,7 +21527,10 @@ export class AgentService {
           scope,
           editRequest,
         ).catch(() => null);
-        const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+        const wd =
+          built?.kind === 'build'
+            ? (built.plan.dashboard.widgets[0] as any)
+            : null;
         if (wd?._sql) {
           return {
             summary: `Scoped the chart to the last ${winMonths} month${winMonths === 1 ? '' : 's'}.`,
@@ -20513,7 +21586,8 @@ export class AgentService {
         `;
         if (await verify(sql, 'combo')) {
           return {
-            summary: 'Added CSAT percentage as a line while preserving asset intensity by delivery center.',
+            summary:
+              'Added CSAT percentage as a line while preserving asset intensity by delivery center.',
             add: [],
             remove_indices: [],
             modify: [
@@ -20528,8 +21602,18 @@ export class AgentService {
                   secondaryAxisFormat: 'percent',
                   secondaryLabel: 'CSAT %',
                   series: [
-                    { key: 'asset_intensity', role: 'bar', axis: 'left', format: 'currency' },
-                    { key: 'csat_pct', role: 'line', axis: 'right', format: 'percent' },
+                    {
+                      key: 'asset_intensity',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'currency',
+                    },
+                    {
+                      key: 'csat_pct',
+                      role: 'line',
+                      axis: 'right',
+                      format: 'percent',
+                    },
                   ],
                 },
               },
@@ -20596,7 +21680,12 @@ export class AgentService {
       ) {
         const breakdownSpec: ChartSpec = {
           measure: 'total_base_salary',
-          measures: ['total_base_salary', 'total_overtime', 'total_bonus', 'total_benefits'],
+          measures: [
+            'total_base_salary',
+            'total_overtime',
+            'total_bonus',
+            'total_benefits',
+          ],
           dimension: 'department',
           chartType: 'stacked_bar',
         };
@@ -20607,10 +21696,14 @@ export class AgentService {
           scope,
           editRequest,
         ).catch(() => null);
-        const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+        const wd =
+          built?.kind === 'build'
+            ? (built.plan.dashboard.widgets[0] as any)
+            : null;
         if (wd?._sql) {
           return {
-            summary: 'Broke payroll down into base salary, overtime, bonus, and benefits by department.',
+            summary:
+              'Broke payroll down into base salary, overtime, bonus, and benefits by department.',
             add: [],
             remove_indices: [],
             modify: [
@@ -20628,7 +21721,8 @@ export class AgentService {
 
       const wantsAverageReferenceLine =
         (/\b(?:average|avg|mean)\b/.test(q) &&
-          (/\breference\s+line\b/.test(q) || /\baverage\b[^.]*\bline\b/.test(q))) ||
+          (/\breference\s+line\b/.test(q) ||
+            /\baverage\b[^.]*\bline\b/.test(q))) ||
         (/\boverall\b/.test(q) && /\breference\s+line\b/.test(q));
       const wantsAverageOutstandingBalance =
         /\b(?:average|avg|mean)\b[^.]*\boutstanding\s+balance\b/.test(q) ||
@@ -20636,7 +21730,9 @@ export class AgentService {
       if (
         spec &&
         wantsAverageOutstandingBalance &&
-        ['ar_outstanding', 'ap_outstanding', 'cash_balance'].includes(String(spec.measure ?? '')) &&
+        ['ar_outstanding', 'ap_outstanding', 'cash_balance'].includes(
+          String(spec.measure ?? ''),
+        ) &&
         spec.dimension === 'month'
       ) {
         const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
@@ -20683,8 +21779,11 @@ export class AgentService {
           spec.measures?.length ? spec.measures : [spec.measure]
         ).filter((id): id is string => !!id);
         const displaySeriesMeasureIds = (priorDisplay.series ?? [])
-          .map((series) =>
-            Object.entries(EBPO_MEASURES).find(([, def]) => def.label === series.key)?.[0] ?? null,
+          .map(
+            (series) =>
+              Object.entries(EBPO_MEASURES).find(
+                ([, def]) => def.label === series.key,
+              )?.[0] ?? null,
           )
           .filter((id): id is string => !!id);
         const mentionedMeasures = this.detectEbpoMeasureMentions(q);
@@ -20695,13 +21794,15 @@ export class AgentService {
         const percentMeasuresInDisplay = displaySeriesMeasureIds.filter(
           (id) => EBPO_MEASURES[id]?.format === 'percent',
         );
-        const mentionedMeasureInChart = mentionedMeasures.find((id) => measures.includes(id));
+        const mentionedMeasureInChart = mentionedMeasures.find((id) =>
+          measures.includes(id),
+        );
         const targetMeasure =
           (wantsPercentMeasure
-            ? (mentionedMeasureInChart &&
-                EBPO_MEASURES[mentionedMeasureInChart]?.format === 'percent'
-                ? mentionedMeasureInChart
-                : percentMeasuresInChart[0] ?? percentMeasuresInDisplay[0])
+            ? mentionedMeasureInChart &&
+              EBPO_MEASURES[mentionedMeasureInChart]?.format === 'percent'
+              ? mentionedMeasureInChart
+              : (percentMeasuresInChart[0] ?? percentMeasuresInDisplay[0])
             : undefined) ??
           mentionedMeasureInChart ??
           mentionedMeasures[0] ??
@@ -20710,11 +21811,14 @@ export class AgentService {
             ? measures.find((id) => EBPO_MEASURES[id]?.format === 'percent')
             : undefined);
         if (targetMeasure) {
-          const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
-            this.queryRows<Record<string, unknown>>(sql, {
-              tenantId: scope.tenantId,
-              externalOrgIds: scope.externalOrgIds,
-            }),
+          const compiled = await compileEbpoSpec(
+            spec,
+            this.analyticsDb,
+            (sql) =>
+              this.queryRows<Record<string, unknown>>(sql, {
+                tenantId: scope.tenantId,
+                externalOrgIds: scope.externalOrgIds,
+              }),
           );
           if (compiled.ok) {
             const def = EBPO_MEASURES[targetMeasure]!;
@@ -20793,7 +21897,9 @@ export class AgentService {
                 LIMIT 1000
               `;
               const priorDisplay = (cfg.display ?? {}) as DisplayHints;
-              const targetRole = priorDisplay.series?.find((s) => s.key === sourceKey);
+              const targetRole = priorDisplay.series?.find(
+                (s) => s.key === sourceKey,
+              );
               referenceAxis = targetRole?.axis ?? 'left';
             }
 
@@ -20835,7 +21941,9 @@ export class AgentService {
       if (
         w.chartType === 'waterfall' &&
         /\blabels?\b/.test(q) &&
-        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(q)
+        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(
+          q,
+        )
       ) {
         const labelKey = 'Gross Margin % Label';
         const sql = `
@@ -20887,7 +21995,9 @@ export class AgentService {
         /\blabels?\b/.test(q)
       ) {
         const existingMeasures = new Set(
-          (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean),
+          (spec.measures?.length ? spec.measures : [spec.measure]).filter(
+            Boolean,
+          ),
         );
         const labelMeasure = this.detectEbpoMeasureMentions(q).find(
           (id) => !existingMeasures.has(id),
@@ -20956,7 +22066,9 @@ export class AgentService {
 
       if (spec?.breakdown && /\blabels?\b/.test(q)) {
         const existingMeasures = new Set(
-          (spec.measures?.length ? spec.measures : [spec.measure]).filter(Boolean),
+          (spec.measures?.length ? spec.measures : [spec.measure]).filter(
+            Boolean,
+          ),
         );
         const labelMeasure = this.detectEbpoMeasureMentions(q).find(
           (id) => !existingMeasures.has(id),
@@ -21141,7 +22253,9 @@ export class AgentService {
           if (await verify(sql, w.chartType as ChartType)) {
             const measureLabel =
               EBPO_MEASURES[String(spec.measure ?? '')]?.label ??
-              this.prettifyChartTitle(String(spec.measure ?? 'Value').replace(/_/g, ' '));
+              this.prettifyChartTitle(
+                String(spec.measure ?? 'Value').replace(/_/g, ' '),
+              );
             const varianceTitle = this.prettifyChartTitle(
               `${measureLabel} Variance from Average${
                 spec.dimension && spec.dimension !== 'month'
@@ -21173,7 +22287,8 @@ export class AgentService {
                         yAxisLabel: 'Revenue vs company average',
                         display: {
                           valueFormat:
-                            EBPO_MEASURES[String(spec.measure ?? '')]?.format ?? null,
+                            EBPO_MEASURES[String(spec.measure ?? '')]?.format ??
+                            null,
                           highlightNegative: true,
                         },
                       }
@@ -21185,7 +22300,9 @@ export class AgentService {
                       : {
                           yAxisLabel: 'Variance from average',
                           display: {
-                            valueFormat: EBPO_MEASURES[String(spec.measure ?? '')]?.format ?? null,
+                            valueFormat:
+                              EBPO_MEASURES[String(spec.measure ?? '')]
+                                ?.format ?? null,
                           },
                         }),
                 },
@@ -21195,7 +22312,11 @@ export class AgentService {
         }
       }
 
-      if (spec && /\bcumulative\b/.test(q) && /\bpercent|percentage|%\b/.test(q)) {
+      if (
+        spec &&
+        /\bcumulative\b/.test(q) &&
+        /\bpercent|percentage|%\b/.test(q)
+      ) {
         const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
           this.queryRows<Record<string, unknown>>(sql, {
             tenantId: scope.tenantId,
@@ -21226,7 +22347,10 @@ export class AgentService {
                   type: 'combo',
                   dynamicSql: sql.trim(),
                   yAxisLabel: '% cumulative',
-                  display: { secondaryAxisFormat: 'percent', secondaryLabel: 'Cumulative %' },
+                  display: {
+                    secondaryAxisFormat: 'percent',
+                    secondaryLabel: 'Cumulative %',
+                  },
                 },
               ],
             };
@@ -21239,23 +22363,30 @@ export class AgentService {
           String(w.chartType ?? '').toLowerCase() === 'heatmap' ||
           String(w.chartType ?? '').toLowerCase() === 'matrix';
         if (isHeatmapLike) {
-          const hints: DisplayHints = { showTotals: true, conditionalColor: 'green' };
-          if (/\bhighest|largest|max\b/.test(q)) hints.conditionalThresholdMode = 'overallAverage';
+          const hints: DisplayHints = {
+            showTotals: true,
+            conditionalColor: 'green',
+          };
+          if (/\bhighest|largest|max\b/.test(q))
+            hints.conditionalThresholdMode = 'overallAverage';
           hints.conditionalColor = this.inferMatrixConditionalColor(q);
-          const compiled = await compileEbpoSpec(spec, this.analyticsDb, (sql) =>
-            this.queryRows<Record<string, unknown>>(sql, {
-              tenantId: scope.tenantId,
-              externalOrgIds: scope.externalOrgIds,
-            }),
+          const compiled = await compileEbpoSpec(
+            spec,
+            this.analyticsDb,
+            (sql) =>
+              this.queryRows<Record<string, unknown>>(sql, {
+                tenantId: scope.tenantId,
+                externalOrgIds: scope.externalOrgIds,
+              }),
           );
-          const dynamicSql =
-            compiled.ok
-              ? compiled.sql
-              : typeof cfg.dynamicSql === 'string'
-                ? cfg.dynamicSql.trim()
-                : '';
+          const dynamicSql = compiled.ok
+            ? compiled.sql
+            : typeof cfg.dynamicSql === 'string'
+              ? cfg.dynamicSql.trim()
+              : '';
           return {
-            summary: 'Applied heatmap highlighting to the existing verified data.',
+            summary:
+              'Applied heatmap highlighting to the existing verified data.',
             add: [],
             remove_indices: [],
             modify: [
@@ -21297,7 +22428,8 @@ export class AgentService {
         `;
         if (await verify(sql, 'combo')) {
           return {
-            summary: 'Added net book value share by asset type on a percentage basis.',
+            summary:
+              'Added net book value share by asset type on a percentage basis.',
             add: [],
             remove_indices: [],
             modify: [
@@ -21310,7 +22442,13 @@ export class AgentService {
                   valueFormat: 'percent',
                   valueDecimals: 1,
                   series: [
-                    { key: 'Asset Cost', role: 'bar', axis: 'left', format: 'percent', decimals: 1 },
+                    {
+                      key: 'Asset Cost',
+                      role: 'bar',
+                      axis: 'left',
+                      format: 'percent',
+                      decimals: 1,
+                    },
                     {
                       key: 'Net Book Value',
                       role: 'bar',
@@ -21331,7 +22469,8 @@ export class AgentService {
         /\bcolou?r\b|\bshade\b/.test(q) &&
         /\bdepreciation\b/.test(q) &&
         /\bpercent(?:age)?\b|\bpct\b|%/.test(q) &&
-        (spec?.measure === 'net_book_value' || /\bnet\s+book\s+value\b/.test(String(w.title ?? '').toLowerCase()))
+        (spec?.measure === 'net_book_value' ||
+          /\bnet\s+book\s+value\b/.test(String(w.title ?? '').toLowerCase()))
       ) {
         const sql = `
           SELECT
@@ -21386,27 +22525,36 @@ export class AgentService {
 
       const comboSpec = spec ? this.buildEbpoComboEditSpec(spec, q) : null;
       const currentMeasures = new Set(
-        (spec?.measures?.length ? spec.measures : spec?.measure ? [spec.measure] : []).filter(
-          Boolean,
-        ) as string[],
+        (spec?.measures?.length
+          ? spec.measures
+          : spec?.measure
+            ? [spec.measure]
+            : []
+        ).filter(Boolean) as string[],
       );
       const extraMeasures = comboSpec
         ? (comboSpec.measures ?? []).filter(
             (id): id is string => !!id && !currentMeasures.has(id),
           )
         : spec
-          ? this.detectEbpoAdditionalMeasures(q).filter((id) => id !== spec.measure)
+          ? this.detectEbpoAdditionalMeasures(q).filter(
+              (id) => id !== spec.measure,
+            )
           : [];
       const needsDerivedEbpoFormula =
         (spec?.measure === 'free_cash_flow' &&
           spec.dimension === 'month' &&
-          /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(q)) ||
+          /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(
+            q,
+          )) ||
         (spec?.measure === 'operating_cf' &&
           spec.dimension === 'month' &&
           /\bfree\s+cash\s+flow\s+margin\b/.test(q)) ||
         (spec?.measure === 'cash_balance' &&
           spec.dimension === 'month' &&
-          /\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(q)) ||
+          /\boutstanding\s+payables?\b|\bap\s+outstanding\b|\bpayables?\b/.test(
+            q,
+          )) ||
         (spec?.measure === 'asset_cost' &&
           spec.dimension === 'asset_type' &&
           /\bnet\s+book\s+value\b/.test(q) &&
@@ -21420,18 +22568,26 @@ export class AgentService {
       // company-wide view) AND dropped the pre-existing measures, keeping only the newly
       // added one. Detect this shape (marked by periodEntityLabels on the widget) and
       // regenerate the full per-year UNION SQL with the combined measure list instead.
-      const periodEntityLabels = (cfg.display as { periodEntityLabels?: unknown } | undefined)
-        ?.periodEntityLabels;
+      const periodEntityLabels = (
+        cfg.display as { periodEntityLabels?: unknown } | undefined
+      )?.periodEntityLabels;
       const isPerYearLargestClientChart =
         Array.isArray(periodEntityLabels) &&
         periodEntityLabels.length > 0 &&
         (spec?.filters ?? []).some((f) => {
-          if (!/client|customer/i.test(String((f as any)?.dimension ?? ''))) return false;
-          const values = Array.isArray((f as any)?.values) ? (f as any).values : [];
-          return values.some((v: unknown) => this.parseClientSuperlative(String(v)) !== null);
+          if (!/client|customer/i.test(String((f as any)?.dimension ?? '')))
+            return false;
+          const values = Array.isArray((f as any)?.values)
+            ? (f as any).values
+            : [];
+          return values.some(
+            (v: unknown) => this.parseClientSuperlative(String(v)) !== null,
+          );
         });
       if (spec && isPerYearLargestClientChart && extraMeasures.length > 0) {
-        const allMeasures = Array.from(new Set([...currentMeasures, ...extraMeasures]));
+        const allMeasures = Array.from(
+          new Set([...currentMeasures, ...extraMeasures]),
+        );
         const stitchableMeasures = allMeasures.filter(
           (m) => !!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[m],
         );
@@ -21441,9 +22597,15 @@ export class AgentService {
             stitchableMeasures,
           ).catch(() => null);
           if (stitched) {
-            const check = await this.executeDynamicSqlChecked(stitched.sql, scope, {
-              chartType: (w.chartType ?? spec.chartType ?? 'stacked_bar') as any,
-            }).catch(() => null);
+            const check = await this.executeDynamicSqlChecked(
+              stitched.sql,
+              scope,
+              {
+                chartType: (w.chartType ??
+                  spec.chartType ??
+                  'stacked_bar') as any,
+              },
+            ).catch(() => null);
             if (check && !check.error && check.rows.length > 0) {
               // Recompute per-series combo roles for the new measure set so the follow-up
               // renders with the right shapes (and the added series is reshapeable) instead
@@ -21462,7 +22624,11 @@ export class AgentService {
                     index: i,
                     type: combo.type,
                     dynamicSql: stitched.sql,
-                    spec: { ...spec, measures: stitchableMeasures, chartType: combo.type },
+                    spec: {
+                      ...spec,
+                      measures: stitchableMeasures,
+                      chartType: combo.type,
+                    },
                     display: {
                       ...((cfg.display ?? {}) as DisplayHints),
                       periodEntityLabels: stitched.perYearClient,
@@ -21471,7 +22637,8 @@ export class AgentService {
                             series: combo.series,
                             ...(combo.secondaryAxisFormat
                               ? {
-                                  secondaryAxisFormat: combo.secondaryAxisFormat,
+                                  secondaryAxisFormat:
+                                    combo.secondaryAxisFormat,
                                   secondaryLabel: combo.secondaryLabel,
                                 }
                               : {}),
@@ -21547,7 +22714,9 @@ export class AgentService {
 
       if (
         !spec &&
-        /\bpayable|payables|invoice|outstanding\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\bpayable|payables|invoice|outstanding\b/.test(
+          String(w.title ?? '').toLowerCase(),
+        ) &&
         /\bpayment\s+rate\b|\bpaid\s+rate\b/.test(q)
       ) {
         const byMonth =
@@ -21593,7 +22762,10 @@ export class AgentService {
                 index: i,
                 type: 'combo',
                 dynamicSql: sql.trim(),
-                display: { secondaryAxisFormat: 'percent', secondaryLabel: 'Payment rate' },
+                display: {
+                  secondaryAxisFormat: 'percent',
+                  secondaryLabel: 'Payment rate',
+                },
               },
             ],
           };
@@ -21628,7 +22800,9 @@ export class AgentService {
 
       if (
         !spec &&
-        /\bpayroll\s+as\s+a\s+percentage\s+of\s+revenue\b|\bpayroll\s+to\s+revenue\b/.test(q) &&
+        /\bpayroll\s+as\s+a\s+percentage\s+of\s+revenue\b|\bpayroll\s+to\s+revenue\b/.test(
+          q,
+        ) &&
         /\bbusiness\s+unit\b/.test(String(w.title ?? '').toLowerCase())
       ) {
         const sql = `
@@ -21699,7 +22873,10 @@ export class AgentService {
                 index: i,
                 type: 'combo',
                 dynamicSql: sql.trim(),
-                display: { secondaryAxisFormat: 'percent', secondaryLabel: 'Payroll / revenue' },
+                display: {
+                  secondaryAxisFormat: 'percent',
+                  secondaryLabel: 'Payroll / revenue',
+                },
               },
             ],
           };
@@ -21761,36 +22938,43 @@ export class AgentService {
         `;
         if (await verify(sql, 'bubble')) {
           return {
-            summary: 'Added payroll cost as bubble size using a country payroll allocation by employee share.',
+            summary:
+              'Added payroll cost as bubble size using a country payroll allocation by employee share.',
             add: [],
             remove_indices: [],
             modify: [
-	              {
-	                index: i,
-	                type: 'bubble',
-	                dynamicSql: sql.trim(),
-                  spec: {
-                    measure: 'utilization_pct',
-                    measures: ['utilization_pct', 'employee_count', 'total_payroll'],
-                    dimension: 'delivery_center',
-                    chartType: 'bubble',
-                  },
-                  display: {
-                    valueFormat: 'percent',
-                    valueDecimals: 1,
-                  },
-                  xAxisLabel: 'Utilization %',
-                  yAxisLabel: 'Employee Count',
-	              },
-	            ],
-	          };
+              {
+                index: i,
+                type: 'bubble',
+                dynamicSql: sql.trim(),
+                spec: {
+                  measure: 'utilization_pct',
+                  measures: [
+                    'utilization_pct',
+                    'employee_count',
+                    'total_payroll',
+                  ],
+                  dimension: 'delivery_center',
+                  chartType: 'bubble',
+                },
+                display: {
+                  valueFormat: 'percent',
+                  valueDecimals: 1,
+                },
+                xAxisLabel: 'Utilization %',
+                yAxisLabel: 'Employee Count',
+              },
+            ],
+          };
         }
       }
 
       if (
         !spec &&
         /\bnet\s+movement\b/.test(String(w.title ?? '').toLowerCase()) &&
-        /\bdebits?\b|\bcredits?\b|\bdebit\s+impact\b|\bcredit\s+impact\b/.test(q)
+        /\bdebits?\b|\bcredits?\b|\bdebit\s+impact\b|\bcredit\s+impact\b/.test(
+          q,
+        )
       ) {
         const sql = `
           SELECT
@@ -21808,7 +22992,8 @@ export class AgentService {
         `;
         if (await verify(sql, 'waterfall')) {
           return {
-            summary: 'Added debit and credit impact labels from verified trial-balance movement columns.',
+            summary:
+              'Added debit and credit impact labels from verified trial-balance movement columns.',
             add: [],
             remove_indices: [],
             modify: [
@@ -21825,7 +23010,9 @@ export class AgentService {
 
       if (
         !spec &&
-        /\b(opening|closing)\s+balance\b/.test(String(w.title ?? '').toLowerCase()) &&
+        /\b(opening|closing)\s+balance\b/.test(
+          String(w.title ?? '').toLowerCase(),
+        ) &&
         /\blargest\b|\bhighest\b|\bbiggest\b/.test(q) &&
         /\bbalance\s+movement\b|\bmovement\b/.test(q)
       ) {
@@ -21861,9 +23048,16 @@ export class AgentService {
 
       if (
         spec?.measure === 'employee_count' &&
-        /\baverage(?:\s+monthly)?\s+salary\b|\bavg(?:\s+monthly)?\s+salary\b/.test(q)
+        /\baverage(?:\s+monthly)?\s+salary\b|\bavg(?:\s+monthly)?\s+salary\b/.test(
+          q,
+        )
       ) {
-        const dim = spec.dimension === 'country' ? 'country' : spec.dimension === 'department' ? 'department' : null;
+        const dim =
+          spec.dimension === 'country'
+            ? 'country'
+            : spec.dimension === 'department'
+              ? 'department'
+              : null;
         if (dim) {
           const sql = `
             SELECT
@@ -21880,7 +23074,8 @@ export class AgentService {
           `;
           if (await verify(sql, 'combo')) {
             return {
-              summary: 'Added average salary labels from the employee headcount view.',
+              summary:
+                'Added average salary labels from the employee headcount view.',
               add: [],
               remove_indices: [],
               modify: [
@@ -21888,7 +23083,10 @@ export class AgentService {
                   index: i,
                   type: 'combo',
                   dynamicSql: sql.trim(),
-                  display: { secondaryAxisFormat: 'currency', secondaryLabel: 'Average salary' },
+                  display: {
+                    secondaryAxisFormat: 'currency',
+                    secondaryLabel: 'Average salary',
+                  },
                 },
               ],
             };
@@ -21898,7 +23096,9 @@ export class AgentService {
 
       if (
         spec?.measure === 'total_payroll' &&
-        /\baverage(?:\s+monthly)?\s+salary\b|\bavg(?:\s+monthly)?\s+salary\b/.test(q)
+        /\baverage(?:\s+monthly)?\s+salary\b|\bavg(?:\s+monthly)?\s+salary\b/.test(
+          q,
+        )
       ) {
         const dim =
           spec.dimension === 'country'
@@ -21940,7 +23140,8 @@ export class AgentService {
           `;
           if (await verify(sql, 'combo')) {
             return {
-              summary: 'Added average monthly salary as a comparison line while keeping payroll by group.',
+              summary:
+                'Added average monthly salary as a comparison line while keeping payroll by group.',
               add: [],
               remove_indices: [],
               modify: [
@@ -21948,7 +23149,10 @@ export class AgentService {
                   index: i,
                   type: 'combo',
                   dynamicSql: sql.trim(),
-                  display: { secondaryAxisFormat: 'currency', secondaryLabel: 'Average monthly salary' },
+                  display: {
+                    secondaryAxisFormat: 'currency',
+                    secondaryLabel: 'Average monthly salary',
+                  },
                 },
               ],
             };
@@ -21959,7 +23163,9 @@ export class AgentService {
       if (
         spec?.measure === 'free_cash_flow' &&
         spec.dimension === 'month' &&
-        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(q)
+        /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(
+          q,
+        )
       ) {
         const sql = `
           SELECT
@@ -21977,7 +23183,14 @@ export class AgentService {
             summary: 'Added gross margin percentage as a comparison line.',
             add: [],
             remove_indices: [],
-            modify: [{ index: i, type: 'combo', dynamicSql: sql.trim(), yAxisLabel: '%' }],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                yAxisLabel: '%',
+              },
+            ],
           };
         }
       }
@@ -22054,7 +23267,12 @@ export class AgentService {
                     secondaryAxisFormat: 'percent',
                     secondaryLabel: 'Overtime / payroll',
                     series: [
-                      { key: 'total_overtime', role: 'bar', axis: 'left', format: 'currency' },
+                      {
+                        key: 'total_overtime',
+                        role: 'bar',
+                        axis: 'left',
+                        format: 'currency',
+                      },
                       {
                         key: 'overtime_to_payroll_pct',
                         role: 'line',
@@ -22118,7 +23336,8 @@ export class AgentService {
         `;
         if (await verify(sql, 'bar')) {
           return {
-            summary: 'Added payroll and gross margin alongside revenue by business unit.',
+            summary:
+              'Added payroll and gross margin alongside revenue by business unit.',
             add: [],
             remove_indices: [],
             modify: [{ index: i, type: 'bar', dynamicSql: sql.trim() }],
@@ -22176,7 +23395,14 @@ export class AgentService {
             summary: 'Added free cash flow margin as a comparison line.',
             add: [],
             remove_indices: [],
-            modify: [{ index: i, type: 'combo', dynamicSql: sql.trim(), yAxisLabel: '% of revenue' }],
+            modify: [
+              {
+                index: i,
+                type: 'combo',
+                dynamicSql: sql.trim(),
+                yAxisLabel: '% of revenue',
+              },
+            ],
           };
         }
       }
@@ -22195,7 +23421,9 @@ export class AgentService {
           'revenue_per_employee',
           'fcf_margin_pct',
         ].filter((id) => this.detectEbpoMeasureMentions(q).includes(id));
-        const measures = Array.from(new Set([...existingMeasures, ...validRequested]));
+        const measures = Array.from(
+          new Set([...existingMeasures, ...validRequested]),
+        );
         const nextSpec: ChartSpec = {
           measure: measures[0],
           measures,
@@ -22341,7 +23569,10 @@ export class AgentService {
         scope,
         editRequest,
       ).catch(() => null);
-      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      const wd =
+        built?.kind === 'build'
+          ? (built.plan.dashboard.widgets[0] as any)
+          : null;
       if (wd?._sql) {
         const primaryLabel = EBPO_DIMENSIONS[primary]?.label ?? primary;
         const targetLabel = EBPO_DIMENSIONS[targetDim]?.label ?? targetDim;
@@ -22384,7 +23615,8 @@ export class AgentService {
     editRequest: string,
   ): 'value_desc' | 'value_asc' | 'name_asc' | null {
     const q = String(editRequest ?? '').toLowerCase();
-    const hasSortVerb = /\b(sort|re-?order|reorder|arrange|order(?:ed)?|rank(?:ed)?)\b/.test(q);
+    const hasSortVerb =
+      /\b(sort|re-?order|reorder|arrange|order(?:ed)?|rank(?:ed)?)\b/.test(q);
     const asc =
       /\b(lowest\s+to\s+highest|low\s+to\s+high|smallest\s+to\s+(?:largest|biggest|highest)|least\s+to\s+(?:most|greatest)|ascending|\basc\b|bottom\s+to\s+top|increasing)\b/.test(
         q,
@@ -22393,7 +23625,8 @@ export class AgentService {
       /\b(highest\s+to\s+lowest|high\s+to\s+low|largest\s+to\s+smallest|biggest\s+to\s+smallest|greatest\s+to\s+least|most\s+to\s+least|descending|\bdesc\b|top\s+to\s+bottom|decreasing)\b/.test(
         q,
       );
-    const byName = /\b(alphabetical(?:ly)?|by\s+name|a\s*(?:-|to|–)\s*z)\b/.test(q);
+    const byName =
+      /\b(alphabetical(?:ly)?|by\s+name|a\s*(?:-|to|–)\s*z)\b/.test(q);
     if (byName && (hasSortVerb || asc || desc)) return 'name_asc';
     if (asc) return 'value_asc';
     if (desc) return 'value_desc';
@@ -22444,7 +23677,10 @@ export class AgentService {
         scope,
         editRequest,
       ).catch(() => null);
-      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      const wd =
+        built?.kind === 'build'
+          ? (built.plan.dashboard.widgets[0] as any)
+          : null;
       if (wd?._sql) {
         const dirLabel =
           sort === 'value_asc'
@@ -22492,7 +23728,8 @@ export class AgentService {
       const cfg = (w.queryConfig as any) ?? {};
       const spec = cfg.spec as ChartSpec | undefined;
       if (!spec?.measure) continue;
-      if (spec.dimension === targetDim || spec.breakdown === targetDim) continue;
+      if (spec.dimension === targetDim || spec.breakdown === targetDim)
+        continue;
       const nextSpec: ChartSpec = {
         ...spec,
         dimension: targetDim,
@@ -22509,10 +23746,14 @@ export class AgentService {
         scope,
         editRequest,
       ).catch(() => null);
-      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      const wd =
+        built?.kind === 'build'
+          ? (built.plan.dashboard.widgets[0] as any)
+          : null;
       if (wd?._sql) {
         const nextTitle =
-          this.ebpoProfitAliasTitle(editRequest, nextSpec) || this.ebpoSpecTitle(nextSpec);
+          this.ebpoProfitAliasTitle(editRequest, nextSpec) ||
+          this.ebpoSpecTitle(nextSpec);
         return {
           summary: `Regrouped the chart by ${EBPO_DIMENSIONS[targetDim]?.label ?? targetDim}.`,
           add: [],
@@ -22549,9 +23790,11 @@ export class AgentService {
   // sample_gl_dump column expressions per pivot axis (mirror of the closure inside
   // buildExpensePivot) so vocab reconstruction can build the SAME data via a single
   // WIDE SQL the SQL-first edit pipeline can rewrite.
-  private glPivotAxisExpr(
-    axis: PivotAxis,
-  ): { labelExpr: string; sortExpr: string; notEmpty: string } {
+  private glPivotAxisExpr(axis: PivotAxis): {
+    labelExpr: string;
+    sortExpr: string;
+    notEmpty: string;
+  } {
     switch (axis) {
       case 'month':
         return {
@@ -22622,8 +23865,7 @@ export class AgentService {
     // Single-axis expense → simple ranked bar (name + value).
     if (parts.length === 1) {
       const ax = this.glPivotAxisExpr(parts[0] as PivotAxis);
-      const order =
-        parts[0] === 'month' ? `${ax.sortExpr} ASC` : `value DESC`;
+      const order = parts[0] === 'month' ? `${ax.sortExpr} ASC` : `value DESC`;
       return `SELECT ${ax.labelExpr} AS name, round(sum(toFloat64(debit)), 0) AS value FROM ${tbl} WHERE ${SCOPE_WHERE} AND toFloat64(debit) > 0 AND ${ax.notEmpty} GROUP BY ${ax.sortExpr} ORDER BY ${order} LIMIT 100`;
     }
 
@@ -22714,7 +23956,8 @@ export class AgentService {
     const widgets = await Promise.all(
       ad.widgets.map(async (w) => {
         const cfg = (w.queryConfig as any) ?? {};
-        if (typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim()) return w;
+        if (typeof cfg.dynamicSql === 'string' && cfg.dynamicSql.trim())
+          return w;
         if (!cfg.metric && !cfg.grouping) return w;
         // Prefer deterministic reconstruction from the structured metric+grouping
         // (correct columns, no title guessing); fall back to title synthesis.
@@ -22749,7 +23992,12 @@ export class AgentService {
           return w;
         return {
           ...w,
-          queryConfig: { ...cfg, dynamicSql: sql, metric: 'dynamic', grouping: 'query' },
+          queryConfig: {
+            ...cfg,
+            dynamicSql: sql,
+            metric: 'dynamic',
+            grouping: 'query',
+          },
         };
       }),
     );
@@ -22778,24 +24026,36 @@ export class AgentService {
     };
     const bits: string[] = [];
     if (next.chartType !== prev.chartType)
-      bits.push(`switched it to a ${this.humanizeChartType(next.chartType) ?? next.chartType}`);
+      bits.push(
+        `switched it to a ${this.humanizeChartType(next.chartType) ?? next.chartType}`,
+      );
     if (next.measure !== prev.measure)
-      bits.push(`now showing ${(CATALOG.MEASURES[next.measure]?.label ?? next.measure).toLowerCase()}`);
+      bits.push(
+        `now showing ${(CATALOG.MEASURES[next.measure]?.label ?? next.measure).toLowerCase()}`,
+      );
     if (next.dimension !== prev.dimension)
-      bits.push(`grouped by ${CATALOG.DIMENSIONS[next.dimension]?.label?.toLowerCase() ?? next.dimension}`);
+      bits.push(
+        `grouped by ${CATALOG.DIMENSIONS[next.dimension]?.label?.toLowerCase() ?? next.dimension}`,
+      );
     if ((next.breakdown ?? null) !== (prev.breakdown ?? null))
-      bits.push(next.breakdown ? `broken down by ${CATALOG.DIMENSIONS[next.breakdown]?.label?.toLowerCase() ?? next.breakdown}` : 'removed the breakdown');
+      bits.push(
+        next.breakdown
+          ? `broken down by ${CATALOG.DIMENSIONS[next.breakdown]?.label?.toLowerCase() ?? next.breakdown}`
+          : 'removed the breakdown',
+      );
     if ((next.topN ?? null) !== (prev.topN ?? null) && next.topN)
       bits.push(`limited to ${next.topN}`);
     if ((next.sort ?? null) !== (prev.sort ?? null)) {
       if (next.sort === 'value_desc') bits.push('ranked to the highest (top)');
-      else if (next.sort === 'value_asc') bits.push('ranked to the lowest (least)');
+      else if (next.sort === 'value_asc')
+        bits.push('ranked to the lowest (least)');
     }
     const oldT = (prev.transforms ?? []).map(tname);
     for (const t of (next.transforms ?? []).map(tname))
       if (t && !oldT.includes(t)) bits.push(TLABEL[t] ?? String(t));
     if (next.having && !prev.having) bits.push('applied a value threshold');
-    if (labelMode === 'value') bits.push('showing values instead of percentages');
+    if (labelMode === 'value')
+      bits.push('showing values instead of percentages');
     else if (labelMode === 'percent') bits.push('showing percentages');
     if (bits.length === 0) return 'Refreshed the chart.';
     const s = bits.join(', ');
@@ -22805,7 +24065,10 @@ export class AgentService {
   // Match catalogued EBPO measures NAMED in an "add a measure" follow-up and return
   // the updated spec with measures[] (a real combo), or null when the request is not
   // a measure-add (e.g. a pure transform/label ask) or no single view can plot them.
-  private buildEbpoComboEditSpec(currentSpec: ChartSpec, req: string): ChartSpec | null {
+  private buildEbpoComboEditSpec(
+    currentSpec: ChartSpec,
+    req: string,
+  ): ChartSpec | null {
     // Normalize so "percentage"/"percent"/"pct"/"%" all compare equal, and strip
     // unit suffixes like "(min)"/"(days)" from measure labels.
     const norm = (s: string) =>
@@ -22820,7 +24083,9 @@ export class AgentService {
 
     const additive =
       this.isAdditiveSameChartRequest(req) ||
-      /\b(add|also|include|compare|comparison|alongside|another|plus|overlay|versus|vs)\b/.test(q) ||
+      /\b(add|also|include|compare|comparison|alongside|another|plus|overlay|versus|vs)\b/.test(
+        q,
+      ) ||
       /\bsplit\b.*\binto\b/.test(q) ||
       /\bas (?:a|another) (?:line|column|bar|series)\b/.test(q) ||
       /\bsecond (?:line|series|bar|column|axis)\b/.test(q);
@@ -22835,7 +24100,9 @@ export class AgentService {
     ).filter((m): m is string => !!m);
     if (current.length === 0) return null;
 
-    const mentioned = this.detectEbpoMeasureMentions(req).filter((mid) => !current.includes(mid));
+    const mentioned = this.detectEbpoMeasureMentions(req).filter(
+      (mid) => !current.includes(mid),
+    );
     if (
       current.includes('total_revenue') &&
       /\byear[\s-]*over[\s-]*year\b|\byoy\b/.test(q) &&
@@ -22860,7 +24127,9 @@ export class AgentService {
       norm(s)
         .trim()
         .split(' ')
-        .filter((w) => w.length >= 4 && !['of', 'the', 'per', 'and'].includes(w));
+        .filter(
+          (w) => w.length >= 4 && !['of', 'the', 'per', 'and'].includes(w),
+        );
 
     // The significant tokens must appear in the request IN ORDER (not necessarily
     // contiguous) — "payroll to revenue" matches the "Payroll / Revenue %" tokens
@@ -22880,7 +24149,9 @@ export class AgentService {
 
     const matched: string[] = [...mentioned];
     const explicitPercentLike =
-      /\bpercent(?:age)?\b|\bpct\b|%|\bratio\b|\brate\b/.test(req.toLowerCase());
+      /\bpercent(?:age)?\b|\bpct\b|%|\bratio\b|\brate\b/.test(
+        req.toLowerCase(),
+      );
     for (const [mid, def] of Object.entries(EBPO_MEASURES)) {
       if (current.includes(mid) || matched.includes(mid)) continue;
       if (def.format === 'percent' && !explicitPercentLike) continue;
@@ -22890,7 +24161,10 @@ export class AgentService {
         const labelCore = norm(candidate);
         const tokens = sigTokens(candidate);
         const allTokensInOrder = tokens.length >= 2 && tokensInOrder(tokens);
-        return (labelCore.trim().length >= 2 && q.includes(labelCore)) || allTokensInOrder;
+        return (
+          (labelCore.trim().length >= 2 && q.includes(labelCore)) ||
+          allTokensInOrder
+        );
       });
       if (q.includes(idPhrase) || matchedCandidate) {
         matched.push(mid);
@@ -22912,15 +24186,24 @@ export class AgentService {
     if (asksOvertimeToPayroll) matched.push('overtime_to_payroll_pct');
     const exactMatched = matched.filter(
       (id) =>
-        !(asksArToRevenue && (id === 'ar_outstanding' || id === 'total_revenue')) &&
+        !(
+          asksArToRevenue &&
+          (id === 'ar_outstanding' || id === 'total_revenue')
+        ) &&
         !(asksApToCost && (id === 'ap_outstanding' || id === 'total_cost')) &&
         !(asksOvertimeToPayroll && id === 'total_payroll'),
     );
     const asksGrossMarginPercentOnly =
-      /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(rawReq) &&
+      /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(
+        rawReq,
+      ) &&
       !/\bgross\s+profit\b/.test(rawReq) &&
-      !/\bgross\s+margin\b[\s\S]{0,32}\b(?:dollars?|usd|amount|value)\b/.test(rawReq) &&
-      !/\b(?:dollars?|usd|amount|value)\b[\s\S]{0,32}\bgross\s+margin\b/.test(rawReq);
+      !/\bgross\s+margin\b[\s\S]{0,32}\b(?:dollars?|usd|amount|value)\b/.test(
+        rawReq,
+      ) &&
+      !/\b(?:dollars?|usd|amount|value)\b[\s\S]{0,32}\bgross\s+margin\b/.test(
+        rawReq,
+      );
     let filteredMatched =
       asksGrossMarginPercentOnly && exactMatched.includes('gross_margin_pct')
         ? exactMatched.filter((id) => id !== 'gross_margin')
@@ -23002,13 +24285,20 @@ export class AgentService {
     // grain, and wrongly refuses instead of letting the transform path apply the share.
     if (this.detectFollowUpTransform(editRequest)) return null;
     const q = editRequest.toLowerCase();
-    if (/\bcurrent\s+year\b/.test(q) && /\b(last|previous|prior)\s+year\b/.test(q))
+    if (
+      /\bcurrent\s+year\b/.test(q) &&
+      /\b(last|previous|prior)\s+year\b/.test(q)
+    )
       return null;
     for (const t of targets) {
       const spec = t.spec;
       if (!spec?.dimension) continue;
       const current = (
-        spec.measures?.length ? spec.measures : spec.measure ? [spec.measure] : []
+        spec.measures?.length
+          ? spec.measures
+          : spec.measure
+            ? [spec.measure]
+            : []
       ).filter((m): m is string => !!m);
       if (current.length === 0) continue;
       const requested = this.detectEbpoMeasureMentions(editRequest).filter(
@@ -23016,13 +24306,17 @@ export class AgentService {
       );
       if (requested.length === 0) continue;
       const impossible = requested.find(
-        (m) => !resolveEbpoView(m, spec.dimension ?? null, spec.breakdown ?? null),
+        (m) =>
+          !resolveEbpoView(m, spec.dimension ?? null, spec.breakdown ?? null),
       );
       if (!impossible) continue;
       const label = EBPO_MEASURES[impossible]?.label ?? impossible;
       const dims = ebpoSupportedGroupings(impossible).dims;
-      const currentDimLabel = EBPO_DIMENSIONS[spec.dimension]?.label ?? spec.dimension;
-      const dimsText = dims.length ? ` It is available by ${dims.join(', ')}.` : '';
+      const currentDimLabel =
+        EBPO_DIMENSIONS[spec.dimension]?.label ?? spec.dimension;
+      const dimsText = dims.length
+        ? ` It is available by ${dims.join(', ')}.`
+        : '';
       return `${label} isn't available at the chart's current grouping (${currentDimLabel}).${dimsText} I left the chart unchanged.`;
     }
     return null;
@@ -23046,9 +24340,13 @@ export class AgentService {
       if (!t.spec) continue;
       if (
         t.spec.dimension === 'month' &&
-        ['operating_cf', 'investing_cf', 'financing_cf'].includes(String(t.spec.measure ?? '')) &&
+        ['operating_cf', 'investing_cf', 'financing_cf'].includes(
+          String(t.spec.measure ?? ''),
+        ) &&
         /\bcash\s+flow\s+components?\b/.test(editRequest.toLowerCase()) &&
-        /\bcontribution\b|\bpercent(?:age)?s?\b|%/.test(editRequest.toLowerCase())
+        /\bcontribution\b|\bpercent(?:age)?s?\b|%/.test(
+          editRequest.toLowerCase(),
+        )
       ) {
         const sql = `
           SELECT
@@ -23095,7 +24393,8 @@ export class AgentService {
         }).catch(() => null);
         if (check && !check.error && check.rows.length > 0) {
           return {
-            summary: 'Updated the cash flow chart to show component contribution percentages.',
+            summary:
+              'Updated the cash flow chart to show component contribution percentages.',
             add: [],
             remove_indices: [],
             modify: [
@@ -23146,7 +24445,9 @@ export class AgentService {
         t.spec.measure === 'gross_margin' &&
         t.spec.dimension === 'industry' &&
         /\brevenue\b/.test(editRequest.toLowerCase()) &&
-        /\byear[\s-]*over[\s-]*year\b|\byoy\b/.test(editRequest.toLowerCase()) &&
+        /\byear[\s-]*over[\s-]*year\b|\byoy\b/.test(
+          editRequest.toLowerCase(),
+        ) &&
         /\bgrowth\b/.test(editRequest.toLowerCase())
       ) {
         const sql = `
@@ -23232,7 +24533,11 @@ export class AgentService {
       }
       const newSpec = this.buildEbpoComboEditSpec(t.spec, editRequest);
       if (!newSpec) continue;
-      const compiled = await compileEbpoSpec(newSpec, this.analyticsDb, runRows);
+      const compiled = await compileEbpoSpec(
+        newSpec,
+        this.analyticsDb,
+        runRows,
+      );
       if (!compiled.ok) continue;
       const nextType = (newSpec.chartType ?? t.w.chartType) as ChartType;
       const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
@@ -23241,7 +24546,9 @@ export class AgentService {
       if (!check || check.error || check.rows.length === 0) continue;
       if (this.detectBadChartShape(check.rows, nextType)) continue;
       if (!summary) {
-        const prior = new Set(t.spec.measures?.length ? t.spec.measures : [t.spec.measure]);
+        const prior = new Set(
+          t.spec.measures?.length ? t.spec.measures : [t.spec.measure],
+        );
         const added = (newSpec.measures ?? [])
           .filter((m) => !prior.has(m))
           .map((m) => EBPO_MEASURES[m!]?.label ?? m)
@@ -23256,12 +24563,20 @@ export class AgentService {
       // format-based default, applied to the measures this edit ADDED.
       const mlist = (newSpec.measures ?? []).filter((m): m is string => !!m);
       const prior = new Set(
-        (t.spec.measures?.length ? t.spec.measures : [t.spec.measure]).filter(Boolean),
+        (t.spec.measures?.length ? t.spec.measures : [t.spec.measure]).filter(
+          Boolean,
+        ),
       );
       const added = mlist.filter((m) => !prior.has(m));
       const ql = ` ${editRequest.toLowerCase()} `;
-      const wantsLine = /\bas (?:a |another )?(?:comparison |trend )?line\b|\bcomparison line\b|\btrend line\b|\bas (?:a )?second line\b/.test(ql);
-      const wantsBar = /\bas (?:a |)?(?:column|bar)s?\b|\bas (?:a )?second (?:column|bar)\b/.test(ql);
+      const wantsLine =
+        /\bas (?:a |another )?(?:comparison |trend )?line\b|\bcomparison line\b|\btrend line\b|\bas (?:a )?second line\b/.test(
+          ql,
+        );
+      const wantsBar =
+        /\bas (?:a |)?(?:column|bar)s?\b|\bas (?:a )?second (?:column|bar)\b/.test(
+          ql,
+        );
       const roles = ebpoComboSeriesRoles(mlist, {
         baseType: String(t.spec.chartType ?? t.w.chartType ?? ''),
         forceLine: wantsLine ? added : [],
@@ -23271,15 +24586,22 @@ export class AgentService {
       const secondaryRole = roles.find((r) => r.axis === 'right');
       const display: DisplayHints = {
         valueFormat: firstM?.format ?? null,
-        ...(typeof firstM?.decimals === 'number' ? { valueDecimals: firstM.decimals } : {}),
+        ...(typeof firstM?.decimals === 'number'
+          ? { valueDecimals: firstM.decimals }
+          : {}),
         ...(secondaryRole
-          ? { secondaryAxisFormat: secondaryRole.format, secondaryLabel: secondaryRole.key }
+          ? {
+              secondaryAxisFormat: secondaryRole.format,
+              secondaryLabel: secondaryRole.key,
+            }
           : {}),
         series: roles,
       };
       // Accurate type so the label matches the visual: all-bar one-unit → "bar",
       // all-line one-unit → "line", mixed/dual-axis → "combo" (stacked stays stacked).
-      const baseStacked = /stacked_(bar|area)/.test(String(t.spec.chartType ?? ''));
+      const baseStacked = /stacked_(bar|area)/.test(
+        String(t.spec.chartType ?? ''),
+      );
       const outType = ebpoComboChartType(roles, {
         forceStacked: baseStacked
           ? String(t.spec.chartType).includes('area')
@@ -23300,10 +24622,17 @@ export class AgentService {
     this.logger.log(
       `[SpecEdit:EBPO-combo] ${modify.length} chart(s) for: "${editRequest.slice(0, 50)}"`,
     );
-    return { summary: summary || 'Added a comparison series.', add: [], remove_indices: [], modify };
+    return {
+      summary: summary || 'Added a comparison series.',
+      add: [],
+      remove_indices: [],
+      modify,
+    };
   }
 
-  private deriveEbpoDisplayFromSpec(spec?: ChartSpec | null): DisplayHints | null {
+  private deriveEbpoDisplayFromSpec(
+    spec?: ChartSpec | null,
+  ): DisplayHints | null {
     if (!spec) return null;
     // Dedupe: an LLM-echoed spec sometimes lists the same measure twice
     // (["total_revenue","total_revenue"]) — that is ONE series, not two. Without the
@@ -23395,7 +24724,10 @@ export class AgentService {
         scope,
         editRequest,
       ).catch(() => null);
-      const wd = built?.kind === 'build' ? (built.plan.dashboard.widgets[0] as any) : null;
+      const wd =
+        built?.kind === 'build'
+          ? (built.plan.dashboard.widgets[0] as any)
+          : null;
       if (!wd?._sql) continue;
       this.logger.log(
         `[SpecEdit:EBPO-topN-monthly] kept top ${spec.topN} ${spec.dimension} for: "${editRequest.slice(0, 50)}"`,
@@ -23427,7 +24759,8 @@ export class AgentService {
   // is the per-month combo. Ratio measures are excluded (no single column to diff).
   private isClientPairComparisonSpec(spec: ChartSpec | undefined): boolean {
     if (!spec?.measure) return false;
-    if (!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[spec.measure]?.col) return false;
+    if (!AgentService.CLIENT_MONTHLY_MEASURE_COLUMNS[spec.measure]?.col)
+      return false;
     const monthlyBreakdown =
       spec.breakdown === 'client' && spec.dimension === 'month';
     const flatClient = spec.dimension === 'client' && !spec.breakdown;
@@ -23438,7 +24771,9 @@ export class AgentService {
     // or topN=2 — so a general 5-client ranking isn't hijacked.
     if (monthlyBreakdown) return true;
     const clientFilter = (spec.filters ?? []).find((f) =>
-      /client|customer/i.test(String((f as { dimension?: string })?.dimension ?? '')),
+      /client|customer/i.test(
+        String((f as { dimension?: string })?.dimension ?? ''),
+      ),
     ) as { values?: unknown } | undefined;
     const vals: string[] = Array.isArray(clientFilter?.values)
       ? (clientFilter!.values as string[])
@@ -23557,7 +24892,12 @@ export class AgentService {
           dynamicSql: sql,
           // Normalize the spec to the monthly per-client combo the SQL actually
           // produces (the flat Q25 base becomes a monthly combo — variance is monthly).
-          spec: { ...spec, chartType: 'combo', dimension: 'month', breakdown: 'client' },
+          spec: {
+            ...spec,
+            chartType: 'combo',
+            dimension: 'month',
+            breakdown: 'client',
+          },
           display: this.clientPairVarianceDisplay(a, b, fmt),
         },
       ],
@@ -23576,10 +24916,15 @@ export class AgentService {
     scope: OrgScope,
   ): Promise<DashboardEditPlan | null> {
     const q = editRequest.toLowerCase();
-    if (!/\bvariance\b/.test(q) || !/\bpercent|percentage|%\b/.test(q)) return null;
+    if (!/\bvariance\b/.test(q) || !/\bpercent|percentage|%\b/.test(q))
+      return null;
     for (const t of targets) {
       if (!this.isClientPairComparisonSpec(t.spec)) continue;
-      const plan = await this.buildClientPairVariancePctPlan(t.spec!, t.index, scope);
+      const plan = await this.buildClientPairVariancePctPlan(
+        t.spec!,
+        t.index,
+        scope,
+      );
       if (plan) return plan;
     }
     return null;
@@ -23598,7 +24943,8 @@ export class AgentService {
     const q = ` ${editRequest.toLowerCase()} `;
     // Must read as a ranking/re-grouping ask, not an "add a series" ask.
     if (!/\b(rank|ranked|ranking|order|sort|top)\b/.test(q)) return null;
-    if (/\badd\b|\bas (?:a |another )?(?:line|series|bar|column)\b/.test(q)) return null;
+    if (/\badd\b|\bas (?:a |another )?(?:line|series|bar|column)\b/.test(q))
+      return null;
     // Entity dimension named in the request (the thing to rank).
     const entityMap: Array<[RegExp, string]> = [
       [/\bclients?\b/, 'client'],
@@ -23655,7 +25001,11 @@ export class AgentService {
         // A ranking reads best as a bar unless the current chart is already categorical.
         chartType: 'bar',
       };
-      const compiled = await compileEbpoSpec(newSpec, this.analyticsDb, runRows);
+      const compiled = await compileEbpoSpec(
+        newSpec,
+        this.analyticsDb,
+        runRows,
+      );
       if (!compiled.ok) continue;
       const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
         chartType: 'bar',
@@ -23680,7 +25030,8 @@ export class AgentService {
             dynamicSql: compiled.sql,
             spec: newSpec,
             display: {
-              valueFormat: (compiled as { outputPercent?: boolean }).outputPercent
+              valueFormat: (compiled as { outputPercent?: boolean })
+                .outputPercent
                 ? 'percent'
                 : compiled.measure.format,
             },
@@ -23710,7 +25061,9 @@ export class AgentService {
 
     const target = targets.find((t) => {
       const measures = new Set(
-        (t.spec?.measures?.length ? t.spec.measures : [t.spec?.measure]).filter(Boolean),
+        (t.spec?.measures?.length ? t.spec.measures : [t.spec?.measure]).filter(
+          Boolean,
+        ),
       );
       return (
         t.spec?.dimension === 'month' &&
@@ -23721,7 +25074,10 @@ export class AgentService {
     });
     if (!target?.spec) return null;
 
-    const movers = await this.queryRows<{ account_name: string; movement: number }>(
+    const movers = await this.queryRows<{
+      account_name: string;
+      movement: number;
+    }>(
       `SELECT account_name, round(sum(abs(net_movement_usd)), 2) AS movement
        FROM ${this.analyticsDb}.v_ebpo_trial_balance_monthly
        WHERE tenant_id = {tenantId:String}
@@ -23741,7 +25097,11 @@ export class AgentService {
         tenantId: scope.tenantId,
         externalOrgIds: scope.externalOrgIds,
       });
-    const compiled = await compileEbpoSpec(target.spec, this.analyticsDb, runRows);
+    const compiled = await compileEbpoSpec(
+      target.spec,
+      this.analyticsDb,
+      runRows,
+    );
     if (!compiled.ok) return null;
     const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
       chartType: 'line',
@@ -23787,10 +25147,24 @@ export class AgentService {
     scope: OrgScope,
   ): Promise<DashboardEditPlan | null> {
     const q = (editRequest ?? '').toLowerCase();
-    if (!/\b(highlight|flag|mark|emphasi[sz]e|call\s+out|show\s+which)\b/.test(q))
+    if (
+      !/\b(highlight|flag|mark|emphasi[sz]e|call\s+out|show\s+which)\b/.test(q)
+    )
       return null;
     // Matrix/heatmap highlighting is handled by detectMatrixDisplayEdit.
-    const highlightTypes = ['bar', 'line', 'area', 'scatter', 'bubble', 'combo', 'stacked_bar', 'stacked_area', 'waterfall', 'pie', 'donut'];
+    const highlightTypes = [
+      'bar',
+      'line',
+      'area',
+      'scatter',
+      'bubble',
+      'combo',
+      'stacked_bar',
+      'stacked_area',
+      'waterfall',
+      'pie',
+      'donut',
+    ];
     const usable = targets.filter((t) =>
       highlightTypes.includes(String(t.w?.chartType ?? '').toLowerCase()),
     );
@@ -23798,21 +25172,25 @@ export class AgentService {
 
     const wantsNegMargin =
       /\bnegative\b/.test(q) && /\bmargin|profit\b/.test(q);
-    const wantsHighest = /\b(highest|largest|biggest|top|max(?:imum)?|peak|best)\b/.test(q);
-    const wantsLowest = /\b(lowest|smallest|min(?:imum)?|bottom|worst|least)\b/.test(q);
+    const wantsHighest =
+      /\b(highest|largest|biggest|top|max(?:imum)?|peak|best)\b/.test(q);
+    const wantsLowest =
+      /\b(lowest|smallest|min(?:imum)?|bottom|worst|least)\b/.test(q);
     const aboutClient = /\bclients?\b/.test(q) || /\bcustomers?\b/.test(q);
     const requestedEntity =
-      ([
-        [/\bclients?\b|\bcustomers?\b/, 'client'],
-        [/\bvendors?\b|\bsuppliers?\b/, 'vendor'],
-        [/\bdepartments?\b/, 'department'],
-        [/\bcountr(?:y|ies)\b/, 'country'],
-        [/\bregions?\b/, 'region'],
-        [/\bdelivery\s+cent(?:er|re)s?\b/, 'delivery_center'],
-        [/\bindustr(?:y|ies)\b/, 'industry'],
-        [/\bbusiness\s+units?\b/, 'business_unit'],
-        [/\baccounts?\b/, 'account'],
-      ] as Array<[RegExp, string]>).find(([re]) => re.test(q))?.[1] ?? null;
+      (
+        [
+          [/\bclients?\b|\bcustomers?\b/, 'client'],
+          [/\bvendors?\b|\bsuppliers?\b/, 'vendor'],
+          [/\bdepartments?\b/, 'department'],
+          [/\bcountr(?:y|ies)\b/, 'country'],
+          [/\bregions?\b/, 'region'],
+          [/\bdelivery\s+cent(?:er|re)s?\b/, 'delivery_center'],
+          [/\bindustr(?:y|ies)\b/, 'industry'],
+          [/\bbusiness\s+units?\b/, 'business_unit'],
+          [/\baccounts?\b/, 'account'],
+        ] as Array<[RegExp, string]>
+      ).find(([re]) => re.test(q))?.[1] ?? null;
 
     const modify: DashboardEditPlan['modify'] = [];
     let summary = '';
@@ -23833,9 +25211,9 @@ export class AgentService {
         emptyReason = `this chart is grouped by ${currentDim || 'a different dimension'}, not ${requestedEntity.replace(/_/g, ' ')}`;
         continue;
       }
-      const probe = await this.executeDynamicSqlChecked(sql, scope, { chartType }).catch(
-        () => null,
-      );
+      const probe = await this.executeDynamicSqlChecked(sql, scope, {
+        chartType,
+      }).catch(() => null);
       if (!probe || probe.error || probe.rows.length === 0) continue;
       const rows = probe.rows as Record<string, unknown>[];
       const cols = Object.keys(rows[0] ?? {});
@@ -23844,7 +25222,9 @@ export class AgentService {
       const namesLookTemporal = names.every((name) =>
         !name
           ? false
-          : /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(name) ||
+          : /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(
+              name,
+            ) ||
             /^\d{4}-\d{2}/.test(name) ||
             /^\d{4}$/.test(name) ||
             /\bq[1-4]\b/i.test(name),
@@ -23853,12 +25233,15 @@ export class AgentService {
         const v = Number((r as any)[c]);
         return Number.isFinite(v) ? v : null;
       };
-      const findCol = (re: RegExp) => cols.find((c) => re.test(c.toLowerCase())) ?? null;
+      const findCol = (re: RegExp) =>
+        cols.find((c) => re.test(c.toLowerCase())) ?? null;
 
       // Primary numeric column (value, else first numeric / x|y) for ranking.
       const primaryCol =
         findCol(/^value$/) ??
-        cols.find((c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null)) ??
+        cols.find(
+          (c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null),
+        ) ??
         null;
 
       let matched: string[] = [];
@@ -23870,7 +25253,10 @@ export class AgentService {
         // "highlight the top N <entities>" → the N highest by the primary value.
         const n = Math.max(1, parseInt(topNMatch[1]!, 10));
         matched = rows
-          .map((r) => ({ name: String((r as any).name ?? ''), v: numAt(r, primaryCol) ?? -Infinity }))
+          .map((r) => ({
+            name: String((r as any).name ?? ''),
+            v: numAt(r, primaryCol) ?? -Infinity,
+          }))
           .sort((a, b) => b.v - a.v)
           .slice(0, n)
           .map((p) => p.name);
@@ -23892,7 +25278,9 @@ export class AgentService {
             'every month in this period has a positive gross margin, so there are no negative-margin months to highlight';
       } else if (
         aboutClient &&
-        (wantsHighest || wantsLowest || /\bthe\s+(?:largest|biggest|top)\b/.test(q))
+        (wantsHighest ||
+          wantsLowest ||
+          /\bthe\s+(?:largest|biggest|top)\b/.test(q))
       ) {
         // "the client with the highest [cumulative] revenue" / "the largest client" —
         // rank clients by their TOTAL within THIS chart's data, so it (a) respects the
@@ -23922,7 +25310,10 @@ export class AgentService {
             scatterNumCols
               .map((c) => ({
                 c,
-                mag: Math.max(0, ...rows.map((r) => Math.abs(numAt(r, c) ?? 0))),
+                mag: Math.max(
+                  0,
+                  ...rows.map((r) => Math.abs(numAt(r, c) ?? 0)),
+                ),
               }))
               .sort((a, b) => b.mag - a.mag)[0]?.c ?? primaryCol;
           if (sizeCol)
@@ -23932,24 +25323,33 @@ export class AgentService {
             }));
         } else if (numericCols.length > 1 && namesLookTemporal) {
           // Wide pivot: each non-name numeric column is a client series → sum the column.
-          const grouped = new Map<string, { name: string; v: number; series: string[] }>();
+          const grouped = new Map<
+            string,
+            { name: string; v: number; series: string[] }
+          >();
           for (const c of numericCols) {
-            const entityName = String(c).split('|')[0]!.trim() || String(c).trim();
+            const entityName =
+              String(c).split('|')[0]!.trim() || String(c).trim();
             const total = rows.reduce((s, r) => s + (numAt(r, c) ?? 0), 0);
-            const current = grouped.get(entityName) ?? { name: entityName, v: 0, series: [] };
+            const current = grouped.get(entityName) ?? {
+              name: entityName,
+              v: 0,
+              series: [],
+            };
             current.v += total;
             current.series.push(c);
             grouped.set(entityName, current);
           }
-          ranking = Array.from(grouped.values()).map(({ name, v }) => ({ name, v }));
+          ranking = Array.from(grouped.values()).map(({ name, v }) => ({
+            name,
+            v,
+          }));
           matchedAreSeries = true;
           if (ranking.length) {
             const pick = wantsLowest
               ? ranking.reduce((a, b) => (b.v < a.v ? b : a))
               : ranking.reduce((a, b) => (b.v > a.v ? b : a));
-            matched =
-              grouped.get(pick.name)?.series.slice() ??
-              [pick.name];
+            matched = grouped.get(pick.name)?.series.slice() ?? [pick.name];
           }
         } else if (numericCols.length > 1) {
           // Grouped/clustered categorical bars: each row is already the entity and each
@@ -23965,7 +25365,10 @@ export class AgentService {
           const byName = new Map<string, number>();
           for (const r of rows) {
             const nm = String((r as any).name ?? '');
-            byName.set(nm, (byName.get(nm) ?? 0) + (numAt(r, numericCols[0]!) ?? 0));
+            byName.set(
+              nm,
+              (byName.get(nm) ?? 0) + (numAt(r, numericCols[0]!) ?? 0),
+            );
           }
           ranking = Array.from(byName, ([name, v]) => ({ name, v }));
         }
@@ -23981,11 +25384,16 @@ export class AgentService {
         // Highest/lowest by the primary numeric column (value, else first numeric / x/y).
         const valCol =
           findCol(/^value$/) ??
-          cols.find((c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null)) ??
+          cols.find(
+            (c) => c !== 'name' && rows.some((r) => numAt(r, c) !== null),
+          ) ??
           null;
         if (valCol) {
           const pairs = rows
-            .map((r) => ({ name: String((r as any).name ?? ''), v: numAt(r, valCol) }))
+            .map((r) => ({
+              name: String((r as any).name ?? ''),
+              v: numAt(r, valCol),
+            }))
             .filter((p) => p.v !== null) as { name: string; v: number }[];
           if (pairs.length) {
             if (wantsHighest)
@@ -24008,7 +25416,8 @@ export class AgentService {
       );
       if (matched.length === 0) continue;
 
-      const priorDisplay = ((t.w.queryConfig as any)?.display ?? {}) as DisplayHints;
+      const priorDisplay = ((t.w.queryConfig as any)?.display ??
+        {}) as DisplayHints;
       const canUseExtremeRing =
         (chartType === 'pie' || chartType === 'donut') &&
         (wantsHighest || wantsLowest) &&
@@ -24024,7 +25433,11 @@ export class AgentService {
           ? {
               ...priorDisplay,
               highlightExtremes:
-                wantsHighest && wantsLowest ? 'both' : wantsHighest ? 'max' : 'min',
+                wantsHighest && wantsLowest
+                  ? 'both'
+                  : wantsHighest
+                    ? 'max'
+                    : 'min',
             }
           : matchedAreSeries
             ? { ...priorDisplay, highlightSeries: matched }
@@ -24093,7 +25506,8 @@ export class AgentService {
       // says so) — otherwise "show cumulative X" isn't an ADD-second-series request.
       const baseIsCumulative =
         (spec?.transforms ?? []).some(
-          (tr) => (typeof tr === 'string' ? tr : (tr as any)?.kind) === 'cumulative',
+          (tr) =>
+            (typeof tr === 'string' ? tr : (tr as any)?.kind) === 'cumulative',
         ) ||
         /ROWS UNBOUNDED PRECEDING/i.test(sqlText) ||
         /cumulative/i.test(String(w.title ?? ''));
@@ -24101,7 +25515,12 @@ export class AgentService {
 
       // Existing base measure: from the spec if present, else inferred from the SQL.
       const existingBase = spec
-        ? baseOf(String((spec.measures?.length ? spec.measures[0] : spec.measure) ?? 'total_revenue'))
+        ? baseOf(
+            String(
+              (spec.measures?.length ? spec.measures[0] : spec.measure) ??
+                'total_revenue',
+            ),
+          )
         : /total_cost_usd/.test(sqlText) && !/total_revenue_usd/.test(sqlText)
           ? 'total_cost'
           : 'total_revenue';
@@ -24115,7 +25534,10 @@ export class AgentService {
           : null);
       const clientMatch = sqlText.match(/client_name\s+IN\s+\(([^)]+)\)/i);
       const clientValues = clientMatch
-        ? clientMatch[1]!.split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)
+        ? clientMatch[1]!
+            .split(',')
+            .map((s) => s.trim().replace(/^'|'$/g, ''))
+            .filter(Boolean)
         : [];
       const filters = spec?.filters?.length
         ? spec.filters
@@ -24126,12 +25548,18 @@ export class AgentService {
         measure: existingBase,
         measures: [existingBase, newMeasure],
         dimension: 'month',
-        chartType: (spec?.chartType ?? (w.chartType as string) ?? 'area') as ChartType,
+        chartType: (spec?.chartType ??
+          (w.chartType as string) ??
+          'area') as ChartType,
         filters,
         recentMonths,
         transforms: [{ kind: 'cumulative' }],
       };
-      const compiled = await compileEbpoSpec(newSpec, this.analyticsDb, runRows);
+      const compiled = await compileEbpoSpec(
+        newSpec,
+        this.analyticsDb,
+        runRows,
+      );
       if (!compiled.ok) continue;
       const chartType = (newSpec.chartType ?? 'area') as ChartType;
       const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
@@ -24169,7 +25597,10 @@ export class AgentService {
     const requested = this.detectEbpoMeasureMentions(editRequest).filter(
       (id) => !!EBPO_MEASURES[id],
     );
-    const preferred = requested.find((id) => EBPO_MEASURES[id]?.format !== 'percent') ?? requested[0] ?? null;
+    const preferred =
+      requested.find((id) => EBPO_MEASURES[id]?.format !== 'percent') ??
+      requested[0] ??
+      null;
 
     const chooseMeasure = (spec?: ChartSpec): string | null => {
       if (!spec?.measure) return preferred;
@@ -24178,7 +25609,9 @@ export class AgentService {
       ).filter((m): m is string => !!m);
       if (currentMeasures.length === 0) return preferred;
       if (preferred && currentMeasures.includes(preferred)) return preferred;
-      const currentNonPercent = currentMeasures.find((m) => EBPO_MEASURES[m]?.format !== 'percent');
+      const currentNonPercent = currentMeasures.find(
+        (m) => EBPO_MEASURES[m]?.format !== 'percent',
+      );
       return currentNonPercent ?? preferred ?? currentMeasures[0] ?? null;
     };
 
@@ -24211,7 +25644,11 @@ export class AgentService {
         recentMonths: spec.recentMonths,
         transforms: [{ kind: 'cumulative' }],
       };
-      const compiled = await compileEbpoSpec(selectedSpec, this.analyticsDb, runRows);
+      const compiled = await compileEbpoSpec(
+        selectedSpec,
+        this.analyticsDb,
+        runRows,
+      );
       if (!compiled.ok) continue;
       const check = await this.executeDynamicSqlChecked(compiled.sql, scope, {
         chartType: baseType,
@@ -24220,7 +25657,8 @@ export class AgentService {
       if (this.detectBadChartShape(check.rows, baseType)) continue;
 
       const label = EBPO_MEASURES[chosenMeasure]?.label ?? chosenMeasure;
-      const dimLabel = EBPO_DIMENSIONS[String(spec.dimension)]?.label ?? spec.dimension;
+      const dimLabel =
+        EBPO_DIMENSIONS[String(spec.dimension)]?.label ?? spec.dimension;
       const isScatterBase = baseType === 'scatter' || baseType === 'bubble';
       return {
         summary: `Added cumulative ${label}${isScatterBase ? '' : ' as a line'}.`,
@@ -24261,7 +25699,11 @@ export class AgentService {
   ): Promise<DashboardEditPlan | null> {
     try {
       const targets = activeDashboard.widgets
-        .map((w, index) => ({ w, index, spec: (w.queryConfig as any)?.spec as ChartSpec | undefined }))
+        .map((w, index) => ({
+          w,
+          index,
+          spec: (w.queryConfig as any)?.spec as ChartSpec | undefined,
+        }))
         .filter((t) => t.spec && typeof t.spec === 'object');
       if (targets.length === 0) return null;
 
@@ -24291,11 +25733,12 @@ export class AgentService {
       // the LLM ping — this path is fully deterministic and needs neither.
       const ebpoForCombo = await this.orgHasEbpoData(scope).catch(() => false);
       if (ebpoForCombo) {
-        const movementHighlight = await this.buildEbpoBalanceMovementHighlightPlan(
-          targets,
-          editRequest,
-          scope,
-        );
+        const movementHighlight =
+          await this.buildEbpoBalanceMovementHighlightPlan(
+            targets,
+            editRequest,
+            scope,
+          );
         if (movementHighlight) return movementHighlight;
         const namedHighlight = await this.buildNamedHighlightEditPlan(
           targets,
@@ -24304,7 +25747,11 @@ export class AgentService {
         );
         if (namedHighlight) return namedHighlight;
         const breakdownVariancePctPlan =
-          await this.buildEbpoBreakdownVariancePctEditPlan(targets, editRequest, scope);
+          await this.buildEbpoBreakdownVariancePctEditPlan(
+            targets,
+            editRequest,
+            scope,
+          );
         if (breakdownVariancePctPlan) return breakdownVariancePctPlan;
         const topNMonthlyPlan = await this.buildEbpoTopNMonthlyRegroupEditPlan(
           targets,
@@ -24312,12 +25759,14 @@ export class AgentService {
           scope,
         );
         if (topNMonthlyPlan) return topNMonthlyPlan;
-        const regroupPlan = await this.buildEbpoRegroupEditPlan(targets, editRequest, scope);
-        if (regroupPlan) return regroupPlan;
-        const impossibleMeasureRefusal = this.buildEbpoUnsupportedMeasureEditRefusal(
+        const regroupPlan = await this.buildEbpoRegroupEditPlan(
           targets,
           editRequest,
+          scope,
         );
+        if (regroupPlan) return regroupPlan;
+        const impossibleMeasureRefusal =
+          this.buildEbpoUnsupportedMeasureEditRefusal(targets, editRequest);
         if (impossibleMeasureRefusal) {
           return {
             summary: '',
@@ -24327,7 +25776,11 @@ export class AgentService {
             refusal: impossibleMeasureRefusal,
           };
         }
-        const comboPlan = await this.buildEbpoComboEditPlan(targets, editRequest, scope);
+        const comboPlan = await this.buildEbpoComboEditPlan(
+          targets,
+          editRequest,
+          scope,
+        );
         if (comboPlan) return comboPlan;
       }
 
@@ -24335,7 +25788,10 @@ export class AgentService {
       // base catalog measure. Defer so buildEbpoMetricEdit can add the verified
       // cumulative_pct series instead of the spec editor replacing the chart with
       // a single normalized value series.
-      if (/\bcumulative\b/.test(editRequest.toLowerCase()) && /\bpercent|percentage|%\b/.test(editRequest.toLowerCase()))
+      if (
+        /\bcumulative\b/.test(editRequest.toLowerCase()) &&
+        /\bpercent|percentage|%\b/.test(editRequest.toLowerCase())
+      )
         return null;
 
       // Median is not the same as the catalog's average reference-line transform.
@@ -24356,7 +25812,9 @@ export class AgentService {
       // Dataset-aware: an EBPO dashboard is edited against the EBPO catalog so the
       // edit stays deterministic too; GL dashboards keep the GL catalog.
       const useEbpo = await this.orgHasEbpoData(scope).catch(() => false);
-      const catalogText = useEbpo ? ebpoCatalogPromptText() : catalogPromptText();
+      const catalogText = useEbpo
+        ? ebpoCatalogPromptText()
+        : catalogPromptText();
 
       const history =
         conversationHistory && !conversationHistory.includes('(No prior')
@@ -24391,7 +25849,9 @@ export class AgentService {
         });
         if (!resp.ok) continue;
         const body = (await resp.json()) as { message?: { content?: string } };
-        const rawText = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
+        const rawText = (body.message?.content ?? '')
+          .replace(/```json|```/g, '')
+          .trim();
         let parsed: any;
         try {
           parsed = JSON.parse(rawText);
@@ -24405,7 +25865,11 @@ export class AgentService {
         // an unmodeled type, or the compile can't satisfy it), DEFER to the legacy
         // editor (which has variance/second-axis/threshold-filter/explode-drill/
         // matrix-format + its own honest refusals). Never refuse from here.
-        if (typeof parsed?.refusal === 'string' && parsed.refusal.trim() && !parsed?.spec)
+        if (
+          typeof parsed?.refusal === 'string' &&
+          parsed.refusal.trim() &&
+          !parsed?.spec
+        )
           continue;
         const newSpec = parsed?.spec as ChartSpec | undefined;
         if (!newSpec || typeof newSpec !== 'object') continue;
@@ -24452,7 +25916,9 @@ export class AgentService {
         // NO-OP GUARD: if the recompiled SQL is identical to what's already on the
         // chart and there's no type/label change, the "edit" changed nothing —
         // defer to legacy instead of claiming success ("Refreshed the chart").
-        const curSql = String((t.w.queryConfig as any)?.dynamicSql ?? '').trim();
+        const curSql = String(
+          (t.w.queryConfig as any)?.dynamicSql ?? '',
+        ).trim();
         const sameSql = curSql && curSql === compiled.sql.trim();
         const sameType = String(t.w.chartType) === String(nextType);
         if (sameSql && sameType && !labelMode && !matrixHints) continue;
@@ -24481,30 +25947,44 @@ export class AgentService {
         }
         if (this.detectBadChartShape(check.rows, nextType)) continue;
 
-      const ct = String(nextType).toLowerCase();
-      const barFamilyCt = [
-        'bar', 'column', 'horizontal_bar', 'waterfall', 'line', 'area',
-        'stacked_bar', 'pareto', 'pie', 'donut', 'treemap',
-      ].includes(ct);
-      const baseDisplay: DisplayHints | undefined =
+        const ct = String(nextType).toLowerCase();
+        const barFamilyCt = [
+          'bar',
+          'column',
+          'horizontal_bar',
+          'waterfall',
+          'line',
+          'area',
+          'stacked_bar',
+          'pareto',
+          'pie',
+          'donut',
+          'treemap',
+        ].includes(ct);
+        const baseDisplay: DisplayHints | undefined =
           labelMode && (ct === 'pie' || ct === 'donut' || ct === 'treemap')
             ? { labelMode }
             : matrixHints && (ct === 'matrix' || ct === 'heatmap')
               ? matrixHints
-              // "highlight the largest/smallest" or "highlight negative periods" on a
-              // bar/waterfall/line: carry just that hint so the renderer rings the
-              // extreme bar / marks negatives (the rest of the matrix hints are matrix-only).
-              : (matrixHints?.highlightExtremes || matrixHints?.highlightNegative) && barFamilyCt
+              : // "highlight the largest/smallest" or "highlight negative periods" on a
+                // bar/waterfall/line: carry just that hint so the renderer rings the
+                // extreme bar / marks negatives (the rest of the matrix hints are matrix-only).
+                (matrixHints?.highlightExtremes ||
+                    matrixHints?.highlightNegative) &&
+                  barFamilyCt
                 ? {
                     ...(matrixHints.highlightExtremes
                       ? { highlightExtremes: matrixHints.highlightExtremes }
                       : {}),
-                    ...(matrixHints.highlightNegative ? { highlightNegative: true } : {}),
+                    ...(matrixHints.highlightNegative
+                      ? { highlightNegative: true }
+                      : {}),
                   }
                 : undefined;
         // EBPO: carry the (possibly changed) measure's unit so a percent measure
         // formats as % not $ after an edit like "replace revenue with gross margin %".
-        const editMeasureDecimals = (compiled.measure as { decimals?: number }).decimals;
+        const editMeasureDecimals = (compiled.measure as { decimals?: number })
+          .decimals;
         const editTransformKinds = (newSpec.transforms ?? []).map((t) =>
           typeof t === 'string' ? t : (t as { kind?: string }).kind,
         );
@@ -24524,7 +26004,12 @@ export class AgentService {
                 ? { valueDecimals: editMeasureDecimals }
                 : {}),
               ...(this.requestedChartLabel(editRequest, nextType)
-                ? { requestedChartLabel: this.requestedChartLabel(editRequest, nextType) }
+                ? {
+                    requestedChartLabel: this.requestedChartLabel(
+                      editRequest,
+                      nextType,
+                    ),
+                  }
                 : {}),
               // A reference_line adds a flat "company_average" column — render it as a
               // dashed reference line, not a plotted series (unless peer_average, a real
@@ -24535,13 +26020,16 @@ export class AgentService {
                 : {}),
             }
           : baseDisplay;
-        if (!changeSummary) changeSummary = this.describeSpecChange(t.spec!, newSpec, labelMode);
+        if (!changeSummary)
+          changeSummary = this.describeSpecChange(t.spec!, newSpec, labelMode);
         // When a follow-up changes the MEASURE or DIMENSION materially (e.g. AP-trend →
         // "rank clients by receivables" becomes ar_outstanding by client), the old title
         // ("AP Trend") is now wrong. Regenerate it from the new spec so the heading
         // matches the data instead of lying. Leave the title alone for cosmetic edits.
-        const measureChanged = newSpec.measure && newSpec.measure !== t.spec!.measure;
-        const dimChanged = (newSpec.dimension ?? null) !== (t.spec!.dimension ?? null);
+        const measureChanged =
+          newSpec.measure && newSpec.measure !== t.spec!.measure;
+        const dimChanged =
+          (newSpec.dimension ?? null) !== (t.spec!.dimension ?? null);
         const sortChanged = (newSpec.sort ?? null) !== (t.spec!.sort ?? null);
         const chartTypeChanged =
           String(newSpec.chartType ?? t.w.chartType ?? '') !==
@@ -24568,14 +26056,26 @@ export class AgentService {
           ...(regenTitle ? { title: regenTitle } : {}),
           ...(display ? { display } : {}),
         };
-        if (this.widgetEditHasMaterialChange(t.w as ActiveDashboard['widgets'][number], nextMod)) {
+        if (
+          this.widgetEditHasMaterialChange(
+            t.w as ActiveDashboard['widgets'][number],
+            nextMod,
+          )
+        ) {
           modify.push(nextMod);
         }
       }
 
       if (modify.length > 0) {
-        this.logger.log(`[SpecEdit] ${modify.length} chart(s) re-specced for: "${editRequest.slice(0, 50)}"`);
-        return { summary: changeSummary || 'Updated the chart.', add: [], remove_indices: [], modify };
+        this.logger.log(
+          `[SpecEdit] ${modify.length} chart(s) re-specced for: "${editRequest.slice(0, 50)}"`,
+        );
+        return {
+          summary: changeSummary || 'Updated the chart.',
+          add: [],
+          remove_indices: [],
+          modify,
+        };
       }
       return null; // couldn't model it → defer to the legacy editor
     } catch (err: any) {
@@ -24679,13 +26179,18 @@ export class AgentService {
       return requestTokens.some((token) => titleTokens.has(token));
     });
     const mentionsChart =
-      /\b(chart|charts|widget|widgets|graph|graphs|visual|visualization|visualisation)\b/.test(q) ||
+      /\b(chart|charts|widget|widgets|graph|graphs|visual|visualization|visualisation)\b/.test(
+        q,
+      ) ||
       /\b(latest|last|newest|recent|current)\b/.test(q) ||
       /\bv\s*\d+\b/.test(q) ||
       titleTargetMentioned;
     if (!mentionsChart) return { kind: 'none' };
 
-    if (/\b(all|every|each)\b/.test(q) && /\b(charts|widgets|graphs)\b/.test(q)) {
+    if (
+      /\b(all|every|each)\b/.test(q) &&
+      /\b(charts|widgets|graphs)\b/.test(q)
+    ) {
       return {
         kind: 'resolved',
         indices: widgets.map((_, index) => index),
@@ -24730,7 +26235,9 @@ export class AgentService {
       .map((widget, index) => {
         const title = this.normalizeChartTargetText(widget.title);
         const titleTokens = new Set(this.tokenizeChartTargetText(widget.title));
-        const overlap = requestTokens.filter((token) => titleTokens.has(token)).length;
+        const overlap = requestTokens.filter((token) =>
+          titleTokens.has(token),
+        ).length;
         const phraseMatch = title.length > 0 && q.includes(title);
         return {
           index,
@@ -24824,8 +26331,12 @@ export class AgentService {
           }),
         });
         if (resp.ok) {
-          const body = (await resp.json()) as { message?: { content?: string } };
-          const raw = (body.message?.content ?? '').replace(/```json|```/g, '').trim();
+          const body = (await resp.json()) as {
+            message?: { content?: string };
+          };
+          const raw = (body.message?.content ?? '')
+            .replace(/```json|```/g, '')
+            .trim();
           const match = raw.match(/\{[\s\S]*\}/);
           if (match) {
             const parsed = JSON.parse(match[0]) as { undo?: unknown };
@@ -24841,14 +26352,17 @@ export class AgentService {
     // never hijacks a real edit: requires an explicit undo verb AND a reference to the
     // change/edit itself, or an unambiguous "go back / put it back" phrasing.
     const q = request.toLowerCase();
-    const undoVerb = /\b(discard|undo|revert|cancel|roll\s*back|rollback|scrap)\b/.test(q);
+    const undoVerb =
+      /\b(discard|undo|revert|cancel|roll\s*back|rollback|scrap)\b/.test(q);
     const changeObj =
       /\b(change|changes|edit|edits|highlight(?:ing|s)?|modification|modifications|that|it|this|last)\b/.test(
         q,
       );
     return (
       (undoVerb && changeObj) ||
-      /\b(go|put|take|set|bring)\s+(?:it\s+|things\s+|them\s+)?back\b/.test(q) ||
+      /\b(go|put|take|set|bring)\s+(?:it\s+|things\s+|them\s+)?back\b/.test(
+        q,
+      ) ||
       /\brestore\b[^.]*\b(previous|original|prior|last|earlier)\b/.test(q)
     );
   }
@@ -24893,7 +26407,9 @@ export class AgentService {
       )
       .map((md) => md as unknown as ChartTurnMetadata)
       // Only turns that actually carry a chart snapshot are restorable.
-      .filter((t) => Array.isArray(t.widgetSnapshots) && t.widgetSnapshots.length > 0);
+      .filter(
+        (t) => Array.isArray(t.widgetSnapshots) && t.widgetSnapshots.length > 0,
+      );
 
     // No chart has been built in this session yet → this can't be an undo of a chart
     // change; defer so the create/edit planners run.
@@ -24965,7 +26481,8 @@ export class AgentService {
       });
     }
 
-    const restoredMode = current.mode === 'edit' ? 'the last change' : 'the last chart';
+    const restoredMode =
+      current.mode === 'edit' ? 'the last change' : 'the last chart';
     return {
       summary: `Discarded ${restoredMode} and restored the previous version of ${previous.dashboardTitle}.`,
       add,
@@ -25098,7 +26615,11 @@ export class AgentService {
       /\bsame\s+dashboard\b/i.test(editRequest) &&
       /\b(?:each|every)\s+metric\b/i.test(editRequest) &&
       /\bmonthly\s+average\b/i.test(editRequest);
-    if (scope && wantsEveryMonthlyAverage && activeDashboard.widgets.length > 0) {
+    if (
+      scope &&
+      wantsEveryMonthlyAverage &&
+      activeDashboard.widgets.length > 0
+    ) {
       return this.buildPerSeriesMonthlyAverageEdit(activeDashboard, scope);
     }
 
@@ -25131,14 +26652,16 @@ export class AgentService {
 
     const wantsCatalogSensitiveEbpoEdit =
       (activeDashboard.widgets.some(
-        (widget) => String(widget.chartType ?? '').toLowerCase() === 'waterfall',
+        (widget) =>
+          String(widget.chartType ?? '').toLowerCase() === 'waterfall',
       ) &&
         /\bgross\s+margin\s+(?:percentage|percent|%)\b/i.test(editRequest) &&
         /\blabels?\b/i.test(editRequest)) ||
       (activeDashboard.widgets.some(
         (widget) =>
           (widget.queryConfig as any)?.spec?.measure === 'asset_intensity',
-      ) && /\bcsat\b|\bcustomer\s+satisfaction\b/i.test(editRequest));
+      ) &&
+        /\bcsat\b|\bcustomer\s+satisfaction\b/i.test(editRequest));
     if (scope && wantsCatalogSensitiveEbpoEdit) {
       const hasEbpo = await this.orgHasEbpoData(scope).catch(() => false);
       if (hasEbpo) {
@@ -25165,8 +26688,15 @@ export class AgentService {
         .map((widget, index) => ({ widget, index }))
         .filter(({ widget }) => {
           const t = String(widget.chartType ?? '').toLowerCase();
-          const specType = String((widget.queryConfig as any)?.spec?.chartType ?? '').toLowerCase();
-          return t === 'matrix' || t === 'heatmap' || specType === 'matrix' || specType === 'heatmap';
+          const specType = String(
+            (widget.queryConfig as any)?.spec?.chartType ?? '',
+          ).toLowerCase();
+          return (
+            t === 'matrix' ||
+            t === 'heatmap' ||
+            specType === 'matrix' ||
+            specType === 'heatmap'
+          );
         });
       if (matrixTargets.length > 0) {
         const avgLabel =
@@ -25177,7 +26707,8 @@ export class AgentService {
               : preSpecMatrixHints.conditionalThresholdMode === 'overallAverage'
                 ? 'above the overall average'
                 : null;
-        const paletteColor = preSpecMatrixHints.conditionalColor === 'red' ? 'red' : 'green';
+        const paletteColor =
+          preSpecMatrixHints.conditionalColor === 'red' ? 'red' : 'green';
         const extremesLabel =
           preSpecMatrixHints.highlightExtremes === 'both'
             ? 'Highlighted the highest and lowest cells.'
@@ -25230,7 +26761,10 @@ export class AgentService {
       if (yoyOverlay) return yoyOverlay;
 
       const earlyTransform = this.detectFollowUpTransform(editRequest);
-      if (earlyTransform?.kind === 'prior_year' || earlyTransform?.kind === 'yoy') {
+      if (
+        earlyTransform?.kind === 'prior_year' ||
+        earlyTransform?.kind === 'yoy'
+      ) {
         const det = await this.buildDeterministicTransformEdit(
           activeDashboard,
           earlyTransform,
@@ -25299,7 +26833,10 @@ export class AgentService {
     // Dataset-aware: EBPO has cash flow / headcount / region / multi-year / segments,
     // so those categories must NOT be refused here for EBPO orgs.
     const editHasEbpo = editHasEbpoEarly;
-    const unavailableData = this.detectUnavailableData(editRequest, editHasEbpo);
+    const unavailableData = this.detectUnavailableData(
+      editRequest,
+      editHasEbpo,
+    );
     if (unavailableData) {
       return {
         summary: '',
@@ -25409,7 +26946,8 @@ export class AgentService {
             : matrixDisplayHints.conditionalThresholdMode === 'overallAverage'
               ? 'above the overall average'
               : null;
-      const paletteColor = matrixDisplayHints.conditionalColor === 'red' ? 'red' : 'green';
+      const paletteColor =
+        matrixDisplayHints.conditionalColor === 'red' ? 'red' : 'green';
       const extremesLabel =
         matrixDisplayHints.highlightExtremes === 'both'
           ? 'Highlighted the highest and lowest cells.'
@@ -25466,8 +27004,17 @@ export class AgentService {
       if ((!extremes && !negative) || activeDashboard.widgets.length === 0)
         return plan;
       const barFamily = new Set([
-        'bar', 'column', 'horizontal_bar', 'waterfall', 'line', 'area',
-        'stacked_bar', 'pareto', 'pie', 'donut', 'treemap',
+        'bar',
+        'column',
+        'horizontal_bar',
+        'waterfall',
+        'line',
+        'area',
+        'stacked_bar',
+        'pareto',
+        'pie',
+        'donut',
+        'treemap',
       ]);
       const targets = activeDashboard.widgets
         .map((widget, index) => ({ widget, index }))
@@ -25486,9 +27033,13 @@ export class AgentService {
       for (const { widget, index } of targets) {
         const existingModify = plan.modify.find((e) => e.index === index);
         const existingDisplay =
-          existingModify?.display ?? (widget.queryConfig as any)?.display ?? null;
+          existingModify?.display ??
+          (widget.queryConfig as any)?.display ??
+          null;
         const mergedDisplay = {
-          ...(existingDisplay && typeof existingDisplay === 'object' ? existingDisplay : {}),
+          ...(existingDisplay && typeof existingDisplay === 'object'
+            ? existingDisplay
+            : {}),
           ...(extremes ? { highlightExtremes: extremes } : {}),
           ...(negative ? { highlightNegative: true } : {}),
         };
@@ -25537,9 +27088,8 @@ export class AgentService {
           add: [],
           remove_indices: [],
           modify: negativeTargets.map(({ widget, index }) => {
-            const existingDisplay = ((widget.queryConfig as any)?.display ?? null) as
-              | DisplayHints
-              | null;
+            const existingDisplay = ((widget.queryConfig as any)?.display ??
+              null) as DisplayHints | null;
             return {
               index,
               display: {
@@ -25596,7 +27146,10 @@ export class AgentService {
           const negs = rows.filter((r) =>
             Object.entries(r).some(
               ([k, v]) =>
-                k !== 'name' && k !== '__ord' && typeof v === 'number' && (v as number) < 0,
+                k !== 'name' &&
+                k !== '__ord' &&
+                typeof v === 'number' &&
+                (v as number) < 0,
             ),
           );
           if (negs.length > 0) {
@@ -25665,9 +27218,7 @@ export class AgentService {
     // heatmap/breakdown chart silently no-ops ("same output").
     const effectiveDashboard =
       scope &&
-      activeDashboard.widgets.some(
-        (w) => !((w.queryConfig as any)?.dynamicSql),
-      )
+      activeDashboard.widgets.some((w) => !(w.queryConfig as any)?.dynamicSql)
         ? await this.backfillVocabSql(activeDashboard, scope)
         : activeDashboard;
 
@@ -25676,28 +27227,28 @@ export class AgentService {
     // reference/average line) we build the SQL deterministically from the
     // chart's existing SQL — no LLM SQL hallucination — and refuse clearly when
     // the data can't satisfy the ask (YoY/prior-year with a single year).
-      // "show cumulative <other measure>" on a cumulative chart → ADD it as a second
-      // cumulative series (before the generic cumulative transform, which would otherwise
-      // refuse "already shows cumulative revenue" or re-cumulate the same series).
-      if (scope && editHasEbpo && effectiveDashboard.widgets.length > 0) {
-        const cumAdd = await this.buildEbpoCumulativeAddSeriesPlan(
+    // "show cumulative <other measure>" on a cumulative chart → ADD it as a second
+    // cumulative series (before the generic cumulative transform, which would otherwise
+    // refuse "already shows cumulative revenue" or re-cumulate the same series).
+    if (scope && editHasEbpo && effectiveDashboard.widgets.length > 0) {
+      const cumAdd = await this.buildEbpoCumulativeAddSeriesPlan(
         effectiveDashboard,
         editRequest,
         scope,
-        ).catch(() => null);
-        if (cumAdd) return applyPresentationEditHints(cumAdd);
-      }
-      if (scope && editHasEbpo && effectiveDashboard.widgets.length > 0) {
-        const cumTrend = await this.buildEbpoCumulativeTrendEdit(
-          effectiveDashboard,
-          editRequest,
-          scope,
-        ).catch(() => null);
-        if (cumTrend) return applyPresentationEditHints(cumTrend);
-      }
-      if (scope && effectiveDashboard.widgets.length > 0) {
-        const transform = this.detectFollowUpTransform(editRequest);
-        if (transform) {
+      ).catch(() => null);
+      if (cumAdd) return applyPresentationEditHints(cumAdd);
+    }
+    if (scope && editHasEbpo && effectiveDashboard.widgets.length > 0) {
+      const cumTrend = await this.buildEbpoCumulativeTrendEdit(
+        effectiveDashboard,
+        editRequest,
+        scope,
+      ).catch(() => null);
+      if (cumTrend) return applyPresentationEditHints(cumTrend);
+    }
+    if (scope && effectiveDashboard.widgets.length > 0) {
+      const transform = this.detectFollowUpTransform(editRequest);
+      if (transform) {
         const det = await this.buildDeterministicTransformEdit(
           effectiveDashboard,
           transform,
@@ -25857,7 +27408,10 @@ export class AgentService {
       parsed.modify = (parsed.modify ?? [])
         .filter((m) => m.index >= 0 && m.index < activeDashboard.widgets.length)
         .filter((m) =>
-          this.widgetEditHasMaterialChange(activeDashboard.widgets[m.index]!, m),
+          this.widgetEditHasMaterialChange(
+            activeDashboard.widgets[m.index]!,
+            m,
+          ),
         );
 
       // Honesty guard: if the vocabulary editor produced nothing actionable,
@@ -25930,17 +27484,24 @@ export class AgentService {
         const widget = currentWidgets[mod.index];
         if (!widget || removeIds.includes(widget.id)) continue;
         const changes: Record<string, unknown> = {};
-        const existingConfig = (widget.queryConfig as Record<string, unknown>) ?? {};
+        const existingConfig =
+          (widget.queryConfig as Record<string, unknown>) ?? {};
 
         // Undo/discard: restore a previously-snapshotted config wholesale. A shallow
         // merge can't drop keys the last edit added (e.g. display.highlightNames), so
         // reverting requires replacing the entire queryConfig — not merging into it.
-        if (mod.replaceQueryConfig && typeof mod.replaceQueryConfig === 'object') {
-          const restored = { ...(mod.replaceQueryConfig as Record<string, unknown>) };
+        if (
+          mod.replaceQueryConfig &&
+          typeof mod.replaceQueryConfig === 'object'
+        ) {
+          const restored = {
+            ...(mod.replaceQueryConfig as Record<string, unknown>),
+          };
           if (JSON.stringify(restored) !== JSON.stringify(existingConfig)) {
             changes.queryConfig = restored as Prisma.InputJsonValue;
           }
-          if (mod.type && mod.type !== widget.chartType) changes.chartType = mod.type;
+          if (mod.type && mod.type !== widget.chartType)
+            changes.chartType = mod.type;
           if (mod.title) changes.title = mod.title;
           if (mod.description)
             changes.chartConfig = {
@@ -25965,35 +27526,48 @@ export class AgentService {
           typeof mod.grouping === 'string' && mod.grouping.trim()
             ? mod.grouping.trim()
             : String(existingConfig.grouping ?? '').trim();
-        const preferredType = mod.type ?? (widget.chartType as ChartType | undefined);
+        const preferredType =
+          mod.type ?? (widget.chartType as ChartType | undefined);
         // SQL-first edit: a rewritten dynamicSql turns this into (or keeps it) a
         // dynamic-SQL widget. The data endpoint runs queryConfig.dynamicSql, so we
         // must replace it AND force metric/grouping to dynamic/query. The chart
         // type is taken verbatim from the requested/current type (skip the
         // vocabulary resolver, which would otherwise snap it to a preset).
         const hasNewSql =
-          typeof mod.dynamicSql === 'string' && mod.dynamicSql.trim().length > 0;
+          typeof mod.dynamicSql === 'string' &&
+          mod.dynamicSql.trim().length > 0;
         const nextType = hasNewSql
           ? (preferredType ?? (widget.chartType as ChartType))
-          : this.resolveWidgetTypeForEdit(nextMetric, nextGrouping, preferredType);
+          : this.resolveWidgetTypeForEdit(
+              nextMetric,
+              nextGrouping,
+              preferredType,
+            );
         if (nextType !== widget.chartType) changes.chartType = nextType;
         if (hasNewSql) {
           nextConfig.dynamicSql = mod.dynamicSql!.trim();
           nextConfig.metric = 'dynamic';
           nextConfig.grouping = 'query';
           // Phase 3: keep the updated spec next to the SQL it compiled from.
-          if (mod.spec) nextConfig.spec = mod.spec as unknown as Prisma.InputJsonValue;
+          if (mod.spec)
+            nextConfig.spec = mod.spec as unknown as Prisma.InputJsonValue;
         }
         if (!hasNewSql && typeof mod.metric === 'string' && mod.metric.trim()) {
           nextConfig.metric = mod.metric.trim();
         }
-        if (!hasNewSql && typeof mod.grouping === 'string' && mod.grouping.trim()) {
+        if (
+          !hasNewSql &&
+          typeof mod.grouping === 'string' &&
+          mod.grouping.trim()
+        ) {
           nextConfig.grouping = mod.grouping.trim();
         }
         if (mod.breakdown !== undefined) nextConfig.breakdown = mod.breakdown;
         if (mod.topN !== undefined) nextConfig.topN = mod.topN;
-        if (mod.xAxisLabel !== undefined) nextConfig.xAxisLabel = mod.xAxisLabel;
-        if (mod.yAxisLabel !== undefined) nextConfig.yAxisLabel = mod.yAxisLabel;
+        if (mod.xAxisLabel !== undefined)
+          nextConfig.xAxisLabel = mod.xAxisLabel;
+        if (mod.yAxisLabel !== undefined)
+          nextConfig.yAxisLabel = mod.yAxisLabel;
         if (mod.display !== undefined) {
           if (mod.display === null) {
             nextConfig.display = null;
@@ -26113,7 +27687,10 @@ export class AgentService {
             const singleWidgetTitle =
               editPlan.modify
                 .map((mod) => mod.title)
-                .find((title): title is string => typeof title === 'string' && title.trim().length > 0) ??
+                .find(
+                  (title): title is string =>
+                    typeof title === 'string' && title.trim().length > 0,
+                ) ??
               editPlan.add[0]?.title ??
               remaining[0]?.title;
             if (singleWidgetTitle) {
@@ -26800,9 +28377,7 @@ Output SQL ONLY — no explanation, no markdown.`;
    * bypassing the Ollama LLM which is unreliable for structured routing.
    * Covers all 60+ canonical query patterns across 5 dashboard categories.
    */
-  private preRouteQuery(
-    query: string,
-  ): Array<{
+  private preRouteQuery(query: string): Array<{
     type: string;
     metric: string;
     grouping: string;
@@ -26887,8 +28462,12 @@ Output SQL ONLY — no explanation, no markdown.`;
       q,
     );
     const hasExecutiveDashboardIntent =
-      /\b(dashboard|report|overview|summary|scorecard|board\s+pack|pack|suite)\b/.test(q) &&
-      /\b(cfo|executive|financial\s+position|operating\s+performance|profitability|liquidity|cash\s+position|financial\s+health|balance\s+sheet|p&l|income\s+statement|net\s+income)\b/.test(q);
+      /\b(dashboard|report|overview|summary|scorecard|board\s+pack|pack|suite)\b/.test(
+        q,
+      ) &&
+      /\b(cfo|executive|financial\s+position|operating\s+performance|profitability|liquidity|cash\s+position|financial\s+health|balance\s+sheet|p&l|income\s+statement|net\s+income)\b/.test(
+        q,
+      );
 
     if (hasExecutiveDashboardIntent)
       return [
@@ -27025,7 +28604,13 @@ Output SQL ONLY — no explanation, no markdown.`;
       if (hasTransactionCount && hasTime)
         return [
           {
-            type: isMatrix ? 'matrix' : isStacked ? 'stacked_bar' : isLine ? 'line' : 'heatmap',
+            type: isMatrix
+              ? 'matrix'
+              : isStacked
+                ? 'stacked_bar'
+                : isLine
+                  ? 'line'
+                  : 'heatmap',
             metric: 'vendor_count',
             grouping: 'month_vendor',
             title: 'Vendor Transaction Activity by Month',
@@ -27560,7 +29145,14 @@ Output SQL ONLY — no explanation, no markdown.`;
   // The LLM writes this often for share-of-total; fix it deterministically so it
   // never errors / needs the slow self-repair round-trip.
   private fixScalarWindowWrap(sql: string): string {
-    const scalarFns = ['abs', 'round', 'floor', 'ceil', 'toFloat64', 'toFloat32'];
+    const scalarFns = [
+      'abs',
+      'round',
+      'floor',
+      'ceil',
+      'toFloat64',
+      'toFloat32',
+    ];
     let out = sql;
     for (const fn of scalarFns) {
       const re = new RegExp(`\\b${fn}\\s*\\(`, 'gi');
@@ -27850,16 +29442,23 @@ Output SQL ONLY — no explanation, no markdown.`;
 
     const materialize = (rows: any[]) => {
       const colTotals = new Map<string, number>();
-      const rowMap = new Map<string, { sort: string; total: number; [key: string]: any }>();
+      const rowMap = new Map<
+        string,
+        { sort: string; total: number; [key: string]: any }
+      >();
 
       for (const r of rows as any[]) {
         const rowLabel = String(r.row_label ?? '');
         const colLabel = String(r.col_label ?? '');
         const value = this.num(r.value);
-        if (!rowLabel || !colLabel || !Number.isFinite(value) || value <= 0) continue;
+        if (!rowLabel || !colLabel || !Number.isFinite(value) || value <= 0)
+          continue;
         colTotals.set(colLabel, (colTotals.get(colLabel) ?? 0) + value);
         if (!rowMap.has(rowLabel)) {
-          rowMap.set(rowLabel, { sort: String(r.row_sort ?? rowLabel), total: 0 });
+          rowMap.set(rowLabel, {
+            sort: String(r.row_sort ?? rowLabel),
+            total: 0,
+          });
         }
         const entry = rowMap.get(rowLabel)!;
         entry[colLabel] = (entry[colLabel] ?? 0) + value;
@@ -27878,7 +29477,8 @@ Output SQL ONLY — no explanation, no markdown.`;
         })
         .map(([label, vals]) => {
           const out: Record<string, unknown> = { name: label };
-          for (const colLabel of sortedCols) out[colLabel] = vals[colLabel] ?? 0;
+          for (const colLabel of sortedCols)
+            out[colLabel] = vals[colLabel] ?? 0;
           return out;
         });
 
@@ -27955,7 +29555,7 @@ Output SQL ONLY — no explanation, no markdown.`;
        GROUP BY row_label, row_sort, col_label
        HAVING value > 0
        ORDER BY row_sort ASC, value DESC`,
-        { externalOrgIds: scope.externalOrgIds, ...entityParam },
+      { externalOrgIds: scope.externalOrgIds, ...entityParam },
     );
 
     return materialize(rows);
@@ -28106,7 +29706,10 @@ Output SQL ONLY — no explanation, no markdown.`;
         }
       }
     }
-    if ((t === 'pie' || t === 'donut' || t === 'treemap') && keys.includes('value')) {
+    if (
+      (t === 'pie' || t === 'donut' || t === 'treemap') &&
+      keys.includes('value')
+    ) {
       if (rows.some((r) => Number((r as any).value) < 0)) {
         return (
           `A ${t} chart shows shares of a whole, so no slice can be negative. The data has ` +
@@ -28140,7 +29743,8 @@ Output SQL ONLY — no explanation, no markdown.`;
       /(?:_pct|_rate)$/.test(primaryMeasure) ||
       /(margin_pct|growth_pct|days|per_employee|avg_)/.test(primaryMeasure);
     if (!looksRateOrAverage) return null;
-    const label = EBPO_MEASURES[primaryMeasure]?.label ?? primaryMeasure.replace(/_/g, ' ');
+    const label =
+      EBPO_MEASURES[primaryMeasure]?.label ?? primaryMeasure.replace(/_/g, ' ');
     return (
       `I can’t build a pie/donut for ${label} because it is an average/rate, not an additive ` +
       `part of a whole. I can show it as a bar or line chart by country, delivery center, or month instead.`

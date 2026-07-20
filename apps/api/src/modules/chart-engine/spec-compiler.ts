@@ -10,7 +10,12 @@
  *   - every query is scoped by tenant_id + org_id PARAMS (never interpolation)
  */
 
-import type { EngineChartSpec, MeasureExpr, SemanticMeasure, SemanticModel } from './semantic-model.types';
+import type {
+  EngineChartSpec,
+  MeasureExpr,
+  SemanticMeasure,
+  SemanticModel,
+} from './semantic-model.types';
 
 export type ValueFormat = 'currency' | 'percent' | 'number';
 
@@ -33,10 +38,18 @@ export interface EngineDisplay {
   xAxisLabel?: string;
   yAxisLabel?: string;
   highlightNames?: string[];
+  highlightTopN?: number;
+  labelSeries?: string;
+  highlightNegative?: boolean;
+  /** 100%-stacked contribution chart: EVERY series is a percentage share, whatever
+   * its name — the renderer must format all series as percent, never infer $ from a
+   * series name like "Voice Revenue". */
+  normalized?: boolean;
 }
 
 /** The tenant isolation predicate — parameters, never string interpolation. */
-export const SCOPE_WHERE = 'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
+export const SCOPE_WHERE =
+  'tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)})';
 
 export interface CompileContext {
   analyticsDb: string;
@@ -108,7 +121,10 @@ function compileMeasureExpr(expr: MeasureExpr): string {
   }
 }
 
-function timeGrainExpr(grain: NonNullable<EngineChartSpec['timeGrain']>, col: string): string {
+function timeGrainExpr(
+  grain: NonNullable<EngineChartSpec['timeGrain']>,
+  col: string,
+): string {
   const c = ident(col);
   switch (grain) {
     case 'day':
@@ -129,7 +145,10 @@ function timeGrainExpr(grain: NonNullable<EngineChartSpec['timeGrain']>, col: st
  * pretty label never breaks chronological order. The frontend's date parser
  * recognizes these shapes, so time-scope filtering keeps working.
  */
-function timeLabelExpr(grain: NonNullable<EngineChartSpec['timeGrain']>, bucketExpr: string): string {
+function timeLabelExpr(
+  grain: NonNullable<EngineChartSpec['timeGrain']>,
+  bucketExpr: string,
+): string {
   switch (grain) {
     case 'day':
       // "5 Jan 2025" — no zero-padding, reads naturally.
@@ -194,12 +213,18 @@ function yAxisTitleFor(m: SemanticMeasure): string {
   if (m.unit === '%') return 'Percent';
   // Distinct-count measures commonly use a technical *_key column. The key is
   // how the count is computed, not what the reader should see on the axis.
-  return m.expr.kind === 'count_distinct' ? m.label.replace(/\s+Key$/i, '') : m.label;
+  return m.expr.kind === 'count_distinct'
+    ? m.label.replace(/\s+Key$/i, '')
+    : m.label;
 }
 
 /** Human x-axis title: the dimension's name, or the time grain, or nothing. */
-function xAxisTitle(spec: EngineChartSpec, model: SemanticModel): string | undefined {
-  if (spec.timeGrain) return spec.timeGrain.charAt(0).toUpperCase() + spec.timeGrain.slice(1);
+function xAxisTitle(
+  spec: EngineChartSpec,
+  model: SemanticModel,
+): string | undefined {
+  if (spec.timeGrain)
+    return spec.timeGrain.charAt(0).toUpperCase() + spec.timeGrain.slice(1);
   if (spec.dimensionKey) {
     const dim = model.dimensions.find((d) => d.key === spec.dimensionKey);
     if (dim) return dim.label;
@@ -214,14 +239,40 @@ function xAxisTitle(spec: EngineChartSpec, model: SemanticModel): string | undef
  * → its own right axis as a line), which is exactly what "add gross margin on
  * another axis" should produce — a dual-axis combo. Pure + unit-testable.
  */
-export function buildEngineDisplay(spec: EngineChartSpec, model: SemanticModel): EngineDisplay {
-  const measures = spec.measureKeys
+export function buildEngineDisplay(
+  spec: EngineChartSpec,
+  model: SemanticModel,
+): EngineDisplay {
+  const allMeasures = spec.measureKeys
     .map((k) => model.measures.find((m) => m.key === k))
     .filter((m): m is SemanticMeasure => !!m);
-  const primaryFmt: ValueFormat = measures.length ? unitFormat(measures[0]!.unit) : 'number';
+  const labelMeasure = spec.labelMeasureKey
+    ? allMeasures.find((measure) => measure.key === spec.labelMeasureKey)
+    : undefined;
+  const measures = labelMeasure
+    ? allMeasures.filter((measure) => measure.key !== labelMeasure.key)
+    : allMeasures;
+  // Percentage-contribution charts are always in percent, whatever the measure's
+  // native unit — each series is its share of the per-axis total.
+  const primaryFmt: ValueFormat = spec.normalize
+    ? 'percent'
+    : spec.comparison === 'yoy_growth_pct'
+      ? 'percent'
+      : measures.length
+        ? unitFormat(measures[0]!.unit)
+        : 'number';
+  const normalizedYLabel = spec.normalize ? 'Share of total (%)' : undefined;
   const xAxisLabel = xAxisTitle(spec, model);
-  const decorate = (display: EngineDisplay): EngineDisplay =>
-    spec.highlightNames?.length ? { ...display, highlightNames: spec.highlightNames } : display;
+  const decorate = (display: EngineDisplay): EngineDisplay => {
+    let d = display;
+    if (spec.highlightNames?.length)
+      d = { ...d, highlightNames: spec.highlightNames };
+    if (spec.highlightTopN) d = { ...d, highlightTopN: spec.highlightTopN };
+    if (labelMeasure) d = { ...d, labelSeries: labelMeasure.label };
+    if (spec.highlightNegative) d = { ...d, highlightNegative: true };
+    if (spec.normalize) d = { ...d, normalized: true };
+    return d;
+  };
 
   if (spec.comparison === 'previous_year' && measures.length >= 1) {
     return decorate({
@@ -231,14 +282,33 @@ export function buildEngineDisplay(spec: EngineChartSpec, model: SemanticModel):
       yAxisLabel: yAxisTitleFor(measures[0]!),
       series: [
         { key: 'Current Year', role: 'line', axis: 'left', format: primaryFmt },
-        { key: 'Previous Year', role: 'line', axis: 'left', format: primaryFmt },
+        {
+          key: 'Previous Year',
+          role: 'line',
+          axis: 'left',
+          format: primaryFmt,
+        },
       ],
+    });
+  }
+
+  if (spec.comparison === 'yoy_growth_pct' && measures.length >= 1) {
+    return decorate({
+      chartType: spec.chartType,
+      valueFormat: 'percent',
+      xAxisLabel: xAxisLabel ?? 'Period',
+      yAxisLabel: 'YoY Growth (%)',
     });
   }
 
   // KPI/scorecard widgets intentionally mix units in one card grid. Preserve
   // that requested visual instead of converting it to a dual-axis combo.
-  if (spec.chartType === 'kpi' || spec.chartType === 'radar' || spec.chartType === 'funnel' || spec.chartType === 'sankey') {
+  if (
+    spec.chartType === 'kpi' ||
+    spec.chartType === 'radar' ||
+    spec.chartType === 'funnel' ||
+    spec.chartType === 'sankey'
+  ) {
     return decorate({
       chartType: spec.chartType,
       valueFormat: primaryFmt,
@@ -249,7 +319,10 @@ export function buildEngineDisplay(spec: EngineChartSpec, model: SemanticModel):
 
   // Point charts encode measures on their numeric axes; differing units are
   // expected and must not coerce the requested scatter/bubble into a combo.
-  if ((spec.chartType === 'scatter' || spec.chartType === 'bubble') && measures.length >= 2) {
+  if (
+    (spec.chartType === 'scatter' || spec.chartType === 'bubble') &&
+    measures.length >= 2
+  ) {
     return decorate({
       chartType: spec.chartType,
       valueFormat: primaryFmt,
@@ -265,18 +338,29 @@ export function buildEngineDisplay(spec: EngineChartSpec, model: SemanticModel):
       chartType: spec.chartType,
       valueFormat: primaryFmt,
       ...(xAxisLabel ? { xAxisLabel } : {}),
-      ...(measures.length ? { yAxisLabel: yAxisTitleFor(measures[0]!) } : {}),
+      ...(normalizedYLabel
+        ? { yAxisLabel: normalizedYLabel }
+        : measures.length
+          ? { yAxisLabel: yAxisTitleFor(measures[0]!) }
+          : {}),
     });
   }
 
-  const baseRole: 'bar' | 'line' = spec.chartType === 'line' || spec.chartType === 'area' ? 'line' : 'bar';
+  const baseRole: 'bar' | 'line' =
+    spec.chartType === 'line' || spec.chartType === 'area' ? 'line' : 'bar';
+  const primaryAggregation = measures[0]?.expr.kind;
   const series: EngineSeries[] = measures.map((m, i) => {
     const fmt = unitFormat(m.unit);
-    const sameUnit = fmt === primaryFmt;
+    // The same display format does not necessarily mean the same numeric scale.
+    // A summed dollar total and an average dollar rate (revenue vs billing rate,
+    // for example) are different semantic quantities and become unreadable on a
+    // shared axis. Keep genuinely comparable aggregations together, but give a
+    // differently aggregated measure its own line/right axis.
+    const sameScale = fmt === primaryFmt && m.expr.kind === primaryAggregation;
     return {
       key: m.label,
-      role: i === 0 || sameUnit ? baseRole : 'line',
-      axis: i === 0 || sameUnit ? 'left' : 'right',
+      role: i === 0 || sameScale ? baseRole : 'line',
+      axis: i === 0 || sameScale ? 'left' : 'right',
       format: fmt,
     };
   });
@@ -287,7 +371,9 @@ export function buildEngineDisplay(spec: EngineChartSpec, model: SemanticModel):
     series,
     ...(xAxisLabel ? { xAxisLabel } : {}),
     yAxisLabel: yAxisTitleFor(measures[0]!),
-    ...(right ? { secondaryAxisFormat: right.format, secondaryLabel: right.key } : {}),
+    ...(right
+      ? { secondaryAxisFormat: right.format, secondaryLabel: right.key }
+      : {}),
   });
 }
 
@@ -303,12 +389,16 @@ export function compileSeriesSql(
   model: SemanticModel,
   ctx: CompileContext,
 ): CompileResult {
-  const measures = spec.measureKeys.map((k) => model.measures.find((m) => m.key === k));
+  const measures = spec.measureKeys.map((k) =>
+    model.measures.find((m) => m.key === k),
+  );
   const missing = spec.measureKeys.filter((_, i) => !measures[i]);
-  if (missing.length) return { ok: false, reason: `unknown measure(s): ${missing.join(', ')}` };
+  if (missing.length)
+    return { ok: false, reason: `unknown measure(s): ${missing.join(', ')}` };
   const resolved = measures as SemanticMeasure[];
   const table = resolved[0]!.sourceTable;
-  if (resolved.some((m) => m.sourceTable !== table)) return { ok: false, reason: 'cross-table not supported' };
+  if (resolved.some((m) => m.sourceTable !== table))
+    return { ok: false, reason: 'cross-table not supported' };
 
   const primaryDim = spec.dimensionKey
     ? model.dimensions.find((d) => d.key === spec.dimensionKey)
@@ -316,8 +406,13 @@ export function compileSeriesSql(
   const explicitBreakdown = spec.breakdownKey
     ? model.dimensions.find((d) => d.key === spec.breakdownKey)
     : undefined;
-  if (spec.dimensionKey && !primaryDim) return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
-  if (spec.breakdownKey && !explicitBreakdown) return { ok: false, reason: `unknown breakdown dimension: ${spec.breakdownKey}` };
+  if (spec.dimensionKey && !primaryDim)
+    return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
+  if (spec.breakdownKey && !explicitBreakdown)
+    return {
+      ok: false,
+      reason: `unknown breakdown dimension: ${spec.breakdownKey}`,
+    };
   if ([primaryDim, explicitBreakdown].some((d) => d && d.table !== table)) {
     return { ok: false, reason: 'cross-table not supported' };
   }
@@ -328,28 +423,87 @@ export function compileSeriesSql(
   // This avoids hardcoding any category values into SQL or application code.
   const implicitTimeBreakdown = !!spec.timeGrain && !!primaryDim;
 
+  if (spec.comparison === 'yoy_growth_pct') {
+    if (!spec.timeGrain || !model.time) {
+      return { ok: false, reason: 'YoY growth requires a time grain' };
+    }
+    if (explicitBreakdown) {
+      return {
+        ok: false,
+        reason: 'YoY growth supports one categorical breakdown',
+      };
+    }
+    if (resolved.length !== 1) {
+      return { ok: false, reason: 'YoY growth supports one base measure' };
+    }
+
+    const measure = resolved[0]!;
+    const bucket = timeGrainExpr(spec.timeGrain, model.time.column);
+    const periodLabel = timeLabelExpr(spec.timeGrain, 'cur.period');
+    const dimensionSelect = primaryDim
+      ? `, if(empty(toString(${ident(primaryDim.column)})), 'Unallocated', toString(${ident(primaryDim.column)})) AS series`
+      : '';
+    const dimensionGroup = primaryDim ? `, ${ident(primaryDim.column)}` : '';
+    const dimensionJoin = primaryDim ? ' AND prev.series = cur.series' : '';
+    const outerSeries = primaryDim ? ', series' : '';
+    const innerSeries = primaryDim ? ', cur.series AS series' : '';
+    const seriesOrder = primaryDim ? ', series ASC' : '';
+    const sql =
+      `WITH base AS (\n` +
+      `  SELECT ${bucket} AS period${dimensionSelect}, toFloat64(${measureValueExpr(measure)}) AS amount\n` +
+      `  FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
+      `  WHERE ${SCOPE_WHERE}\n` +
+      `  GROUP BY ${bucket}${dimensionGroup}\n` +
+      `)\n` +
+      `SELECT name${outerSeries}, value FROM (\n` +
+      `  SELECT ${periodLabel} AS name${innerSeries}, ` +
+      `round(100 * (cur.amount - prev.amount) / nullIf(abs(prev.amount), 0), 4) AS value, cur.period AS _series_order\n` +
+      `  FROM base AS cur\n` +
+      `  INNER JOIN base AS prev ON prev.period = addYears(cur.period, -1)${dimensionJoin}\n` +
+      `  WHERE abs(prev.amount) > 0.000000000001\n` +
+      `)\n` +
+      `WHERE isFinite(value)\n` +
+      `ORDER BY _series_order ASC${seriesOrder}\n` +
+      `LIMIT ${ctx.maxRows ?? 5000}`;
+    return {
+      ok: true,
+      sql,
+      params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    };
+  }
+
   if (spec.comparison === 'previous_year') {
-    if (!spec.timeGrain || !model.time) return { ok: false, reason: 'previous-year comparison requires a time grain' };
-    if (explicitBreakdown) return { ok: false, reason: 'previous-year comparison supports one categorical breakdown' };
+    if (!spec.timeGrain || !model.time)
+      return {
+        ok: false,
+        reason: 'previous-year comparison requires a time grain',
+      };
+    if (explicitBreakdown)
+      return {
+        ok: false,
+        reason: 'previous-year comparison supports one categorical breakdown',
+      };
     const measure = resolved[0]!;
     const timeColumn = ident(model.time.column);
     const latestYear = `(SELECT max(toYear(${timeColumn})) FROM ${ident(ctx.analyticsDb)}.${ident(table)} WHERE ${SCOPE_WHERE})`;
     const currentCondition = `toYear(${timeColumn}) = ${latestYear}`;
     const previousCondition = `toYear(${timeColumn}) = ${latestYear} - 1`;
-    const periodOrder = spec.timeGrain === 'quarter'
-      ? `toQuarter(${timeColumn})`
-      : spec.timeGrain === 'year'
-        ? `toYear(${timeColumn})`
-        : spec.timeGrain === 'day'
-          ? `toDayOfYear(${timeColumn})`
-          : `toMonth(${timeColumn})`;
-    const periodLabel = spec.timeGrain === 'quarter'
-      ? `concat('Q', toString(toQuarter(${timeColumn})))`
-      : spec.timeGrain === 'year'
-        ? `'Year'`
-        : spec.timeGrain === 'day'
-          ? `formatDateTime(${timeColumn}, '%d %b')`
-          : `formatDateTime(${timeColumn}, '%b')`;
+    const periodOrder =
+      spec.timeGrain === 'quarter'
+        ? `toQuarter(${timeColumn})`
+        : spec.timeGrain === 'year'
+          ? `toYear(${timeColumn})`
+          : spec.timeGrain === 'day'
+            ? `toDayOfYear(${timeColumn})`
+            : `toMonth(${timeColumn})`;
+    const periodLabel =
+      spec.timeGrain === 'quarter'
+        ? `concat('Q', toString(toQuarter(${timeColumn})))`
+        : spec.timeGrain === 'year'
+          ? `'Year'`
+          : spec.timeGrain === 'day'
+            ? `formatDateTime(${timeColumn}, '%d %b')`
+            : `formatDateTime(${timeColumn}, '%b')`;
     const currentValue = measureValueExprIf(measure, currentCondition);
     const previousValue = measureValueExprIf(measure, previousCondition);
     if (primaryDim) {
@@ -358,9 +512,14 @@ export function compileSeriesSql(
         `SELECT ${periodLabel} AS name, concat(toString(${dimColumn}), ' — ${label}') AS series, toFloat64(${value}) AS value, ${periodOrder} AS _ord\n` +
         `FROM ${ident(ctx.analyticsDb)}.${ident(table)} WHERE ${SCOPE_WHERE} AND toYear(${timeColumn}) IN (${latestYear}, ${latestYear} - 1)\n` +
         `GROUP BY ${periodOrder}, name, ${dimColumn}\nHAVING abs(ifNull(value, 0)) > 0.000000000001`;
-      const sql = `SELECT name, series, value FROM (\n${base('Current Year', currentValue)}\nUNION ALL\n${base('Previous Year', previousValue)}\n) ` +
+      const sql =
+        `SELECT name, series, value FROM (\n${base('Current Year', currentValue)}\nUNION ALL\n${base('Previous Year', previousValue)}\n) ` +
         `ORDER BY _ord ASC, series ASC LIMIT ${ctx.maxRows ?? 5000}`;
-      return { ok: true, sql, params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds } };
+      return {
+        ok: true,
+        sql,
+        params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+      };
     }
     if (spec.chartType === 'waterfall') {
       const sql =
@@ -370,7 +529,11 @@ export function compileSeriesSql(
         `SELECT 1 AS ord, 'Previous Year' AS name, previous_value AS value, 1 AS is_total FROM totals\nUNION ALL\n` +
         `SELECT 2 AS ord, 'Change' AS name, current_value - previous_value AS value, 0 AS is_total FROM totals\nUNION ALL\n` +
         `SELECT 3 AS ord, 'Current Year' AS name, current_value AS value, 1 AS is_total FROM totals) ORDER BY ord LIMIT 3`;
-      return { ok: true, sql, params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds } };
+      return {
+        ok: true,
+        sql,
+        params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+      };
     }
     const sql =
       `SELECT ${periodLabel} AS name, toFloat64(${currentValue}) AS "Current Year", toFloat64(${previousValue}) AS "Previous Year"\n` +
@@ -379,7 +542,11 @@ export function compileSeriesSql(
       `GROUP BY ${periodOrder}, name\n` +
       `HAVING abs(ifNull("Current Year", 0)) > 0.000000000001 OR abs(ifNull("Previous Year", 0)) > 0.000000000001\n` +
       `ORDER BY ${periodOrder} ASC\nLIMIT ${ctx.maxRows ?? 5000}`;
-    return { ok: true, sql, params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds } };
+    return {
+      ok: true,
+      sql,
+      params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    };
   }
 
   // Scatter/bubble charts use an explicit x/y/z transport contract. A generic
@@ -387,10 +554,18 @@ export function compileSeriesSql(
   // a combo or collapse all bubbles to zero. The point name is assembled from
   // whichever categorical/time dimensions the planner selected.
   if (spec.chartType === 'scatter' || spec.chartType === 'bubble') {
-    if (resolved.length < 2) return { ok: false, reason: 'point chart requires at least two measures' };
-    if (spec.timeGrain && !model.time) return { ok: false, reason: 'no time column' };
+    if (resolved.length < 2)
+      return {
+        ok: false,
+        reason: 'point chart requires at least two measures',
+      };
+    if (spec.timeGrain && !model.time)
+      return { ok: false, reason: 'no time column' };
     if (!primaryDim && !explicitBreakdown && !spec.timeGrain) {
-      return { ok: false, reason: 'point chart requires a category or time dimension' };
+      return {
+        ok: false,
+        reason: 'point chart requires a category or time dimension',
+      };
     }
 
     const groupExprs: string[] = [];
@@ -416,16 +591,21 @@ export function compileSeriesSql(
     const pointMeasures = resolved.slice(0, 3);
     const aliases = ['x', 'y', 'z'];
     const valueSelect = pointMeasures
-      .map((measure, index) => `toFloat64(${measureValueExpr(measure)}) AS ${aliases[index]!}`)
+      .map(
+        (measure, index) =>
+          `toFloat64(${measureValueExpr(measure)}) AS ${aliases[index]!}`,
+      )
       .join(', ');
     const having = pointMeasures
       .map((_, index) => `abs(ifNull(${aliases[index]!}, 0)) > 0.000000000001`)
       .join(' OR ');
     const maxRows = ctx.maxRows ?? 5000;
-    const limit = spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
-    const nameExpr = nameExprs.length === 1
-      ? nameExprs[0]!
-      : `concat(${nameExprs.flatMap((expr, index) => index === 0 ? [expr] : [stringLiteral(' — '), expr]).join(', ')})`;
+    const limit =
+      spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
+    const nameExpr =
+      nameExprs.length === 1
+        ? nameExprs[0]!
+        : `concat(${nameExprs.flatMap((expr, index) => (index === 0 ? [expr] : [stringLiteral(' — '), expr])).join(', ')})`;
     const sql =
       `SELECT ${nameExpr} AS name, ${valueSelect}\n` +
       `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
@@ -434,40 +614,80 @@ export function compileSeriesSql(
       `HAVING ${having}\n` +
       `ORDER BY ${pointOrderExpr} ${spec.timeGrain ? 'ASC' : spec.sort === 'asc' ? 'ASC' : 'DESC'}\n` +
       `LIMIT ${limit}`;
-    return { ok: true, sql, params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds } };
+    return {
+      ok: true,
+      sql,
+      params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    };
   }
 
   if (explicitBreakdown || implicitTimeBreakdown) {
-    if (spec.timeGrain && !model.time) return { ok: false, reason: 'no time column' };
+    if (spec.timeGrain && !model.time)
+      return { ok: false, reason: 'no time column' };
     const axisExpr = spec.timeGrain
-      ? timeLabelExpr(spec.timeGrain, timeGrainExpr(spec.timeGrain, model.time!.column))
+      ? timeLabelExpr(
+          spec.timeGrain,
+          timeGrainExpr(spec.timeGrain, model.time!.column),
+        )
       : `toString(${ident(primaryDim!.column)})`;
     const orderExpr = spec.timeGrain
       ? timeGrainExpr(spec.timeGrain, model.time!.column)
       : `toString(${ident(primaryDim!.column)})`;
     const seriesDim = explicitBreakdown ?? primaryDim!;
     const groupExprs = spec.timeGrain
-      ? [timeGrainExpr(spec.timeGrain, model.time!.column), ident(seriesDim.column)]
+      ? [
+          timeGrainExpr(spec.timeGrain, model.time!.column),
+          ident(seriesDim.column),
+        ]
       : [ident(primaryDim!.column), ident(seriesDim.column)];
     const maxRows = ctx.maxRows ?? 5000;
-    const parts = resolved.map((m) => {
-      const seriesExpr = resolved.length === 1
-        ? `toString(${ident(seriesDim.column)})`
-        : `concat(toString(${ident(seriesDim.column)}), ' — ', ${stringLiteral(m.label)})`;
+    const primaryFormat = unitFormat(resolved[0]!.unit);
+    const primaryAggregation = resolved[0]!.expr.kind;
+    const parts = resolved.map((m, index) => {
+      // A mixed-scale follow-up on a stacked breakdown needs two different
+      // granularities: keep the primary measure split into the requested stack,
+      // but aggregate overlay measures once per x-axis bucket. Otherwise the
+      // chart produces one salary/margin line per grade/category and becomes a
+      // misleading tangle. Same-scale component measures remain fully stacked.
+      const isOverlay =
+        index > 0 &&
+        (unitFormat(m.unit) !== primaryFormat ||
+          m.expr.kind !== primaryAggregation);
+      const seriesExpr = isOverlay
+        ? stringLiteral(m.label)
+        : resolved.length === 1
+          ? `toString(${ident(seriesDim.column)})`
+          : `concat(toString(${ident(seriesDim.column)}), ' — ', ${stringLiteral(m.label)})`;
+      const measureGroupExprs = isOverlay
+        ? spec.timeGrain
+          ? [timeGrainExpr(spec.timeGrain, model.time!.column)]
+          : [ident(primaryDim!.column)]
+        : groupExprs;
       // UNION ALL requires one common numeric type across measures (e.g.
       // uniqExact → UInt64 and avg salary → Float64). Float64 is the dashboard's
       // transport type; the source aggregation semantics remain unchanged.
       const valueExpr = `toFloat64(${measureValueExpr(m)})`;
-      return `SELECT ${axisExpr} AS name, ${seriesExpr} AS series, ${valueExpr} AS value, ${orderExpr} AS _series_order\n` +
+      return (
+        `SELECT ${axisExpr} AS name, ${seriesExpr} AS series, ${valueExpr} AS value, ${orderExpr} AS _series_order\n` +
         `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
         `WHERE ${SCOPE_WHERE}\n` +
-        `GROUP BY ${groupExprs.join(', ')}\n` +
-        `HAVING abs(ifNull(value, 0)) > 0.000000000001`;
+        `GROUP BY ${measureGroupExprs.join(', ')}\n` +
+        `HAVING abs(ifNull(value, 0)) > 0.000000000001`
+      );
     });
+    // Percentage contribution (100%-stacked): each series becomes its share of
+    // the per-axis-bucket total. round to 2dp; the display formats it as percent.
+    const valueOut = spec.normalize
+      ? `round(100 * value / nullIf(sum(value) OVER (PARTITION BY name), 0), 2)`
+      : `value`;
     const sql =
-      `SELECT name, series, value FROM (\n${parts.join('\nUNION ALL\n')}\n)\n` +
+      `SELECT name, series, ${valueOut} AS value FROM (\n${parts.join('\nUNION ALL\n')}\n)\n` +
       `ORDER BY _series_order ASC, series ASC\nLIMIT ${maxRows}`;
-    return { ok: true, sql, params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds } };
+    return {
+      ok: true,
+      sql,
+      params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    };
   }
 
   let nameExpr = `'Total'`;
@@ -475,8 +695,10 @@ export function compileSeriesSql(
   let timeBucket: string | null = null;
   if (spec.dimensionKey) {
     const dim = model.dimensions.find((d) => d.key === spec.dimensionKey);
-    if (!dim) return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
-    if (dim.table !== table) return { ok: false, reason: 'cross-table not supported' };
+    if (!dim)
+      return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
+    if (dim.table !== table)
+      return { ok: false, reason: 'cross-table not supported' };
     nameExpr = `toString(${ident(dim.column)})`;
     groupBy = `\nGROUP BY ${ident(dim.column)}`;
   } else if (spec.timeGrain) {
@@ -486,12 +708,15 @@ export function compileSeriesSql(
     groupBy = `\nGROUP BY ${timeBucket}`;
   }
 
-  const valueCols = resolved.map((m) => `${measureValueExpr(m)} AS ${quoteAlias(m.label)}`).join(', ');
+  const valueCols = resolved
+    .map((m) => `${measureValueExpr(m)} AS ${quoteAlias(m.label)}`)
+    .join(', ');
   const having = groupBy
     ? `\nHAVING ${resolved.map((m) => `abs(ifNull(${quoteAlias(m.label)}, 0)) > 0.000000000001`).join(' OR ')}`
     : '';
   const maxRows = ctx.maxRows ?? 5000;
-  const limit = spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
+  const limit =
+    spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
   const orderBy = timeBucket
     ? `\nORDER BY ${timeBucket} ASC`
     : `\nORDER BY ${quoteAlias(resolved[0]!.label)} ${spec.sort === 'asc' ? 'ASC' : 'DESC'}`;
@@ -504,7 +729,11 @@ export function compileSeriesSql(
     having +
     orderBy +
     `\nLIMIT ${limit}`;
-  return { ok: true, sql, params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds } };
+  return {
+    ok: true,
+    sql,
+    params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+  };
 }
 
 /**
@@ -519,7 +748,8 @@ export function compileNameValueSql(
   ctx: CompileContext,
 ): CompileResult {
   const measure = model.measures.find((m) => m.key === spec.measureKeys[0]);
-  if (!measure) return { ok: false, reason: `unknown measure: ${spec.measureKeys[0]}` };
+  if (!measure)
+    return { ok: false, reason: `unknown measure: ${spec.measureKeys[0]}` };
 
   let nameExpr = `'Total'`;
   let groupBy = '';
@@ -528,8 +758,10 @@ export function compileNameValueSql(
   let timeBucket: string | null = null;
   if (spec.dimensionKey) {
     const dim = model.dimensions.find((d) => d.key === spec.dimensionKey);
-    if (!dim) return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
-    if (dim.table !== measure.sourceTable) return { ok: false, reason: 'cross-table not supported' };
+    if (!dim)
+      return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
+    if (dim.table !== measure.sourceTable)
+      return { ok: false, reason: 'cross-table not supported' };
     nameExpr = `toString(${ident(dim.column)})`;
     groupBy = `\nGROUP BY ${ident(dim.column)}`;
   } else if (spec.timeGrain) {
@@ -542,9 +774,12 @@ export function compileNameValueSql(
   // Ratios are stored/derived as a 0..1 fraction; the UI's percent formatter
   // expects percent-points (33.7 → "33.7%"), so scale ratio measures ×100.
   const valueExpr = measureValueExpr(measure);
-  const having = groupBy ? `\nHAVING abs(ifNull(value, 0)) > 0.000000000001` : '';
+  const having = groupBy
+    ? `\nHAVING abs(ifNull(value, 0)) > 0.000000000001`
+    : '';
   const maxRows = ctx.maxRows ?? 5000;
-  const limit = spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
+  const limit =
+    spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
   // Time axis: chronological by the underlying date bucket (NOT by the pretty
   // label — "Apr" must not sort before "Jan"). Otherwise: biggest value first.
   const orderBy = timeBucket
@@ -559,7 +794,11 @@ export function compileNameValueSql(
     having +
     orderBy +
     `\nLIMIT ${limit}`;
-  return { ok: true, sql, params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds } };
+  return {
+    ok: true,
+    sql,
+    params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+  };
 }
 
 /** Compile genuine row-level distributions rather than charting one aggregate
@@ -571,17 +810,26 @@ export function compileDistributionSql(
   ctx: CompileContext,
 ): CompileResult {
   const measure = model.measures.find((m) => m.key === spec.measureKeys[0]);
-  if (!measure) return { ok: false, reason: `unknown measure: ${spec.measureKeys[0]}` };
+  if (!measure)
+    return { ok: false, reason: `unknown measure: ${spec.measureKeys[0]}` };
   const rawColumn = distributionColumn(measure);
-  if (!rawColumn) return { ok: false, reason: 'distribution requires a row-level numeric measure' };
+  if (!rawColumn)
+    return {
+      ok: false,
+      reason: 'distribution requires a row-level numeric measure',
+    };
   const column = ident(rawColumn);
   const dbTable = `${ident(ctx.analyticsDb)}.${ident(measure.sourceTable)}`;
   const params = { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds };
 
   if (spec.chartType === 'box_plot') {
-    const dim = spec.dimensionKey ? model.dimensions.find((d) => d.key === spec.dimensionKey) : undefined;
-    if (spec.dimensionKey && !dim) return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
-    if (dim && dim.table !== measure.sourceTable) return { ok: false, reason: 'cross-table not supported' };
+    const dim = spec.dimensionKey
+      ? model.dimensions.find((d) => d.key === spec.dimensionKey)
+      : undefined;
+    if (spec.dimensionKey && !dim)
+      return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
+    if (dim && dim.table !== measure.sourceTable)
+      return { ok: false, reason: 'cross-table not supported' };
     const name = dim
       ? `if(empty(toString(${ident(dim.column)})), 'Unallocated', toString(${ident(dim.column)}))`
       : `'All records'`;
@@ -611,11 +859,15 @@ export function compileSpec(
   model: SemanticModel,
   ctx: CompileContext,
 ): CompileResult {
-  if (!spec.measureKeys.length) return { ok: false, reason: 'no measures in spec' };
+  if (!spec.measureKeys.length)
+    return { ok: false, reason: 'no measures in spec' };
 
-  const measures = spec.measureKeys.map((k) => model.measures.find((m) => m.key === k));
+  const measures = spec.measureKeys.map((k) =>
+    model.measures.find((m) => m.key === k),
+  );
   const missing = spec.measureKeys.filter((_, i) => !measures[i]);
-  if (missing.length) return { ok: false, reason: `unknown measure(s): ${missing.join(', ')}` };
+  if (missing.length)
+    return { ok: false, reason: `unknown measure(s): ${missing.join(', ')}` };
   const resolved = measures as NonNullable<(typeof measures)[number]>[];
 
   // v1 supports single-fact-table queries; cross-table joins are a later phase.
@@ -623,18 +875,26 @@ export function compileSpec(
   let dimension: SemanticModel['dimensions'][number] | undefined;
   if (spec.dimensionKey) {
     dimension = model.dimensions.find((d) => d.key === spec.dimensionKey);
-    if (!dimension) return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
+    if (!dimension)
+      return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
     tables.add(dimension.table);
   }
   let breakdown: SemanticModel['dimensions'][number] | undefined;
   if (spec.breakdownKey) {
     breakdown = model.dimensions.find((d) => d.key === spec.breakdownKey);
-    if (!breakdown) return { ok: false, reason: `unknown breakdown dimension: ${spec.breakdownKey}` };
+    if (!breakdown)
+      return {
+        ok: false,
+        reason: `unknown breakdown dimension: ${spec.breakdownKey}`,
+      };
     tables.add(breakdown.table);
   }
   if (spec.timeGrain && model.time) tables.add(model.time.table);
   if (tables.size > 1) {
-    return { ok: false, reason: `cross-table query not supported in v1 (tables: ${[...tables].join(', ')})` };
+    return {
+      ok: false,
+      reason: `cross-table query not supported in v1 (tables: ${[...tables].join(', ')})`,
+    };
   }
   const table = resolved[0]!.sourceTable;
 
@@ -650,18 +910,25 @@ export function compileSpec(
     groupParts.push(ident(breakdown.column));
   }
   if (spec.timeGrain) {
-    if (!model.time) return { ok: false, reason: 'spec requests a time grain but model has no time column' };
+    if (!model.time)
+      return {
+        ok: false,
+        reason: 'spec requests a time grain but model has no time column',
+      };
     const t = timeGrainExpr(spec.timeGrain, model.time.column);
     selectParts.push(`${t} AS period`);
     groupParts.push(t);
   }
 
   for (const [index, m] of resolved.entries()) {
-    selectParts.push(`${compileMeasureExpr(m.expr)} AS \`${compiledMeasureColumn(index)}\``);
+    selectParts.push(
+      `${compileMeasureExpr(m.expr)} AS \`${compiledMeasureColumn(index)}\``,
+    );
   }
 
   const maxRows = ctx.maxRows ?? 5000;
-  const limit = spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
+  const limit =
+    spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
 
   let orderBy = '';
   if (spec.topN && resolved[0]) {
@@ -671,7 +938,9 @@ export function compileSpec(
     orderBy = `\nORDER BY period ASC`;
   }
 
-  const groupBy = groupParts.length ? `\nGROUP BY ${groupParts.join(', ')}` : '';
+  const groupBy = groupParts.length
+    ? `\nGROUP BY ${groupParts.join(', ')}`
+    : '';
   const having = groupParts.length
     ? `\nHAVING ${resolved.map((_, index) => `abs(ifNull(\`${compiledMeasureColumn(index)}\`, 0)) > 0.000000000001`).join(' OR ')}`
     : '';
@@ -685,6 +954,33 @@ export function compileSpec(
     orderBy +
     `\nLIMIT ${limit}`;
 
+  return {
+    ok: true,
+    sql,
+    params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+  };
+}
+
+/**
+ * Scoped SQL that INDEPENDENTLY re-sums a ratio measure's numerator and
+ * denominator as two raw columns (no grouping, no HAVING, no scaling). The
+ * executor compares the charted ratio against SUM(num)/SUM(den) from this query
+ * — the live tripwire that keeps the avg-of-ratios class of bug from silently
+ * reappearing (docs/TARGET_ARCHITECTURE.md §9, guardrail #5). Returns a refusal
+ * only when handed a non-ratio measure (a caller bug), never for data reasons.
+ */
+export function compileRatioComponentsTotal(
+  measure: SemanticMeasure,
+  ctx: CompileContext,
+): CompileResult {
+  if (measure.expr.kind !== 'ratio_of_sums') {
+    return { ok: false, reason: `not a ratio measure: ${measure.key}` };
+  }
+  const { numerator, denominator } = measure.expr;
+  const sql =
+    `SELECT sum(${ident(numerator)}) AS \`num\`, sum(${ident(denominator)}) AS \`den\`\n` +
+    `FROM ${ident(ctx.analyticsDb)}.${ident(measure.sourceTable)}\n` +
+    `WHERE ${SCOPE_WHERE}`;
   return {
     ok: true,
     sql,

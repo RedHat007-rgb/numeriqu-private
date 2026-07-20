@@ -1,0 +1,434 @@
+[
+  {
+    "no": "1.0",
+    "category": "P&L",
+    "main": "Create a bar chart showing total revenue by business unit.",
+    "followup": "In the same chart, add gross profit by business unit."
+  },
+  {
+    "no": "2.0",
+    "category": "Payroll",
+    "main": "Create a bar chart showing total payroll cost by department.",
+    "followup": "In the same chart, add employee headcount."
+  },
+  {
+    "no": "3.0",
+    "category": "Client & Commercial",
+    "main": "Create a bar chart ranking clients by total revenue.",
+    "followup": "In the same chart, highlight the top 3 clients."
+  },
+  {
+    "no": "4.0",
+    "category": "Client & Commercial",
+    "main": "Create a treemap showing total revenue by country.",
+    "followup": "In the same visual, add gross margin percentage."
+  },
+  {
+    "no": "5.0",
+    "category": "P&L",
+    "main": "Generate a line chart showing monthly total revenue.",
+    "followup": "In the same chart, add revenue for the previous year."
+  },
+  {
+    "no": "6.0",
+    "category": "P&L",
+    "main": "Generate a line chart showing monthly total operating cost.",
+    "followup": "In the same chart, add monthly gross profit."
+  },
+  {
+    "no": "7.0",
+    "category": "P&L",
+    "main": "Create a combo chart showing monthly revenue and COGS.",
+    "followup": "In the same chart, add gross margin percentage as a line."
+  },
+  {
+    "no": "8.0",
+    "category": "P&L",
+    "main": "Create a stacked area chart showing monthly revenue by revenue category.",
+    "followup": "In the same chart, show each category's percentage contribution."
+  },
+  {
+    "no": "9.0",
+    "category": "P&L",
+    "main": "Create a stacked column chart showing monthly revenue by contract type.",
+    "followup": "In the same chart, show year-over-year growth for each contract type."
+  },
+  {
+    "no": "10.0",
+    "category": "P&L",
+    "main": "Create a bar chart showing revenue by service line.",
+    "followup": "In the same chart, add average billing rate."
+  },
+  {
+    "no": "11.0",
+    "category": "Client & Commercial",
+    "main": "Create a bar chart showing revenue by delivery center.",
+    "followup": "In the same chart, add payroll cost by delivery center."
+  },
+  {
+    "no": "12.0",
+    "category": "P&L",
+    "main": "Create a bar chart showing revenue by department.",
+    "followup": "In the same chart, add total COGS."
+  },
+  {
+    "no": "13.0",
+    "category": "Client & Commercial",
+    "main": "Create a bar chart showing gross profit by client.",
+    "followup": "In the same chart, add gross margin percentage."
+  },
+  {
+    "no": "14.0",
+    "category": "P&L",
+    "main": "Create a bar chart showing EBITDA by business unit.",
+    "followup": "In the same chart, add EBITDA margin by business unit."
+  },
+  {
+    "no": "15.0",
+    "category": "P&L",
+    "main": "Generate a line chart showing monthly net profit.",
+    "followup": "In the same chart, highlight months with negative net profit."
+  },
+  {
+    "no": "16.0",
+    "category": "P&L",
+    "main": "Generate a line chart showing monthly SG&A cost.",
+    "followup": "In the same chart, show SG&A as a percentage of revenue."
+  },
+  {
+    "no": "17.0",
+    "category": "P&L",
+    "main": "Create a bar chart ranking cost categories by total cost.",
+    "followup": "In the same chart, highlight the top 5 cost categories."
+  },
+  {
+    "no": "18.0",
+    "category": "Payroll",
+    "main": "Create a stacked bar chart showing payroll components by department.",
+    "followup": "In the same chart, add the department total payroll cost."
+  },
+  {
+    "no": "19.0",
+    "category": "Employee Based",
+    "main": "Create a stacked column chart showing employee headcount by grade and department.",
+    "followup": "In the same chart, add average monthly salary."
+  },
+  {
+    "no": "20.0",
+    "category": "Employee Based",
+    "main": "Create a donut chart showing employee headcount by client.",
+    "followup": "In the same chart, show each client's share of payroll cost."
+  },
+  {
+    "no": "21.0",
+    "category": "Employee Based",
+    "main": "Create a stacked column chart showing present days, paid leave days, sick leave days, and unpaid absent days by month.",
+    "followup": "In the same chart, add scheduled work days."
+  },
+  {
+    "no": "22.0",
+    "category": "Employee Based",
+    "main": "Create a bar chart showing productive hours by department.",
+    "followup": "In the same chart, add paid hours."
+  },
+  {
+    "no": "23.0",
+    "category": "Payroll",
+    "main": "Create a bar chart showing overtime hours by shift type.",
+    "followup": "In the same chart, show overtime-eligible employees."
+  },
+  {
+    "no": "24.0",
+    "category": "Operations",
+    "main": "Create a clustered bar chart showing SLA, QA score, CSAT, and NPS by service line.",
+    "followup": "In the same chart, add occupancy percentage and rank service lines by SLA."
+  },
+  {
+    "no": "25.0",
+    "category": "Operations",
+    "main": "Create a clustered bar chart showing calls handled and tickets resolved by service line.",
+    "followup": "In the same chart, add average handling time."
+  },
+  {
+    "no": "26.0",
+    "category": "Operations",
+    "main": "Create a scatter chart showing occupancy percentage versus billable utilization percentage by service line.",
+    "followup": "In the same chart, use revenue as the bubble size."
+  },
+  {
+    "no": "27.0",
+    "category": "Operations",
+    "main": "Create a scatter chart showing average handling time versus CSAT by service line.",
+    "followup": "In the same chart, add SLA percentage."
+  },
+  {
+    "no": "28.0",
+    "category": "Operations",
+    "main": "Create a bar chart showing average SLA percentage by client.",
+    "followup": "In the same chart, add average CSAT score."
+  },
+  {
+    "no": "29.0",
+    "category": "Operations",
+    "main": "Create a bar chart showing average NPS by client.",
+    "followup": "In the same chart, add average QA score."
+  },
+  {
+    "no": "30.0",
+    "category": "Accounts Receivable",
+    "main": "Create a donut chart showing outstanding receivables by aging bucket.",
+    "followup": "In the same chart, highlight the 90+ days balance."
+  },
+  {
+    "no": "31.0",
+    "category": "Accounts Receivable",
+    "main": "Generate a line chart showing invoice amount and collected amount by month.",
+    "followup": "In the same chart, add monthly receivable outstanding balance."
+  },
+  {
+    "no": "32.0",
+    "category": "Accounts Receivable",
+    "main": "Create a bar chart ranking clients by collection efficiency percentage.",
+    "followup": "In the same chart, add average DSO."
+  },
+  {
+    "no": "33.0",
+    "category": "Accounts Receivable",
+    "main": "Create a stacked bar chart showing AR over 30, 60, and 90 days by client.",
+    "followup": "In the same chart, rank clients by total overdue balance."
+  },
+  {
+    "no": "34.0",
+    "category": "Accounts Payable",
+    "main": "Generate a line chart showing AP invoice amount and paid amount by month.",
+    "followup": "In the same chart, add monthly payable outstanding balance."
+  },
+  {
+    "no": "35.0",
+    "category": "Accounts Payable",
+    "main": "Create a bar chart ranking vendors by outstanding payable balance.",
+    "followup": "In the same chart, add average DPO by vendor."
+  },
+  {
+    "no": "36.0",
+    "category": "Accounts Payable",
+    "main": "Create a treemap showing AP invoice amount by cost category.",
+    "followup": "In the same visual, drill down to expense account."
+  },
+  {
+    "no": "37.0",
+    "category": "Cash Flow",
+    "main": "Create a stacked column chart showing cash inflow and cash outflow by cash flow activity.",
+    "followup": "In the same chart, add net cash flow."
+  },
+  {
+    "no": "38.0",
+    "category": "Cash Flow",
+    "main": "Generate a line chart showing closing cash balance and net cash flow by month.",
+    "followup": "In the same chart, highlight months with negative net cash flow."
+  },
+  {
+    "no": "39.0",
+    "category": "Cash Flow",
+    "main": "Generate a line chart showing customer collections and customer cash inflow by month.",
+    "followup": "In the same chart, add invoice amount."
+  },
+  {
+    "no": "40.0",
+    "category": "Cash Flow",
+    "main": "Generate a line chart showing vendor payments and vendor cash outflow by month.",
+    "followup": "In the same chart, add the monthly average DPO."
+  },
+  {
+    "no": "41.0",
+    "category": "Payroll",
+    "main": "Generate a line chart showing monthly payroll cost and payroll cash outflow.",
+    "followup": "In the same chart, add payroll cost from the general ledger."
+  },
+  {
+    "no": "42.0",
+    "category": "GL & Trial Balance",
+    "main": "Create a clustered bar chart showing debit and credit amounts by journal type.",
+    "followup": "In the same chart, add source system."
+  },
+  {
+    "no": "43.0",
+    "category": "P&L",
+    "main": "Create a bar chart showing P&L amount by account group.",
+    "followup": "In the same chart, show each account group's percentage of revenue."
+  },
+  {
+    "no": "44.0",
+    "category": "GL & Trial Balance",
+    "main": "Create a clustered column chart showing opening balance, debit movement, credit movement, and closing balance by account type and fiscal year.",
+    "followup": "In the same chart, highlight the account type with the largest closing balance change."
+  },
+  {
+    "no": "45.0",
+    "category": "Executive",
+    "main": "Create an executive KPI dashboard showing revenue, gross profit, EBITDA, operating profit, and net profit.",
+    "followup": "In the same dashboard, add growth and margin percentages."
+  },
+  {
+    "no": "46.0",
+    "category": "Client & Commercial",
+    "main": "Create a scatter chart showing client revenue versus gross margin percentage.",
+    "followup": "In the same chart, use billable hours as the bubble size."
+  },
+  {
+    "no": "47.0",
+    "category": "Employee Based",
+    "main": "Create a combo chart showing revenue, payroll cost, and productive hours by department.",
+    "followup": "In the same chart, add employee headcount and productive hours percentage."
+  },
+  {
+    "no": "48.0",
+    "category": "Client & Commercial",
+    "main": "Create a client scorecard showing revenue, revenue growth, gross margin, SLA, CSAT, DSO, and collection efficiency.",
+    "followup": "In the same scorecard, highlight high-revenue clients with weak performance."
+  },
+  {
+    "no": "49.0",
+    "category": "Client & Commercial",
+    "main": "Create a clustered bar chart showing revenue and outstanding receivables by industry.",
+    "followup": "In the same chart, add gross margin, DSO, and bad debt percentage."
+  },
+  {
+    "no": "50.0",
+    "category": "Client & Commercial",
+    "main": "Create a scorecard showing revenue, payroll cost, headcount, utilization, SLA, and CSAT by delivery center.",
+    "followup": "In the same scorecard, highlight the top and bottom delivery centers."
+  },
+  {
+    "no": "51.0",
+    "category": "Employee Based",
+    "main": "Create a scatter chart showing revenue per productive hour versus cost per productive hour by delivery center.",
+    "followup": "In the same chart, use productive hours as the bubble size."
+  },
+  {
+    "no": "52.0",
+    "category": "Operations",
+    "main": "Create a service line dashboard showing revenue, gross margin, billable hours, billing rate, calls, tickets, and average handling time.",
+    "followup": "In the same dashboard, add SLA, QA score, CSAT, and NPS."
+  },
+  {
+    "no": "53.0",
+    "category": "Client & Commercial",
+    "main": "Create a clustered bar chart comparing revenue and gross profit by contract type.",
+    "followup": "In the same chart, add billable hours, billing rate, utilization, SLA, and CSAT."
+  },
+  {
+    "no": "54.0",
+    "category": "P&L",
+    "main": "Generate a waterfall chart showing the change from last year's revenue to this year's revenue by revenue category.",
+    "followup": "In the same chart, show cumulative revenue change."
+  },
+  {
+    "no": "55.0",
+    "category": "P&L",
+    "main": "Create a stacked area chart showing labor, people, technology, facility, third-party, and SG&A costs as a percentage of revenue.",
+    "followup": "In the same chart, add the monthly EBITDA margin percentage."
+  },
+  {
+    "no": "56.0",
+    "category": "P&L",
+    "main": "Create a line chart showing monthly revenue, gross profit, EBITDA, operating profit, and net profit.",
+    "followup": "In the same chart, add previous-year values and variance percentages."
+  },
+  {
+    "no": "57.0",
+    "category": "Balance Sheet",
+    "main": "Create a KPI dashboard showing debt-to-equity ratio, ROA, ROE, asset turnover, debt ratio, and equity ratio.",
+    "followup": "In the same dashboard, show the quarterly trend for each ratio."
+  },
+  {
+    "no": "58.0",
+    "category": "Balance Sheet",
+    "main": "Create a treemap showing closing balance by account type, account group, and account name.",
+    "followup": "In the same visual, show the change from opening balance."
+  },
+  {
+    "no": "59.0",
+    "category": "GL & Trial Balance",
+    "main": "Generate a waterfall chart showing the movement from opening balance to closing balance by account group.",
+    "followup": "In the same chart, add debit and credit movements."
+  },
+  {
+    "no": "60.0",
+    "category": "GL & Trial Balance",
+    "main": "Create a clustered column chart comparing general ledger debit and credit amounts with trial balance debit and credit movements.",
+    "followup": "In the same chart, highlight general ledger and trial balance differences."
+  },
+  {
+    "no": "61.0",
+    "category": "Accounts Receivable",
+    "main": "Create a stacked column chart showing invoice amount, collected amount, write-off amount, and outstanding balance by client.",
+    "followup": "In the same chart, highlight the client with the largest outstanding balance."
+  },
+  {
+    "no": "62.0",
+    "category": "Payroll",
+    "main": "Create a combo chart showing monthly payroll cost and paid hours by client.",
+    "followup": "In the same chart, add productive hours and payroll cost per paid hour."
+  },
+  {
+    "no": "63.0",
+    "category": "Cash Flow",
+    "main": "Create a combo chart comparing net cash flow with general ledger cash movements by month.",
+    "followup": "In the same chart, add the monthly cash reconciliation difference."
+  },
+  {
+    "no": "64.0",
+    "category": "Accounts Receivable",
+    "main": "Create a dashboard showing revenue, invoice amount, collected amount, cash received, and outstanding receivables by month.",
+    "followup": "In the same dashboard, add DSO and aging balances."
+  },
+  {
+    "no": "65.0",
+    "category": "Accounts Payable",
+    "main": "Create a dashboard showing AP invoice amount, paid amount, cash paid, and outstanding payables by month.",
+    "followup": "In the same dashboard, add DPO and aging balances."
+  },
+  {
+    "no": "66.0",
+    "category": "Cash Flow",
+    "main": "Create a multi-line chart showing cash, accounts receivable, accounts payable, prepaid expenses, payroll payable, and taxes payable by month.",
+    "followup": "In the same chart, add DSO and DPO."
+  },
+  {
+    "no": "67.0",
+    "category": "Employee Based",
+    "main": "Create a scatter chart showing employee payroll cost versus productive hours.",
+    "followup": "In the same chart, use overtime hours as the bubble size."
+  },
+  {
+    "no": "68.0",
+    "category": "Employee Based",
+    "main": "Create a scatter chart showing revenue versus payroll cost by client and business unit.",
+    "followup": "In the same chart, use employee headcount as bubble size and highlight combinations with payroll cost but no revenue."
+  },
+  {
+    "no": "69.0",
+    "category": "Operations",
+    "main": "Create a scatter chart showing client revenue versus SLA percentage by month.",
+    "followup": "In the same chart, use CSAT as the bubble size."
+  },
+  {
+    "no": "70.0",
+    "category": "Employee Based",
+    "main": "Create a stacked column chart showing capacity, working, paid, productive, billable, idle, training, and overtime hours by service line.",
+    "followup": "In the same chart, add occupancy and utilization percentages as lines."
+  },
+  {
+    "no": "71.0",
+    "category": "Executive",
+    "main": "Create an executive drill-down dashboard showing revenue, profitability, payroll, utilization, service quality, and receivables.",
+    "followup": "In the same dashboard, enable drill-down from region to client and service line."
+  },
+  {
+    "no": "72.0",
+    "category": "Executive",
+    "main": "Create a scatter chart showing revenue growth versus EBITDA growth by business unit, client, and delivery center.",
+    "followup": "In the same chart, use gross margin as the bubble size and highlight combinations with low SLA or CSAT."
+  }
+]

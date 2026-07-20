@@ -32,13 +32,33 @@ export interface BuildResult {
 
 /** Deterministic label: "total_revenue_usd" → "Total Revenue". */
 export function prettifyLabel(column: string): string {
-  return column
+  const label = column
     .replace(/_usd$/i, '')
     .replace(/_pct$/i, ' %')
+    .replace(/_key$/i, '')
     .replace(/_/g, ' ')
     .trim()
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .replace(/\bPct\b/i, '%');
+  const financialAcronyms: Record<string, string> = {
+    Ebitda: 'EBITDA',
+    Ebit: 'EBIT',
+    Cogs: 'COGS',
+    Sga: 'SG&A',
+    Sla: 'SLA',
+    Qa: 'QA',
+    Csat: 'CSAT',
+    Nps: 'NPS',
+    Ar: 'AR',
+    Ap: 'AP',
+    Dso: 'DSO',
+    Dpo: 'DPO',
+    Aht: 'AHT',
+  };
+  return label.replace(
+    /\b(?:Ebitda|Ebit|Cogs|Sga|Sla|Qa|Csat|Nps|Ar|Ap|Dso|Dpo|Aht)\b/g,
+    (word) => financialAcronyms[word] ?? word,
+  );
 }
 
 function unitFor(profile: ColumnProfile): string {

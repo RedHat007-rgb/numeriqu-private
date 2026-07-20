@@ -1,4 +1,4 @@
-# Investigations API
+# Investigations AP
 
 ## POST /api/v1/investigations
 

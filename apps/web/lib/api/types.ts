@@ -483,6 +483,7 @@ export type ChartConfig = {
     conditionalColor?: "green" | "red" | null;
     highlightExtremes?: "max" | "min" | "both" | null;
     highlightNegative?: boolean;
+    highlightTopN?: number;
   } | null;
   /** Axis titles describing what X and Y actually represent (with units). */
   xAxisLabel?: string | null;
@@ -569,6 +570,8 @@ export type WorkspaceSummary = {
     name: string;
     slug: string;
     accountType: "SOLO" | "ORGANIZATION";
+    /** Per-org embedded Power BI report URL; null ⇒ no Power BI button. */
+    powerBiUrl: string | null;
     createdAt: string;
     updatedAt: string;
   };

@@ -118,6 +118,7 @@ export class OrganizationService {
             name: true,
             slug: true,
             accountType: true,
+            powerBiUrl: true,
             createdAt: true,
             updatedAt: true,
           },

@@ -36,7 +36,8 @@ export const PLANNER_OUTPUT_CONTRACT = `Return ONLY a JSON object:
   "dimensionKey": "<optional dimension key>",
   "breakdownKey": "<optional second dimension used for series/color>",
   "timeGrain": "day|month|quarter|year (optional)",
-  "comparison": "previous_year (optional; use instead of duplicating a measure key)",
+  "comparison": "previous_year|yoy_growth_pct (optional; use instead of duplicating a measure key)",
+  "normalize": <optional boolean — true for percentage contribution / share of total / % of total by category (100%-stacked)>,
   "topN": <optional integer>,
   "sort": "asc|desc (optional)",
   "title": "<concise chart title>"
@@ -44,21 +45,27 @@ export const PLANNER_OUTPUT_CONTRACT = `Return ONLY a JSON object:
 
 export function buildPlannerPrompt(model: SemanticModel): string {
   const measures = model.measures
-    .map((m) => `  - ${m.key}${m.unit ? ` (${m.unit})` : ''}: ${m.label} — ${aggWord(m.expr)}`)
+    .map(
+      (m) =>
+        `  - ${m.key}${m.unit ? ` (${m.unit})` : ''}: ${m.label} — ${aggWord(m.expr)}`,
+    )
     .join('\n');
-  const dimensions = model.dimensions.map((d) => {
-    const examples = d.sampleValues?.length
-      ? ` — observed examples: ${d.sampleValues.slice(0, 10).map(String).join(', ')}`
-      : '';
-    return `  - ${d.key}: ${d.label}${examples}`;
-  }).join('\n') || '  (none)';
+  const dimensions =
+    model.dimensions
+      .map((d) => {
+        const examples = d.sampleValues?.length
+          ? ` — observed examples: ${d.sampleValues.slice(0, 10).map(String).join(', ')}`
+          : '';
+        return `  - ${d.key}: ${d.label}${examples}`;
+      })
+      .join('\n') || '  (none)';
   const timeLine = model.time
     ? `Time grain available on "${model.time.column}": ${model.time.grains.join(', ')}.`
     : 'This dataset has no time dimension — do not request a time grain.';
 
   return [
     'You are a chart planner. Turn the user question into a chart spec using ONLY the catalog below.',
-    'This catalog was derived automatically from the client\'s own data. Do not invent measures, dimensions, or numbers.',
+    "This catalog was derived automatically from the client's own data. Do not invent measures, dimensions, or numbers.",
     '',
     `Dataset grain: ${model.factGrain}.`,
     timeLine,
@@ -71,9 +78,12 @@ export function buildPlannerPrompt(model: SemanticModel): string {
     '',
     'RULES:',
     '- If the question asks for something not expressible with these measures/dimensions, return {"chartType":"table","measureKeys":[],"title":"<why it cannot be answered>"} — refuse honestly, never guess.',
+    '- ONLY add a dimensionKey or breakdownKey when the user EXPLICITLY names a grouping — e.g. "by business unit", "per client", "split/broken down by X", "across departments", "for each region". A plain total or a metric shown over time ("total revenue", "monthly total revenue", "revenue trend") with NO named grouping must have NO dimensionKey and NO breakdownKey: return just the measure key (plus timeGrain for a trend). NEVER infer a breakdown from the measure\'s own category — "total revenue" is the single aggregate total, never split by revenue category; "total cost" is the single total, never split by cost category.',
+    '- "Total <measure>" always means the single aggregate value of that measure, not a per-category decomposition.',
+    '- Set "normalize": true when the user asks for each category\'s PERCENTAGE CONTRIBUTION, SHARE OF TOTAL, "% of total", "% of revenue" by category, proportion, or a 100%-stacked view. Keep the same measure + breakdown; the engine turns each series into its share of the per-axis total and formats it as a percentage. Do NOT switch the measure to a ratio for this.',
     '- Never state or assume specific figures; the engine computes all numbers.',
     '- Ratios/percentages are already computed correctly as SUM/SUM by the engine — just reference the measure key.',
-    '- For previous-year / prior-year / YoY comparison, set comparison to "previous_year" and keep each measure key only once.',
+    '- For previous-year / prior-year totals, set comparison to "previous_year". For year-over-year / YoY GROWTH, set comparison to "yoy_growth_pct"; this computes (current − same period last year) ÷ |same period last year| × 100. Keep each measure key only once.',
     '- Preserve the requested visual whenever it is supported: column/clustered/grouped column → bar; horizontal bar → horizontal_bar; stacked column/bar → stacked_bar; stacked area → stacked_area; box plot → box_plot; radar → radar; funnel → funnel; Sankey → sankey.',
     '- A dashboard, KPI dashboard, or scorecard request is expressible as one kpi spec containing all requested measures; keep its optional grouping dimension. Do not refuse merely because it mixes several metrics or units.',
     '- Use combo when the user asks for a combo/dual-axis visual, donut for donut (not pie), and treemap/waterfall/heatmap/bubble exactly when requested.',

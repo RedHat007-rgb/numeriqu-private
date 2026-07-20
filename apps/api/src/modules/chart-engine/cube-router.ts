@@ -11,7 +11,14 @@
  * "revenue by business unit" to the BU cube — no heuristics, just validation.
  */
 
-import { fieldMatchScore, planChart, type LlmCaller, type PlanResult } from './chart-planner';
+import {
+  fieldMatchScore,
+  meaningfulWords,
+  planChart,
+  requestedChartType,
+  type LlmCaller,
+  type PlanResult,
+} from './chart-planner';
 import type { EngineChartSpec, SemanticModel } from './semantic-model.types';
 
 export interface Cube {
@@ -26,6 +33,81 @@ export type CubePlan =
 const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
 
 /**
+ * Whether the user actually asked to group by this dimension. True when the
+ * question names the dimension by identity (key/label words: "by service line",
+ * "per country") OR names a SPECIFIC multi-word value of it ("for JP Morgan").
+ * A lone measure-word collision with a sample value (e.g. "revenue" ⊂ the
+ * service_line value "Voice Revenue") does NOT count — that is the false signal
+ * that used to split a plain "total revenue" by service line.
+ */
+function dimensionRequested(
+  question: string,
+  model: SemanticModel,
+  key: string,
+  measureKeys: string[],
+): boolean {
+  const dim = model.dimensions.find((d) => d.key === key);
+  if (!dim) return false;
+  const qWords = new Set(meaningfulWords(question));
+  const dimWords = meaningfulWords(`${dim.key} ${dim.label}`);
+  const dimNamed = dimWords.some((w) => qWords.has(w));
+  // EXPLICIT grouping phrase ("by cash flow activity", "per client", "for each
+  // region"): if the dimension is named at all, the user clearly asked to group by
+  // it — keep it, even if a selected measure coincidentally shares those words
+  // (e.g. a "Net Activity Cash Flow" measure shares "activity/cash/flow" with the
+  // cash_flow_activity dimension). The measure-word exclusion below is ONLY for the
+  // ambiguous no-"by" case (e.g. "total revenue" must not split by revenue_category).
+  const explicitGrouping = /\b(?:by|per|across|group(?:ed)?\s+by|broken\s+down\s+by|split\s+by|for\s+each)\b/i.test(question);
+  if (explicitGrouping && dimNamed) return true;
+  // Words that belong to the SELECTED measure(s) — a dimension that merely shares
+  // one of these ("revenue" in both "total revenue" and "revenue_category") is NOT
+  // a real grouping request; the word is just the measure bleeding into the dim name.
+  const measureWords = new Set(
+    measureKeys.flatMap((mk) => {
+      const m = model.measures.find((x) => x.key === mk);
+      return m ? meaningfulWords(`${m.key} ${m.label}`) : [];
+    }),
+  );
+  // A technical dimension such as cost_category must not be introduced merely
+  // because the metric phrase contains "cost" ("monthly SG&A cost"). The user
+  // must actually ask for categories, or name a concrete category value below.
+  // This still preserves "rank cost categories" and "revenue by category".
+  const categoryIdentityMissing =
+    dimWords.includes('category') && !qWords.has('category');
+  const distinctive = dimWords.filter((w) => qWords.has(w) && !measureWords.has(w));
+  if (!categoryIdentityMissing && distinctive.length > 0) return true; // user named the dimension distinctly
+  // Otherwise: only keep if the user named a SPECIFIC multi-word value of it
+  // (e.g. "JP Morgan") — not a lone measure-word collision with a sample value.
+  const nameOnly = fieldMatchScore(question, dim.key, dim.label);
+  const withSamples = fieldMatchScore(question, dim.key, dim.label, dim.sampleValues);
+  return withSamples > nameOnly && withSamples >= 6;
+}
+
+/**
+ * Deterministically drop a grouping the user never asked for. The planner LLM
+ * often adds a dimensionKey/breakdownKey even for a plain total ("total
+ * revenue"); the prompt discourages it but cannot guarantee it. This enforces
+ * "give the user exactly what they asked" without any dataset/question-specific
+ * hardcoding — a grouping survives only if the user named the dimension.
+ */
+export function stripUnrequestedGrouping(
+  question: string,
+  spec: EngineChartSpec,
+  model: SemanticModel,
+): EngineChartSpec {
+  let next = spec;
+  if (next.dimensionKey && !dimensionRequested(question, model, next.dimensionKey, spec.measureKeys)) {
+    const { dimensionKey: _drop, ...rest } = next;
+    next = rest;
+  }
+  if (next.breakdownKey && !dimensionRequested(question, model, next.breakdownKey, spec.measureKeys)) {
+    const { breakdownKey: _drop, ...rest } = next;
+    next = rest;
+  }
+  return next;
+}
+
+/**
  * Score a plan against the question. A dimension whose words actually appear in
  * the question (e.g. "business_unit" for "by business unit") beats a loose
  * substitution (e.g. a cube that only has "org_name" mapping it to "business
@@ -37,9 +119,20 @@ function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number 
   score += fieldMatchScore(question, cube.view, cube.view);
   if (spec.dimensionKey) {
     const dim = cube.model.dimensions.find((d) => d.key === spec.dimensionKey);
-    score += dim
-      ? 3 * fieldMatchScore(question, dim.key, dim.label, dim.sampleValues)
-      : 0;
+    if (dim) {
+      // Reward a grouping ONLY when the user actually named the dimension by its
+      // identity (key/label words: "by service line", "per country"). Matching a
+      // dimension's SAMPLE VALUES is a false signal here — e.g. the measure word
+      // "revenue" collides with service_line values like "Voice Revenue", which
+      // used to route a plain "total revenue" into a spurious per-service-line
+      // split. A specific multi-word value match (e.g. "JP Morgan") stays neutral;
+      // an unrequested grouping is penalized so the faithful, ungrouped plan wins.
+      const nameScore = fieldMatchScore(question, dim.key, dim.label);
+      const withSamples = fieldMatchScore(question, dim.key, dim.label, dim.sampleValues);
+      if (nameScore > 0) score += 3 * nameScore;
+      else if (withSamples >= 6) score += 0; // user named a specific value → legitimate filter/group
+      else score -= 6; // grouping the user never asked for → discourage
+    }
   }
   if (spec.timeGrain && [...qt].some((w) => ['month', 'monthly', 'trend', 'quarter', 'year', 'time', 'over'].includes(w))) {
     score += 2;
@@ -49,6 +142,16 @@ function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number 
     const measure = cube.model.measures.find((candidate) => candidate.key === mk);
     if (measure) score += fieldMatchScore(question, measure.key, measure.label);
   }
+  // Strongly prefer a cube that actually CONTAINS a dimension the user named by
+  // identity ("… by cash flow activity" → a cash_flow_activity dimension). Without
+  // this, a cube that merely has lookalike measure COLUMNS (e.g. AP cube carrying
+  // stray cash_outflow_* columns) can out-score the cube that owns the requested
+  // grouping. Uses the cube's own dimensions, so it's dataset-agnostic.
+  const namedDimBonus = cube.model.dimensions.reduce(
+    (best, d) => Math.max(best, fieldMatchScore(question, d.key, d.label)),
+    0,
+  );
+  score += 2 * namedDimBonus;
   // Flow charts need categorical endpoints. A totals-only cube may technically
   // validate a Sankey request, but it cannot produce links, so keep it behind a
   // cube that can supply source/category dimensions.
@@ -69,9 +172,38 @@ function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number 
 }
 
 /**
- * Plan the question against every cube, then pick the highest-scoring valid
- * plan. Order is only a tie-breaker, so a specific cube can no longer be
- * pre-empted by an earlier cube's loose match.
+ * Cheap lexical relevance of a cube to the question (no LLM): does any of its
+ * measures/dimensions/name share words with the question? Used only to shortlist
+ * cubes before the expensive per-cube LLM planning pass.
+ */
+function cubeLexScore(question: string, cube: Cube): number {
+  let s = fieldMatchScore(question, cube.view, cube.view);
+  for (const m of cube.model.measures) s += fieldMatchScore(question, m.key, m.label);
+  for (const d of cube.model.dimensions) s += fieldMatchScore(question, d.key, d.label, d.sampleValues);
+  return s;
+}
+
+/**
+ * Shortlist the cubes worth LLM-planning. Planning every cube means one OpenAI
+ * call PER cube (~20 for the sfin dataset) — the dominant latency. When enough
+ * cubes lexically match the question we plan only those (fast); when the match is
+ * ambiguous (<MIN) we fall back to ALL cubes so a semantically-right-but-lexically
+ * -silent cube is never dropped. Pure/deterministic — safe to unit-test.
+ */
+export function preselectCubes(question: string, cubes: Cube[], max = 12, min = 3): Cube[] {
+  if (cubes.length <= min) return cubes;
+  const positive = cubes
+    .map((cube) => ({ cube, s: cubeLexScore(question, cube) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s);
+  if (positive.length < min) return cubes; // too ambiguous to shortlist safely
+  return positive.slice(0, max).map((x) => x.cube);
+}
+
+/**
+ * Plan the question against every (shortlisted) cube, then pick the
+ * highest-scoring valid plan. Order is only a tie-breaker, so a specific cube can
+ * no longer be pre-empted by an earlier cube's loose match.
  */
 export async function planAcrossCubes(
   question: string,
@@ -81,7 +213,11 @@ export async function planAcrossCubes(
   const reasons: string[] = [];
   const candidates: Array<{ cube: Cube; spec: EngineChartSpec; score: number }> = [];
 
-  for (const cube of cubes) {
+  // Only LLM-plan the cubes lexically relevant to the question — the per-cube LLM
+  // call is the dominant cost. Falls back to all cubes when the match is ambiguous.
+  const shortlist = preselectCubes(question, cubes);
+
+  for (const cube of shortlist) {
     let r: PlanResult;
     try {
       r = await planChart(question, cube.model, callLlm);
@@ -93,11 +229,22 @@ export async function planAcrossCubes(
       reasons.push(`${cube.view}: ${r.reason}`);
       continue;
     }
-    candidates.push({ cube, spec: r.spec, score: scorePlan(question, cube, r.spec) });
+    // Enforce "only group when the user asked": drop a spurious dimension/breakdown
+    // the LLM added on its own, so a plain "total revenue" is a single total, not a
+    // per-category split.
+    const spec = stripUnrequestedGrouping(question, r.spec, cube.model);
+    candidates.push({ cube, spec, score: scorePlan(question, cube, spec) });
   }
 
   if (!candidates.length) return { ok: false, reasons };
   candidates.sort((a, b) => b.score - a.score); // stable: keeps cube order on ties
   const best = candidates[0]!;
-  return { ok: true, cube: best.cube, spec: best.spec };
+  // Presentation words are a hard user constraint. Re-apply them at the final
+  // routing boundary so no candidate selection or future router refinement can
+  // return a different chart type than an explicitly requested bar/line/etc.
+  const explicitType = requestedChartType(question);
+  const spec = explicitType
+    ? { ...best.spec, chartType: explicitType }
+    : best.spec;
+  return { ok: true, cube: best.cube, spec };
 }

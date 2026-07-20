@@ -1,0 +1,90 @@
+{
+  "_comment": "Standard analytic cubes for a BPO finance star schema, expressed as DATA. Onboarding a new dataset of this shape = edit this file + run scripts/onboard-cubes.ts. No TypeScript. `discover:true` pivots read their taxonomy live from the data. Change the sfin_ prefixes to the new dataset's raw table names.",
+  "database": "analytics",
+  "blueprints": [
+    {
+      "view": "v_sfingen_pl_monthly",
+      "factTable": "sfin_fact_general_ledger",
+      "dateColumn": "posting_date",
+      "pivots": [
+        { "valueColumn": "pl_amount_usd", "categoryColumn": "account_type", "discover": true, "aliasSuffix": "_usd", "canonical": { "Revenue": "total_revenue_usd", "Direct Cost (COS)": "total_cogs_usd", "SG&A": "total_sga_usd", "Finance Cost": "finance_cost_usd", "Tax": "tax_expense_usd" } },
+        { "valueColumn": "pl_amount_usd", "categoryColumn": "cost_category", "discover": true, "aliasPrefix": "cc_", "aliasSuffix": "_usd" },
+        { "valueColumn": "pl_amount_usd", "categoryColumn": "revenue_category", "discover": true, "aliasPrefix": "rc_", "aliasSuffix": "_usd" }
+      ],
+      "derived": [
+        { "expr": "(total_revenue_usd - total_cogs_usd)", "alias": "gross_profit_usd" },
+        { "expr": "round(100 * (total_revenue_usd - total_cogs_usd) / nullIf(total_revenue_usd, 0), 4)", "alias": "gross_margin_pct" }
+      ]
+    },
+    {
+      "view": "v_sfingen_operations_monthly",
+      "factTable": "sfin_fact_operations",
+      "dateColumn": "posting_date",
+      "measures": [
+        { "column": "billable_hours", "alias": "billable_hours", "agg": "sum" },
+        { "column": "productive_hours", "alias": "productive_hours", "agg": "sum" },
+        { "column": "calls_handled", "alias": "calls_handled", "agg": "sum" },
+        { "column": "tickets_resolved", "alias": "tickets_resolved", "agg": "sum" },
+        { "column": "utilization_pct", "alias": "utilization_pct", "agg": "mean" },
+        { "column": "occupancy_pct", "alias": "occupancy_pct", "agg": "mean" },
+        { "column": "sla_compliance_pct", "alias": "sla_compliance_pct", "agg": "mean" },
+        { "column": "csat_pct", "alias": "csat_pct", "agg": "mean" }
+      ]
+    },
+    {
+      "view": "v_sfingen_ar_monthly",
+      "factTable": "sfin_fact_accounts_receivable",
+      "dateColumn": "invoice_date",
+      "measures": [
+        { "column": "invoice_amount_usd", "alias": "invoice_amount_usd", "agg": "sum" },
+        { "column": "collected_amount_usd", "alias": "collected_amount_usd", "agg": "sum" },
+        { "column": "outstanding_balance_usd", "alias": "outstanding_balance_usd", "agg": "sum" },
+        { "column": "days_sales_outstanding", "alias": "dso_days", "agg": "mean" }
+      ]
+    },
+    {
+      "view": "v_sfingen_ap_monthly",
+      "factTable": "sfin_fact_accounts_payable",
+      "dateColumn": "invoice_date",
+      "measures": [
+        { "column": "invoice_amount_usd", "alias": "invoice_amount_usd", "agg": "sum" },
+        { "column": "paid_amount_usd", "alias": "paid_amount_usd", "agg": "sum" },
+        { "column": "outstanding_balance_usd", "alias": "outstanding_balance_usd", "agg": "sum" },
+        { "column": "days_payable_outstanding", "alias": "dpo_days", "agg": "mean" }
+      ]
+    },
+    {
+      "view": "v_sfingen_cashflow_monthly",
+      "factTable": "sfin_fact_cash_flow",
+      "measures": [
+        { "column": "cash_inflow_usd", "alias": "cash_inflow_usd", "agg": "sum" },
+        { "column": "cash_outflow_usd", "alias": "cash_outflow_usd", "agg": "sum" },
+        { "column": "net_cash_flow_usd", "alias": "net_cash_flow_usd", "agg": "sum" }
+      ],
+      "pivots": [
+        { "valueColumn": "cash_outflow_usd", "categoryColumn": "cash_flow_category", "discover": true, "aliasPrefix": "out_", "aliasSuffix": "_usd" }
+      ]
+    },
+    {
+      "view": "v_sfingen_revenue_by_client_monthly",
+      "factTable": "sfin_fact_revenue",
+      "dateColumn": "posting_date",
+      "joins": [
+        { "dimTable": "sfin_dim_client", "factKey": "client_key", "dimKey": "client_key", "selects": [{ "column": "client_name", "alias": "client_name" }, { "column": "industry", "alias": "industry" }] }
+      ],
+      "measures": [
+        { "column": "revenue_usd", "alias": "revenue_usd", "agg": "sum" },
+        { "column": "billable_hours", "alias": "billable_hours", "agg": "sum" }
+      ]
+    },
+    {
+      "view": "v_sfingen_payroll_monthly",
+      "factTable": "sfin_fact_payroll",
+      "measures": [
+        { "column": "total_payroll_usd", "alias": "total_payroll_usd", "agg": "sum" },
+        { "column": "paid_hours", "alias": "paid_hours", "agg": "sum" },
+        { "column": "employee_key", "alias": "headcount", "agg": "count_distinct" }
+      ]
+    }
+  ]
+}

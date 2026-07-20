@@ -39,18 +39,16 @@ const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon:
   { href: "/dashboard/settings", label: "Settings", description: "Workspace and session", icon: Shield },
 ];
 
-const POWER_BI_URL =
-  "https://app.powerbi.com/view?r=eyJrIjoiM2JlYTFhMjAtNGVlNy00MjIzLWFmNGYtOGQ4NTMwOWE2Y2EzIiwidCI6ImYzYzVhY2ZkLTg4OGMtNGQ2Yi1hZDNiLWQyNDYwZThhMTQ0NyJ9&pageName=ebbb890dd70e7910d663";
-
 /**
  * PowerBI launch button with special effects: brand-amber gradient, a sweeping
- * shimmer on hover, and an animated glow ring. Opens the embedded report in a
- * new tab. Collapses to an icon-only pill when the sidebar is collapsed.
+ * shimmer on hover, and an animated glow ring. Opens the org's embedded report
+ * (passed in per-org, never hardcoded) in a new tab. Collapses to an icon-only
+ * pill when the sidebar is collapsed.
  */
-function PowerBiButton({ collapsed }: { collapsed: boolean }) {
+function PowerBiButton({ url, collapsed }: { url: string; collapsed: boolean }) {
   return (
     <a
-      href={POWER_BI_URL}
+      href={url}
       target="_blank"
       rel="noopener noreferrer"
       title="Open Power BI report in a new tab"
@@ -191,6 +189,15 @@ export function DashboardShell({
   const pathname = usePathname();
   const activeItem = visibleNavItems.find((item) =>
     item.href === "/dashboard" ? pathname === item.href : pathname.startsWith(item.href),
+  );
+
+  // Per-org embedded Power BI report — config as data, not a compiled-in literal.
+  // Absent ⇒ the sidebar simply omits the button for this org.
+  const powerBiUrl = useMemo(
+    () =>
+      workspaces.find((ws) => ws.organization.id === currentWorkspaceId)?.organization.powerBiUrl ??
+      null,
+    [workspaces, currentWorkspaceId],
   );
 
   const isImmersive = pathname.startsWith("/dashboard/agent") || pathname.startsWith("/dashboard/rag") || pathname.startsWith("/dashboard/chat");
@@ -428,9 +435,11 @@ export function DashboardShell({
                   ))}
                 </nav>
 
-                <div className="pt-1">
-                  <PowerBiButton collapsed={navCollapsed} />
-                </div>
+                {powerBiUrl ? (
+                  <div className="pt-1">
+                    <PowerBiButton url={powerBiUrl} collapsed={navCollapsed} />
+                  </div>
+                ) : null}
               </aside>
             ) : null}
 
@@ -486,9 +495,11 @@ export function DashboardShell({
                     <span className="font-semibold">{item.label}</span>
                   </Link>
                 ))}
-                <div className="pt-1">
-                  <PowerBiButton collapsed={false} />
-                </div>
+                {powerBiUrl ? (
+                  <div className="pt-1">
+                    <PowerBiButton url={powerBiUrl} collapsed={false} />
+                  </div>
+                ) : null}
               </nav>
             </div>
           </div>

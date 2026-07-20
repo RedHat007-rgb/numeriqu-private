@@ -4,7 +4,7 @@
  * model produces correct, tenant-scoped SQL with NO hardcoded catalog and NO DAX.
  */
 import { profileTable, type ColumnStats } from './data-profiler';
-import { buildSemanticModel } from './semantic-model-builder';
+import { buildSemanticModel, prettifyLabel } from './semantic-model-builder';
 import { compileSpec } from './spec-compiler';
 import type { EngineChartSpec, PhysicalSchema } from './semantic-model.types';
 
@@ -35,6 +35,15 @@ const schema: PhysicalSchema = {
   relationships: [],
   tables: [{ name: 'v_fact', rowCountEstimate: 5000, columns: rawStats.map((s) => ({ name: s.column, type: s.type, nullable: false })) }],
 };
+
+describe('semantic labels', () => {
+  it('preserves standard financial and operating acronyms', () => {
+    expect(prettifyLabel('ebitda_margin_pct')).toBe('EBITDA Margin %');
+    expect(prettifyLabel('total_cogs_usd')).toBe('Total COGS');
+    expect(prettifyLabel('average_dso_days')).toBe('Average DSO Days');
+    expect(prettifyLabel('employee_headcount_key')).toBe('Employee Headcount');
+  });
+});
 
 const ctx = { analyticsDb: 'analytics', tenantId: 'org-uuid', externalOrgIds: ['ext-1'] };
 

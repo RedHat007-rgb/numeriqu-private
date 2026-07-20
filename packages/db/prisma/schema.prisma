@@ -169,6 +169,10 @@ model Organization {
   name        String
   slug        String      @unique
   createdById String      @map("created_by_id") @db.Uuid
+  /** Optional per-org embedded Power BI report URL, surfaced in the dashboard
+   * sidebar. NULL ⇒ no Power BI button for this org (config as data, not a
+   * compiled-in per-tenant literal). */
+  powerBiUrl  String?     @map("power_bi_url")
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")
 

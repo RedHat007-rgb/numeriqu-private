@@ -350,7 +350,7 @@ function ChartRenderer({
     if (isMultiSeries) {
       return (
         <div style={{ height: h }}>
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
             <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
               <CartesianGrid {...GRID} />
               <XAxis
@@ -396,7 +396,7 @@ function ChartRenderer({
 
     return (
       <div style={{ height: h }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
           <AreaChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
             <defs>
               <linearGradient id={`grad-${chartId}`} x1="0" y1="0" x2="0" y2="1">
@@ -455,7 +455,7 @@ function ChartRenderer({
     const isMulti = grouping === "month" && !hasValueSeries && seriesKeys.length >= 1;
     return (
       <div style={{ height: useHorizontalBars ? Math.max(h, trimmed.length * 24 + 24) : h }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
           <BarChart
             data={trimmed}
             margin={useHorizontalBars ? { top: 6, right: 10, left: 8, bottom: 6 } : { top: 8, right: 4, left: 12, bottom: 0 }}
@@ -556,7 +556,7 @@ function ChartRenderer({
     const enriched = data.map((d) => ({ ...d, total }));
     return (
       <div style={{ height: h }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
           <PieChart>
             <Pie
               data={enriched}
@@ -691,7 +691,7 @@ function ChartRenderer({
 
     return (
       <div style={{ height: h, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
           <Treemap
             data={nodes}
             dataKey="size"
@@ -876,7 +876,7 @@ function ChartRenderer({
 
   return (
     <div style={{ height: h }}>
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
         <LineChart data={data} margin={{ top: 8, right: 4, left: 12, bottom: 0 }}>
           <CartesianGrid {...GRID} />
           <XAxis dataKey="name" tick={TICK} />

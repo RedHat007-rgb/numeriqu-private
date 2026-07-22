@@ -394,6 +394,26 @@ describe('compileSeriesSql multi-series output', () => {
     expect(r.sql).toContain('max(toYear(period_date))');
   });
 
+  it('compiles previous-year category waterfall as a bridge with cumulative values', () => {
+    const spec: EngineChartSpec = {
+      chartType: 'waterfall',
+      measureKeys: ['revenue'],
+      dimensionKey: 'business_unit',
+      timeGrain: 'month',
+      comparison: 'previous_year',
+      showCumulative: true,
+      title: 'Revenue change by category',
+    };
+    const r = compileSeriesSql(spec, model, ctx);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.sql).toContain('category_changes AS');
+    expect(r.sql).toContain("'Previous Year' AS name");
+    expect(r.sql).toContain("'Current Year' AS name");
+    expect(r.sql).toContain('change_value AS value');
+    expect(r.sql).toContain('AS "Cumulative Value"');
+  });
+
   it('computes YoY growth percent at the retained monthly grain for every category', () => {
     const spec: EngineChartSpec = {
       chartType: 'line',
@@ -525,9 +545,56 @@ describe('compileSeriesSql multi-series output', () => {
     expect(r.sql).toContain('GROUP BY business_unit, grade');
     expect(r.sql).toContain('GROUP BY business_unit\nHAVING');
   });
+
+  it('keeps every combo measure at the requested time-plus-dimension grain', () => {
+    const spec: EngineChartSpec = {
+      chartType: 'combo',
+      measureKeys: ['revenue', 'clients'],
+      dimensionKey: 'client',
+      timeGrain: 'month',
+      title: 'Monthly revenue and clients by client',
+    };
+    const r = compileSeriesSql(spec, model, ctx);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.sql).toContain(
+      "concat(toString(client_name), ' — ', 'Revenue') AS series",
+    );
+    expect(r.sql).toContain(
+      "concat(toString(client_name), ' — ', 'Clients') AS series",
+    );
+    expect(
+      r.sql.match(/GROUP BY toStartOfMonth\(period_date\), client_name/g),
+    ).toHaveLength(2);
+  });
 });
 
 describe('buildEngineDisplay axis assignment', () => {
+  it('renders an explicitly requested same-unit combo as a bar plus lines', () => {
+    const cashModel: SemanticModel = {
+      ...model,
+      measures: [
+        { key: 'net_cash', label: 'Net Cash Flow', unit: 'USD', sourceTable: 'v_fact', expr: { kind: 'sum', column: 'net_cash' } },
+        { key: 'gl_cash', label: 'General Ledger Cash Movement', unit: 'USD', sourceTable: 'v_fact', expr: { kind: 'sum', column: 'gl_cash' } },
+        { key: 'difference', label: 'Cash Reconciliation Difference', unit: 'USD', sourceTable: 'v_fact', expr: { kind: 'sum', column: 'difference' } },
+      ],
+    };
+    const d = buildEngineDisplay(
+      {
+        chartType: 'combo',
+        measureKeys: ['net_cash', 'gl_cash', 'difference'],
+        timeGrain: 'month',
+        title: 'Cash reconciliation',
+      },
+      cashModel,
+    );
+    expect(d.series?.map((series) => series.role)).toEqual([
+      'bar',
+      'line',
+      'line',
+    ]);
+  });
+
   it('provides two named series for a previous-year comparison', () => {
     const spec: EngineChartSpec = {
       chartType: 'line',
@@ -667,6 +734,24 @@ describe('buildEngineDisplay axis assignment', () => {
     expect(d.yAxisLabel).toBe('USD');
   });
 
+  it('labels a mixed-unit right axis with all right-side units', () => {
+    const spec: EngineChartSpec = {
+      chartType: 'bar',
+      measureKeys: ['revenue', 'dso_days', 'gross_margin_pct'],
+      dimensionKey: 'business_unit',
+      title: 'x',
+    };
+    const d = buildEngineDisplay(spec, model);
+    expect(d.chartType).toBe('combo');
+    expect(d.series).toEqual([
+      { key: 'Revenue', role: 'bar', axis: 'left', format: 'currency' },
+      { key: 'Dso Days', role: 'line', axis: 'right', format: 'number' },
+      { key: 'Gross Margin %', role: 'line', axis: 'right', format: 'percent' },
+    ]);
+    expect(d.yAxisLabel).toBe('USD');
+    expect(d.secondaryLabel).toBe('Days / Percent');
+  });
+
   it('uses time as the x-axis when a dimension is the series breakdown', () => {
     const spec: EngineChartSpec = {
       chartType: 'stacked_area',
@@ -782,6 +867,39 @@ describe('buildEngineDisplay axis assignment', () => {
       { key: 'Paid Leave Days', role: 'bar', axis: 'left', format: 'number' },
       { key: 'Scheduled Work Days', role: 'line', axis: 'left', format: 'number' },
     ]);
+    expect(display.yAxisLabel).toBe('Days');
+  });
+
+  it('uses the shared hour unit for profiled hour measures', () => {
+    const hoursModel: SemanticModel = {
+      ...model,
+      measures: [
+        {
+          key: 'overtime_hours',
+          label: 'Overtime Hours',
+          unit: 'count',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'overtime_hours' },
+        },
+        {
+          key: 'working_hours',
+          label: 'Working Hours',
+          unit: 'count',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'working_hours' },
+        },
+      ],
+    };
+    const display = buildEngineDisplay(
+      {
+        chartType: 'stacked_bar',
+        measureKeys: ['overtime_hours', 'working_hours'],
+        dimensionKey: 'business_unit',
+        title: 'Hours',
+      },
+      hoursModel,
+    );
+    expect(display.yAxisLabel).toBe('Hours');
   });
 
   it('keeps mixed-format measures as bars when clustered columns were explicit', () => {
@@ -814,6 +932,42 @@ describe('buildEngineDisplay axis assignment', () => {
     );
     expect(display.chartType).toBe('bubble');
     expect(display.secondaryLabel).toBe('Clients');
+  });
+
+  it('compiles every current/prior profit series and a percentage variance axis', () => {
+    const profitModel: SemanticModel = {
+      ...model,
+      measures: [
+        model.measures[0]!,
+        ...['gross_profit', 'ebitda', 'operating_profit', 'net_profit'].map((key) => ({
+          key,
+          label: key.replace(/_/g, ' '),
+          unit: 'USD',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum' as const, column: `${key}_usd` },
+        })),
+      ],
+    };
+    const spec: EngineChartSpec = {
+      chartType: 'line',
+      measureKeys: ['revenue', 'gross_profit', 'ebitda', 'operating_profit', 'net_profit'],
+      timeGrain: 'month',
+      comparison: 'previous_year',
+      showVariancePct: true,
+      title: 'Monthly profitability',
+    };
+    const display = buildEngineDisplay(spec, profitModel);
+    expect(display.chartType).toBe('combo');
+    expect(display.secondaryAxisFormat).toBe('percent');
+    expect(display.series).toHaveLength(15);
+    expect(display.series?.filter((series) => series.axis === 'right')).toHaveLength(5);
+    const compiled = compileSeriesSql(spec, profitModel, ctx);
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+    expect(compiled.sql).toContain('"Revenue — Current Year"');
+    expect(compiled.sql).toContain('"net profit — Previous Year"');
+    expect(compiled.sql).toContain('"ebitda — Variance %"');
+    expect(compiled.sql).toContain('/ nullIf(abs(toFloat64(');
   });
 });
 

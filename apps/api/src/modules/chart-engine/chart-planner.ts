@@ -147,6 +147,21 @@ export function parsePlannerResponse(
     }
   }
 
+  let hierarchyKeys: string[] | undefined;
+  if (obj.hierarchyKeys != null) {
+    const validDims = new Set(model.dimensions.map((d) => d.key));
+    if (
+      !Array.isArray(obj.hierarchyKeys) ||
+      obj.hierarchyKeys.length < 2 ||
+      obj.hierarchyKeys.some((key: unknown) =>
+        typeof key !== 'string' || !validDims.has(key)
+      )
+    ) {
+      return { ok: false, reason: 'invalid hierarchy dimensions', raw };
+    }
+    hierarchyKeys = Array.from(new Set(obj.hierarchyKeys as string[]));
+  }
+
   if (obj.timeGrain != null) {
     if (!GRAINS.includes(obj.timeGrain))
       return { ok: false, reason: `invalid timeGrain: ${obj.timeGrain}`, raw };
@@ -182,17 +197,20 @@ export function parsePlannerResponse(
     title: typeof obj.title === 'string' && obj.title ? obj.title : 'Chart',
     ...(obj.dimensionKey ? { dimensionKey: obj.dimensionKey } : {}),
     ...(obj.breakdownKey ? { breakdownKey: obj.breakdownKey } : {}),
+    ...(hierarchyKeys ? { hierarchyKeys } : {}),
     ...(obj.timeGrain ? { timeGrain: obj.timeGrain } : {}),
     ...(obj.comparison === 'previous_year' ||
     obj.comparison === 'yoy_growth_pct'
       ? { comparison: obj.comparison as 'previous_year' | 'yoy_growth_pct' }
       : {}),
+    ...(obj.showVariancePct === true ? { showVariancePct: true } : {}),
     ...(obj.normalize === true ? { normalize: true } : {}),
     ...(obj.highlightNegative === true ? { highlightNegative: true } : {}),
     ...(Number.isInteger(Number(obj.highlightTopN)) && Number(obj.highlightTopN) > 0
       ? { highlightTopN: Number(obj.highlightTopN) }
       : {}),
     ...(obj.componentMode === true ? { componentMode: true } : {}),
+    ...(obj.showCumulative === true ? { showCumulative: true } : {}),
     ...(typeof obj.labelMeasureKey === 'string'
       ? { labelMeasureKey: obj.labelMeasureKey }
       : {}),
@@ -324,6 +342,18 @@ const INTENT_STOP_WORDS = new Set([
 
 export { INTENT_STOP_WORDS };
 
+const STANDARD_ACRONYMS = new Set([
+  'sla',
+  'qa',
+  'csat',
+  'nps',
+  'aht',
+  'dso',
+  'dpo',
+  'cogs',
+  'ebitda',
+]);
+
 /** Meaningful (stop-word-filtered) tokens of a phrase — the vocabulary used to
  * decide whether the user actually named a field. */
 export function meaningfulWords(value: string): string[] {
@@ -347,6 +377,11 @@ function intentWords(value: string): string[] {
       // noun. Without this, "invoiced amount" did not match `invoice_amount`
       // and the planner silently returned only the collected series.
       if (word === 'invoiced' || word === 'invoicing') return 'invoice';
+      if (word === 'collections' || word === 'collection' || word === 'collect')
+        return 'collected';
+      if (word === 'inflow') return 'received';
+      if (word === 'payment' || word === 'payments' || word === 'paying')
+        return 'paid';
       if (word.length > 4 && word.endsWith('ies'))
         return word.slice(0, -3) + 'y';
       if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss'))
@@ -373,11 +408,76 @@ export function fieldMatchScore(
 ): number {
   const queryTokens = intentWords(text);
   const query = new Set(queryTokens);
+  const catalogPhrase = `${key} ${label}`.replace(/_/g, ' ');
+  // Qualifiers are part of the metric identity. If the user explicitly asks for
+  // "<name> hours", do not also select the similarly named dollar measure (for
+  // example Overtime USD) unless that amount/cost was independently requested.
+  const requestedHourBases = Array.from(
+    text.matchAll(/\b([a-z][a-z-]*)\s+hours?\b/gi),
+    (match) => match[1]!.toLowerCase(),
+  );
+  if (
+    /\busd\b/i.test(catalogPhrase) &&
+    requestedHourBases.some(
+      (base) =>
+        new RegExp(`\\b${base}\\b`, 'i').test(catalogPhrase) &&
+        !new RegExp(
+          `\\b${base}\\b[^.!?]*\\b(?:amount|cost|value|usd|dollars?)\\b`,
+          'i',
+        ).test(text),
+    )
+  )
+    return 0;
+  // Balance-sheet users commonly say "accounts receivable", "prepaid
+  // expenses", or "taxes payable", while the derived cube correctly exposes
+  // those discovered account subtypes as `<name> balance` measures.  Resolve
+  // those business synonyms by meaning so the router chooses the working-
+  // capital cube instead of similarly-worded cash-flow measures.
+  const balanceAliases: Array<[RegExp, RegExp]> = [
+    [/\baccounts?\s+receivable\b/i, /\breceivables?\s+balance\b/i],
+    [/\baccounts?\s+payable\b/i, /\bpayables?\s+balance\b/i],
+    [/\bprepaid\s+expenses?\b/i, /\bprepaids?\s+balance\b/i],
+    [/\bpayroll\s+payable\b/i, /\bpayroll\s+liability\s+balance\b/i],
+    [/\btaxes?\s+payable\b/i, /\btax\s+liability\s+balance\b/i],
+  ];
+  if (
+    balanceAliases.some(
+      ([requested, catalog]) => requested.test(text) && catalog.test(catalogPhrase),
+    )
+  )
+    return 18;
+  const balanceSheetContext = balanceAliases.filter(([requested]) =>
+    requested.test(text),
+  ).length;
+  if (
+    balanceSheetContext >= 2 &&
+    /\bcash\b/i.test(text) &&
+    /\bcash\s+balance\b/i.test(catalogPhrase)
+  )
+    return 18;
+  // In an AP question, "cash paid" is the cash-flow settlement measure, not a
+  // second spelling of the invoice's `paid_amount`.  The semantic cubes expose
+  // that flow as a cash outflow (often further qualified as vendor payments).
+  // Treat the natural business phrase as a catalog synonym so routing reaches
+  // the cross-domain monthly AP cube instead of silently staying on raw AP.
+  if (
+    /\bcash\s+paid\b/i.test(text) &&
+    /\bcash\b/i.test(catalogPhrase) &&
+    /\boutflows?\b/i.test(catalogPhrase) &&
+    /\bvendor\b/i.test(catalogPhrase) &&
+    /\bpayments?\b/i.test(catalogPhrase)
+  )
+    return 18;
   if (
     (query.has('dpo') && /days?_payable_outstanding|days? payable outstanding/i.test(`${key} ${label}`)) ||
     (query.has('dso') && /days?_sales_outstanding|days? sales outstanding/i.test(`${key} ${label}`))
   )
     return 18;
+  if (
+    /^productive_hours$/i.test(key) &&
+    /\bper\s+productive\s+hours?\b/i.test(text)
+  )
+    return 0;
   // A monetary balance/amount request must not resolve to a duration KPI merely
   // because both share words such as "payable outstanding". Duration measures
   // remain eligible when the user explicitly says days, DSO, or DPO.
@@ -389,26 +489,94 @@ export function fieldMatchScore(
     return 0;
   const vocab = fieldVocabulary(key, label);
   if (!vocab.meaningful.length) return 0;
+  const standardAcronymMatch = vocab.meaningful.some(
+    (word) => STANDARD_ACRONYMS.has(word) && query.has(word),
+  );
+  if (
+    /\bbalances?\b/i.test(`${key} ${label}`.replace(/_/g, ' ')) &&
+    /\b(?:cost|costs|outflow|outflows|payment|payments|paid|expense|expenses)\b/i.test(
+      text,
+    ) &&
+    !/\bbalances?\b/i.test(text)
+  )
+    return 0;
+  if (
+    /\b(?:per|rate|average|avg)\b/i.test(
+      `${key} ${label}`.replace(/_/g, ' '),
+    ) &&
+    !/\b(?:per|rate|average|avg)\b/i.test(text) &&
+    !(
+      /\bgrowth\b/i.test(`${key} ${label}`.replace(/_/g, ' ')) &&
+      /\bgrowth\b/i.test(text)
+    )
+  )
+    return 0;
+  if (
+    /\b(?:pct|percent|percentage)\b|%/i.test(
+      `${key} ${label}`.replace(/_/g, ' '),
+    ) &&
+    !/\b(?:pct|percent|percentage|%|rate|ratio|share|margin|utili[sz]ation|occupancy|efficiency|compliance)\b/i.test(text) &&
+    !query.has(vocab.acronym) &&
+    !standardAcronymMatch
+  )
+    return 0;
+  if (
+    /\b(debit|credit)[_ ]+balance(?:[_ ]+usd)?\b/i.test(
+      `${key} ${label}`.replace(/_/g, ' '),
+    )
+  ) {
+    const side = RegExp.$1;
+    if (
+      new RegExp(`\\b${side}\\s+movement\\b`, 'i').test(text) &&
+      !new RegExp(`\\b${side}\\s+balance\\b`, 'i').test(text)
+    ) {
+      return 0;
+    }
+  }
   // Negation is semantically essential in metric names. "Productive hours"
   // must not also select "Non Productive Hours" merely because two remaining
   // words overlap; the `non` qualifier has to be present in the request.
   if (vocab.meaningful.includes('non') && !query.has('non')) return 0;
-  const standardAcronyms = new Set([
-    'sla',
-    'qa',
-    'csat',
-    'nps',
-    'aht',
-    'dso',
-    'dpo',
-    'cogs',
-    'ebitda',
-  ]);
+  // "Net" changes the business meaning of a measure. A request for cash
+  // inflow/outflow must not quietly add net cash flow merely because all three
+  // share the words "cash flow"; the net series is included only when asked.
+  if (vocab.meaningful.includes('net') && !query.has('net')) return 0;
+  // Likewise, activity-specific measures should not satisfy a plain measure
+  // request. "Net cash flow" and "net activity cash flow" are different facts;
+  // the latter is only eligible when activity movement is actually named.
   if (
-    vocab.meaningful.some(
-      (word) => standardAcronyms.has(word) && query.has(word),
-    )
+    vocab.meaningful.includes('activity') &&
+    !/\b(?:activity|activities|movement|movements)\b/i.test(text)
   )
+    return 0;
+  if (
+    /^general_ledger_/i.test(key) &&
+    !/\b(?:general\s+ledger|gl)\b/i.test(text)
+  )
+    return 0;
+  if (
+    /\bjournal\b/i.test(`${key} ${label}`.replace(/_/g, ' ')) &&
+    /\bvalue\b/i.test(`${key} ${label}`.replace(/_/g, ' ')) &&
+    /\b(?:debit|credit)\b/i.test(text) &&
+    !/\bvalue\b/i.test(text)
+  )
+    return 0;
+  if (
+    /^general_ledger_.+_cost(?:_usd)?$/i.test(key) &&
+    !/^general_ledger_payroll_cost(?:_usd)?$/i.test(key)
+  ) {
+    const family = key
+      .replace(/^general_ledger_/i, '')
+      .replace(/_cost(?:_usd)?$/i, '')
+      .replace(/_/g, ' ');
+    const familyWords = meaningfulWords(family);
+    const familyMentioned = familyWords.length
+      ? familyWords.every((word) => query.has(word))
+      : new RegExp(`\\b${family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text);
+    if (!familyMentioned)
+      return 0;
+  }
+  if (standardAcronymMatch)
     return 18;
   const compact = vocab.meaningful.join('');
   // Compact-name matching supports "cashflow" ↔ "cash flow", but must never
@@ -444,6 +612,27 @@ export function fieldMatchScore(
     'count',
   ]);
   const overlap = partialVocabulary.filter((word) => query.has(word));
+  const flowWords = new Set([
+    'cash',
+    'flow',
+    'received',
+    'inflow',
+    'outflow',
+    'paid',
+  ]);
+  const flowOnlyOverlap =
+    overlap.length > 0 && overlap.every((word) => flowWords.has(word));
+  const unrequestedFlowQualifiers = partialVocabulary.filter(
+    (word) => !flowWords.has(word) && !query.has(word),
+  );
+  if (flowOnlyOverlap && unrequestedFlowQualifiers.length > 0) return 0;
+  if (
+    vocab.meaningful.includes('total') &&
+    ['vendor', 'customer', 'payroll', 'bank', 'capital', 'debt', 'tax', 'interest'].some(
+      (word) => query.has(word) && !vocab.meaningful.includes(word),
+    )
+  )
+    return 0;
   if (
     overlap.length === partialVocabulary.length &&
     overlap.length > 0 &&
@@ -487,6 +676,100 @@ function rankedMeasures(
     }))
     .filter((item) => item.score >= 8)
     .sort((a, b) => b.score - a.score);
+}
+
+function bestMeasureForPhrase(
+  phrase: string,
+  model: SemanticModel,
+): string | undefined {
+  const normalized = phrase.toLowerCase();
+  const has = (key: string) => model.measures.some((measure) => measure.key === key);
+  // Growth is a different quantity and unit from the underlying total. Resolve
+  // the fully qualified KPI before lexical ranking can prefer a shorter label.
+  if (/\brevenue\s+growth\b/.test(normalized) && has('revenue_growth_pct'))
+    return 'revenue_growth_pct';
+  if (/\bebitda\s+growth\b/.test(normalized) && has('ebitda_growth_pct'))
+    return 'ebitda_growth_pct';
+  const ranked = rankedMeasures(phrase, model);
+  if (ranked[0]) return ranked[0].key;
+  if (/\bgross\s+margin\b/.test(normalized) && has('gross_margin_pct'))
+    return 'gross_margin_pct';
+  if (/\brevenue\b/.test(normalized) && has('total_revenue_usd'))
+    return 'total_revenue_usd';
+  if (/\bbillable\s+hours?\b/.test(normalized) && has('billable_hours'))
+    return 'billable_hours';
+  return undefined;
+}
+
+function explicitCoreMeasureKeys(
+  text: string,
+  model: SemanticModel,
+): string[] {
+  const has = (key: string) =>
+    model.measures.some((measure) => measure.key === key);
+  const candidates: Array<{ key: string; pattern: RegExp }> = [
+    {
+      key: 'productive_hours_percentage',
+      pattern: /\bproductive\s+hours?\s+(?:pct|percent|percentage)\b/i,
+    },
+    {
+      key: 'total_revenue_usd',
+      pattern: /\brevenue\b(?!\s+per\b)/i,
+    },
+    {
+      key: 'total_payroll_usd',
+      pattern: /\bpayroll(?:\s+costs?)?\b|\bpayroll\s+expense\b/i,
+    },
+    {
+      key: 'productive_hours',
+      pattern:
+        /(?<!\bper\s)\bproductive\s+hours?\b(?!\s+(?:pct|percent|percentage))/i,
+    },
+    {
+      key: 'employee_headcount',
+      pattern: /\bemployee\s+headcount\b|\bheadcount\b/i,
+    },
+    {
+      key: 'calls_handled',
+      pattern: /\bcalls?\b|\bcalls?\s+handled\b/i,
+    },
+    {
+      key: 'tickets_resolved',
+      pattern: /\btickets?\b|\btickets?\s+resolved\b/i,
+    },
+  ];
+  return candidates
+    .flatMap((candidate) => {
+      if (!has(candidate.key)) return [];
+      const match = candidate.pattern.exec(text);
+      return match?.index === undefined
+        ? []
+        : [{ key: candidate.key, index: match.index }];
+    })
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.key);
+}
+
+function measureMentionIndex(
+  text: string,
+  measureKey: string,
+  model: SemanticModel,
+): number {
+  const measure = model.measures.find((item) => item.key === measureKey);
+  if (!measure) return Number.MAX_SAFE_INTEGER;
+  const lowered = text.toLowerCase();
+  const vocab = fieldVocabulary(measure.key, measure.label).meaningful.filter(
+    (word) => !['total', 'average', 'avg', 'mean', 'pct'].includes(word),
+  );
+  const phrase = vocab.join(' ');
+  if (phrase.length > 2) {
+    const index = lowered.indexOf(phrase);
+    if (index >= 0) return index;
+  }
+  const positions = vocab
+    .map((word) => lowered.search(new RegExp(`\\b${word}\\b`, 'i')))
+    .filter((index) => index >= 0);
+  return positions.length ? Math.min(...positions) : Number.MAX_SAFE_INTEGER;
 }
 
 function rankedDimensions(
@@ -546,6 +829,68 @@ export function requestedChartType(
   return choices.find(([pattern]) => pattern.test(normalized))?.[1];
 }
 
+/**
+ * High-confidence deterministic plan for an explicitly requested X-versus-Y
+ * point chart. Both axes and every grouping must resolve against the SAME live
+ * cube catalog. This gives the router a stable candidate when an LLM spells a
+ * valid catalog key loosely ("payroll cost") or refuses a multi-dimensional
+ * scatter even though a cross-domain cube contains all requested fields.
+ */
+export function planExplicitPointChart(
+  text: string,
+  model: SemanticModel,
+): EngineChartSpec | undefined {
+  const chartType = requestedChartType(text);
+  if (chartType !== 'scatter' && chartType !== 'bubble') return undefined;
+  const versus = text.match(
+    /\bshow(?:ing)?\b([\s\S]+?)\b(?:versus|vs\.?)\b([\s\S]+?)(?=\bby\b|\buse\b|\bwith\b|[.!?]|$)/i,
+  );
+  if (!versus) return undefined;
+  const xKey = bestMeasureForPhrase(versus[1]!, model);
+  const yKey = bestMeasureForPhrase(versus[2]!, model);
+  if (!xKey || !yKey || xKey === yKey) return undefined;
+
+  const groupingTail = text.match(/\bby\s+([^.!?]+)/i)?.[1] ?? '';
+  const loweredTail = groupingTail.toLowerCase();
+  const dimensions = rankedDimensions(groupingTail, model)
+    // The grouping tail is introduced by an explicit "by". A one-word entity
+    // identity such as Client legitimately scores 4; requiring 8 drops it while
+    // retaining the later multi-word Business Unit.
+    .filter((item) => item.score >= 4)
+    .map((item) => {
+      const dimension = model.dimensions.find((d) => d.key === item.key)!;
+      const words = fieldVocabulary(dimension.key, dimension.label).meaningful;
+      const indices = words
+        .map((word) => loweredTail.search(new RegExp(`\\b${word}\\b`, 'i')))
+        .filter((index) => index >= 0);
+      return {
+        key: item.key,
+        index: indices.length ? Math.min(...indices) : Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .filter((item) => item.index < Number.MAX_SAFE_INTEGER)
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.key);
+  const uniqueDimensions = Array.from(new Set(dimensions));
+  if (groupingTail && !uniqueDimensions.length) return undefined;
+
+  const xLabel = model.measures.find((m) => m.key === xKey)!.label;
+  const yLabel = model.measures.find((m) => m.key === yKey)!.label;
+  const dimensionLabels = uniqueDimensions.map(
+    (key) => model.dimensions.find((d) => d.key === key)!.label,
+  );
+  return {
+    chartType,
+    measureKeys: [xKey, yKey],
+    ...(uniqueDimensions[0] ? { dimensionKey: uniqueDimensions[0] } : {}),
+    ...(uniqueDimensions[1] ? { breakdownKey: uniqueDimensions[1] } : {}),
+    ...(uniqueDimensions.length > 2
+      ? { hierarchyKeys: uniqueDimensions }
+      : {}),
+    title: `${xLabel} versus ${yLabel}${dimensionLabels.length ? ` by ${dimensionLabels.join(' and ')}` : ''}`,
+  };
+}
+
 function requestedTimeGrain(
   text: string,
   model: SemanticModel,
@@ -559,6 +904,13 @@ function requestedTimeGrain(
     .replace(
       /\bmonthly\s+(?:salary|pay|compensation|wage|billing\s+rate)\b/g,
       (phrase) => phrase.replace(/^monthly\s+/, ''),
+    )
+    // These phrases request a comparison, not a yearly x-axis. On edits such
+    // as "add previous-year values" the existing monthly/quarterly grain must
+    // remain intact so like-for-like periods can be aligned.
+    .replace(
+      /\b(?:previous|prior|last)[- ]+year\b|\byear[- ]over[- ]year\b|\byoy\b/g,
+      ' ',
     );
   const requested = /\b(?:daily|day)\b/.test(normalized)
     ? 'day'
@@ -609,23 +961,256 @@ function applyCatalogIntent(
 
   let spec: EngineChartSpec = planned.spec;
 
+  if (
+    /\bexecutive\b/i.test(text) &&
+    /\bkpi\b|\bdashboard\b/i.test(text) &&
+    /\brevenue\b/i.test(text) &&
+    /\bgross\s+profit\b/i.test(text) &&
+    /\bebitda\b/i.test(text) &&
+    /\boperating\s+profit\b/i.test(text) &&
+    /\bnet\s+profit\b/i.test(text)
+  ) {
+    const executiveKeys = [
+      'total_revenue_usd',
+      'gross_profit_usd',
+      'ebitda_usd',
+      'operating_profit_usd',
+      'net_profit_usd',
+    ].filter((key) => model.measures.some((measure) => measure.key === key));
+    if (executiveKeys.length >= 5) {
+      spec = {
+        ...spec,
+        chartType: 'kpi',
+        measureKeys: executiveKeys,
+      };
+    }
+  }
+
+  if (
+    /\bexecutive\b/i.test(text) &&
+    /\bdashboard\b/i.test(text) &&
+    /\brevenue\b/i.test(text) &&
+    /\bprofitability\b/i.test(text) &&
+    /\bpayroll\b/i.test(text) &&
+    /\butili[sz]ation\b/i.test(text) &&
+    /\bservice\s+quality\b/i.test(text) &&
+    /\breceivables?\b/i.test(text)
+  ) {
+    // Resolve broad executive concepts to the cube's canonical, auditable KPIs.
+    // Service quality is intentionally represented by both SLA and CSAT rather
+    // than an invented blended score.
+    const executiveKeys = [
+      'total_revenue_usd',
+      'gross_profit_usd',
+      'total_payroll_usd',
+      'utilization_pct',
+      'sla_compliance_pct',
+      'csat_pct',
+      'outstanding_receivable_usd',
+    ].filter((key) => model.measures.some((measure) => measure.key === key));
+    if (executiveKeys.length >= 6) {
+      spec = { ...spec, chartType: 'kpi', measureKeys: executiveKeys };
+    }
+  }
+
   let explicitlyMatchedMeasures = measureMatches
     // Two distinctive matching words score 8 (for example "EBITDA margin"
     // against ebitda_margin_pct). That is already an unambiguous metric name;
     // requiring 9 let an unrelated LLM-selected measure such as Debit survive.
-    .filter((item) => item.score >= 8)
+    .filter((item) => item.score >= 8);
   if (isEdit && priorSpec) {
     const newMatches = explicitlyMatchedMeasures.filter(
       (item) => !priorSpec.measureKeys.includes(item.key),
     );
     if (newMatches.length) {
-      const bestNewScore = Math.max(...newMatches.map((item) => item.score));
-      explicitlyMatchedMeasures = newMatches.filter(
-        (item) => item.score === bestNewScore,
+      explicitlyMatchedMeasures = newMatches;
+    }
+  }
+  const coreMeasureKeys = explicitCoreMeasureKeys(text, model);
+  const usableCoreMeasureKeys = coreMeasureKeys.filter(
+    (key) =>
+      coreMeasureKeys.length >= 2 ||
+      (isEdit && key !== 'total_revenue_usd') ||
+      (!isEdit &&
+        key === 'total_revenue_usd' &&
+        !/\b(?:percentage|percent|%)\s+of\s+revenue\b|\bas\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b/i.test(
+          text,
+        )),
+  );
+  let explicitMeasureKeys = Array.from(
+    new Set([
+      ...usableCoreMeasureKeys,
+      ...explicitlyMatchedMeasures.map((item) => item.key),
+    ]),
+  );
+  if (/\boutstanding\s+balance\b/i.test(text)) {
+    const outstanding = model.measures.filter((measure) =>
+      /\boutstanding\b/i.test(
+        `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+      ),
+    );
+    const requestedSide =
+      /\b(?:vendor|supplier|accounts?\s+payable|\bap\b)\b/i.test(text)
+        ? /payable/i
+        : /\b(?:client|customer|invoice|collected|write[- ]?off|accounts?\s+receivable|\bar\b)\b/i.test(
+              text,
+            )
+          ? /receivable/i
+          : null;
+    const selected =
+      (requestedSide
+        ? outstanding.find((measure) =>
+            requestedSide.test(`${measure.key} ${measure.label}`),
+          )
+        : undefined) ?? (outstanding.length === 1 ? outstanding[0] : undefined);
+    if (selected) {
+      explicitMeasureKeys = Array.from(
+        new Set([...explicitMeasureKeys, selected.key]),
       );
     }
   }
-  const explicitMeasureKeys = explicitlyMatchedMeasures.map((item) => item.key);
+  if (/\baging\s+balances?\b/i.test(text)) {
+    // Normalize catalog keys before applying word boundaries: `_` is a regex
+    // word character, so `outstanding_payable_usd` otherwise fails `\bpayable\b`
+    // and AP aging is incorrectly treated as receivables aging.
+    const context = `${text} ${(priorSpec?.measureKeys ?? []).join(' ')}`.replace(
+      /_/g,
+      ' ',
+    );
+    const side = /\b(?:payable|vendor|supplier|\bap\b)\b/i.test(context)
+      ? /payable/i
+      : /receivable/i;
+    const agingKeys = model.measures
+      .filter((measure) => {
+        const catalogText = `${measure.key} ${measure.label}`.replace(/_/g, ' ');
+        return (
+          side.test(catalogText) &&
+          /\b(?:current|overdue)\b/i.test(catalogText)
+        );
+      })
+      .sort((a, b) => {
+        const rank = (value: string) => (/\bcurrent\b/i.test(value) ? 0 : 1);
+        return rank(`${a.key} ${a.label}`) - rank(`${b.key} ${b.label}`);
+      })
+      .map((measure) => measure.key);
+    explicitMeasureKeys = Array.from(
+      new Set([...explicitMeasureKeys, ...agingKeys]),
+    );
+  }
+  const daysMetricPhrases = [
+    { requested: /\bdso\b/i, catalog: /\bdays\s+sales\s+outstanding\b/i },
+    { requested: /\bdpo\b/i, catalog: /\bdays\s+payable\s+outstanding\b/i },
+  ];
+  for (const phrase of daysMetricPhrases) {
+    if (!phrase.requested.test(text)) continue;
+    const match = model.measures.find((measure) =>
+      phrase.catalog.test(
+        `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+      ),
+    );
+    if (match) {
+      explicitMeasureKeys = Array.from(
+        new Set([...explicitMeasureKeys, match.key]),
+      );
+    }
+  }
+  if (
+    /\bgeneral\s+ledger\b/i.test(text) &&
+    /\btrial\s+balance\b/i.test(text) &&
+    /\bdebit\b/i.test(text) &&
+    /\bcredit\b/i.test(text)
+  ) {
+    const pairedKeys = [
+      'general ledger debit',
+      'general ledger credit',
+      'trial balance debit movement',
+      'trial balance credit movement',
+    ]
+      .map((phrase) => {
+        const required = phrase.split(/\s+/);
+        return model.measures.find((measure) => {
+          const catalogText = `${measure.key} ${measure.label}`
+            .replace(/_/g, ' ')
+            .toLowerCase();
+          return required.every((word) =>
+            new RegExp(`\\b${word}\\b`, 'i').test(catalogText),
+          );
+        })?.key;
+      })
+      .filter((key): key is string => Boolean(key));
+    explicitMeasureKeys = Array.from(
+      new Set([...explicitMeasureKeys, ...pairedKeys]),
+    );
+  }
+  const reconciliationDifferenceKeys =
+    isEdit &&
+    /\bhighlight\b/i.test(text) &&
+    /\bgeneral\s+ledger\b/i.test(text) &&
+    /\btrial\s+balance\b/i.test(text) &&
+    /\bdifferences?\b/i.test(text)
+      ? ['debit', 'credit'].flatMap((side) => {
+          const match = model.measures.find((measure) => {
+            const catalogText = `${measure.key} ${measure.label}`
+              .replace(/_/g, ' ')
+              .toLowerCase();
+            return (
+              new RegExp(`\\b${side}\\b`, 'i').test(catalogText) &&
+              /\breconciliation\b/i.test(catalogText) &&
+              /\bdifference\b/i.test(catalogText)
+            );
+          });
+          return match ? [match.key] : [];
+        })
+      : [];
+  if (reconciliationDifferenceKeys.length) {
+    explicitMeasureKeys = Array.from(
+      new Set([...explicitMeasureKeys, ...reconciliationDifferenceKeys]),
+    );
+  }
+  if (/\bchange\b[^.]*\bopening\s+balance\b/i.test(text)) {
+    const hasDerivedChange = explicitMeasureKeys.some((key) =>
+      /balance[_ ]change/i.test(key),
+    );
+    if (hasDerivedChange) {
+      explicitMeasureKeys = explicitMeasureKeys.filter(
+        (key) => !/opening[_ ]balance/i.test(key),
+      );
+    }
+  }
+  if (
+    /\bdebit\b[^.]*\bcredit\b[^.]*\bmovements?\b|\bmovements?\b[^.]*\bdebit\b[^.]*\bcredit\b/i.test(
+      text,
+    )
+  ) {
+    explicitMeasureKeys = explicitMeasureKeys.filter(
+      (key) =>
+        !(
+          /^(?:debit|credit)_balance(?:_|$)|^balance_(?:debit|credit)(?:_|$)/i.test(
+            key,
+          )
+        ) ||
+        Boolean(priorSpec?.measureKeys.includes(key)),
+    );
+  }
+  if (isEdit || explicitType === 'kpi' || spec.chartType === 'kpi') {
+    explicitMeasureKeys = explicitMeasureKeys.sort(
+      (a, b) =>
+        measureMentionIndex(text, a, model) -
+        measureMentionIndex(text, b, model),
+    );
+  }
+  const profitabilityOrder = [
+    'total_revenue_usd',
+    'gross_profit_usd',
+    'ebitda_usd',
+    'operating_profit_usd',
+    'net_profit_usd',
+  ];
+  if (profitabilityOrder.every((key) => explicitMeasureKeys.includes(key))) {
+    explicitMeasureKeys = profitabilityOrder.filter((key) =>
+      explicitMeasureKeys.includes(key),
+    );
+  }
   const asksShareOfTotal =
     /\b(?:share|percentage|percent)\s+of\s+(?:the\s+)?total\b/i.test(text);
   if (explicitMeasureKeys.length) {
@@ -646,6 +1231,95 @@ function applyCatalogIntent(
           )
         : explicitMeasureKeys,
     };
+    if (reconciliationDifferenceKeys.length) {
+      spec = { ...spec, highlightSeries: reconciliationDifferenceKeys };
+    }
+  }
+
+  // Re-apply the complete executive scorecard after the generic explicit-match
+  // pass above; broad concept words otherwise replace it with only the three
+  // literal matches (revenue/payroll/utilization).
+  if (
+    /\bexecutive\b/i.test(text) &&
+    /\bdashboard\b/i.test(text) &&
+    /\bprofitability\b/i.test(text) &&
+    /\bservice\s+quality\b/i.test(text) &&
+    /\breceivables?\b/i.test(text)
+  ) {
+    const executiveKeys = [
+      'total_revenue_usd',
+      'gross_profit_usd',
+      'total_payroll_usd',
+      'utilization_pct',
+      'sla_compliance_pct',
+      'csat_pct',
+      'outstanding_receivable_usd',
+    ].filter((key) => model.measures.some((measure) => measure.key === key));
+    if (executiveKeys.length >= 6) {
+      spec = { ...spec, chartType: 'kpi', measureKeys: executiveKeys };
+    }
+  }
+
+  if (
+    /\bexecutive\b/i.test(text) &&
+    /\bkpi\b|\bdashboard\b/i.test(text) &&
+    /\brevenue\b/i.test(text) &&
+    /\bgross\s+profit\b/i.test(text) &&
+    /\bebitda\b/i.test(text) &&
+    /\boperating\s+profit\b/i.test(text) &&
+    /\bnet\s+profit\b/i.test(text)
+  ) {
+    const executiveKeys = [
+      'total_revenue_usd',
+      'gross_profit_usd',
+      'ebitda_usd',
+      'operating_profit_usd',
+      'net_profit_usd',
+    ].filter((key) => model.measures.some((measure) => measure.key === key));
+    if (executiveKeys.length >= 5) {
+      spec = {
+        ...spec,
+        chartType: 'kpi',
+        measureKeys: executiveKeys,
+      };
+    }
+  }
+
+  if (spec.chartType === 'scatter' || spec.chartType === 'bubble') {
+    const versus = text.match(/\bshow(?:ing)?\b([\s\S]+?)\b(?:versus|vs\.?)\b([\s\S]+)/i);
+    if (versus) {
+      const leftKey = bestMeasureForPhrase(versus[1]!, model);
+      const rightText = versus[2]!.replace(
+        /\b(?:by|for|per|across|use|with)\b[\s\S]*$/i,
+        '',
+      );
+      const rightKey = bestMeasureForPhrase(rightText, model);
+      if (leftKey && rightKey && leftKey !== rightKey) {
+        spec = {
+          ...spec,
+          measureKeys: [
+            leftKey,
+            rightKey,
+            ...spec.measureKeys.filter(
+              (key) => key !== leftKey && key !== rightKey,
+            ),
+          ],
+        };
+      }
+    }
+    const bubbleSize = text.match(
+      /\b(?:use|with)\s+([\s\S]+?)\s+as\s+(?:the\s+)?bubble\s+size\b/i,
+    );
+    if (bubbleSize) {
+      const sizeKey = bestMeasureForPhrase(bubbleSize[1]!, model);
+      if (sizeKey) {
+        spec = {
+          ...spec,
+          chartType: 'bubble',
+          measureKeys: Array.from(new Set([...spec.measureKeys, sizeKey])),
+        };
+      }
+    }
   }
 
   const asksForComponents =
@@ -783,19 +1457,120 @@ function applyCatalogIntent(
       const { dimensionKey: _dropTimeLeak, breakdownKey: _dropBreakdown, ...rest } =
         spec;
       spec = rest;
+    } else if (spec.breakdownKey) {
+      const chosenBreakdown = model.dimensions.find(
+        (dimension) => dimension.key === spec.breakdownKey,
+      );
+      const breakdownText = `${chosenBreakdown?.key ?? spec.breakdownKey} ${chosenBreakdown?.label ?? ''}`.replace(
+        /_/g,
+        ' ',
+      );
+      // "by account type and fiscal year" is one categorical grouping plus a
+      // time grain. Do not infer account_sub_type merely because it shares the
+      // words "account" and "type"; the user has to actually ask for subtype.
+      if (
+        /\bsub\s*type\b/i.test(breakdownText) &&
+        !/\bsub\s*type\b/i.test(text)
+      ) {
+        const { breakdownKey: _dropSubtypeBreakdown, ...rest } = spec;
+        spec = rest;
+      }
     }
   }
 
   if (explicitType) spec = { ...spec, chartType: explicitType };
+  else if (
+    isEdit &&
+    priorSpec?.chartType === 'stacked_bar' &&
+    /\bas\s+lines?\b/i.test(text)
+  ) {
+    // Adding overlay lines does not unstack the existing columns. The compiler
+    // will emit a composed chart from this stacked-bar semantic spec, preserving
+    // the stack while putting different-unit additions on the right axis.
+    spec = { ...spec, chartType: 'stacked_bar' };
+  }
+
+  if (spec.chartType === 'treemap') {
+    const lowered = text.toLowerCase();
+    const mentionedHierarchy = dimensionMatches
+      .filter((item) => item.score >= 8)
+      .map((item) => {
+        const dimension = model.dimensions.find((d) => d.key === item.key)!;
+        const words = fieldVocabulary(dimension.key, dimension.label).meaningful;
+        const phrase = words.join(' ');
+        const phraseIndex = phrase ? lowered.indexOf(phrase) : -1;
+        return {
+          key: item.key,
+          index: phraseIndex,
+        };
+      })
+      // Shared vocabulary (account name/type/group/sub-type) must not cause an
+      // unrequested hierarchy level to leak in. Require the catalog phrase as a
+      // phrase, then preserve the user's stated order.
+      .filter((item) => item.index >= 0)
+      .sort((a, b) => a.index - b.index)
+      .map((item) => item.key);
+    if (mentionedHierarchy.length >= 2) {
+      spec = {
+        ...spec,
+        hierarchyKeys: Array.from(new Set(mentionedHierarchy)),
+        dimensionKey: mentionedHierarchy.at(-1),
+        breakdownKey: mentionedHierarchy[0],
+      };
+    }
+  }
+  if (isEdit && priorSpec && /\bdrill[- ]?down\s+from\b/i.test(text)) {
+    const lowered = text.toLowerCase();
+    const orderedHierarchy = dimensionMatches
+      .map((item) => {
+        const dimension = model.dimensions.find((d) => d.key === item.key)!;
+        const words = fieldVocabulary(
+          dimension.key,
+          dimension.label,
+        ).meaningful.filter((word) => word !== 'name');
+        const indices = words
+          .map((word) => lowered.search(new RegExp(`\\b${word}\\b`, 'i')))
+          .filter((index) => index >= 0);
+        return {
+          key: item.key,
+          index: indices.length ? Math.min(...indices) : -1,
+        };
+      })
+      .filter((item) => item.index >= 0)
+      .sort((a, b) => a.index - b.index)
+      .map((item) => item.key);
+    const hierarchyKeys = Array.from(new Set(orderedHierarchy));
+    if (hierarchyKeys.length >= 2) {
+      const { breakdownKey: _dropHierarchyBreakdown, ...rest } = spec;
+      spec = {
+        ...rest,
+        measureKeys: priorSpec.measureKeys,
+        chartType: priorSpec.chartType,
+        hierarchyKeys,
+        dimensionKey: hierarchyKeys[0],
+      };
+    }
+  }
   if (requestsClustered) spec = { ...spec, clustered: true };
   else if (priorSpec?.clustered) spec = { ...spec, clustered: true };
   if (timeGrain) spec = { ...spec, timeGrain };
+  else if (!isEdit && spec.chartType === 'stacked_area' && model.time) {
+    spec = { ...spec, timeGrain: 'month' };
+  }
   else if (isEdit && priorSpec) {
     if (priorSpec.timeGrain) spec = { ...spec, timeGrain: priorSpec.timeGrain };
     else if (spec.timeGrain) {
       const { timeGrain: _dropTimeGrain, ...rest } = spec;
       spec = rest;
     }
+  }
+  if (
+    isEdit &&
+    priorSpec?.chartType === 'kpi' &&
+    timeGrain &&
+    /\btrend\b/i.test(text)
+  ) {
+    spec = { ...spec, chartType: 'line', measureKeys: priorSpec.measureKeys };
   }
   const asksYoyGrowth =
     /\b(?:year[- ]over[- ]year|yoy)\b/i.test(text) && /\bgrowth\b/i.test(text);
@@ -817,15 +1592,103 @@ function applyCatalogIntent(
       title: `${measure?.label ?? 'Value'} YoY Growth${dimension ? ` by ${dimension.label}` : ''}`,
     };
   } else if (
-    /\b(?:previous|prior|last)\s+year\b|\byear[- ]over[- ]year\b|\byoy\b/i.test(
+    /\b(?:previous|prior|last)[- ]+year\b|\byear[- ]over[- ]year\b|\byoy\b/i.test(
       text,
     )
   ) {
     spec = {
       ...spec,
       comparison: 'previous_year',
+      ...(/\bvariance\b[^.]*\b(?:percentages?|percents?|%)\b|\b(?:percentages?|percents?|%)\b[^.]*\bvariance\b/i.test(
+        text,
+      )
+        ? { showVariancePct: true }
+        : priorSpec?.showVariancePct
+          ? { showVariancePct: true }
+          : {}),
       ...(model.time && !spec.timeGrain ? { timeGrain: 'month' as const } : {}),
     };
+  }
+
+  if (
+    isEdit &&
+    priorSpec &&
+    /\b(?:percentage|percent|%)\s+of\s+revenue\b/i.test(text)
+  ) {
+    const byKey = new Map(model.measures.map((measure) => [measure.key, measure]));
+    const ratioKeys = priorSpec.measureKeys.flatMap((key) => {
+      const prior = byKey.get(key);
+      if (!prior || prior.expr.kind !== 'sum') return [];
+      const priorColumn = prior.expr.column;
+      const ratio = model.measures.find(
+        (measure) =>
+          measure.expr.kind === 'ratio_of_sums' &&
+          measure.expr.numerator === priorColumn &&
+          /revenue/i.test(measure.expr.denominator),
+      );
+      return ratio ? [ratio.key] : [];
+    });
+    if (ratioKeys.length) {
+      const { normalize: _dropNormalize, ...rest } = spec;
+      spec = {
+        ...rest,
+        measureKeys: Array.from(new Set([...priorSpec.measureKeys, ...ratioKeys])),
+      };
+    }
+  }
+  if (
+    !isEdit &&
+    /\bas\s+(?:a\s+)?(?:percentage|percent|%)\s+of\s+revenue\b|\b(?:percentage|percent|%)\s+of\s+revenue\b/i.test(
+      text,
+    )
+  ) {
+    const byKey = new Map(model.measures.map((measure) => [measure.key, measure]));
+    const revenueRatioKeys = spec.measureKeys.filter((key) => {
+      const expr = byKey.get(key)?.expr;
+      return (
+        expr?.kind === 'ratio_of_sums' &&
+        /revenue/i.test(expr.denominator)
+      );
+    });
+    if (revenueRatioKeys.length) {
+      spec = { ...spec, measureKeys: revenueRatioKeys };
+    }
+  }
+
+  if (
+    isEdit &&
+    priorSpec &&
+    /\b(?:growth|margin)s?\b/i.test(text) &&
+    /\b(?:percentage|percent|%)s?\b/i.test(text)
+  ) {
+    const byKey = new Map(model.measures.map((measure) => [measure.key, measure]));
+    const marginByProfit: Record<string, string> = {
+      gross_profit_usd: 'gross_margin_pct',
+      operating_profit_usd: 'operating_margin_pct',
+      net_profit_usd: 'net_margin_pct',
+      ebitda_usd: 'ebitda_margin_pct',
+    };
+    const requestedMargins = /\bmargin/i.test(text)
+      ? priorSpec.measureKeys
+          .map((key) => marginByProfit[key])
+          .filter((key): key is string => !!key && byKey.has(key))
+      : [];
+    const requestedGrowth = /\bgrowth/i.test(text)
+      ? model.measures
+          .filter(
+            (measure) =>
+              /growth/i.test(`${measure.key} ${measure.label}`) &&
+              /%|pct|percent/i.test(`${measure.key} ${measure.label} ${measure.unit}`),
+          )
+          .map((measure) => measure.key)
+      : [];
+    const additions = [...requestedMargins, ...requestedGrowth];
+    if (additions.length) {
+      spec = {
+        ...spec,
+        measureKeys: Array.from(new Set([...priorSpec.measureKeys, ...additions])),
+      };
+    }
   }
 
   const top = text.match(/\btop\s+(\d+)\b/i);
@@ -891,6 +1754,172 @@ function applyCatalogIntent(
   ) {
     spec = { ...spec, highlightNegative: true };
   }
+  if (
+    isEdit &&
+    priorSpec &&
+    /\bhighlight\b[^.]*\b(?:largest|biggest|highest)\b[^.]*\bclosing\s+balance\s+change\b|\b(?:largest|biggest|highest)\b[^.]*\bclosing\s+balance\s+change\b[^.]*\bhighlight\b/i.test(
+      text,
+    )
+  ) {
+    const priorKeys = new Set(priorSpec.measureKeys);
+    if (priorKeys.has('opening_balance_usd') && priorKeys.has('closing_balance_usd')) {
+      const { topN: _dropTopN, ...rest } = spec;
+      spec = {
+        ...rest,
+        measureKeys: priorSpec.measureKeys,
+        ...(priorSpec.dimensionKey ? { dimensionKey: priorSpec.dimensionKey } : {}),
+        ...(priorSpec.breakdownKey ? { breakdownKey: priorSpec.breakdownKey } : {}),
+        ...(priorSpec.timeGrain ? { timeGrain: priorSpec.timeGrain } : {}),
+        highlightTopN: 1,
+        highlightChangeFromMeasureKey: 'opening_balance_usd',
+        highlightChangeToMeasureKey: 'closing_balance_usd',
+      };
+    }
+  }
+  if (
+    isEdit &&
+    priorSpec &&
+    /\bhighlight\b/i.test(text) &&
+    /\bhigh[-\s]?revenue\b/i.test(text) &&
+    /\bweak\s+performance\b|\bunderperform/i.test(text)
+  ) {
+    spec = {
+      ...spec,
+      measureKeys: priorSpec.measureKeys,
+      ...(priorSpec.dimensionKey ? { dimensionKey: priorSpec.dimensionKey } : {}),
+      ...(priorSpec.breakdownKey ? { breakdownKey: priorSpec.breakdownKey } : {}),
+      ...(priorSpec.timeGrain ? { timeGrain: priorSpec.timeGrain } : {}),
+      highlightWeakPerformance: true,
+    };
+  }
+  if (
+    isEdit &&
+    priorSpec &&
+    /\bhighlight\b/i.test(text) &&
+    /\btop\b/i.test(text) &&
+    /\bbottom\b/i.test(text)
+  ) {
+    spec = {
+      ...spec,
+      measureKeys: priorSpec.measureKeys,
+      ...(priorSpec.dimensionKey ? { dimensionKey: priorSpec.dimensionKey } : {}),
+      ...(priorSpec.breakdownKey ? { breakdownKey: priorSpec.breakdownKey } : {}),
+      ...(priorSpec.timeGrain ? { timeGrain: priorSpec.timeGrain } : {}),
+      highlightExtremes: 'both',
+    };
+  }
+  if (
+    isEdit &&
+    priorSpec &&
+    /\bhighlight\b/i.test(text) &&
+    /\b(?:largest|highest)\b/i.test(text) &&
+    !/\bchange\b/i.test(text)
+  ) {
+    const highlightTail = text.match(/\b(?:largest|highest)\b\s+([^.!?]+)/i)?.[1] ?? text;
+    const requested = priorSpec.measureKeys
+      .map((key) => {
+        const measure = model.measures.find((item) => item.key === key);
+        return {
+          key,
+          score: measure
+            ? fieldMatchScore(highlightTail, measure.key, measure.label)
+            : 0,
+        };
+      })
+      .sort((a, b) => b.score - a.score)[0];
+    if (requested && requested.score >= 4) {
+      const { topN: _dropHighlightTopN, ...rest } = spec;
+      spec = {
+        ...rest,
+        measureKeys: [
+          requested.key,
+          ...priorSpec.measureKeys.filter((key) => key !== requested.key),
+        ],
+        ...(priorSpec.dimensionKey ? { dimensionKey: priorSpec.dimensionKey } : {}),
+        ...(priorSpec.timeGrain ? { timeGrain: priorSpec.timeGrain } : {}),
+        highlightExtremes: 'max',
+      };
+    }
+  }
+  if (
+    isEdit &&
+    priorSpec &&
+    /\b(?:payroll|cost)\b[^.]*\b(?:no|zero|without)\s+revenue\b/i.test(text)
+  ) {
+    spec = { ...spec, highlightCostWithoutRevenue: true };
+  }
+  if (
+    isEdit &&
+    priorSpec &&
+    /\bhighlight\b/i.test(text) &&
+    /\blow\b/i.test(text) &&
+    /\b(?:sla|csat|service\s+quality)\b/i.test(text)
+  ) {
+    const bubblePhrase = text.match(
+      /\b(?:use|with)\s+([\s\S]+?)\s+as\s+(?:the\s+)?bubble\s+size\b/i,
+    )?.[1];
+    const sizeKey = bubblePhrase
+      ? bestMeasureForPhrase(bubblePhrase, model)
+      : undefined;
+    const qualityKeys = model.measures
+      .filter((measure) =>
+        /\b(?:sla|csat)\b/i.test(
+          `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+        ),
+      )
+      .map((measure) => measure.key);
+    spec = {
+      ...spec,
+      measureKeys: Array.from(
+        new Set([
+          ...priorSpec.measureKeys.slice(0, 2),
+          ...(sizeKey ? [sizeKey] : []),
+          ...qualityKeys,
+        ]),
+      ),
+      highlightLowPerformance: true,
+    };
+  }
+  if (
+    isEdit &&
+    priorSpec &&
+    /\bcumulative\b|\brunning\s+total\b/i.test(text)
+  ) {
+    spec = {
+      ...spec,
+      measureKeys: priorSpec.measureKeys,
+      ...(priorSpec.dimensionKey ? { dimensionKey: priorSpec.dimensionKey } : {}),
+      ...(priorSpec.breakdownKey ? { breakdownKey: priorSpec.breakdownKey } : {}),
+      ...(priorSpec.timeGrain ? { timeGrain: priorSpec.timeGrain } : {}),
+      ...(priorSpec.comparison ? { comparison: priorSpec.comparison } : {}),
+      showCumulative: true,
+    };
+  }
+
+  // An edit model may append a plausible but entirely unrequested metric. Keep
+  // existing series, deterministic additions, and catalog measures whose full
+  // name is actually present in the instruction; discard loose one-word
+  // collisions such as Overtime Hours from "add productive hours and payroll
+  // cost per paid hour".
+  if (
+    isEdit &&
+    priorSpec &&
+    explicitMeasureKeys.length > 0 &&
+    (/\badd\b/i.test(text) || /\bbubble\s+size\b/i.test(text))
+  ) {
+    const requestedAdditions = new Set(explicitMeasureKeys);
+    spec = {
+      ...spec,
+      measureKeys: spec.measureKeys.filter((key) => {
+        if (priorSpec.measureKeys.includes(key) || requestedAdditions.has(key))
+          return true;
+        const measure = model.measures.find((item) => item.key === key);
+        return Boolean(
+          measure && fieldMatchScore(text, measure.key, measure.label) >= 8,
+        );
+      }),
+    };
+  }
 
   // Percentage contribution / share of total → 100%-stacked normalize. Only when
   // there's a category breakdown to take a share OF (a single "X as % of revenue"
@@ -898,11 +1927,12 @@ function applyCatalogIntent(
   // it fires even when the LLM misses it; also restores a breakdown the edit LLM
   // may have drifted when the user didn't name a new grouping.
   const wantsContribution =
-    /\b(contribution|share)\b/i.test(text) ||
-    /\bproportion\b/i.test(text) ||
-    /\b100\s*%?\s*stack/i.test(text) ||
-    /\b(percentage|percent|%)\s+(?:of\s+)?(?:the\s+)?total\b/i.test(text) ||
-    /\beach\b[^.]*\b(percentage|percent|share|proportion)\b/i.test(text);
+    !/\b(?:percentage|percent|%)\s+of\s+revenue\b/i.test(text) &&
+    (/\b(contribution|share)\b/i.test(text) ||
+      /\bproportion\b/i.test(text) ||
+      /\b100\s*%?\s*stack/i.test(text) ||
+      /\b(percentage|percent|%)\s+(?:of\s+)?(?:the\s+)?total\b/i.test(text) ||
+      /\beach\b[^.]*\b(percentage|percent|share|proportion)\b/i.test(text));
   const hasBreakdown = !!(
     spec.dimensionKey ||
     spec.breakdownKey ||
@@ -1045,7 +2075,7 @@ export async function planEdit(
   // re-route the full request to a scorecard cube that contains both measures.
   const asksToAddMeasure =
     /\badd\b/i.test(instruction) &&
-    !/\b(?:axis|axes|label|labels|annotation|annotations|reference\s+line|trend\s+line|filter|filters|highlight|highlights|threshold|target|breakdown)\b/i.test(
+    !/\b(?:axis|axes|label|labels|annotation|annotations|reference\s+line|trend\s+line|filter|filters|highlight|highlights|threshold|target|breakdown|comparison|previous[- ]+year|prior[- ]+year|variance)\b/i.test(
       instruction,
     );
   const addedMeasure = result.spec.measureKeys.some(

@@ -171,7 +171,7 @@ export function DashboardMockup({ className }: { className?: string }) {
                 <Legend />
               </div>
               <div className="mt-2 h-[140px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
                   <AreaChart data={revenue} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
                     <defs>
                       <linearGradient id="nq-rev" x1="0" y1="0" x2="0" y2="1">
@@ -209,7 +209,7 @@ export function DashboardMockup({ className }: { className?: string }) {
                 <span className="text-[10px] text-muted-foreground">net · last 8 weeks</span>
               </div>
               <div className="mt-2 h-[110px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
                   <BarChart data={cash} margin={{ top: 4, right: 4, left: 4, bottom: 0 }} barCategoryGap="20%">
                     <XAxis
                       dataKey="m"
@@ -231,7 +231,7 @@ export function DashboardMockup({ className }: { className?: string }) {
               </div>
               <div className="mt-1 flex items-center gap-3">
                 <div className="h-[110px] w-[110px]">
-                  <ResponsiveContainer>
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
                     <PieChart>
                       <Pie
                         data={segments}

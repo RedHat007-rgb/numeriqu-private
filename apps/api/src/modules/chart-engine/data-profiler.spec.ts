@@ -72,6 +72,21 @@ describe('DataProfiler.classifyColumn', () => {
     expect(classifyColumn(stats({ column: 'ar_outstanding', type: 'Decimal(18, 2)' }), opts).agg).toBe('semi_additive');
   });
 
+  it('classifies trial-balance movements as additive flows', () => {
+    expect(
+      classifyColumn(
+        stats({ column: 'trial_balance_debit_movement_usd', type: 'Float64' }),
+        opts,
+      ).agg,
+    ).toBe('additive');
+    expect(
+      classifyColumn(
+        stats({ column: 'trial_balance_credit_movement_usd', type: 'Float64' }),
+        opts,
+      ).agg,
+    ).toBe('additive');
+  });
+
   it('classifies id/key columns as count_distinct', () => {
     expect(classifyColumn(stats({ column: 'client_id', type: 'UInt64' }), opts).agg).toBe('count_distinct');
     expect(classifyColumn(stats({ column: 'invoice_number', type: 'String' }), opts).agg).toBe('attribute'); // non-numeric wins → attribute
@@ -120,6 +135,42 @@ describe('DataProfiler.deriveRatioComponents', () => {
   it('resolves revenue-per-employee to revenue / headcount', () => {
     const c = deriveRatioComponents('revenue_per_employee', ['revenue_per_employee', 'total_revenue', 'headcount']);
     expect(c).toEqual({ numerator: 'total_revenue', denominator: 'headcount' });
+  });
+
+  it('resolves productive-hours percentage to productive hours / paid hours', () => {
+    const c = deriveRatioComponents('productive_hours_percentage', [
+      'productive_hours_percentage',
+      'productive_hours',
+      'paid_hours',
+    ]);
+    expect(c).toEqual({
+      numerator: 'productive_hours',
+      denominator: 'paid_hours',
+    });
+  });
+
+  it('resolves collection efficiency to collected amount / invoice amount', () => {
+    const c = deriveRatioComponents('collection_efficiency_pct', [
+      'collection_efficiency_pct',
+      'collected_amount_usd',
+      'invoice_amount_usd',
+    ]);
+    expect(c).toEqual({
+      numerator: 'collected_amount_usd',
+      denominator: 'invoice_amount_usd',
+    });
+  });
+
+  it('resolves bad-debt percentage to write-off amount / invoice amount', () => {
+    const c = deriveRatioComponents('bad_debt_pct', [
+      'bad_debt_pct',
+      'write_off_amount_usd',
+      'invoice_amount_usd',
+    ]);
+    expect(c).toEqual({
+      numerator: 'write_off_amount_usd',
+      denominator: 'invoice_amount_usd',
+    });
   });
 
   it('returns undefined when components are absent (forces refusal, not a guessed average)', () => {

@@ -169,7 +169,7 @@ export function Ask() {
 
                 <div className="mt-3 grid grid-cols-12 gap-3">
                   <Mini className="col-span-12 sm:col-span-7" label="Revenue · Q4 vs plan">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
                       <AreaChart data={series1}>
                         <defs>
                           <linearGradient id="ag-1" x1="0" y1="0" x2="0" y2="1">
@@ -194,7 +194,7 @@ export function Ask() {
                     </ResponsiveContainer>
                   </Mini>
                   <Mini className="col-span-12 sm:col-span-5" label="Cash · 8w outlook">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
                       <LineChart data={series3}>
                         <Line
                           type="monotone"
@@ -213,7 +213,7 @@ export function Ask() {
                     </ResponsiveContainer>
                   </Mini>
                   <Mini className="col-span-12" label="Margin contribution by entity">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
                       <BarChart data={series2}>
                         <Bar dataKey="v" fill="oklch(var(--chart-1))" radius={[3, 3, 0, 0]} />
                         <XAxis

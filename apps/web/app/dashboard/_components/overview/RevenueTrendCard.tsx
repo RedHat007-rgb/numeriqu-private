@@ -95,7 +95,7 @@ export function CashflowCard({
             <p className="mt-1 max-w-md">Connect a source and sync at least one period to see spend, revenue, and net position move together.</p>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 1, height: 1 }}>
             <BarChart data={series} margin={{ top: 8, right: 8, left: 12, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--color-text-muted) / 0.12)" />
               <XAxis dataKey="name" tick={{ fill: "rgb(var(--color-text-muted))", fontSize: 11 }} />

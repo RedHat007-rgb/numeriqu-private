@@ -30,6 +30,7 @@ import {
 } from './schema-introspector';
 import type {
   ColumnProfile,
+  EngineChartSpec,
   PhysicalSchema,
   SemanticModel,
 } from './semantic-model.types';
@@ -58,7 +59,6 @@ import {
   preferDistinctAxisMeasure,
   type LlmCaller,
 } from './chart-planner';
-import type { EngineChartSpec } from './semantic-model.types';
 import { resolveLlmRuntimeConfig } from '../../common/llm/llm-config';
 
 const NUMERIC_TYPE_RE = /\b(Int|UInt|Float|Decimal)/i;
@@ -232,14 +232,17 @@ export class ChartEngineService {
             (dimension) => dimension.key === priorSpec.dimensionKey,
           )?.label ?? priorSpec.dimensionKey.replace(/_/g, ' '))
         : undefined;
-      if (
-        plan.reason.includes('added measure is unavailable') &&
-        priorDimensionLabel
-      ) {
+      if (plan.reason.includes('added measure is unavailable')) {
         const requestedMeasureText =
           instruction.split(/\badd\b/i).slice(1).join(' add ') || instruction;
         const compatible = cubes
           .map((candidate) => {
+            if (
+              priorSpec.timeGrain &&
+              (!candidate.model.time ||
+                !candidate.model.time.grains.includes(priorSpec.timeGrain))
+            )
+              return null;
             const reboundPrior = priorMeasureLabels.map((label) =>
               candidate.model.measures
                 .map((measure) => ({
@@ -266,17 +269,23 @@ export class ChartEngineService {
                 ),
               }))
               .sort((a, b) => b.score - a.score)[0];
-            const dimension = candidate.model.dimensions
-              .map((item) => ({
-                dimension: item,
-                score: fieldMatchScore(
-                  priorDimensionLabel,
-                  item.key,
-                  item.label,
-                ),
-              }))
-              .sort((a, b) => b.score - a.score)[0];
-            if (!added || added.score < 4 || !dimension || dimension.score < 4)
+            const dimension = priorDimensionLabel
+              ? candidate.model.dimensions
+                  .map((item) => ({
+                    dimension: item,
+                    score: fieldMatchScore(
+                      priorDimensionLabel,
+                      item.key,
+                      item.label,
+                    ),
+                  }))
+                  .sort((a, b) => b.score - a.score)[0]
+              : undefined;
+            if (
+              !added ||
+              added.score < 4 ||
+              (priorDimensionLabel && (!dimension || dimension.score < 4))
+            )
               return null;
             return {
               candidate,
@@ -286,7 +295,8 @@ export class ChartEngineService {
               score:
                 reboundPrior.reduce((sum, match) => sum + match!.score, 0) +
                 added.score +
-                dimension.score -
+                (dimension?.score ?? 0) +
+                (priorSpec.timeGrain ? 4 : 0) -
                 candidate.model.measures.length / 1000,
             };
           })
@@ -306,8 +316,16 @@ export class ChartEngineService {
           const reboundSpec: EngineChartSpec = {
             ...priorSpec,
             measureKeys,
-            dimensionKey: compatible.dimension.dimension.key,
-            title: `${measureLabels.join(' and ')} by ${compatible.dimension.dimension.label}`,
+            ...(compatible.dimension
+              ? { dimensionKey: compatible.dimension.dimension.key }
+              : {}),
+            title: `${measureLabels.join(' and ')}${
+              compatible.dimension
+                ? ` by ${compatible.dimension.dimension.label}`
+                : priorSpec.timeGrain
+                  ? ` by ${priorSpec.timeGrain}`
+                  : ''
+            }`,
           };
           return this.shapeAnswer(
             scope,
@@ -437,7 +455,27 @@ export class ChartEngineService {
       };
     }
 
-    const display = buildEngineDisplay(spec, cube.model);
+    let display = buildEngineDisplay(spec, cube.model);
+    const changeHighlights = this.highlightNamesByMeasureChange(spec, rows);
+    const weakPerformanceHighlights = this.highlightNamesByWeakPerformance(spec, rows);
+    const costWithoutRevenueHighlights = this.highlightNamesByCostWithoutRevenue(spec, rows);
+    const lowPerformanceHighlights = this.highlightNamesByLowPerformance(spec, rows);
+    const extremeHighlights = this.highlightNamesByExtremes(spec, rows);
+    const derivedHighlights = [
+      ...changeHighlights,
+      ...weakPerformanceHighlights,
+      ...costWithoutRevenueHighlights,
+      ...lowPerformanceHighlights,
+      ...extremeHighlights,
+    ];
+    if (derivedHighlights.length) {
+      display = {
+        ...display,
+        highlightNames: Array.from(
+          new Set([...(display.highlightNames ?? []), ...derivedHighlights]),
+        ),
+      };
+    }
     let answerRows = rows;
 
     // The analytic/headline query deliberately uses the raw base measure so its
@@ -473,6 +511,190 @@ export class ChartEngineService {
       mode,
       rows: answerRows,
     };
+  }
+
+  private highlightNamesByMeasureChange(
+    spec: EngineChartSpec,
+    rows: Array<Record<string, unknown>>,
+  ): string[] {
+    if (
+      !spec.dimensionKey ||
+      !spec.highlightTopN ||
+      !spec.highlightChangeFromMeasureKey ||
+      !spec.highlightChangeToMeasureKey
+    ) {
+      return [];
+    }
+    const byName = new Map<string, number>();
+    for (const row of rows) {
+      const name = row[spec.dimensionKey];
+      if (name == null) continue;
+      const from = Number(row[spec.highlightChangeFromMeasureKey]);
+      const to = Number(row[spec.highlightChangeToMeasureKey]);
+      if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+      const magnitude = Math.abs(to - from);
+      const key = String(name);
+      byName.set(key, Math.max(byName.get(key) ?? 0, magnitude));
+    }
+    return [...byName.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, spec.highlightTopN)
+      .map(([name]) => name);
+  }
+
+  private highlightNamesByWeakPerformance(
+    spec: EngineChartSpec,
+    rows: Array<Record<string, unknown>>,
+  ): string[] {
+    if (!spec.dimensionKey || !spec.highlightWeakPerformance || rows.length < 2)
+      return [];
+
+    const revenueKey = spec.measureKeys.find((key) => /revenue/i.test(key));
+    if (!revenueKey) return [];
+    const metricKeys = spec.measureKeys.filter(
+      (key) =>
+        key !== revenueKey &&
+        /growth|margin|sla|csat|collection|efficiency|dso|days_sales_outstanding/i.test(
+          key,
+        ),
+    );
+    if (!metricKeys.length) return [];
+
+    const numericRows = rows
+      .map((row) => ({
+        name: row[spec.dimensionKey!],
+        revenue: Number(row[revenueKey]),
+        row,
+      }))
+      .filter(
+        (item) =>
+          item.name != null &&
+          Number.isFinite(item.revenue) &&
+          item.revenue > 0,
+      );
+    if (numericRows.length < 2) return [];
+
+    const median = (values: number[]): number | undefined => {
+      const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+      if (!sorted.length) return undefined;
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2
+        ? sorted[mid]
+        : (sorted[mid - 1]! + sorted[mid]!) / 2;
+    };
+
+    const revenueCutoff = median(numericRows.map((item) => item.revenue));
+    if (revenueCutoff == null) return [];
+    const metricMedians = new Map<string, number>();
+    for (const key of metricKeys) {
+      const value = median(rows.map((row) => Number(row[key])));
+      if (value != null) metricMedians.set(key, value);
+    }
+    if (!metricMedians.size) return [];
+
+    return numericRows
+      .filter((item) => item.revenue >= revenueCutoff)
+      .map((item) => {
+        const weakScore = [...metricMedians.entries()].reduce(
+          (score, [key, med]) => {
+            const value = Number(item.row[key]);
+            if (!Number.isFinite(value)) return score;
+            const lowerIsWeak =
+              /growth|margin|sla|csat|collection|efficiency/i.test(key) &&
+              !/dso|days_sales_outstanding/i.test(key);
+            const higherIsWeak = /dso|days_sales_outstanding/i.test(key);
+            if (lowerIsWeak && value < med) return score + 1;
+            if (higherIsWeak && value > med) return score + 1;
+            return score;
+          },
+          0,
+        );
+        return { name: String(item.name), revenue: item.revenue, weakScore };
+      })
+      .filter((item) => item.weakScore > 0)
+      .sort((a, b) => b.weakScore - a.weakScore || b.revenue - a.revenue)
+      .slice(0, Math.min(5, Math.max(1, Math.ceil(numericRows.length / 4))))
+      .map((item) => item.name);
+  }
+
+  private highlightNamesByCostWithoutRevenue(
+    spec: EngineChartSpec,
+    rows: Array<Record<string, unknown>>,
+  ): string[] {
+    if (!spec.dimensionKey || !spec.highlightCostWithoutRevenue) return [];
+    const revenueKey = spec.measureKeys.find((key) => /revenue/i.test(key));
+    const costKey = spec.measureKeys.find((key) => /payroll|cost/i.test(key));
+    if (!revenueKey || !costKey) return [];
+    return rows
+      .filter((row) => {
+        const revenue = Number(row[revenueKey]);
+        const cost = Number(row[costKey]);
+        return Number.isFinite(revenue) && Number.isFinite(cost) && Math.abs(revenue) <= 0.000001 && cost > 0;
+      })
+      .map((row) => row[spec.dimensionKey!])
+      .filter((name): name is string | number => name != null)
+      .map(String);
+  }
+
+  private highlightNamesByLowPerformance(
+    spec: EngineChartSpec,
+    rows: Array<Record<string, unknown>>,
+  ): string[] {
+    if (!spec.dimensionKey || !spec.highlightLowPerformance || rows.length < 2)
+      return [];
+    const qualityKeys = spec.measureKeys.filter((key) => /sla|csat|quality/i.test(key));
+    if (!qualityKeys.length) return [];
+    const medians = new Map<string, number>();
+    for (const key of qualityKeys) {
+      const values = rows.map((row) => Number(row[key])).filter(Number.isFinite).sort((a, b) => a - b);
+      if (!values.length) continue;
+      const mid = Math.floor(values.length / 2);
+      medians.set(key, values.length % 2 ? values[mid]! : (values[mid - 1]! + values[mid]!) / 2);
+    }
+    return rows
+      .map((row) => ({
+        name: row[spec.dimensionKey!],
+        score: [...medians].reduce((score, [key, median]) => {
+          const value = Number(row[key]);
+          return score + (Number.isFinite(value) && value < median ? 1 : 0);
+        }, 0),
+      }))
+      .filter((item) => item.name != null && item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.min(5, Math.max(1, Math.ceil(rows.length / 4))))
+      .map((item) => String(item.name));
+  }
+
+  private highlightNamesByExtremes(
+    spec: EngineChartSpec,
+    rows: Array<Record<string, unknown>>,
+  ): string[] {
+    if (!spec.dimensionKey || !spec.highlightExtremes || !spec.measureKeys[0])
+      return [];
+    const measureKey = spec.measureKeys[0];
+    const values = rows
+      .map((row) => ({
+        name: row[spec.dimensionKey!],
+        value: Number(row[measureKey]),
+      }))
+      .filter(
+        (item) => item.name != null && Number.isFinite(item.value),
+      );
+    if (values.length < 2) return [];
+    const names: string[] = [];
+    if (spec.highlightExtremes === 'max' || spec.highlightExtremes === 'both') {
+      const max = values.reduce((best, item) =>
+        item.value > best.value ? item : best,
+      );
+      names.push(String(max.name));
+    }
+    if (spec.highlightExtremes === 'min' || spec.highlightExtremes === 'both') {
+      const min = values.reduce((best, item) =>
+        item.value < best.value ? item : best,
+      );
+      names.push(String(min.name));
+    }
+    return Array.from(new Set(names));
   }
 
   /**
@@ -544,6 +766,11 @@ export class ChartEngineService {
     if (!Number.isFinite(total)) return null;
 
     const partsTotal = parts.reduce((sum, value) => sum + value, 0);
+    // Currency is stored and displayed to cent precision. Signed ledgers can
+    // cancel to zero while Float64 aggregation leaves a few millionths of a
+    // dollar; that is not a financial mismatch and must not block the chart.
+    if (measure.unit === 'USD' && Math.abs(partsTotal - total) <= 0.01)
+      return null;
     // Balanced signed ledgers legitimately reconcile to floating-point dust.
     // Relative error around zero is meaningless; an absolute sub-micro-unit
     // difference is already materially exact.

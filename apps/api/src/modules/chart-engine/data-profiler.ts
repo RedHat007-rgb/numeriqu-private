@@ -77,6 +77,7 @@ const RATIO_COMPONENT_HINTS: Array<{ re: RegExp; numerator: RegExp; denominator:
   { re: /collection_(?:rate|efficiency)|collected.*(?:rate|efficiency)/i, numerator: /collected/i, denominator: /invoice|billed|total_billed/i },
   { re: /bad_debt/i, numerator: /write_off|bad_debt/i, denominator: /invoice|revenue|sales/i },
   { re: /payment_rate|paid.*rate/i, numerator: /paid/i, denominator: /invoice|billed/i },
+  { re: /productive_hours.*(?:pct|percent|percentage)/i, numerator: /productive_hours/i, denominator: /paid_hours|working_hours|capacity_hours/i },
   { re: /cost_to_income|cost.*ratio/i, numerator: /total_cost|cost_usd/i, denominator: /revenue|income/i },
   { re: /per_employee/i, numerator: /revenue|sales|amount/i, denominator: /headcount|employee_count|employees|fte/i },
 ];
@@ -212,6 +213,14 @@ export function classifyColumn(stats: ColumnStats, opts: ProfileOptions): Column
   // explicit names to distinguish the two concepts without any data hardcoding.
   if (/^outstanding_(?:receivable|payable)_usd$/i.test(name)) {
     return make('additive', 0.95, 'invoice-grain outstanding amount');
+  }
+
+  // A movement/flow remains additive even when its source name contains a
+  // stock noun (for example `trial_balance_debit_movement_usd`). Treating the
+  // source prefix as a balance made the compiler take only the latest month
+  // with argMax instead of summing the requested debit/credit movements.
+  if (/(?:^|_)(?:movement|movements|flow)(?:_|$)/i.test(name)) {
+    return make('additive', 0.95, 'name explicitly identifies a movement/flow');
   }
 
   // 4. Stock / balance by name ⇒ semi_additive (must not sum across periods).

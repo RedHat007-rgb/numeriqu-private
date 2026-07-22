@@ -23,6 +23,8 @@ const rawStats: ColumnStats[] = [
   col({ column: 'business_unit', type: 'String' }),
   col({ column: 'period_date', type: 'Date' }),
   col({ column: 'revenue_usd', type: 'Decimal(18, 2)' }),
+  col({ column: 'pl_amount_usd', type: 'Decimal(18, 2)' }),
+  col({ column: 'total_revenue_usd', type: 'Decimal(18, 2)' }),
   col({ column: 'gross_profit_usd', type: 'Decimal(18, 2)' }),
   col({ column: 'gross_margin_pct', type: 'Float64' }),
   col({ column: 'cash_balance', type: 'Decimal(18, 2)' }),
@@ -55,6 +57,7 @@ describe('auto-derived pipeline (no hardcoded catalog, no DAX)', () => {
     const byKey = Object.fromEntries(model.measures.map((m) => [m.key, m]));
     expect(byKey['revenue_usd']?.expr).toEqual({ kind: 'sum', column: 'revenue_usd' });
     expect(byKey['gross_margin_pct']?.expr).toEqual({ kind: 'ratio_of_sums', numerator: 'gross_profit_usd', denominator: 'revenue_usd' });
+    expect(byKey['pl_amount_pct_of_revenue']?.expr).toEqual({ kind: 'ratio_of_sums', numerator: 'pl_amount_usd', denominator: 'total_revenue_usd' });
     expect(byKey['cash_balance']?.expr).toEqual({ kind: 'last_value', column: 'cash_balance', orderBy: 'period_date' });
     expect(byKey['client_id']?.expr).toEqual({ kind: 'count_distinct', column: 'client_id' });
   });

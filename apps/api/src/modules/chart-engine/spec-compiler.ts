@@ -13,6 +13,7 @@
 import type {
   EngineChartSpec,
   MeasureExpr,
+  SemanticDimension,
   SemanticMeasure,
   SemanticModel,
 } from './semantic-model.types';
@@ -33,12 +34,17 @@ export interface EngineDisplay {
   valueFormat: ValueFormat;
   series?: EngineSeries[];
   secondaryAxisFormat?: ValueFormat;
+  colorMetric?: string;
+  colorMetricLabel?: string;
+  colorMetricFormat?: ValueFormat;
   secondaryLabel?: string;
   /** Human axis TITLES so the chart reads on its own: what the x/y axes mean. */
   xAxisLabel?: string;
   yAxisLabel?: string;
   highlightNames?: string[];
+  highlightSeries?: string[];
   highlightTopN?: number;
+  highlightExtremes?: 'max' | 'min' | 'both';
   labelSeries?: string;
   highlightNegative?: boolean;
   /** 100%-stacked contribution chart: EVERY series is a percentage share, whatever
@@ -238,11 +244,27 @@ function unitFormat(unit: string): ValueFormat {
 function yAxisTitleFor(m: SemanticMeasure): string {
   if (m.unit === 'USD') return 'USD';
   if (m.unit === '%') return 'Percent';
+  const semanticName = `${m.key} ${m.label}`;
+  if (/^hours?$/i.test(m.unit) || /(?:^|[_\s])hours?(?:$|[_\s])/i.test(semanticName))
+    return 'Hours';
+  if (/^days?$/i.test(m.unit) || /(?:^|[_\s])days?(?:$|[_\s])/i.test(semanticName))
+    return 'Days';
+  if (
+    /^(?:min|minutes?)$/i.test(m.unit) ||
+    /(?:^|[_\s])(?:min|minutes?)(?:$|[_\s])/i.test(semanticName)
+  )
+    return 'Minutes';
   // Distinct-count measures commonly use a technical *_key column. The key is
   // how the count is computed, not what the reader should see on the axis.
   return m.expr.kind === 'count_distinct'
     ? m.label.replace(/\s+Key$/i, '')
     : m.label;
+}
+
+function yAxisTitleForMeasures(measures: SemanticMeasure[]): string | undefined {
+  if (!measures.length) return undefined;
+  const titles = Array.from(new Set(measures.map((m) => yAxisTitleFor(m))));
+  return titles.length === 1 ? titles[0] : titles.join(' / ');
 }
 
 /** Human x-axis title: the dimension's name, or the time grain, or nothing. */
@@ -294,28 +316,47 @@ export function buildEngineDisplay(
     let d = display;
     if (spec.highlightNames?.length)
       d = { ...d, highlightNames: spec.highlightNames };
+    if (spec.highlightSeries?.length) {
+      const highlightedLabels = spec.highlightSeries.flatMap((key) => {
+        const measure = model.measures.find((item) => item.key === key);
+        return measure ? [measure.label] : [];
+      });
+      if (highlightedLabels.length)
+        d = { ...d, highlightSeries: highlightedLabels };
+    }
     if (spec.highlightTopN) d = { ...d, highlightTopN: spec.highlightTopN };
+    if (spec.highlightExtremes)
+      d = { ...d, highlightExtremes: spec.highlightExtremes };
     if (labelMeasure) d = { ...d, labelSeries: labelMeasure.label };
+    if (spec.showCumulative) d = { ...d, labelSeries: 'Cumulative Value' };
     if (spec.highlightNegative) d = { ...d, highlightNegative: true };
     if (spec.normalize) d = { ...d, normalized: true };
     return d;
   };
 
   if (spec.comparison === 'previous_year' && measures.length >= 1) {
+    const comparisonSeries: EngineSeries[] = measures.flatMap((measure) => {
+      const format = unitFormat(measure.unit);
+      const prefix = measures.length > 1 ? `${measure.label} — ` : '';
+      return [
+        { key: `${prefix}Current Year`, role: 'line' as const, axis: 'left' as const, format },
+        { key: `${prefix}Previous Year`, role: 'line' as const, axis: 'left' as const, format },
+        ...(spec.showVariancePct
+          ? [{ key: `${prefix}Variance %`, role: 'line' as const, axis: 'right' as const, format: 'percent' as const }]
+          : []),
+      ];
+    });
     return decorate({
-      chartType: spec.chartType,
+      chartType: spec.showVariancePct ? 'combo' : spec.chartType,
       valueFormat: primaryFmt,
       xAxisLabel: xAxisLabel ?? 'Period',
-      yAxisLabel: yAxisTitleFor(measures[0]!),
-      series: [
-        { key: 'Current Year', role: 'line', axis: 'left', format: primaryFmt },
-        {
-          key: 'Previous Year',
-          role: 'line',
-          axis: 'left',
-          format: primaryFmt,
-        },
-      ],
+      yAxisLabel: measures.every((measure) => unitFormat(measure.unit) === primaryFmt)
+        ? yAxisTitleFor(measures[0]!)
+        : 'Value',
+      series: comparisonSeries,
+      ...(spec.showVariancePct
+        ? { secondaryAxisFormat: 'percent' as const, secondaryLabel: 'Variance (%)' }
+        : {}),
     });
   }
 
@@ -325,6 +366,30 @@ export function buildEngineDisplay(
       valueFormat: 'percent',
       xAxisLabel: xAxisLabel ?? 'Period',
       yAxisLabel: 'YoY Growth (%)',
+    });
+  }
+
+  if (spec.chartType === 'treemap' && measures.length >= 1) {
+    const colorMeasure = measures[1];
+    return decorate({
+      chartType: 'treemap',
+      valueFormat: unitFormat(measures[0]!.unit),
+      ...(colorMeasure
+        ? {
+            colorMetric: colorMeasure.label,
+            colorMetricLabel: colorMeasure.label,
+            colorMetricFormat: unitFormat(colorMeasure.unit),
+          }
+        : {}),
+    });
+  }
+
+  if (spec.chartType === 'waterfall' && measures.length >= 1) {
+    return decorate({
+      chartType: 'waterfall',
+      valueFormat: unitFormat(measures[0]!.unit),
+      ...(xAxisLabel ? { xAxisLabel } : {}),
+      yAxisLabel: yAxisTitleFor(measures[0]!),
     });
   }
 
@@ -383,7 +448,8 @@ export function buildEngineDisplay(
     // for example) are different semantic quantities and become unreadable on a
     // shared axis. Keep genuinely comparable aggregations together, but give a
     // differently aggregated measure its own line/right axis.
-    const sameScale = fmt === primaryFmt && m.expr.kind === primaryAggregation;
+    const sameScale =
+      fmt === primaryFmt && (spec.clustered || m.expr.kind === primaryAggregation);
     // Scheduled/target/capacity measures are comparison envelopes, not another
     // component of an additive stack. Draw them as a line on the same unit axis;
     // stacking scheduled work days on top of present/leave days would double-count
@@ -392,10 +458,16 @@ export function buildEngineDisplay(
       spec.chartType === 'stacked_bar' &&
       i > 0 &&
       !spec.componentMode &&
-      /\b(?:scheduled|target|capacity)\b/i.test(m.label);
+      /\b(?:scheduled|target|capacity|net|variance|change|difference)\b/i.test(
+        m.label,
+      );
     return {
       key: m.label,
-      role: spec.clustered
+      role: spec.chartType === 'combo'
+        ? i === 0
+          ? 'bar'
+          : 'line'
+        : spec.clustered
         ? 'bar'
         : isStackReference
           ? 'line'
@@ -407,6 +479,11 @@ export function buildEngineDisplay(
     };
   });
   const right = series.find((s) => s.axis === 'right');
+  const rightMeasures = measures.filter((m) =>
+    series.some((s) => s.axis === 'right' && s.key === m.label),
+  );
+  const rightAxisLabel =
+    rightMeasures.length > 1 ? yAxisTitleForMeasures(rightMeasures) : undefined;
   const hasBarOverlay =
     baseRole === 'bar' && series.some((item) => item.role === 'line');
   return decorate({
@@ -416,7 +493,7 @@ export function buildEngineDisplay(
     ...(xAxisLabel ? { xAxisLabel } : {}),
     yAxisLabel: yAxisTitleFor(measures[0]!),
     ...(right
-      ? { secondaryAxisFormat: right.format, secondaryLabel: right.key }
+      ? { secondaryAxisFormat: right.format, secondaryLabel: rightAxisLabel ?? right.key }
       : {}),
   });
 }
@@ -450,6 +527,9 @@ export function compileSeriesSql(
   const explicitBreakdown = spec.breakdownKey
     ? model.dimensions.find((d) => d.key === spec.breakdownKey)
     : undefined;
+  const hierarchyDims = (spec.hierarchyKeys ?? []).map((key) =>
+    model.dimensions.find((dimension) => dimension.key === key),
+  );
   if (spec.dimensionKey && !primaryDim)
     return { ok: false, reason: `unknown dimension: ${spec.dimensionKey}` };
   if (spec.breakdownKey && !explicitBreakdown)
@@ -460,6 +540,10 @@ export function compileSeriesSql(
   if ([primaryDim, explicitBreakdown].some((d) => d && d.table !== table)) {
     return { ok: false, reason: 'cross-table not supported' };
   }
+  if (hierarchyDims.some((dimension) => !dimension))
+    return { ok: false, reason: 'unknown hierarchy dimension' };
+  if (hierarchyDims.some((dimension) => dimension!.table !== table))
+    return { ok: false, reason: 'cross-table not supported' };
 
   // Multi-dimensional visuals use a generic long-form contract:
   //   name = primary category/time, series = breakdown value, value = aggregate.
@@ -527,7 +611,6 @@ export function compileSeriesSql(
         ok: false,
         reason: 'previous-year comparison supports one categorical breakdown',
       };
-    const measure = resolved[0]!;
     const timeColumn = ident(model.time.column);
     const latestYear = `(SELECT max(toYear(${timeColumn})) FROM ${ident(ctx.analyticsDb)}.${ident(table)} WHERE ${SCOPE_WHERE})`;
     const currentCondition = `toYear(${timeColumn}) = ${latestYear}`;
@@ -548,8 +631,40 @@ export function compileSeriesSql(
           : spec.timeGrain === 'day'
             ? `formatDateTime(${timeColumn}, '%d %b')`
             : `formatDateTime(${timeColumn}, '%b')`;
+    const measure = resolved[0]!;
     const currentValue = measureValueExprIf(measure, currentCondition);
     const previousValue = measureValueExprIf(measure, previousCondition);
+    if (spec.chartType === 'waterfall' && primaryDim) {
+      const dimColumn = ident(primaryDim.column);
+      const sql =
+        `WITH category_changes AS (\n` +
+        `  SELECT if(empty(toString(${dimColumn})), 'Unallocated', toString(${dimColumn})) AS name,\n` +
+        `    toFloat64(${currentValue}) AS current_value,\n` +
+        `    toFloat64(${previousValue}) AS previous_value,\n` +
+        `    toFloat64(${currentValue}) - toFloat64(${previousValue}) AS change_value\n` +
+        `  FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
+        `  WHERE ${SCOPE_WHERE} AND toYear(${timeColumn}) IN (${latestYear}, ${latestYear} - 1)\n` +
+        `  GROUP BY ${dimColumn}\n` +
+        `  HAVING abs(ifNull(current_value, 0)) > 0.000000000001 OR abs(ifNull(previous_value, 0)) > 0.000000000001 OR abs(ifNull(change_value, 0)) > 0.000000000001\n` +
+        `), totals AS (\n` +
+        `  SELECT sum(current_value) AS current_total, sum(previous_value) AS previous_total FROM category_changes\n` +
+        `), steps AS (\n` +
+        `  SELECT 1 AS ord, 0 AS sub_ord, 'Previous Year' AS name, previous_total AS value, 1 AS is_total FROM totals\n` +
+        `  UNION ALL\n` +
+        `  SELECT 2 AS ord, row_number() OVER (ORDER BY abs(change_value) DESC, name ASC) AS sub_ord, name, change_value AS value, 0 AS is_total FROM category_changes\n` +
+        `  UNION ALL\n` +
+        `  SELECT 3 AS ord, 0 AS sub_ord, 'Current Year' AS name, current_total AS value, 1 AS is_total FROM totals\n` +
+        `)\n` +
+        `SELECT name, value, is_total, round(sum(if(ord = 3 AND is_total = 1, 0, value)) OVER (ORDER BY ord ASC, sub_ord ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 2) AS "Cumulative Value"\n` +
+        `FROM steps\n` +
+        `ORDER BY ord ASC, sub_ord ASC\n` +
+        `LIMIT ${ctx.maxRows ?? 5000}`;
+      return {
+        ok: true,
+        sql,
+        params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+      };
+    }
     if (primaryDim) {
       const dimColumn = ident(primaryDim.column);
       const base = (label: string, value: string) =>
@@ -579,18 +694,104 @@ export function compileSeriesSql(
         params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
       };
     }
+    const comparisonColumns = resolved.flatMap((item) => {
+      const prefix = resolved.length > 1 ? `${item.label} — ` : '';
+      const current = measureValueExprIf(item, currentCondition);
+      const previous = measureValueExprIf(item, previousCondition);
+      return [
+        `toFloat64(${current}) AS ${quoteAlias(`${prefix}Current Year`)}`,
+        `toFloat64(${previous}) AS ${quoteAlias(`${prefix}Previous Year`)}`,
+        ...(spec.showVariancePct
+          ? [`round(100 * (toFloat64(${current}) - toFloat64(${previous})) / nullIf(abs(toFloat64(${previous})), 0), 4) AS ${quoteAlias(`${prefix}Variance %`)}`]
+          : []),
+      ];
+    });
+    const nonZeroComparison = resolved.flatMap((item) => {
+      const prefix = resolved.length > 1 ? `${item.label} — ` : '';
+      return [
+        `abs(ifNull(${quoteAlias(`${prefix}Current Year`)}, 0)) > 0.000000000001`,
+        `abs(ifNull(${quoteAlias(`${prefix}Previous Year`)}, 0)) > 0.000000000001`,
+      ];
+    });
     const sql =
-      `SELECT ${periodLabel} AS name, toFloat64(${currentValue}) AS "Current Year", toFloat64(${previousValue}) AS "Previous Year"\n` +
+      `SELECT ${periodLabel} AS name, ${comparisonColumns.join(', ')}\n` +
       `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
       `WHERE ${SCOPE_WHERE} AND toYear(${timeColumn}) IN (${latestYear}, ${latestYear} - 1)\n` +
       `GROUP BY ${periodOrder}, name\n` +
-      `HAVING abs(ifNull("Current Year", 0)) > 0.000000000001 OR abs(ifNull("Previous Year", 0)) > 0.000000000001\n` +
+      `HAVING ${nonZeroComparison.join(' OR ')}\n` +
       `ORDER BY ${periodOrder} ASC\nLIMIT ${ctx.maxRows ?? 5000}`;
     return {
       ok: true,
       sql,
       params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
     };
+  }
+
+  if (spec.chartType === 'waterfall' && primaryDim) {
+    const opening = resolved.find((measure) =>
+      /opening[_ ]balance/i.test(`${measure.key} ${measure.label}`),
+    );
+    const closing = resolved.find((measure) =>
+      /closing[_ ]balance/i.test(`${measure.key} ${measure.label}`),
+    );
+    if (opening && closing) {
+      const debit =
+        resolved.find((measure) =>
+          /\bdebit\b[^.]*\bmovement\b/i.test(
+            `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+          ),
+        ) ??
+        resolved.find((measure) =>
+          /\bdebit\b/i.test(`${measure.key} ${measure.label}`.replace(/_/g, ' ')),
+        );
+      const credit =
+        resolved.find((measure) =>
+          /\bcredit\b[^.]*\bmovement\b/i.test(
+            `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+          ),
+        ) ??
+        resolved.find((measure) =>
+          /\bcredit\b/i.test(`${measure.key} ${measure.label}`.replace(/_/g, ' ')),
+        );
+      const dimColumn = ident(primaryDim.column);
+      const openingExpr = measureValueExpr(opening);
+      const closingExpr = measureValueExpr(closing);
+      const movementColumns = [
+        ...(debit
+          ? [`toFloat64(${measureValueExpr(debit)}) AS debit_value`]
+          : []),
+        ...(credit
+          ? [`toFloat64(${measureValueExpr(credit)}) AS credit_value`]
+          : []),
+      ];
+      const movementSteps =
+        debit && credit
+          ? `SELECT 2 AS ord, toInt64(row_number() OVER (ORDER BY abs(debit_value) + abs(credit_value) DESC, name ASC) * 2 - 1) AS sub_ord, concat(name, ' — Debit') AS name, debit_value AS value, 0 AS is_total FROM category_changes\n` +
+            `  UNION ALL\n` +
+            `  SELECT 2 AS ord, toInt64(row_number() OVER (ORDER BY abs(debit_value) + abs(credit_value) DESC, name ASC) * 2) AS sub_ord, concat(name, ' — Credit') AS name, -abs(credit_value) AS value, 0 AS is_total FROM category_changes\n`
+          : `SELECT 2 AS ord, toInt64(row_number() OVER (ORDER BY abs(closing_value - opening_value) DESC, name ASC)) AS sub_ord, name, closing_value - opening_value AS value, 0 AS is_total FROM category_changes\n`;
+      const sql =
+        `WITH category_changes AS (\n` +
+        `  SELECT if(empty(toString(${dimColumn})), 'Unallocated', toString(${dimColumn})) AS name, ` +
+        `toFloat64(${openingExpr}) AS opening_value, toFloat64(${closingExpr}) AS closing_value${movementColumns.length ? `, ${movementColumns.join(', ')}` : ''}\n` +
+        `  FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
+        `  WHERE ${SCOPE_WHERE}\n` +
+        `  GROUP BY ${dimColumn}\n` +
+        `  HAVING abs(ifNull(opening_value, 0)) > 0.000000000001 OR abs(ifNull(closing_value, 0)) > 0.000000000001\n` +
+        `), totals AS (SELECT sum(opening_value) AS opening_total, sum(closing_value) AS closing_total FROM category_changes), steps AS (\n` +
+        `  SELECT 1 AS ord, toInt64(0) AS sub_ord, 'Opening Balance' AS name, opening_total AS value, 1 AS is_total FROM totals\n` +
+        `  UNION ALL\n` +
+        `  ${movementSteps}` +
+        `  UNION ALL\n` +
+        `  SELECT 3 AS ord, toInt64(0) AS sub_ord, 'Closing Balance' AS name, closing_total AS value, 1 AS is_total FROM totals\n` +
+        `)\n` +
+        `SELECT name, value, is_total FROM steps ORDER BY ord ASC, sub_ord ASC LIMIT ${ctx.maxRows ?? 5000}`;
+      return {
+        ok: true,
+        sql,
+        params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+      };
+    }
   }
 
   // Scatter/bubble charts use an explicit x/y/z transport contract. A generic
@@ -614,13 +815,20 @@ export function compileSeriesSql(
 
     const groupExprs: string[] = [];
     const nameExprs: string[] = [];
-    if (primaryDim) {
-      groupExprs.push(ident(primaryDim.column));
-      nameExprs.push(`toString(${ident(primaryDim.column)})`);
-    }
-    if (explicitBreakdown && explicitBreakdown.key !== primaryDim?.key) {
-      groupExprs.push(ident(explicitBreakdown.column));
-      nameExprs.push(`toString(${ident(explicitBreakdown.column)})`);
+    const pointDimensions = (
+      hierarchyDims.length
+        ? (hierarchyDims as SemanticDimension[])
+        : [primaryDim, explicitBreakdown].filter(
+            (dimension): dimension is SemanticDimension => !!dimension,
+          )
+    ).filter(
+      (dimension, index, dimensions) =>
+        dimensions.findIndex((candidate) => candidate.key === dimension.key) ===
+        index,
+    );
+    for (const dimension of pointDimensions) {
+      groupExprs.push(ident(dimension.column));
+      nameExprs.push(`toString(${ident(dimension.column)})`);
     }
     let pointOrderExpr: string;
     if (spec.timeGrain) {
@@ -640,6 +848,13 @@ export function compileSeriesSql(
           `toFloat64(${measureValueExpr(measure)}) AS ${aliases[index]!}`,
       )
       .join(', ');
+    const supplementalPointSelect = resolved
+      .slice(3)
+      .map(
+        (measure) =>
+          `toFloat64(${measureValueExpr(measure)}) AS ${quoteAlias(measure.label)}`,
+      )
+      .join(', ');
     const having = pointMeasures
       .map((_, index) => `abs(ifNull(${aliases[index]!}, 0)) > 0.000000000001`)
       .join(' OR ');
@@ -651,13 +866,44 @@ export function compileSeriesSql(
         ? nameExprs[0]!
         : `concat(${nameExprs.flatMap((expr, index) => (index === 0 ? [expr] : [stringLiteral(' — '), expr])).join(', ')})`;
     const sql =
-      `SELECT ${nameExpr} AS name, ${valueSelect}\n` +
+      `SELECT ${nameExpr} AS name, ${valueSelect}${supplementalPointSelect ? `, ${supplementalPointSelect}` : ''}\n` +
       `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
       `WHERE ${SCOPE_WHERE}\n` +
       `GROUP BY ${groupExprs.join(', ')}\n` +
       `HAVING ${having}\n` +
       `ORDER BY ${pointOrderExpr} ${spec.timeGrain ? 'ASC' : spec.sort === 'asc' ? 'ASC' : 'DESC'}\n` +
       `LIMIT ${limit}`;
+    return {
+      ok: true,
+      sql,
+      params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    };
+  }
+
+  if (spec.chartType === 'treemap' && hierarchyDims.length >= 2) {
+    const dims = hierarchyDims as SemanticDimension[];
+    const leaf = dims.at(-1)!;
+    const parents = dims.slice(0, -1);
+    const aggregate = measureValueExpr(resolved[0]!);
+    const supplemental = resolved.slice(1).map(
+      (measure) =>
+        `toFloat64(${measureValueExpr(measure)}) AS ${quoteAlias(measure.label)}`,
+    );
+    const parentPath = parents
+      .map((dimension) => `toString(${ident(dimension.column)})`)
+      .join(`, ' › ', `);
+    const fullPath = dims
+      .map((dimension) => `toString(${ident(dimension.column)})`)
+      .join(`, ' › ', `);
+    const groupBy = dims.map((dimension) => ident(dimension.column)).join(', ');
+    const sql =
+      `SELECT toString(${ident(leaf.column)}) AS name, concat(${parentPath}) AS series, concat(${fullPath}) AS path, ` +
+      `abs(toFloat64(${aggregate})) AS value, toFloat64(${aggregate}) AS signedValue${supplemental.length ? `, ${supplemental.join(', ')}` : ''}\n` +
+      `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
+      `WHERE ${SCOPE_WHERE}\n` +
+      `GROUP BY ${groupBy}\n` +
+      `HAVING abs(ifNull(signedValue, 0)) > 0.000000000001\n` +
+      `ORDER BY value DESC\nLIMIT ${Math.min(ctx.maxRows ?? 5000, 500)}`;
     return {
       ok: true,
       sql,
@@ -694,6 +940,9 @@ export function compileSeriesSql(
       // chart produces one salary/margin line per grade/category and becomes a
       // misleading tangle. Same-scale component measures remain fully stacked.
       const isOverlay =
+        (spec.chartType === 'stacked_bar' ||
+          spec.chartType === 'stacked_area') &&
+        !spec.clustered &&
         index > 0 &&
         (unitFormat(m.unit) !== primaryFormat ||
           m.expr.kind !== primaryAggregation);

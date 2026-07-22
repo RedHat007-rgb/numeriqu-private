@@ -17,8 +17,10 @@ export const SFIN_SEMANTIC_CUBE_VIEWS = [
   'v_sfin_trial_balance_semantic',
   'v_sfin_employee_semantic',
   'v_sfin_client_service_performance_semantic',
+  'v_sfin_department_workforce_semantic',
   'v_sfin_delivery_scorecard_semantic',
   'v_sfin_service_line_scorecard_semantic',
+  'v_sfin_contract_performance_semantic',
   'v_sfin_balance_ratio_semantic',
   'v_sfin_cost_family_semantic',
   'v_sfin_payment_speed_semantic',
@@ -27,6 +29,8 @@ export const SFIN_SEMANTIC_CUBE_VIEWS = [
   'v_sfin_monthly_ap_semantic',
   'v_sfin_working_capital_semantic',
   'v_sfin_payroll_reconciliation_semantic',
+  'v_sfin_cash_reconciliation_semantic',
+  'v_sfin_executive_performance_semantic',
 ] as const;
 
 function safeDatabase(database: string): string {
@@ -145,6 +149,11 @@ export function buildSfinSemanticCubeDdls(
         0.0 AS operating_margin_pct,
         0.0 AS net_margin_pct,
         0.0 AS ebitda_margin_pct,
+        ifNull(100 * (gy.total_revenue_usd - py.total_revenue_usd) / nullIf(abs(py.total_revenue_usd), 0), 0) AS revenue_growth_pct,
+        ifNull(100 * (gy.gross_profit_usd - py.gross_profit_usd) / nullIf(abs(py.gross_profit_usd), 0), 0) AS gross_profit_growth_pct,
+        ifNull(100 * (gy.ebitda_usd - py.ebitda_usd) / nullIf(abs(py.ebitda_usd), 0), 0) AS ebitda_growth_pct,
+        ifNull(100 * (gy.operating_profit_usd - py.operating_profit_usd) / nullIf(abs(py.operating_profit_usd), 0), 0) AS operating_profit_growth_pct,
+        ifNull(100 * (gy.net_profit_usd - py.net_profit_usd) / nullIf(abs(py.net_profit_usd), 0), 0) AS net_profit_growth_pct,
         0.0 AS sga_pct_of_revenue
       FROM ${db}.sfin_fact_general_ledger f
       LEFT JOIN ${db}.sfin_dim_client c
@@ -158,7 +167,45 @@ export function buildSfinSemanticCubeDdls(
       LEFT JOIN ${db}.sfin_dim_department d
         ON d.tenant_id=f.tenant_id AND d.org_id=f.org_id AND d.department_key=f.department_key
       LEFT JOIN ${db}.sfin_dim_business_unit b
-        ON b.tenant_id=f.tenant_id AND b.org_id=f.org_id AND b.business_unit_key=f.business_unit_key`,
+        ON b.tenant_id=f.tenant_id AND b.org_id=f.org_id AND b.business_unit_key=f.business_unit_key
+      LEFT JOIN (
+        SELECT
+          tenant_id,
+          org_id,
+          toYear(posting_date) AS fiscal_year,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0)) AS total_revenue_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type = 'Direct Cost (COS)', abs(pl_amount_usd), 0)) AS gross_profit_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type IN ('Direct Cost (COS)', 'SG&A'), abs(pl_amount_usd), 0))
+            + sum(if(cost_category = 'DepreciationAndAmortization', abs(pl_amount_usd), 0)) AS ebitda_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type IN ('Direct Cost (COS)', 'SG&A'), abs(pl_amount_usd), 0)) AS operating_profit_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type IN ('Direct Cost (COS)', 'SG&A', 'Finance Cost', 'Tax'), abs(pl_amount_usd), 0)) AS net_profit_usd
+        FROM ${db}.sfin_fact_general_ledger
+        GROUP BY tenant_id, org_id, fiscal_year
+      ) gy
+        ON gy.tenant_id=f.tenant_id AND gy.org_id=f.org_id AND gy.fiscal_year=toYear(f.posting_date)
+      LEFT JOIN (
+        SELECT
+          tenant_id,
+          org_id,
+          toYear(posting_date) AS fiscal_year,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0)) AS total_revenue_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type = 'Direct Cost (COS)', abs(pl_amount_usd), 0)) AS gross_profit_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type IN ('Direct Cost (COS)', 'SG&A'), abs(pl_amount_usd), 0))
+            + sum(if(cost_category = 'DepreciationAndAmortization', abs(pl_amount_usd), 0)) AS ebitda_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type IN ('Direct Cost (COS)', 'SG&A'), abs(pl_amount_usd), 0)) AS operating_profit_usd,
+          sum(if(account_type = 'Revenue', abs(pl_amount_usd), 0))
+            - sum(if(account_type IN ('Direct Cost (COS)', 'SG&A', 'Finance Cost', 'Tax'), abs(pl_amount_usd), 0)) AS net_profit_usd
+        FROM ${db}.sfin_fact_general_ledger
+        GROUP BY tenant_id, org_id, fiscal_year
+      ) py
+        ON py.tenant_id=f.tenant_id AND py.org_id=f.org_id AND py.fiscal_year=toYear(f.posting_date)-1`,
 
     `CREATE OR REPLACE VIEW ${db}.v_sfin_payroll_semantic AS
       SELECT
@@ -406,6 +453,7 @@ export function buildSfinSemanticCubeDdls(
         f.debit_movement_usd,
         f.credit_movement_usd,
         f.closing_balance_usd,
+        f.closing_balance_usd - f.opening_balance_usd AS balance_change_usd,
         f.debit_balance_usd,
         f.credit_balance_usd
       FROM ${db}.sfin_fact_trial_balance f
@@ -450,7 +498,8 @@ export function buildSfinSemanticCubeDdls(
           )
         ) AS average_revenue_growth_pct,
         0.0 AS gross_margin_pct,
-        0.0 AS collection_efficiency_pct
+        0.0 AS collection_efficiency_pct,
+        0.0 AS bad_debt_pct
       FROM (
         SELECT
           k.tenant_id AS tenant_id,
@@ -517,6 +566,51 @@ export function buildSfinSemanticCubeDdls(
         ) a USING (tenant_id, org_id, period_date, client_name)
         GROUP BY k.tenant_id, k.org_id, k.org_name, k.period_date, k.client_name
       ) b`,
+
+    `CREATE OR REPLACE VIEW ${db}.v_sfin_department_workforce_semantic AS
+      SELECT
+        k.tenant_id AS tenant_id,
+        k.org_id AS org_id,
+        k.org_name AS org_name,
+        k.period_date AS period_date,
+        k.department AS department,
+        ifNull(any(g.total_revenue_usd), 0) AS total_revenue_usd,
+        ifNull(any(p.total_payroll_usd), 0) AS total_payroll_usd,
+        ifNull(any(o.productive_hours), 0) AS productive_hours,
+        ifNull(any(o.paid_hours), 0) AS paid_hours,
+        ifNull(any(p.employee_headcount), 0) AS employee_headcount,
+        0.0 AS productive_hours_percentage
+      FROM (
+        SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date, department
+        FROM ${db}.v_sfin_gl_semantic WHERE notEmpty(department)
+        UNION DISTINCT
+        SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date, department
+        FROM ${db}.v_sfin_payroll_semantic WHERE notEmpty(department)
+        UNION DISTINCT
+        SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date, department
+        FROM ${db}.v_sfin_operations_semantic WHERE notEmpty(department)
+      ) k
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, department,
+          sum(total_revenue_usd) AS total_revenue_usd
+        FROM ${db}.v_sfin_gl_semantic
+        GROUP BY tenant_id, org_id, period_date, department
+      ) g USING (tenant_id, org_id, period_date, department)
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, department,
+          sum(total_payroll_usd) AS total_payroll_usd,
+          uniqExact(employee_headcount_key) AS employee_headcount
+        FROM ${db}.v_sfin_payroll_semantic
+        GROUP BY tenant_id, org_id, period_date, department
+      ) p USING (tenant_id, org_id, period_date, department)
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, department,
+          sum(productive_hours) AS productive_hours,
+          sum(paid_hours) AS paid_hours
+        FROM ${db}.v_sfin_operations_semantic
+        GROUP BY tenant_id, org_id, period_date, department
+      ) o USING (tenant_id, org_id, period_date, department)
+      GROUP BY k.tenant_id, k.org_id, k.org_name, k.period_date, k.department`,
 
     `CREATE OR REPLACE VIEW ${db}.v_sfin_delivery_scorecard_semantic AS
       SELECT
@@ -600,6 +694,47 @@ export function buildSfinSemanticCubeDdls(
         SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, sum(total_cogs_usd) AS total_cogs_usd
         FROM ${db}.v_sfin_gl_semantic GROUP BY tenant_id, org_id, period_date
       ) c USING (tenant_id, org_id, period_date)`,
+
+    `CREATE OR REPLACE VIEW ${db}.v_sfin_contract_performance_semantic AS
+      SELECT
+        k.tenant_id AS tenant_id,
+        k.org_id AS org_id,
+        k.org_name AS org_name,
+        k.period_date AS period_date,
+        k.contract_type AS contract_type,
+        ifNull(any(g.total_revenue_usd), 0) AS total_revenue_usd,
+        ifNull(any(g.gross_profit_usd), 0) AS gross_profit_usd,
+        0.0 AS gross_margin_pct,
+        ifNull(any(o.billable_hours), 0) AS billable_hours,
+        ifNull(any(o.average_billing_rate), 0) AS average_billing_rate,
+        ifNull(any(o.utilization_pct), 0) AS utilization_pct,
+        ifNull(any(o.sla_compliance_pct), 0) AS sla_compliance_pct,
+        ifNull(any(o.csat_pct), 0) AS csat_pct
+      FROM (
+        SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date, contract_type
+        FROM ${db}.v_sfin_gl_semantic WHERE notEmpty(contract_type)
+        UNION DISTINCT
+        SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date, contract_type
+        FROM ${db}.v_sfin_operations_semantic WHERE notEmpty(contract_type)
+      ) k
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, contract_type,
+          sum(total_revenue_usd) AS total_revenue_usd,
+          sum(gross_profit_usd) AS gross_profit_usd
+        FROM ${db}.v_sfin_gl_semantic
+        GROUP BY tenant_id, org_id, period_date, contract_type
+      ) g USING (tenant_id, org_id, period_date, contract_type)
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, contract_type,
+          sum(billable_hours) AS billable_hours,
+          avg(average_billing_rate) AS average_billing_rate,
+          avg(utilization_pct) AS utilization_pct,
+          avg(sla_compliance_pct) AS sla_compliance_pct,
+          avg(csat_pct) AS csat_pct
+        FROM ${db}.v_sfin_operations_semantic
+        GROUP BY tenant_id, org_id, period_date, contract_type
+      ) o USING (tenant_id, org_id, period_date, contract_type)
+      GROUP BY k.tenant_id, k.org_id, k.org_name, k.period_date, k.contract_type`,
 
     `CREATE OR REPLACE VIEW ${db}.v_sfin_balance_ratio_semantic AS
       SELECT
@@ -721,7 +856,8 @@ export function buildSfinSemanticCubeDdls(
           sum(ar.outstanding_receivable_usd) AS outstanding_receivable_usd,
           sumIf(ar.outstanding_receivable_usd, ar.days_past_due <= 0) AS current_receivable_usd,
           sumIf(ar.outstanding_receivable_usd, ar.days_past_due > 0) AS overdue_receivable_usd,
-          avg(ar.days_sales_outstanding) AS average_days_sales_outstanding
+          if(sum(ar.invoice_amount_usd) = 0, 0,
+            30 * sum(ar.outstanding_receivable_usd) / sum(ar.invoice_amount_usd)) AS average_days_sales_outstanding
         FROM ${db}.v_sfin_ar_semantic ar GROUP BY tenant_id, org_id, period_date
       ) a USING (tenant_id, org_id, period_date)
       LEFT JOIN (
@@ -787,7 +923,8 @@ export function buildSfinSemanticCubeDdls(
           sum(ap.outstanding_payable_usd) AS outstanding_payable_usd,
           sumIf(ap.outstanding_payable_usd, ap.days_past_due <= 0) AS current_payable_usd,
           sumIf(ap.outstanding_payable_usd, ap.days_past_due > 0) AS overdue_payable_usd,
-          avg(ap.days_payable_outstanding) AS average_days_payable_outstanding
+          if(sum(ap.invoice_amount_usd) = 0, 0,
+            30 * sum(ap.outstanding_payable_usd) / sum(ap.invoice_amount_usd)) AS average_days_payable_outstanding
         FROM ${db}.v_sfin_ap_semantic ap GROUP BY tenant_id, org_id, period_date
       ) p USING (tenant_id, org_id, period_date)
       LEFT JOIN (
@@ -814,12 +951,14 @@ export function buildSfinSemanticCubeDdls(
       ) t
       LEFT JOIN (
         SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date,
-          avg(days_sales_outstanding) AS average_days_sales_outstanding
+          if(sum(invoice_amount_usd) = 0, 0,
+            30 * sum(outstanding_receivable_usd) / sum(invoice_amount_usd)) AS average_days_sales_outstanding
         FROM ${db}.v_sfin_ar_semantic GROUP BY tenant_id, org_id, period_date
       ) a USING (tenant_id, org_id, period_date)
       LEFT JOIN (
         SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date,
-          avg(days_payable_outstanding) AS average_days_payable_outstanding
+          if(sum(invoice_amount_usd) = 0, 0,
+            30 * sum(outstanding_payable_usd) / sum(invoice_amount_usd)) AS average_days_payable_outstanding
         FROM ${db}.v_sfin_ap_semantic GROUP BY tenant_id, org_id, period_date
       ) p USING (tenant_id, org_id, period_date)`,
 
@@ -831,7 +970,8 @@ export function buildSfinSemanticCubeDdls(
         k.period_date AS period_date,
         ifNull(any(p.payroll_cost_usd), 0) AS payroll_cost_usd,
         ifNull(any(c.total_cash_outflow_usd), 0) AS total_cash_outflow_usd${cashFlowSelect},
-        ifNull(any(g.total_general_ledger_cost_usd), 0) AS total_general_ledger_cost_usd${glCostSelect}
+        ifNull(any(g.total_general_ledger_cost_usd), 0) AS total_general_ledger_cost_usd,
+        ifNull(any(g.general_ledger_payroll_cost_usd), 0) AS general_ledger_payroll_cost_usd${glCostSelect}
       FROM (
         SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date FROM ${db}.v_sfin_payroll_semantic
         UNION DISTINCT
@@ -851,9 +991,129 @@ export function buildSfinSemanticCubeDdls(
       ) c USING (tenant_id, org_id, period_date)
       LEFT JOIN (
         SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date,
-          sum(abs(pl_amount_usd)) AS total_general_ledger_cost_usd${glCostAggregate}
+          sum(abs(pl_amount_usd)) AS total_general_ledger_cost_usd,
+          sumIf(abs(pl_amount_usd), match(lowerUTF8(cost_category), 'payroll|salary|wage|labor|labour')) AS general_ledger_payroll_cost_usd${glCostAggregate}
         FROM ${db}.v_sfin_gl_semantic GROUP BY tenant_id, org_id, period_date
       ) g USING (tenant_id, org_id, period_date)
       GROUP BY k.tenant_id, k.org_id, k.period_date`,
+
+    `CREATE OR REPLACE VIEW ${db}.v_sfin_cash_reconciliation_semantic AS
+      SELECT
+        k.tenant_id AS tenant_id,
+        k.org_id AS org_id,
+        any(k.org_name) AS org_name,
+        k.period_date AS period_date,
+        ifNull(any(c.net_cash_flow_usd), 0) AS net_cash_flow_usd,
+        ifNull(any(g.general_ledger_cash_movement_usd), 0) AS general_ledger_cash_movement_usd,
+        net_cash_flow_usd - general_ledger_cash_movement_usd AS cash_reconciliation_difference_usd
+      FROM (
+        SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date
+        FROM ${db}.v_sfin_cashflow_semantic
+        UNION DISTINCT
+        SELECT tenant_id, org_id, org_name, toStartOfMonth(period_date) AS period_date
+        FROM ${db}.v_sfin_gl_semantic WHERE notEmpty(cash_flow_category)
+      ) k
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date,
+          sum(net_cash_flow_usd) AS net_cash_flow_usd
+        FROM ${db}.v_sfin_cashflow_semantic GROUP BY tenant_id, org_id, period_date
+      ) c USING (tenant_id, org_id, period_date)
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date,
+          sum(signed_amount_usd) AS general_ledger_cash_movement_usd
+        FROM ${db}.v_sfin_gl_semantic
+        WHERE notEmpty(cash_flow_category)
+        GROUP BY tenant_id, org_id, period_date
+      ) g USING (tenant_id, org_id, period_date)
+      GROUP BY k.tenant_id, k.org_id, k.period_date`,
+
+    `CREATE OR REPLACE VIEW ${db}.v_sfin_executive_performance_semantic AS
+      SELECT
+        b.*,
+        if(
+          lagInFrame(total_revenue_usd, 12, total_revenue_usd) OVER (
+            PARTITION BY tenant_id, org_id, region, business_unit, client_name, delivery_center, service_line
+            ORDER BY period_date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+          ) = 0,
+          0,
+          100 * (total_revenue_usd - lagInFrame(total_revenue_usd, 12, total_revenue_usd) OVER (
+            PARTITION BY tenant_id, org_id, region, business_unit, client_name, delivery_center, service_line
+            ORDER BY period_date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+          )) / abs(lagInFrame(total_revenue_usd, 12, total_revenue_usd) OVER (
+            PARTITION BY tenant_id, org_id, region, business_unit, client_name, delivery_center, service_line
+            ORDER BY period_date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+          ))
+        ) AS revenue_growth_pct,
+        if(
+          lagInFrame(ebitda_usd, 12, ebitda_usd) OVER (
+            PARTITION BY tenant_id, org_id, region, business_unit, client_name, delivery_center, service_line
+            ORDER BY period_date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+          ) = 0,
+          0,
+          100 * (ebitda_usd - lagInFrame(ebitda_usd, 12, ebitda_usd) OVER (
+            PARTITION BY tenant_id, org_id, region, business_unit, client_name, delivery_center, service_line
+            ORDER BY period_date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+          )) / abs(lagInFrame(ebitda_usd, 12, ebitda_usd) OVER (
+            PARTITION BY tenant_id, org_id, region, business_unit, client_name, delivery_center, service_line
+            ORDER BY period_date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+          ))
+        ) AS ebitda_growth_pct,
+        0.0 AS gross_margin_pct
+      FROM (
+        SELECT
+          o.tenant_id AS tenant_id,
+          o.org_id AS org_id,
+          o.org_name AS org_name,
+          o.period_date AS period_date,
+          o.region AS region,
+          o.business_unit AS business_unit,
+          o.client_name AS client_name,
+          o.delivery_center AS delivery_center,
+          o.service_line AS service_line,
+          if(o.client_service_revenue_usd = 0, 0, ifNull(g.total_revenue_usd, 0) * o.service_revenue_usd / o.client_service_revenue_usd) AS total_revenue_usd,
+          if(o.client_service_revenue_usd = 0, 0, ifNull(g.gross_profit_usd, 0) * o.service_revenue_usd / o.client_service_revenue_usd) AS gross_profit_usd,
+          if(o.client_service_revenue_usd = 0, 0, ifNull(g.ebitda_usd, 0) * o.service_revenue_usd / o.client_service_revenue_usd) AS ebitda_usd,
+          if(o.client_productive_hours = 0, 0, ifNull(p.total_payroll_usd, 0) * o.service_productive_hours / o.client_productive_hours) AS total_payroll_usd,
+          if(o.client_productive_hours = 0, 0, ifNull(p.employee_headcount, 0) * o.service_productive_hours / o.client_productive_hours) AS employee_headcount,
+          o.service_productive_hours AS productive_hours,
+          o.utilization_pct AS utilization_pct,
+          o.sla_compliance_pct AS sla_compliance_pct,
+          o.csat_pct AS csat_pct,
+          if(o.client_service_revenue_usd = 0, 0, ifNull(a.outstanding_receivable_usd, 0) * o.service_revenue_usd / o.client_service_revenue_usd) AS outstanding_receivable_usd
+        FROM (
+          SELECT tenant_id, org_id, any(org_name) AS org_name, toStartOfMonth(period_date) AS period_date,
+            region, business_unit, client_name, delivery_center, service_line,
+            sum(revenue_usd) AS service_revenue_usd,
+            sum(productive_hours) AS service_productive_hours,
+            sum(sum(revenue_usd)) OVER (PARTITION BY tenant_id, org_id, toStartOfMonth(period_date), region, business_unit, client_name, delivery_center) AS client_service_revenue_usd,
+            sum(sum(productive_hours)) OVER (PARTITION BY tenant_id, org_id, toStartOfMonth(period_date), region, business_unit, client_name, delivery_center) AS client_productive_hours,
+            avg(utilization_pct) AS utilization_pct,
+            avg(sla_compliance_pct) AS sla_compliance_pct,
+            avg(csat_pct) AS csat_pct
+          FROM ${db}.v_sfin_operations_semantic
+          GROUP BY tenant_id, org_id, period_date, region, business_unit, client_name, delivery_center, service_line
+        ) o
+        LEFT JOIN (
+          SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, region, business_unit, client_name, delivery_center,
+            sum(total_revenue_usd) AS total_revenue_usd,
+            sum(gross_profit_usd) AS gross_profit_usd,
+            sum(ebitda_usd) AS ebitda_usd
+          FROM ${db}.v_sfin_gl_semantic
+          GROUP BY tenant_id, org_id, period_date, region, business_unit, client_name, delivery_center
+        ) g USING (tenant_id, org_id, period_date, region, business_unit, client_name, delivery_center)
+        LEFT JOIN (
+          SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, region, business_unit, client_name, delivery_center,
+            sum(total_payroll_usd) AS total_payroll_usd,
+            uniqExact(employee_headcount_key) AS employee_headcount
+          FROM ${db}.v_sfin_payroll_semantic
+          GROUP BY tenant_id, org_id, period_date, region, business_unit, client_name, delivery_center
+        ) p USING (tenant_id, org_id, period_date, region, business_unit, client_name, delivery_center)
+        LEFT JOIN (
+          SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date, region, business_unit, client_name, delivery_center,
+            sum(outstanding_receivable_usd) AS outstanding_receivable_usd
+          FROM ${db}.v_sfin_ar_semantic
+          GROUP BY tenant_id, org_id, period_date, region, business_unit, client_name, delivery_center
+        ) a USING (tenant_id, org_id, period_date, region, business_unit, client_name, delivery_center)
+      ) b`,
   ];
 }

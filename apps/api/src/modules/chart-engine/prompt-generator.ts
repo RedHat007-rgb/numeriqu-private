@@ -37,6 +37,7 @@ export const PLANNER_OUTPUT_CONTRACT = `Return ONLY a JSON object:
   "measureKeys": ["<one or more measure keys from the catalog>"],
   "dimensionKey": "<optional dimension key>",
   "breakdownKey": "<optional second dimension used for series/color>",
+  "hierarchyKeys": ["<optional ordered dimensions for a hierarchical visual such as a treemap>"],
   "timeGrain": "day|month|quarter|year (optional)",
   "comparison": "previous_year|yoy_growth_pct (optional; use instead of duplicating a measure key)",
   "normalize": <optional boolean — true for percentage contribution / share of total / % of total by category (100%-stacked)>,

@@ -10633,16 +10633,28 @@ export class AgentService {
     }
 
     // Dimension breakdown — leader, runner-up, total.
-    const sorted = [...points].sort((a, b) => b.value - a.value);
+    const hasPositive = points.some((point) => point.value > 0);
+    const hasNegative = points.some((point) => point.value < 0);
+    const hasSignedMix = hasPositive && hasNegative;
+    const sorted = [...points].sort((a, b) =>
+      hasSignedMix
+        ? Math.abs(b.value) - Math.abs(a.value)
+        : b.value - a.value,
+    );
     const top = sorted[0]!;
     const second = sorted[1];
     const isCurrency = built.valueFormat === 'currency';
     const total = points.reduce((s, p) => s + p.value, 0);
+    const shareDenominator = hasSignedMix
+      ? points.reduce((sum, point) => sum + Math.abs(point.value), 0)
+      : total;
     const share =
-      isCurrency && total !== 0 ? Math.round((top.value / total) * 100) : null;
+      isCurrency && shareDenominator > 0
+        ? Math.round((Math.abs(top.value) / shareDenominator) * 100)
+        : null;
     const lead =
       share !== null
-        ? `**${top.name}** leads at **${fmt(top.value)}** — about ${share}% of the total.`
+        ? `**${top.name}** leads${hasSignedMix ? ' by magnitude' : ''} at **${fmt(top.value)}** — about ${share}% of the ${hasSignedMix ? 'total magnitude' : 'total'}.`
         : `**${top.name}** is on top at **${fmt(top.value)}**.`;
     const totalNote = isCurrency
       ? ` All ${points.length} together come to ${fmt(total)}.`
@@ -29298,7 +29310,46 @@ Output SQL ONLY — no explanation, no markdown.`;
     opts?: { chartType?: ChartType },
   ): Promise<Record<string, unknown>[]> {
     const { rows } = await this.executeDynamicSqlChecked(sql, scope, opts);
+    if (opts?.chartType === 'kpi') return this.normalizeDynamicKpiRows(rows);
     return rows;
+  }
+
+  private normalizeDynamicKpiRows(
+    rows: Record<string, unknown>[],
+  ): Record<string, unknown>[] {
+    if (rows.length !== 1) return rows;
+    const row = rows[0] ?? {};
+    if ('label' in row && 'value' in row) return rows;
+    const entries = Object.entries(row).filter(
+      ([key, value]) =>
+        key !== 'name' &&
+        value != null &&
+        value !== '' &&
+        Number.isFinite(Number(value)),
+    );
+    if (!entries.length) return rows;
+    return entries.map(([label, raw]) => {
+      // Compiler-generated aliases preserve explicit percent markers ("%",
+      // "pct", "percent"). Do not treat every ratio/rate as a percentage:
+      // debt-to-equity and asset turnover are scalar ratios, while billing
+      // rates can be currency. Mixed KPI grids must format each card by unit.
+      const isPercent = /%|\bpct\b|percent/i.test(label);
+      const isNumber = /\bratio\b|\bcount\b|\bhours?\b|headcount/i.test(label);
+      const isRevenue = /revenue/i.test(label);
+      const isExpense = /cost|expense|cogs|sga|tax/i.test(label);
+      return {
+        label,
+        value: this.num(raw),
+        format: isPercent ? 'percent' : isNumber ? 'number' : 'currency',
+        icon: isRevenue
+          ? 'revenue'
+          : isExpense
+            ? 'expenses'
+            : isPercent
+              ? 'count'
+              : 'profit',
+      };
+    });
   }
 
   // Like executeDynamicSql but surfaces WHY a query produced no rows: error !==

@@ -75,6 +75,8 @@ interface ChartConfig {
   // chart is promoted to a combo for a secondary-axis overlay.
   spec?: {
     chartType?: string | null;
+    highlightCostWithoutRevenue?: boolean | null;
+    highlightLowPerformance?: boolean | null;
   } | null;
   description?: string;
   timeRange?: TimeRange | null;
@@ -704,12 +706,14 @@ function fmtCurrency(value: number): string {
   // Abbreviate by MAGNITUDE so negatives match positives (−$87.6M, not −$87,596,173).
   const sign = v < 0 ? "-" : "";
   const abs = Math.abs(v);
+  if (abs >= 1_000_000_000)
+    return `${sign}$${(abs / 1_000_000_000).toFixed(1)}B`;
   if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    maximumFractionDigits: abs < 100 ? 2 : 0,
   }).format(v);
 }
 
@@ -718,9 +722,16 @@ function fmtNumber(value: number): string {
   if (!Number.isFinite(v)) return "0";
   const sign = v < 0 ? "-" : "";
   const abs = Math.abs(v);
+  if (abs >= 1_000_000_000)
+    return `${sign}${(abs / 1_000_000_000).toFixed(1)}B`;
   if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}K`;
-  return v.toFixed(0);
+  // Preserve meaningful precision for ratios and fractional operational
+  // measures. Integer counts stay integer while values such as 0.472 no longer
+  // collapse to the misleading display value 0.
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(v);
 }
 
 function fmtPercent(value: number): string {
@@ -1474,7 +1485,10 @@ export function renderChart(
   isExpanded: boolean,
   onFigureClick?: (arg: FigureClickArg) => void,
 ) {
-  data = pivotLongSeries(data);
+  // Treemaps consume the long-form hierarchy directly. Pivoting them like a
+  // stacked chart duplicates path text into numeric series keys and loses the
+  // signed-size metadata needed by the tooltip.
+  data = chart.type === "treemap" ? data : pivotLongSeries(data);
   const h = isExpanded ? 480 : 240;
   // Expanded charts live inside a flex-1 modal container that is taller than 480px, so a
   // fixed-height wrapper leaves dead space below and mis-aligns the plot. When expanded we
@@ -1861,6 +1875,11 @@ export function renderChart(
       return "full";
     }
 
+    // A latest-value label for every line is still unreadable on comparison
+    // charts with many series (for example 5 metrics x current/prior/variance).
+    // Keep the plot clean and expose every exact value through the tooltip.
+    if (safeSeriesCount >= 6) return "none";
+
     if (safeSeriesCount === 1) {
       if (effectivePointCount <= 12) return "full";
       if (effectivePointCount <= 24) return "sparse";
@@ -1898,7 +1917,25 @@ export function renderChart(
       chartTitleText,
     );
   const expandedXAxisHeight = isExpanded ? 34 : 24;
-  const expandedLegendHeight = isExpanded ? 36 : 28;
+  const longFormLegendSeriesCount = new Set(
+    data
+      .map((row) => String((row as Record<string, unknown>).series ?? ""))
+      .filter(Boolean),
+  ).size;
+  const legendSeriesCount = Math.max(
+    1,
+    chart.config.display?.series?.length ?? 0,
+    inferNumericSeriesKeys(data).length,
+    longFormLegendSeriesCount,
+  );
+  // Recharts does not grow its legend wrapper automatically. Reserve additional
+  // rows for dense comparison charts so long legends are not cut off in either
+  // the card or the expanded view.
+  const expandedLegendHeight = isExpanded
+    ? Math.min(180, 30 + Math.ceil(legendSeriesCount / 4) * 18)
+    : legendSeriesCount > 6
+      ? Math.min(128, 28 + Math.ceil(legendSeriesCount / 4) * 18)
+      : 28;
   const expandedBottomChartMargin = isExpanded ? 44 : 8;
   // Axis TITLES ("Department" under x, "USD" beside y) so the chart explains itself.
   // Only rendered when the backend supplied them (chart.config.xAxisLabel/yAxisLabel),
@@ -2520,7 +2557,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <AreaChart
             data={areaData}
@@ -2928,6 +2965,10 @@ export function renderChart(
         Math.abs(r.value - running) <= Math.max(1, Math.abs(running) * 0.005);
       if (r.isTotal || autoTotal) {
         const base = Math.min(0, r.value);
+        // A subtotal establishes the baseline for the following movements.
+        // Without this, an opening-balance total was drawn correctly but every
+        // account-group change incorrectly started from zero.
+        running = r.value;
         return {
           name: r.name,
           base,
@@ -2990,11 +3031,11 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={wf}
-            margin={{ top: 16, right: 4, left: 12, bottom: manyBars ? 28 : 4 }}
+            margin={{ top: 16, right: 4, left: 12, bottom: manyBars ? 46 : 4 }}
             onClick={emitFromActive}
           >
             <CartesianGrid {...gridStyle} vertical={false} />
@@ -3006,7 +3047,13 @@ export function renderChart(
               interval={0}
               angle={manyBars ? -40 : 0}
               textAnchor={manyBars ? "end" : "middle"}
-              height={manyBars ? 48 : 24}
+              height={manyBars ? 70 : 24}
+              tickFormatter={(value: unknown) => {
+                const label = String(value ?? "");
+                return wf.length > 24 && label.length > 20
+                  ? `${label.slice(0, 19)}…`
+                  : label;
+              }}
             />
             <YAxis
               tick={tickStyle}
@@ -3121,7 +3168,7 @@ export function renderChart(
     type ComboSeries = {
       key: string;
       role: "bar" | "line";
-      axis: "left" | "right";
+      axis: "left" | "right" | "farRight";
       format: ComboFmt;
     };
     const ignoredKeys = new Set([
@@ -3132,7 +3179,7 @@ export function renderChart(
     // Combo series must be inferred across ALL rows, not just the first one. YoY /
     // prior-year overlays are null for early periods by design, so first-row-only
     // detection silently dropped the whole comparison series and its right axis.
-    const inferredKeys = inferNumericSeriesKeys(data).filter(
+    const nonZeroInferredKeys = inferNumericSeriesKeys(data).filter(
       (k) => !ignoredKeys.has(k),
     );
     // Per-series roles from the backend (display.series) are the source of truth:
@@ -3142,6 +3189,20 @@ export function renderChart(
     const configuredMeta = (chart.config.display?.series ?? []).filter(
       (s): s is NonNullable<typeof s> => !!s && typeof s.key === "string",
     );
+    // A requested/configured measure remains part of the chart even when every
+    // value in the selected period is legitimately zero. Generic inference drops
+    // empty noise, but it must not silently erase explicit series such as Payroll
+    // Liability or Tax Liability from the legend and tooltip.
+    const inferredKeys = [
+      ...configuredMeta
+        .map((s) => s.key)
+        .filter(
+          (key) => !ignoredKeys.has(key) && hasFiniteValueKey(data, key),
+        ),
+      ...nonZeroInferredKeys.filter(
+        (key) => !configuredMeta.some((s) => s.key === key),
+      ),
+    ];
     // Long-form breakdown queries pivot into keys such as
     // "Manager — Employee Headcount". Match those concrete keys back to their
     // measure metadata so every grade remains a bar on the headcount axis while
@@ -3248,12 +3309,31 @@ export function renderChart(
       });
     }
 
+    // A combo can legitimately contain three scales (for example payroll $, paid
+    // hours, and $ per paid hour). Never merge unlike units onto one right axis:
+    // move a scale-separated line that shares the primary bar's FORMAT to a
+    // second right-side axis so its values remain visible and correctly labelled.
+    const primaryBarFormat = series.find(
+      (s) => s.axis === "left" && s.role === "bar",
+    )?.format;
+    const rightFormats = new Set(
+      series.filter((s) => s.axis === "right").map((s) => s.format),
+    );
+    if (primaryBarFormat && rightFormats.size > 1) {
+      series = series.map((s) =>
+        s.axis === "right" && s.format === primaryBarFormat
+          ? { ...s, axis: "farRight" as const }
+          : s,
+      );
+    }
+
     const barSeries = series.filter((s) => s.role === "bar");
     const lineSeries = series.filter((s) => s.role === "line");
     const usesRight =
       series.some((s) => s.axis === "right") ||
       chart.config.display?.referenceAxis === "right" ||
       (!!chart.config.display?.secondaryAxisFormat && lineSeries.length > 0);
+    const usesFarRight = series.some((s) => s.axis === "farRight");
     const leftFmt: ComboFmt =
       series.find((s) => s.axis === "left")?.format ??
       (chart.config.display?.valueFormat as ComboFmt) ??
@@ -3262,6 +3342,20 @@ export function renderChart(
       series.find((s) => s.axis === "right")?.format ??
       (chart.config.display?.secondaryAxisFormat as ComboFmt) ??
       "percent";
+    const farRightFmt: ComboFmt =
+      series.find((s) => s.axis === "farRight")?.format ?? "currency";
+    const configuredSecondaryLabel = String(
+      chart.config.display?.secondaryLabel ?? "",
+    );
+    const rightSeriesKeys = series
+      .filter((s) => s.axis === "right")
+      .map((s) => s.key);
+    const conciseSecondaryLabel =
+      rightFmt === "number" &&
+      rightSeriesKeys.length > 0 &&
+      rightSeriesKeys.every((key) => /\b(?:days?|dso|dpo)\b/i.test(key))
+        ? "Days"
+        : configuredSecondaryLabel;
     const fmtFor = (fmt: ComboFmt) => (v: number) =>
       fmt === "currency"
         ? fmtCurrency(Number(v) || 0)
@@ -3315,6 +3409,13 @@ export function renderChart(
       "rgb(var(--color-accent-cyan))",
       "rgb(var(--color-accent-violet))",
       "rgb(var(--color-accent-blue))",
+      "#22C55E",
+      "#F59E0B",
+      "#EC4899",
+      "#14B8A6",
+      "#F97316",
+      "#A3E635",
+      "#E879F9",
     ];
     const barSize = barSeries.length > 1 ? 28 : 56;
     const shouldStackBars =
@@ -3340,7 +3441,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <ComposedChart
             data={comboData}
@@ -3457,7 +3558,7 @@ export function renderChart(
               tickLine={false}
               axisLine={false}
               tickFormatter={(v: number) => fmtFor(leftFmt)(Number(v) || 0)}
-              width={56 + yAxisTitleWidth}
+              width={(isExpanded ? 68 : 56) + yAxisTitleWidth}
               tickMargin={8}
               {...yAxisTitleProp}
             />
@@ -3469,12 +3570,19 @@ export function renderChart(
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(v: number) => fmtFor(rightFmt)(Number(v) || 0)}
-                width={chart.config.display?.secondaryLabel ? 60 : 44}
+                width={conciseSecondaryLabel ? (isExpanded ? 76 : 64) : 48}
                 tickMargin={8}
-                {...(chart.config.display?.secondaryLabel
+                {...(conciseSecondaryLabel
                   ? {
                       label: {
-                        value: String(chart.config.display.secondaryLabel),
+                        value: usesFarRight
+                          ? /hours?/i.test(conciseSecondaryLabel)
+                            ? "Hours"
+                            : conciseSecondaryLabel.replace(
+                                /\s*\/\s*USD\s*$/i,
+                                "",
+                              )
+                          : conciseSecondaryLabel,
                         angle: 90,
                         position: "insideRight" as const,
                         offset: 6,
@@ -3484,6 +3592,29 @@ export function renderChart(
                       },
                     }
                   : {})}
+              />
+            )}
+            {usesFarRight && (
+              <YAxis
+                yAxisId="farRight"
+                orientation="right"
+                tick={tickStyle}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v: number) =>
+                  fmtFor(farRightFmt)(Number(v) || 0)
+                }
+                width={isExpanded ? 78 : 66}
+                tickMargin={8}
+                label={{
+                  value: "USD / paid hr",
+                  angle: 90,
+                  position: "insideRight" as const,
+                  offset: 6,
+                  fontSize: axisTitleFontSize,
+                  fill: axisTitleFill,
+                  style: { textAnchor: "middle" as const },
+                }}
               />
             )}
             <Tooltip
@@ -3560,6 +3691,13 @@ export function renderChart(
                   name={prettySeriesName(s.key)}
                   stroke={color}
                   strokeWidth={isExpanded ? 2.5 : 2}
+                  strokeDasharray={
+                    /previous year/i.test(s.key)
+                      ? "7 4"
+                      : /variance\s*%/i.test(s.key)
+                        ? "2 3"
+                        : undefined
+                  }
                   dot={
                     isExpanded ? { r: 4, fill: color, strokeWidth: 0 } : false
                   }
@@ -3688,6 +3826,12 @@ export function renderChart(
       ).length >=
         trimmed.length / 2;
     const isMultiSeries = !useHorizontalBars && isActuallyMultiSeries;
+    const barHighlightedSeries = new Set(
+      chart.config.display?.highlightSeries ?? [],
+    );
+    const hasBarSeriesHighlight = rawSeriesKeys.some((key) =>
+      barHighlightedSeries.has(key),
+    );
     // "highlight the top N clients" / a named category → emphasize matching bars, dim rest.
     const barHighlightNames = new Set(
       (chart.config.display?.highlightNames ?? []).map((s) => String(s)),
@@ -3878,7 +4022,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={chartData}
@@ -4071,6 +4215,11 @@ export function renderChart(
                       dataKey={k}
                       name={prettySeriesName(k)}
                       fill={PIE_COLORS[idx % PIE_COLORS.length]}
+                      fillOpacity={
+                        hasBarSeriesHighlight && !barHighlightedSeries.has(k)
+                          ? 0.25
+                          : 1
+                      }
                       radius={
                         shouldStackBreakdownBars && !isDerived
                           ? [0, 0, 0, 0]
@@ -4135,6 +4284,7 @@ export function renderChart(
                         )}
                       {!shouldStackBreakdownBars &&
                         (_forceLabels ||
+                          barHighlightedSeries.has(k) ||
                           (displayKeys.length <= 4 &&
                             chartData.length <= 12)) && (
                           <LabelList
@@ -4246,7 +4396,19 @@ export function renderChart(
                     paddingTop: isExpanded ? 8 : 4,
                   }}
                   formatter={(value: string) => (
-                    <span style={{ color: "rgb(var(--color-text-secondary))" }}>
+                    <span
+                      style={{
+                        color: "rgb(var(--color-text-secondary))",
+                        opacity:
+                          hasBarSeriesHighlight &&
+                          !barHighlightedSeries.has(String(value))
+                            ? 0.38
+                            : 1,
+                        fontWeight: barHighlightedSeries.has(String(value))
+                          ? 800
+                          : 600,
+                      }}
+                    >
                       {prettySeriesName(String(value))}
                     </span>
                   )}
@@ -4367,7 +4529,8 @@ export function renderChart(
         ? data.flatMap((d) =>
             seriesKeys.map((key) => ({
               name: `${String((d as any).name ?? "")} / ${key.replace(/_/g, " ")}`,
-              size: Number((d as any)[key]) || 0,
+              size: Math.abs(Number((d as any)[key]) || 0),
+              signedValue: Number((d as any)[key]) || 0,
               colorValue: colorMetricKey
                 ? Number((d as any)[colorMetricKey])
                 : null,
@@ -4376,13 +4539,17 @@ export function renderChart(
         : data
             .map((d) => ({
               name: String((d as any).name ?? ""),
-              size: Number((d as any).value) || 0,
+              path: String((d as any).path ?? (d as any).name ?? ""),
+              size: Math.abs(Number((d as any).value) || 0),
+              signedValue: Number.isFinite(Number((d as any).signedValue))
+                ? Number((d as any).signedValue)
+                : Number((d as any).value) || 0,
               colorValue: colorMetricKey
                 ? Number((d as any)[colorMetricKey])
                 : null,
             }))
             .filter((n) => n.name && Number.isFinite(n.size) && n.size > 0)
-            .slice(0, 40);
+            .slice(0, 200);
     const colorValues = nodes
       .map((node) => Number(node.colorValue))
       .filter((value) => Number.isFinite(value));
@@ -4424,7 +4591,14 @@ export function renderChart(
       size,
       index,
       colorValue,
+      signedValue,
+      path,
+      depth,
     }: any) => {
+      // Recharts invokes custom content once for its synthetic root. Drawing
+      // that root produces a meaningless full-size "$0" rectangle behind the
+      // real cells and can remain visible in unused pixels when expanded.
+      if (depth === 0) return null;
       const color = metricColor(colorValue, index);
       // Lower thresholds so smaller cells (e.g. all 24 vendors) still get a label,
       // and always provide a hover tooltip so nothing is unreadable/"empty".
@@ -4434,13 +4608,14 @@ export function renderChart(
         : width > 50 && height > 34;
       const charBudget = Math.max(3, Math.floor(width / 7));
       const label = String(name ?? "");
+      const hierarchyPath = String(path ?? name ?? "");
       const contributionPct =
         showContributionPct && Number.isFinite(totalSize) && totalSize > 0
           ? ((Number(size) || 0) / totalSize) * 100
           : null;
       const valueText =
         contributionPct === null
-          ? fmtTreemapSize(size)
+          ? fmtTreemapSize(Number(signedValue) || 0)
           : fmtPercent(contributionPct);
       const colorLine =
         hasColorMetric && Number.isFinite(Number(colorValue))
@@ -4448,8 +4623,8 @@ export function renderChart(
           : "";
       const titleText =
         contributionPct === null
-          ? `${label}: ${fmtTreemapSize(size)}${colorLine}`
-          : `${label}: ${fmtTreemapSize(size)}\nContribution: ${fmtPercent(contributionPct)}${colorLine}`;
+          ? `${hierarchyPath}: ${fmtTreemapSize(Number(signedValue) || 0)}${colorLine}`
+          : `${hierarchyPath}: ${fmtTreemapSize(Number(signedValue) || 0)}\nContribution: ${fmtPercent(contributionPct)}${colorLine}`;
       return (
         <g>
           <title>{titleText}</title>
@@ -4524,7 +4699,7 @@ export function renderChart(
           width="100%"
           height={hasColorMetric ? Math.max(80, h - 24) : "100%"}
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <Treemap
             data={nodes}
@@ -4583,6 +4758,10 @@ export function renderChart(
     // small enough to stay legible; otherwise the legend + tooltip carry it.
     const xLabel = chart.config.xAxisLabel?.trim() || xKey.replaceAll("_", " ");
     const yLabel = chart.config.yAxisLabel?.trim() || yKey.replaceAll("_", " ");
+    const visibleYLabel =
+      !isExpanded && yLabel.length > 16
+        ? yLabel.replace(/\baverage\b/gi, "Avg").replace(/\bhours?\b/gi, "hrs")
+        : yLabel;
     const xFmt = resolveAxisFormatFromMetadata(
       xLabel,
       "x",
@@ -4638,7 +4817,7 @@ export function renderChart(
             width="100%"
             height="100%"
             minWidth={0}
-            minHeight={0}
+            minHeight={0} initialDimension={{ width: 1, height: 1 }}
           >
             <ScatterChart
               margin={{
@@ -4687,7 +4866,7 @@ export function renderChart(
                 domain={view.y}
                 allowDataOverflow
                 label={{
-                  value: yLabel,
+                  value: visibleYLabel,
                   angle: -90,
                   position: "insideLeft",
                   offset: 4,
@@ -4855,7 +5034,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <PieChart>
             <Pie
@@ -5170,7 +5349,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <PieChart>
             {donutTotal > 0 && !donutHasSignedSlices && (
@@ -5279,7 +5458,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={sorted}
@@ -5342,7 +5521,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={data}
@@ -5412,7 +5591,7 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <ComposedChart
             data={paretoData}
@@ -5522,7 +5701,7 @@ export function renderChart(
           width="100%"
           height={isExpanded ? 300 : 200}
           minWidth={0}
-          minHeight={0}
+          minHeight={0} initialDimension={{ width: 1, height: 1 }}
         >
           <RadialBarChart
             cx="50%"
@@ -5599,6 +5778,10 @@ export function renderChart(
     const showBubbleLabels = bubbleHasName && bubbleData.length <= 16;
     const xLabel = chart.config.xAxisLabel?.trim() || "x";
     const yLabel = chart.config.yAxisLabel?.trim() || "y";
+    const visibleBubbleYLabel =
+      !isExpanded && yLabel.length > 16
+        ? yLabel.replace(/\baverage\b/gi, "Avg").replace(/\bhours?\b/gi, "hrs")
+        : yLabel;
     const xFmt = resolveAxisFormatFromMetadata(xLabel, "x", "number");
     const yFmt = resolveAxisFormatFromMetadata(yLabel, "y", "number");
     const zLabel =
@@ -5611,6 +5794,44 @@ export function renderChart(
       chart.config.display?.valueFormat ?? "number",
     );
     const hasSize = finiteZ.length > 0 && zSpan > 0;
+    const highlightCostWithoutRevenue = Boolean(
+      chart.config.spec?.highlightCostWithoutRevenue,
+    );
+    const hasCostWithoutRevenue =
+      highlightCostWithoutRevenue &&
+      bubbleData.some(
+        (point) => Number((point as any).y) > 0 && Number((point as any).x) <= 0,
+      );
+    const highlightLowPerformance = Boolean(
+      chart.config.spec?.highlightLowPerformance,
+    );
+    const qualityKeys = Object.keys((bubbleData[0] ?? {}) as object).filter(
+      (key) => /\b(?:sla|csat)\b/i.test(key),
+    );
+    const qualityThresholds = new Map(
+      qualityKeys.map((key) => {
+        const values = bubbleData
+          .map((point) => toFiniteNumber((point as any)[key]))
+          .filter((value): value is number => value !== null)
+          .sort((a, b) => a - b);
+        return [
+          key,
+          values.length
+            ? values[Math.floor((values.length - 1) * 0.25)]!
+            : Number.NEGATIVE_INFINITY,
+        ] as const;
+      }),
+    );
+    const isLowPerformancePoint = (point: Record<string, unknown>) =>
+      highlightLowPerformance &&
+      qualityKeys.some((key) => {
+        const value = toFiniteNumber(point[key]);
+        return value !== null && value <= (qualityThresholds.get(key) ?? -Infinity);
+      });
+    const hasLowPerformance = bubbleData.some((point) =>
+      isLowPerformancePoint(point as Record<string, unknown>),
+    );
+    const hasBubbleHighlight = hasCostWithoutRevenue || hasLowPerformance;
     return (
       <ZoomableChartFrame
         height={wrapH}
@@ -5618,7 +5839,7 @@ export function renderChart(
         yValues={bubbleData.map((d: any) => Number(d.y) || 0)}
         footer={
           <>
-            {bubbleHasName && (
+            {bubbleHasName && bubbleData.length <= 12 && (
               <div className="mt-1 flex max-h-[34%] flex-wrap gap-x-3 gap-y-1 overflow-y-auto px-1">
                 {bubbleData.map((d, i) => (
                   <span
@@ -5647,10 +5868,18 @@ export function renderChart(
             width="100%"
             height="100%"
             minWidth={0}
-            minHeight={0}
+            minHeight={0} initialDimension={{ width: 1, height: 1 }}
           >
             <ScatterChart
-              margin={{ top: 14, right: 12, left: 8, bottom: 24 }}
+              margin={{
+                // Named bubbles draw multi-line labels above the point. Reserve
+                // enough headroom for the largest bubble + label so top-ranked
+                // points are not cut by the SVG border.
+                top: showBubbleLabels ? (isExpanded ? 64 : 72) : 14,
+                right: 12,
+                left: 8,
+                bottom: 24,
+              }}
               onClick={emitFromActive}
             >
               <CartesianGrid
@@ -5688,7 +5917,7 @@ export function renderChart(
                 tickMargin={8}
                 tickFormatter={(v: number) => fmtByUnit(Number(v) || 0, yFmt)}
                 label={{
-                  value: yLabel,
+                  value: visibleBubbleYLabel,
                   angle: -90,
                   position: "insideLeft",
                   offset: 4,
@@ -5725,14 +5954,38 @@ export function renderChart(
                           {zLabel}: {fmtByUnit(Number(d._zval) || 0, zFmt)}
                         </p>
                       )}
+                      {qualityKeys.map((key) => (
+                        <p key={key} className="text-text-muted">
+                          {key}: {fmtByUnit(Number(d[key]) || 0, "percent")}
+                        </p>
+                      ))}
                     </div>
                   );
                 }}
               />
               <Scatter data={bubbleData} fillOpacity={0.7}>
-                {bubbleData.map((_, i) => (
-                  <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                ))}
+                {bubbleData.map((point, i) => {
+                  const highlighted =
+                    (hasCostWithoutRevenue &&
+                      Number((point as any).y) > 0 &&
+                      Number((point as any).x) <= 0) ||
+                    isLowPerformancePoint(
+                      point as Record<string, unknown>,
+                    );
+                  return (
+                    <Cell
+                      key={i}
+                      fill={
+                        highlighted
+                          ? "#f59e0b"
+                          : PIE_COLORS[i % PIE_COLORS.length]
+                      }
+                      fillOpacity={hasBubbleHighlight && !highlighted ? 0.24 : 0.85}
+                      stroke={highlighted ? "#fbbf24" : "none"}
+                      strokeWidth={highlighted ? 3 : 0}
+                    />
+                  );
+                })}
                 {showBubbleLabels && (
                   <LabelList
                     dataKey="name"
@@ -6132,7 +6385,7 @@ export function renderChart(
         width="100%"
         height="100%"
         minWidth={0}
-        minHeight={0}
+        minHeight={0} initialDimension={{ width: 1, height: 1 }}
       >
         {(() => {
           const seriesKeys = inferNumericSeriesKeys(data);
@@ -6141,6 +6394,26 @@ export function renderChart(
 
           if (isMultiSeries) {
             const visibleSeriesKeys = seriesKeys.slice(0, 6);
+            const lineHighlightNames = (
+              chart.config.display?.highlightNames ?? []
+            ).map((name) => String(name).trim().toLocaleLowerCase());
+            const hasLineHighlights = lineHighlightNames.length > 0;
+            const isHighlightedLine = (key: string) => {
+              if (!hasLineHighlights) return true;
+              const normalizedKey = key.trim().toLocaleLowerCase();
+              const normalizedPretty = prettySeriesName(key)
+                .trim()
+                .toLocaleLowerCase();
+              return lineHighlightNames.some(
+                (highlight) =>
+                  normalizedKey === highlight ||
+                  normalizedPretty === highlight ||
+                  normalizedKey.startsWith(`${highlight} —`) ||
+                  normalizedPretty.startsWith(`${highlight} —`) ||
+                  normalizedKey.startsWith(`${highlight} -`) ||
+                  normalizedPretty.startsWith(`${highlight} -`),
+              );
+            };
             const multiSeriesLabelMode = pointLabelMode(
               data.length,
               visibleSeriesKeys.length,
@@ -6230,7 +6503,8 @@ export function renderChart(
                     dataKey={key}
                     name={prettySeriesName(key)}
                     stroke={PIE_COLORS[idx % PIE_COLORS.length]}
-                    strokeWidth={2}
+                    strokeOpacity={isHighlightedLine(key) ? 1 : 0.28}
+                    strokeWidth={isHighlightedLine(key) ? 3 : 1.5}
                     dot={false}
                     activeDot={inspectDot(key)}
                     isAnimationActive={false}
@@ -7216,6 +7490,7 @@ export function DashboardPreview({
           const metaMap: Record<string, ChartDataMeta> = {};
           for (const chart of chartsToLoad) {
             if (
+              chart.config.metric !== "dynamic" &&
               Array.isArray(chart.snapshotData) &&
               chart.snapshotData.length > 0
             ) {
@@ -7248,7 +7523,9 @@ export function DashboardPreview({
                     chart.config.orgId ?? null,
                     chart.config.breakdown ?? null,
                     chart.config.topN ?? null,
-                    chart.config.metric === "dynamic" ? chart.id : null,
+                    chart.config.metric === "dynamic"
+                      ? (chart.widgetId ?? chart.id)
+                      : null,
                   );
                   dataMap[chart.id] = (res.data ?? []) as DataRow[];
                   if (
@@ -7599,7 +7876,7 @@ export function DashboardPreview({
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.94, opacity: 0, y: 20 }}
               transition={{ type: "spring", stiffness: 280, damping: 28 }}
-              className="surface-card relative flex h-[88vh] w-full max-w-5xl flex-col p-8"
+              className="surface-card relative flex h-[92vh] w-[96vw] max-w-none flex-col p-4 sm:p-6 lg:p-8"
             >
               <button
                 onClick={() => setExpandedChartId(null)}

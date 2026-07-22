@@ -15,6 +15,7 @@ import {
   fieldMatchScore,
   meaningfulWords,
   planChart,
+  planExplicitPointChart,
   requestedChartType,
   type LlmCaller,
   type PlanResult,
@@ -217,7 +218,28 @@ export async function planAcrossCubes(
   // call is the dominant cost. Falls back to all cubes when the match is ambiguous.
   const shortlist = preselectCubes(question, cubes);
 
-  for (const cube of shortlist) {
+  // Exact X-versus-Y plans are cheap and catalog-validated, so evaluate them
+  // across every cube before lexical shortlisting. A wide cross-domain cube can
+  // otherwise rank just outside the top-N shortlist even though it is the only
+  // cube that contains both measures and all requested groupings.
+  const deterministicViews = new Set<string>();
+  for (const cube of cubes) {
+    const deterministicPointPlan = planExplicitPointChart(question, cube.model);
+    if (!deterministicPointPlan) continue;
+    deterministicViews.add(cube.view);
+    candidates.push({
+      cube,
+      spec: deterministicPointPlan,
+      score: scorePlan(question, cube, deterministicPointPlan) + 20,
+    });
+  }
+
+  // When at least one exact catalog-backed point plan exists, do not let a
+  // loosely related LLM plan (for example invoice/outstanding-payable for a
+  // revenue/payroll request) compete on dimension vocabulary and win. The
+  // deterministic candidates already satisfy both axes and all groupings.
+  for (const cube of deterministicViews.size ? [] : shortlist) {
+    if (deterministicViews.has(cube.view)) continue;
     let r: PlanResult;
     try {
       r = await planChart(question, cube.model, callLlm);
@@ -227,6 +249,15 @@ export async function planAcrossCubes(
     }
     if (!r.ok) {
       reasons.push(`${cube.view}: ${r.reason}`);
+      continue;
+    }
+    if (
+      (r.spec.chartType === 'scatter' || r.spec.chartType === 'bubble') &&
+      r.spec.measureKeys.length < 2
+    ) {
+      reasons.push(
+        `${cube.view}: point chart requires at least two catalog measures`,
+      );
       continue;
     }
     // Enforce "only group when the user asked": drop a spurious dimension/breakdown

@@ -192,10 +192,14 @@ export interface EngineChartSpec {
   dimensionKey?: string;
   /** Optional second categorical dimension used as the series/color breakdown. */
   breakdownKey?: string;
+  /** Ordered categorical hierarchy for visuals such as treemaps. */
+  hierarchyKeys?: string[];
   /** Optional time grain when the user wants a trend. */
   timeGrain?: 'day' | 'month' | 'quarter' | 'year';
   /** Optional aligned comparison series derived from the same measure. */
   comparison?: 'previous_year' | 'yoy_growth_pct';
+  /** Include the aligned percentage variance beside current/prior-year values. */
+  showVariancePct?: boolean;
   /**
    * Render each series as its PERCENTAGE CONTRIBUTION to the per-axis total
    * (100%-stacked): value → 100 * value / sum(value) over the same axis bucket.
@@ -209,8 +213,31 @@ export interface EngineChartSpec {
   sort?: 'asc' | 'desc';
   /** Optional category labels to emphasize visually (derived from user text). */
   highlightNames?: string[];
+  /** Measure keys whose rendered series should remain visually emphasized. */
+  highlightSeries?: string[];
   /** Preserve all categories while emphasizing the highest N values. */
   highlightTopN?: number;
+  /**
+   * Highlight categories by the largest change between two already-plotted
+   * measures. This keeps the chart values unchanged; the executor derives the
+   * category names from result rows and passes them as display.highlightNames.
+  */
+  highlightChangeFromMeasureKey?: string;
+  highlightChangeToMeasureKey?: string;
+  /**
+   * Highlight high-value entities whose operational/collection performance is
+   * weak relative to peers. The executor derives concrete names from data rows;
+   * the planner never hardcodes entity labels.
+   */
+  highlightWeakPerformance?: boolean;
+  /** Highlight categories where payroll/cost is positive while revenue is zero. */
+  highlightCostWithoutRevenue?: boolean;
+  /** Highlight categories below peer medians on service-quality measures. */
+  highlightLowPerformance?: boolean;
+  /** Highlight the highest and/or lowest category by the chart's primary measure. */
+  highlightExtremes?: 'max' | 'min' | 'both';
+  /** Add running cumulative labels/series for bridge-style change charts. */
+  showCumulative?: boolean;
   /** The measures are additive components requested as a stacked composition. */
   componentMode?: boolean;
   /** A queried total used only as the stack label, never as another segment. */

@@ -103,6 +103,15 @@ export function measureExprFor(
   profile: ColumnProfile,
   timeColumn: string | undefined,
 ): { expr: MeasureExpr } | { skip: string } {
+  if (
+    timeColumn &&
+    /growth/i.test(profile.column) &&
+    /(?:_pct|percent|percentage)/i.test(profile.column)
+  ) {
+    return {
+      expr: { kind: 'last_value', column: profile.column, orderBy: timeColumn },
+    };
+  }
   switch (profile.agg) {
     case 'additive':
       return { expr: { kind: 'sum', column: profile.column } };
@@ -292,6 +301,21 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
         if (!measures.some((existing) => existing.key === measure.key))
           measures.push(measure);
       }
+    }
+    if (columns.has('pl_amount_usd') && columns.has('total_revenue_usd')) {
+      const measure: SemanticMeasure = {
+        key: 'pl_amount_pct_of_revenue',
+        label: 'P&L Amount % of Revenue',
+        unit: '%',
+        sourceTable: table,
+        expr: {
+          kind: 'ratio_of_sums',
+          numerator: 'pl_amount_usd',
+          denominator: 'total_revenue_usd',
+        },
+      };
+      if (!measures.some((existing) => existing.key === measure.key))
+        measures.push(measure);
     }
   }
 

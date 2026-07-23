@@ -20,6 +20,9 @@ jobs:
     name: Verify before deploy
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # CI only parses/generates the schema; it does not connect to this database.
+      DIRECT_URL: postgresql://prisma:prisma@localhost:5432/prisma
 
     steps:
       - name: Checkout
@@ -39,13 +42,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build database package
+        run: pnpm --filter @repo/db build
+
       - name: Type-check API
         run: pnpm --filter api build
 
       - name: Validate database contracts
-        env:
-          # Validation only parses the schema; it does not connect to this database.
-          DIRECT_URL: postgresql://prisma:prisma@localhost:5432/prisma
         run: pnpm --filter @repo/db exec prisma validate
 
       - name: Run Prism policy and contract evaluations

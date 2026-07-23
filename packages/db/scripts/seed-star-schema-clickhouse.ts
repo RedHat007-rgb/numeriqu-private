@@ -57,7 +57,7 @@ type Scope = {
   org_name: string;
 };
 type ColumnKind = 'string' | 'uint' | 'float' | 'date';
-type ColumnSpec = { source: string; name: string; kind: ColumnKind };
+type ColumnSpec = { source: string; name: string; kind: ColumnKind; nullable: boolean };
 type TableSpec = { sheet: string; table: string; columns: ColumnSpec[]; orderBy: string };
 type CHClient = ReturnType<typeof createClickHouseClient>;
 
@@ -123,7 +123,11 @@ function inferKind(header: string, records: Array<Record<string, unknown>>): Col
   }
   return 'string';
 }
-const ddlFor = (k: ColumnKind) => (k === 'string' ? 'String' : k === 'uint' ? 'UInt64' : k === 'float' ? 'Float64' : 'Date');
+const isBlank = (v: unknown) => v === null || v === undefined || v === '';
+const ddlFor = (k: ColumnKind, nullable = false) => {
+  const base = k === 'string' ? 'String' : k === 'uint' ? 'UInt64' : k === 'float' ? 'Float64' : 'Date';
+  return nullable ? `Nullable(${base})` : base;
+};
 
 function toUInt(v: unknown): number {
   if (v === null || v === undefined || v === '') return 0;
@@ -147,8 +151,16 @@ function toDateOnly(v: unknown): string {
   const d = new Date(t);
   return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : '1970-01-01';
 }
-const coerce = (v: unknown, k: ColumnKind) =>
-  k === 'uint' ? toUInt(v) : k === 'float' ? toFloat(v) : k === 'date' ? toDateOnly(v) : toText(v);
+const coerce = (v: unknown, column: ColumnSpec) => {
+  if (column.nullable && isBlank(v)) return null;
+  return column.kind === 'uint'
+    ? toUInt(v)
+    : column.kind === 'float'
+      ? toFloat(v)
+      : column.kind === 'date'
+        ? toDateOnly(v)
+        : toText(v);
+};
 
 // ── workbook → table specs (fully generic) ─────────────────────────────────────
 function extractWorkbook(xlsxPath: string): WorkbookDump {
@@ -164,7 +176,12 @@ function buildTableSpecs(workbook: WorkbookDump, prefix: string): TableSpec[] {
   const specs: TableSpec[] = [];
   for (const [sheet, { headers, records }] of Object.entries(workbook.sheets)) {
     if (!headers?.length) continue;
-    const columns: ColumnSpec[] = headers.map((h) => ({ source: h, name: snake(h), kind: inferKind(h, records) }));
+    const columns: ColumnSpec[] = headers.map((h) => ({
+      source: h,
+      name: snake(h),
+      kind: inferKind(h, records),
+      nullable: records.some((record) => isBlank(record[h])),
+    }));
     const names = new Set(columns.map((c) => c.name));
     const orderBy = names.has('date_key') ? 'date_key' : columns[0]!.name;
     specs.push({ sheet, table: `${prefix}_${snake(sheet)}`, columns, orderBy });
@@ -183,13 +200,13 @@ function prepareRows(spec: TableSpec, records: Array<Record<string, unknown>>, s
       org_name: scope.org_name,
       source_dataset: SOURCE_TAG,
     };
-    for (const c of spec.columns) out[c.name] = coerce(record[c.source], c.kind);
+    for (const c of spec.columns) out[c.name] = coerce(record[c.source], c);
     return out;
   });
 }
 
 function rawTableDdl(db: string, spec: TableSpec): string {
-  const cols = spec.columns.map((c) => `  ${c.name} ${ddlFor(c.kind)}`).join(',\n');
+  const cols = spec.columns.map((c) => `  ${c.name} ${ddlFor(c.kind, c.nullable)}`).join(',\n');
   return `CREATE TABLE IF NOT EXISTS ${db}.${spec.table} (
   tenant_id String,
   user_id String DEFAULT '',
@@ -644,7 +661,15 @@ async function main() {
           file: absFilePath,
           prefix,
           org: { name: orgName, slug: orgSlug, externalOrgId },
-          rawTables: Object.fromEntries(specs.map((s) => [s.table, { rows: workbook.sheets[s.sheet]!.records.length, columns: s.columns.map((c) => `${c.name}:${c.kind}`) }])),
+          rawTables: Object.fromEntries(
+            specs.map((s) => [
+              s.table,
+              {
+                rows: workbook.sheets[s.sheet]!.records.length,
+                columns: s.columns.map((c) => `${c.name}:${ddlFor(c.kind, c.nullable)}`),
+              },
+            ]),
+          ),
         },
         null,
         2,
@@ -666,7 +691,18 @@ async function main() {
   for (const spec of specs) {
     await run(client, rawTableDdl(db, spec));
     // Converge existing tables additively (safe re-run).
-    for (const c of spec.columns) await run(client, `ALTER TABLE ${db}.${spec.table} ADD COLUMN IF NOT EXISTS ${c.name} ${ddlFor(c.kind)}`);
+    for (const c of spec.columns) {
+      await run(
+        client,
+        `ALTER TABLE ${db}.${spec.table} ADD COLUMN IF NOT EXISTS ${c.name} ${ddlFor(c.kind, c.nullable)}`,
+      );
+      // Nullable is monotonic for shared raw tables: once a workbook contains a
+      // blank, keep the column nullable so a later tenant load cannot erase that
+      // capability. Non-nullable columns are never narrowed on a subsequent run.
+      if (c.nullable) {
+        await run(client, `ALTER TABLE ${db}.${spec.table} MODIFY COLUMN ${c.name} ${ddlFor(c.kind, true)}`);
+      }
+    }
     await wipeScope(client, db, spec.table, scope);
   }
   const inserted: Record<string, number> = {};

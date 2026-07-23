@@ -31,7 +31,13 @@ export type CubePlan =
   | { ok: true; cube: Cube; spec: EngineChartSpec }
   | { ok: false; reasons: string[] };
 
-const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
+const tokens = (s: string) =>
+  new Set(
+    s
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length > 2),
+  );
 
 /**
  * Whether the user actually asked to group by this dimension. True when the
@@ -58,7 +64,10 @@ function dimensionRequested(
   // (e.g. a "Net Activity Cash Flow" measure shares "activity/cash/flow" with the
   // cash_flow_activity dimension). The measure-word exclusion below is ONLY for the
   // ambiguous no-"by" case (e.g. "total revenue" must not split by revenue_category).
-  const explicitGrouping = /\b(?:by|per|across|group(?:ed)?\s+by|broken\s+down\s+by|split\s+by|for\s+each)\b/i.test(question);
+  const explicitGrouping =
+    /\b(?:by|per|across|group(?:ed)?\s+by|broken\s+down\s+by|split\s+by|for\s+each)\b/i.test(
+      question,
+    );
   if (explicitGrouping && dimNamed) return true;
   // Words that belong to the SELECTED measure(s) — a dimension that merely shares
   // one of these ("revenue" in both "total revenue" and "revenue_category") is NOT
@@ -75,12 +84,19 @@ function dimensionRequested(
   // This still preserves "rank cost categories" and "revenue by category".
   const categoryIdentityMissing =
     dimWords.includes('category') && !qWords.has('category');
-  const distinctive = dimWords.filter((w) => qWords.has(w) && !measureWords.has(w));
+  const distinctive = dimWords.filter(
+    (w) => qWords.has(w) && !measureWords.has(w),
+  );
   if (!categoryIdentityMissing && distinctive.length > 0) return true; // user named the dimension distinctly
   // Otherwise: only keep if the user named a SPECIFIC multi-word value of it
   // (e.g. "JP Morgan") — not a lone measure-word collision with a sample value.
   const nameOnly = fieldMatchScore(question, dim.key, dim.label);
-  const withSamples = fieldMatchScore(question, dim.key, dim.label, dim.sampleValues);
+  const withSamples = fieldMatchScore(
+    question,
+    dim.key,
+    dim.label,
+    dim.sampleValues,
+  );
   return withSamples > nameOnly && withSamples >= 6;
 }
 
@@ -97,11 +113,17 @@ export function stripUnrequestedGrouping(
   model: SemanticModel,
 ): EngineChartSpec {
   let next = spec;
-  if (next.dimensionKey && !dimensionRequested(question, model, next.dimensionKey, spec.measureKeys)) {
+  if (
+    next.dimensionKey &&
+    !dimensionRequested(question, model, next.dimensionKey, spec.measureKeys)
+  ) {
     const { dimensionKey: _drop, ...rest } = next;
     next = rest;
   }
-  if (next.breakdownKey && !dimensionRequested(question, model, next.breakdownKey, spec.measureKeys)) {
+  if (
+    next.breakdownKey &&
+    !dimensionRequested(question, model, next.breakdownKey, spec.measureKeys)
+  ) {
     const { breakdownKey: _drop, ...rest } = next;
     next = rest;
   }
@@ -114,7 +136,11 @@ export function stripUnrequestedGrouping(
  * substitution (e.g. a cube that only has "org_name" mapping it to "business
  * unit") — which is exactly the mis-route we must avoid.
  */
-function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number {
+function scorePlan(
+  question: string,
+  cube: Cube,
+  spec: EngineChartSpec,
+): number {
   const qt = tokens(question);
   let score = 0;
   score += fieldMatchScore(question, cube.view, cube.view);
@@ -129,18 +155,33 @@ function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number 
       // split. A specific multi-word value match (e.g. "JP Morgan") stays neutral;
       // an unrequested grouping is penalized so the faithful, ungrouped plan wins.
       const nameScore = fieldMatchScore(question, dim.key, dim.label);
-      const withSamples = fieldMatchScore(question, dim.key, dim.label, dim.sampleValues);
+      const withSamples = fieldMatchScore(
+        question,
+        dim.key,
+        dim.label,
+        dim.sampleValues,
+      );
       if (nameScore > 0) score += 3 * nameScore;
-      else if (withSamples >= 6) score += 0; // user named a specific value → legitimate filter/group
+      else if (withSamples >= 6)
+        score += 0; // user named a specific value → legitimate filter/group
       else score -= 6; // grouping the user never asked for → discourage
     }
   }
-  if (spec.timeGrain && [...qt].some((w) => ['month', 'monthly', 'trend', 'quarter', 'year', 'time', 'over'].includes(w))) {
+  if (
+    spec.timeGrain &&
+    [...qt].some((w) =>
+      ['month', 'monthly', 'trend', 'quarter', 'year', 'time', 'over'].includes(
+        w,
+      ),
+    )
+  ) {
     score += 2;
   }
   // Measures whose key words appear in the question are a mild positive signal.
   for (const mk of spec.measureKeys) {
-    const measure = cube.model.measures.find((candidate) => candidate.key === mk);
+    const measure = cube.model.measures.find(
+      (candidate) => candidate.key === mk,
+    );
     if (measure) score += fieldMatchScore(question, measure.key, measure.label);
   }
   // Strongly prefer a cube that actually CONTAINS a dimension the user named by
@@ -168,7 +209,8 @@ function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number 
   // On equal lexical coverage, prefer the narrower analytic cube. This breaks
   // ties in favor of a purpose-built summary view over a wide raw ledger without
   // encoding any dataset, question, measure, or dimension name.
-  score += 1 / Math.max(1, cube.model.measures.length + cube.model.dimensions.length);
+  score +=
+    1 / Math.max(1, cube.model.measures.length + cube.model.dimensions.length);
   return score;
 }
 
@@ -179,8 +221,10 @@ function scorePlan(question: string, cube: Cube, spec: EngineChartSpec): number 
  */
 function cubeLexScore(question: string, cube: Cube): number {
   let s = fieldMatchScore(question, cube.view, cube.view);
-  for (const m of cube.model.measures) s += fieldMatchScore(question, m.key, m.label);
-  for (const d of cube.model.dimensions) s += fieldMatchScore(question, d.key, d.label, d.sampleValues);
+  for (const m of cube.model.measures)
+    s += fieldMatchScore(question, m.key, m.label);
+  for (const d of cube.model.dimensions)
+    s += fieldMatchScore(question, d.key, d.label, d.sampleValues);
   return s;
 }
 
@@ -191,7 +235,12 @@ function cubeLexScore(question: string, cube: Cube): number {
  * ambiguous (<MIN) we fall back to ALL cubes so a semantically-right-but-lexically
  * -silent cube is never dropped. Pure/deterministic — safe to unit-test.
  */
-export function preselectCubes(question: string, cubes: Cube[], max = 12, min = 3): Cube[] {
+export function preselectCubes(
+  question: string,
+  cubes: Cube[],
+  max = 12,
+  min = 3,
+): Cube[] {
   if (cubes.length <= min) return cubes;
   const positive = cubes
     .map((cube) => ({ cube, s: cubeLexScore(question, cube) }))
@@ -212,11 +261,21 @@ export async function planAcrossCubes(
   callLlm: LlmCaller,
 ): Promise<CubePlan> {
   const reasons: string[] = [];
-  const candidates: Array<{ cube: Cube; spec: EngineChartSpec; score: number }> = [];
+  const candidates: Array<{
+    cube: Cube;
+    spec: EngineChartSpec;
+    score: number;
+  }> = [];
 
   // Only LLM-plan the cubes lexically relevant to the question — the per-cube LLM
   // call is the dominant cost. Falls back to all cubes when the match is ambiguous.
-  const shortlist = preselectCubes(question, cubes);
+  // Keep the model-facing surface bounded. Four independently validated cubes
+  // are enough to resolve lexical ties without multiplying latency and spend by
+  // every dataset view. A question with no catalog overlap is unsupported; do
+  // not ask a model to invent a mapping across the entire physical schema.
+  const shortlist = preselectCubes(question, cubes, 4, 1).filter(
+    (cube) => cubeLexScore(question, cube) > 0,
+  );
 
   // Exact X-versus-Y plans are cheap and catalog-validated, so evaluate them
   // across every cube before lexical shortlisting. A wide cross-domain cube can
@@ -238,15 +297,30 @@ export async function planAcrossCubes(
   // loosely related LLM plan (for example invoice/outstanding-payable for a
   // revenue/payroll request) compete on dimension vocabulary and win. The
   // deterministic candidates already satisfy both axes and all groupings.
-  for (const cube of deterministicViews.size ? [] : shortlist) {
-    if (deterministicViews.has(cube.view)) continue;
-    let r: PlanResult;
-    try {
-      r = await planChart(question, cube.model, callLlm);
-    } catch (e) {
-      reasons.push(`${cube.view}: ${(e as Error).message}`);
+  const plannedCubes = deterministicViews.size
+    ? []
+    : shortlist.filter((cube) => !deterministicViews.has(cube.view));
+  const planned = await Promise.all(
+    plannedCubes.map(async (cube) => {
+      try {
+        return {
+          ok: true as const,
+          cube,
+          result: await planChart(question, cube.model, callLlm),
+        };
+      } catch (error) {
+        return { ok: false as const, cube, error: error as Error };
+      }
+    }),
+  );
+
+  for (const item of planned) {
+    const cube = item.cube;
+    if (!item.ok) {
+      reasons.push(`${cube.view}: ${item.error.message}`);
       continue;
     }
+    const r: PlanResult = item.result;
     if (!r.ok) {
       reasons.push(`${cube.view}: ${r.reason}`);
       continue;

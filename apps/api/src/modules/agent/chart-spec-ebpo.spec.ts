@@ -12,10 +12,7 @@ const DB = 'analytics';
 const noRows = async () => [] as Array<Record<string, unknown>>;
 
 // Convenience: compile and assert success, returning the SQL.
-async function sqlFor(
-  spec: ChartSpec,
-  runRows = noRows,
-): Promise<string> {
+async function sqlFor(spec: ChartSpec, runRows = noRows): Promise<string> {
   const r = await compileEbpoSpec(spec, DB, runRows);
   if (!r.ok) throw new Error(`expected build, got refusal: ${r.refusal}`);
   return r.sql;
@@ -58,21 +55,21 @@ describe('EBPO catalog — view resolution', () => {
     expect(resolveEbpoView('cost_per_employee', null, null)?.name).toBe(
       'v_ebpo_business_unit_efficiency',
     );
-    expect(resolveEbpoView('cost_per_employee', 'business_unit', null)?.name).toBe(
-      'v_ebpo_business_unit_efficiency',
-    );
+    expect(
+      resolveEbpoView('cost_per_employee', 'business_unit', null)?.name,
+    ).toBe('v_ebpo_business_unit_efficiency');
   });
 
-  test('cost per employee by month can use a view that exposes the precomputed monthly metric directly', () => {
-    expect(resolveEbpoView('cost_per_employee', 'month', null)?.name).toBe(
-      'v_ebpo_department_efficiency_monthly',
-    );
+  test('cost per employee by month is refused when cost and headcount do not share that grain', () => {
+    // The similarly named monthly source column is payroll/headcount, not total
+    // cost/headcount. Using it would silently change the financial definition.
+    expect(resolveEbpoView('cost_per_employee', 'month', null)).toBeNull();
   });
 
   test('derived overtime to payroll percentage resolves to the payroll view', () => {
-    expect(resolveEbpoView('overtime_to_payroll_pct', 'department', null)?.name).toBe(
-      'v_ebpo_payroll_monthly',
-    );
+    expect(
+      resolveEbpoView('overtime_to_payroll_pct', 'department', null)?.name,
+    ).toBe('v_ebpo_payroll_monthly');
   });
 
   test('employee count by department avoids the monthly payroll view', () => {
@@ -86,10 +83,18 @@ describe('EBPO catalog — view resolution', () => {
     // ebpo_fact_revenue now carries geography_key + department_key (added 2026-07-06),
     // so total_revenue resolves against region/country/delivery_center via the geography
     // view and against department via the department view. These are REAL per-slice values.
-    expect(resolveEbpoView('total_revenue', 'country', null)?.name).toBe('v_ebpo_revenue_by_geography_monthly');
-    expect(resolveEbpoView('total_revenue', 'region', null)?.name).toBe('v_ebpo_revenue_by_geography_monthly');
-    expect(resolveEbpoView('total_revenue', 'delivery_center', null)?.name).toBe('v_ebpo_revenue_by_geography_monthly');
-    expect(resolveEbpoView('total_revenue', 'department', null)?.name).toBe('v_ebpo_revenue_by_department_monthly');
+    expect(resolveEbpoView('total_revenue', 'country', null)?.name).toBe(
+      'v_ebpo_revenue_by_geography_monthly',
+    );
+    expect(resolveEbpoView('total_revenue', 'region', null)?.name).toBe(
+      'v_ebpo_revenue_by_geography_monthly',
+    );
+    expect(
+      resolveEbpoView('total_revenue', 'delivery_center', null)?.name,
+    ).toBe('v_ebpo_revenue_by_geography_monthly');
+    expect(resolveEbpoView('total_revenue', 'department', null)?.name).toBe(
+      'v_ebpo_revenue_by_department_monthly',
+    );
     // City is still NOT carried on the revenue fact (revenue geography stops at delivery center).
     expect(resolveEbpoView('total_revenue', 'city', null)).toBeNull();
     // and there is still no fabricated allocated_revenue measure
@@ -99,14 +104,15 @@ describe('EBPO catalog — view resolution', () => {
   test('OPERATIONS metrics still resolve by delivery center / country (real relationship)', () => {
     // operations are genuinely keyed by delivery_center (→ geography), so these resolve to a
     // real operations view (v_ebpo_operations_monthly wins as the dedicated provider).
-    expect(resolveEbpoView('calls_handled', 'delivery_center', null)?.name).toMatch(
+    expect(
+      resolveEbpoView('calls_handled', 'delivery_center', null)?.name,
+    ).toMatch(
       /^v_ebpo_(operations_monthly|delivery_center_efficiency_monthly)$/,
     );
     expect(resolveEbpoView('utilization_pct', 'country', null)?.name).toMatch(
       /^v_ebpo_(operations_monthly|delivery_center_efficiency_monthly)$/,
     );
   });
-
 });
 
 describe('EBPO compiler — aggregation correctness', () => {
@@ -128,25 +134,46 @@ describe('EBPO compiler — aggregation correctness', () => {
   });
 
   test('flow measure uses SUM', async () => {
-    const sql = await sqlFor(base({ measure: 'total_revenue', dimension: 'business_unit', chartType: 'bar' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'total_revenue',
+        dimension: 'business_unit',
+        chartType: 'bar',
+      }),
+    );
     expect(sql).toMatch(/sum\(total_revenue_usd\)/);
     expect(sql).not.toMatch(/avg\(total_revenue_usd\)/);
     expect(sql).toContain('analytics.v_ebpo_revenue_by_business_unit');
   });
 
   test('ratio measure uses RATIO-OF-SUMS, never a naive SUM of the ratio', async () => {
-    // Gross Margin % now follows the requested DAX:
-    // [ (Total Revenue - Total Expenses) / Total Revenue ] * 0.01
-    // with Total Expenses derived recursively as Total Cost + Total Payroll.
-    const sql = await sqlFor(base({ measure: 'gross_margin_pct', dimension: 'month', chartType: 'line' }));
-    expect(sql).toMatch(/\(sum\(total_revenue_usd\) - \(sum\(total_cost_usd\) \+ sum\(total_payroll_usd\)\)\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*1/);
+    // Gross margin is gross profit divided by revenue. Net/EBITDA-style margin
+    // remains a separate governed measure and must not be mislabeled as gross margin.
+    const sql = await sqlFor(
+      base({
+        measure: 'gross_margin_pct',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
+    expect(sql).toMatch(
+      /sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100/,
+    );
     expect(sql).not.toMatch(/avg\(gross_margin_pct\)/);
     expect(sql).not.toMatch(/sum\(gross_margin_pct\)/);
   });
 
   test('gross_profit_pct stays cost-based as gross profit over revenue', async () => {
-    const sql = await sqlFor(base({ measure: 'gross_profit_pct', dimension: 'month', chartType: 'line' }));
-    expect(sql).toMatch(/sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100/);
+    const sql = await sqlFor(
+      base({
+        measure: 'gross_profit_pct',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
+    expect(sql).toMatch(
+      /sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100/,
+    );
   });
 
   test('overtime to payroll percentage uses RATIO-OF-SUMS', async () => {
@@ -157,24 +184,40 @@ describe('EBPO compiler — aggregation correctness', () => {
         chartType: 'bar',
       }),
     );
-    expect(sql).toMatch(/sum\(total_overtime_usd\)\s*\/\s*nullIf\(sum\(total_payroll_usd\), 0\)\s*\*\s*100/);
+    expect(sql).toMatch(
+      /sum\(total_overtime_usd\)\s*\/\s*nullIf\(sum\(total_payroll_usd\), 0\)\s*\*\s*100/,
+    );
     expect(sql).not.toMatch(/avg\(overtime_to_payroll_pct\)/);
     expect(sql).not.toMatch(/sum\(overtime_to_payroll_pct\)/);
   });
 
   test('cash balance uses MAX (matches DAX MAX(CashBalance))', async () => {
-    const sql = await sqlFor(base({ measure: 'cash_balance', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({ measure: 'cash_balance', dimension: 'month', chartType: 'line' }),
+    );
     expect(sql).toMatch(/max\(cash_balance_usd\)/);
   });
 
   test('stock measure grouped by a non-time dim restricts to the latest period', async () => {
-    const sql = await sqlFor(base({ measure: 'closing_balance', dimension: 'account', chartType: 'bar' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'closing_balance',
+        dimension: 'account',
+        chartType: 'bar',
+      }),
+    );
     expect(sql).toContain('period_date = (SELECT max(period_date)');
     expect(sql).toMatch(/sum\(closing_balance_usd\)/);
   });
 
   test('stock measure over time shows the monthly balance (no latest-period filter)', async () => {
-    const sql = await sqlFor(base({ measure: 'closing_balance', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'closing_balance',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
     expect(sql).not.toContain('period_date = (SELECT max(period_date)');
   });
 
@@ -196,7 +239,9 @@ describe('EBPO compiler — aggregation correctness', () => {
     if (!r.ok) {
       expect(r.refusal).toMatch(/trustworthy expense breakdown by account/i);
       expect(r.refusal).toMatch(/trial balance/i);
-      expect(r.refusal).toMatch(/Total Cost, Total Payroll, or Total Expenses/i);
+      expect(r.refusal).toMatch(
+        /Total Cost, Total Payroll, or Total Expenses/i,
+      );
     }
   });
 
@@ -205,7 +250,13 @@ describe('EBPO compiler — aggregation correctness', () => {
   test.each(['ar_outstanding', 'ap_outstanding'])(
     '%s sums across snapshots (matches PowerBI DAX), no latest-period filter',
     async (measure) => {
-      const sql = await sqlFor(base({ measure, dimension: measure === 'ar_outstanding' ? 'client' : 'vendor', chartType: 'bar' }));
+      const sql = await sqlFor(
+        base({
+          measure,
+          dimension: measure === 'ar_outstanding' ? 'client' : 'vendor',
+          chartType: 'bar',
+        }),
+      );
       expect(sql).not.toContain('period_date = (SELECT max(period_date)');
       expect(sql).toMatch(/sum\(outstanding_balance_usd\)/);
     },
@@ -225,10 +276,20 @@ describe('EBPO compiler — shapes', () => {
   });
 
   test('KPI (no dimension) selects a single value with no GROUP BY', async () => {
-    const r = await compileEbpoSpec({ measure: 'total_revenue', dimension: '', chartType: 'kpi' } as ChartSpec, DB, noRows);
+    const r = await compileEbpoSpec(
+      {
+        measure: 'total_revenue',
+        dimension: '',
+        chartType: 'kpi',
+      } as ChartSpec,
+      DB,
+      noRows,
+    );
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.sql).toMatch(/SELECT round\(sum\(total_revenue_usd\), 0\) AS value/);
+      expect(r.sql).toMatch(
+        /SELECT round\(sum\(total_revenue_usd\), 0\) AS value/,
+      );
       expect(r.sql).not.toContain('GROUP BY');
     }
   });
@@ -239,7 +300,12 @@ describe('EBPO compiler — shapes', () => {
       { v: 'Healthcare BPO', m: 30 },
     ];
     const sql = await sqlFor(
-      base({ measure: 'total_revenue', dimension: 'month', breakdown: 'business_unit', chartType: 'stacked_bar' }),
+      base({
+        measure: 'total_revenue',
+        dimension: 'month',
+        breakdown: 'business_unit',
+        chartType: 'stacked_bar',
+      }),
       runRows,
     );
     expect(sql).toMatch(/sumIf\(total_revenue_usd, .*Banking BPO/);
@@ -248,13 +314,23 @@ describe('EBPO compiler — shapes', () => {
   });
 
   test('topN and value sort are honored for ranking charts', async () => {
-    const sql = await sqlFor(base({ measure: 'total_revenue', dimension: 'client', chartType: 'bar', topN: 5, sort: 'value_desc' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'total_revenue',
+        dimension: 'client',
+        chartType: 'bar',
+        topN: 5,
+        sort: 'value_desc',
+      }),
+    );
     expect(sql).toContain('LIMIT 5');
     expect(sql).toContain('ORDER BY value DESC');
   });
 
   test('time dimension always orders chronologically', async () => {
-    const sql = await sqlFor(base({ measure: 'total_revenue', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({ measure: 'total_revenue', dimension: 'month', chartType: 'line' }),
+    );
     // Most-recent-N wrap: the inner query takes the latest periods (ORDER BY __ord
     // DESC) then the outer re-sorts ascending for display. __ord is the month key, so
     // the final series is chronological.
@@ -263,8 +339,16 @@ describe('EBPO compiler — shapes', () => {
   });
 
   test('employee count by department compiles against a non-time headcount view', async () => {
-    const sql = await sqlFor(base({ measure: 'employee_count', dimension: 'department', chartType: 'bar' }));
-    expect(sql).toMatch(/analytics\.v_ebpo_(employee_headcount|salary_by_dept_grade)/);
+    const sql = await sqlFor(
+      base({
+        measure: 'employee_count',
+        dimension: 'department',
+        chartType: 'bar',
+      }),
+    );
+    expect(sql).toMatch(
+      /analytics\.v_ebpo_(employee_headcount|salary_by_dept_grade)/,
+    );
     expect(sql).not.toContain('v_ebpo_payroll_monthly');
     expect(sql).not.toContain('period_date = (SELECT max(period_date)');
   });
@@ -273,75 +357,119 @@ describe('EBPO compiler — shapes', () => {
     // ebpo_fact_revenue now carries geography_key + department_key, so these resolve to
     // genuine per-slice revenue/cost/margin — not fabricated, not company-total replication.
     const country = await compileEbpoSpec(
-      { measure: 'total_revenue', dimension: 'country', chartType: 'bar' } as ChartSpec,
+      {
+        measure: 'total_revenue',
+        dimension: 'country',
+        chartType: 'bar',
+      } as ChartSpec,
       DB,
       noRows,
     );
     expect(country.ok).toBe(true);
     if (country.ok) {
-      expect(country.sql).toContain('analytics.v_ebpo_revenue_by_geography_monthly');
+      expect(country.sql).toContain(
+        'analytics.v_ebpo_revenue_by_geography_monthly',
+      );
       expect(country.sql).toContain('country');
     }
 
     const region = await compileEbpoSpec(
-      { measure: 'total_revenue', dimension: 'region', chartType: 'bar' } as ChartSpec,
+      {
+        measure: 'total_revenue',
+        dimension: 'region',
+        chartType: 'bar',
+      } as ChartSpec,
       DB,
       noRows,
     );
     expect(region.ok).toBe(true);
 
     const dept = await compileEbpoSpec(
-      { measure: 'total_cost', dimension: 'department', chartType: 'bar' } as ChartSpec,
+      {
+        measure: 'total_cost',
+        dimension: 'department',
+        chartType: 'bar',
+      } as ChartSpec,
       DB,
       noRows,
     );
     expect(dept.ok).toBe(true);
     if (dept.ok) {
-      expect(dept.sql).toContain('analytics.v_ebpo_revenue_by_department_monthly');
+      expect(dept.sql).toContain(
+        'analytics.v_ebpo_revenue_by_department_monthly',
+      );
     }
   });
 
   test('operations by delivery center compiles against an operations view', async () => {
     const sql = await sqlFor(
-      base({ measure: 'calls_handled', dimension: 'delivery_center', chartType: 'bar' }),
+      base({
+        measure: 'calls_handled',
+        dimension: 'delivery_center',
+        chartType: 'bar',
+      }),
     );
-    expect(sql).toMatch(/analytics\.v_ebpo_(operations_monthly|delivery_center_efficiency_monthly)/);
+    expect(sql).toMatch(
+      /analytics\.v_ebpo_(operations_monthly|delivery_center_efficiency_monthly)/,
+    );
   });
-
 });
 
 describe('EBPO compiler — honest refusals', () => {
   test('unavailable concept is refused, not fabricated', async () => {
-    const r = await compileEbpoSpec({ measure: 'budget', dimension: 'month', chartType: 'line' } as ChartSpec, DB, noRows);
+    const r = await compileEbpoSpec(
+      { measure: 'budget', dimension: 'month', chartType: 'line' } as ChartSpec,
+      DB,
+      noRows,
+    );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.refusal).toMatch(/budget/i);
   });
 
   test('unknown measure is refused', async () => {
-    const r = validateEbpoSpec({ measure: 'made_up_kpi', dimension: 'month', chartType: 'line' } as ChartSpec);
+    const r = validateEbpoSpec({
+      measure: 'made_up_kpi',
+      dimension: 'month',
+      chartType: 'line',
+    } as ChartSpec);
     expect(r?.ok).toBe(false);
   });
 
-  test('a RATIO measure replicates across an unrelated dimension (PowerBI parity)', async () => {
-    // csat_pct (an average %) has no per-client view but resolves company-wide and client
-    // categories can be enumerated → the compiler replicates the company AVERAGE across
-    // clients (a flat benchmark reads sensibly for an average). Allowed, not refused.
-    const r = validateEbpoSpec({ measure: 'csat_pct', dimension: 'client', chartType: 'bar' } as ChartSpec);
-    expect(r).toBeNull();
+  test('a RATIO measure is refused across an unrelated dimension', async () => {
+    // Repeating a company-wide CSAT value for every client fabricates a client-level
+    // relationship. A benchmark belongs in chart metadata, not duplicated data rows.
+    const r = validateEbpoSpec({
+      measure: 'csat_pct',
+      dimension: 'client',
+      chartType: 'bar',
+    } as ChartSpec);
+    expect(r?.ok).toBe(false);
   });
 
   test('an ADDITIVE measure does NOT replicate across an unrelated dimension', async () => {
     // asset_cost / cash_balance are sum/stock measures: replicating the company TOTAL onto
     // every category is nonsense ("asset cost by client" = the whole company on every
     // client), so an unrelated breakdown is refused, not replicated.
-    const assets = validateEbpoSpec({ measure: 'asset_cost', dimension: 'client', chartType: 'bar' } as ChartSpec);
+    const assets = validateEbpoSpec({
+      measure: 'asset_cost',
+      dimension: 'client',
+      chartType: 'bar',
+    } as ChartSpec);
     expect(assets?.ok).toBe(false);
-    const cash = validateEbpoSpec({ measure: 'cash_balance', dimension: 'client', chartType: 'bar' } as ChartSpec);
+    const cash = validateEbpoSpec({
+      measure: 'cash_balance',
+      dimension: 'client',
+      chartType: 'bar',
+    } as ChartSpec);
     expect(cash?.ok).toBe(false);
   });
 
   test('a measure absent from the catalog is still refused (no fabrication)', async () => {
-    const r = validateEbpoSpec({ measure: 'headcount_forecast', dimension: 'client', chartType: 'bar' } as ChartSpec);
+    const r = validateEbpoSpec({
+      measure: 'headcount_forecast',
+      dimension: 'client',
+      chartType: 'bar',
+    } as ChartSpec);
     expect(r?.ok).toBe(false);
   });
 });
@@ -353,8 +481,12 @@ describe('EBPO catalog — derived CFO ratios', () => {
   test.each([['working_capital', 'working_capital_usd']])(
     '%s resolves to the canonical cfo-ratios view by month',
     async (measure, column) => {
-      expect(resolveEbpoView(measure, 'month', null)?.name).toBe('v_ebpo_cfo_ratios_monthly');
-      const sql = await sqlFor(base({ measure, dimension: 'month', chartType: 'line' }));
+      expect(resolveEbpoView(measure, 'month', null)?.name).toBe(
+        'v_ebpo_cfo_ratios_monthly',
+      );
+      const sql = await sqlFor(
+        base({ measure, dimension: 'month', chartType: 'line' }),
+      );
       expect(sql).toContain('analytics.v_ebpo_cfo_ratios_monthly');
       expect(sql).toContain(column);
     },
@@ -366,26 +498,48 @@ describe('EBPO catalog — derived CFO ratios', () => {
   test.each([
     ['cost_to_income_pct', 'total_cost_usd', 'total_revenue_usd'],
     ['fcf_margin_pct', 'free_cash_flow_usd', 'total_revenue_usd'],
-    ['operating_cf_to_revenue_pct', 'operating_cash_flow_usd', 'total_revenue_usd'],
-  ])('%s compiles as ratio-of-sums of its base columns', async (measure, num, den) => {
-    const sql = await sqlFor(base({ measure, dimension: 'month', chartType: 'line' }));
-    expect(sql).toContain(`sum(${num})`);
-    expect(sql).toContain(`nullIf(sum(${den})`);
-    // must NOT average the precomputed percentage column
-    expect(sql).not.toContain(`avg(${measure})`);
-  });
+    [
+      'operating_cf_to_revenue_pct',
+      'operating_cash_flow_usd',
+      'total_revenue_usd',
+    ],
+  ])(
+    '%s compiles as ratio-of-sums of its base columns',
+    async (measure, num, den) => {
+      const sql = await sqlFor(
+        base({ measure, dimension: 'month', chartType: 'line' }),
+      );
+      expect(sql).toContain(`sum(${num})`);
+      expect(sql).toContain(`nullIf(sum(${den})`);
+      // must NOT average the precomputed percentage column
+      expect(sql).not.toContain(`avg(${measure})`);
+    },
+  );
 
   // Composite numerator: (revenue − cost − payroll) / revenue (ratio-of-sums, not avg).
   test('ebitda_style_margin_pct compiles as a composite ratio-of-sums', async () => {
-    const sql = await sqlFor(base({ measure: 'ebitda_style_margin_pct', dimension: 'month', chartType: 'line' }));
-    expect(sql).toContain('sum(total_revenue_usd) - sum(total_cost_usd) - sum(total_payroll_usd)');
+    const sql = await sqlFor(
+      base({
+        measure: 'ebitda_style_margin_pct',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
+    expect(sql).toContain(
+      'sum(total_revenue_usd) - sum(total_cost_usd) - sum(total_payroll_usd)',
+    );
     expect(sql).toContain('nullIf(sum(total_revenue_usd)');
     expect(sql).not.toContain('avg(ebitda_style_margin_pct)');
   });
 
   test('a ratio + base-measure combo resolves to a single view exposing both', async () => {
     const sql = await sqlFor(
-      base({ measure: 'ebitda_style_margin_pct', measures: ['ebitda_style_margin_pct', 'gross_margin_pct'], dimension: 'month', chartType: 'combo' }),
+      base({
+        measure: 'ebitda_style_margin_pct',
+        measures: ['ebitda_style_margin_pct', 'gross_margin_pct'],
+        dimension: 'month',
+        chartType: 'combo',
+      }),
     );
     // One FROM (no cross-view join); both series computed as ratio-of-sums.
     expect(sql.match(/FROM analytics\./g)?.length).toBe(1);
@@ -395,10 +549,18 @@ describe('EBPO catalog — derived CFO ratios', () => {
 
   test('receivables/revenue and payables/cost compile as ratios of sums', async () => {
     const arSql = await sqlFor(
-      base({ measure: 'ar_to_revenue_pct', dimension: 'month', chartType: 'line' }),
+      base({
+        measure: 'ar_to_revenue_pct',
+        dimension: 'month',
+        chartType: 'line',
+      }),
     );
     const apSql = await sqlFor(
-      base({ measure: 'ap_to_cost_pct', dimension: 'month', chartType: 'line' }),
+      base({
+        measure: 'ap_to_cost_pct',
+        dimension: 'month',
+        chartType: 'line',
+      }),
     );
     expect(arSql).toMatch(
       /sum\(ar_outstanding_usd\) \/ nullIf\(sum\(total_revenue_usd\), 0\) \* 100/,
@@ -434,23 +596,36 @@ describe('EBPO catalog — windowed YoY measure', () => {
     ['month', 12],
     ['quarter', 4],
     ['year', 1],
-  ])('revenue_yoy_pct by %s lags one year (%d periods) over aggregated revenue', async (dim, lag) => {
-    const sql = await sqlFor(base({ measure: 'revenue_yoy_pct', dimension: dim, chartType: 'line' }));
-    expect(sql).toContain(`ROWS BETWEEN ${lag} PRECEDING AND ${lag} PRECEDING`);
-    expect(sql).toContain('sum(total_revenue_usd)');
-    // must NOT fall back to averaging the precomputed per-month pct column
-    expect(sql).not.toContain('avg(revenue_yoy_pct)');
-  });
+  ])(
+    'revenue_yoy_pct by %s lags one year (%d periods) over aggregated revenue',
+    async (dim, lag) => {
+      const sql = await sqlFor(
+        base({ measure: 'revenue_yoy_pct', dimension: dim, chartType: 'line' }),
+      );
+      expect(sql).toContain(
+        `ROWS BETWEEN ${lag} PRECEDING AND ${lag} PRECEDING`,
+      );
+      expect(sql).toContain('sum(total_revenue_usd)');
+      // must NOT fall back to averaging the precomputed per-month pct column
+      expect(sql).not.toContain('avg(revenue_yoy_pct)');
+    },
+  );
 
   test('revenue_yoy_pct without a time axis is refused (needs month/quarter/year)', async () => {
-    const r = await compileEbpoSpec({ measure: 'revenue_yoy_pct', chartType: 'kpi' } as ChartSpec, DB, noRows);
+    const r = await compileEbpoSpec(
+      { measure: 'revenue_yoy_pct', chartType: 'kpi' } as ChartSpec,
+      DB,
+      noRows,
+    );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.refusal).toMatch(/time axis/i);
   });
 
   // Revenue LY = same period one year ago (DAX SAMEPERIODLASTYEAR), windowed.
   test('revenue_ly by month is the prior-year value, blank in the first year', async () => {
-    const sql = await sqlFor(base({ measure: 'revenue_ly', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({ measure: 'revenue_ly', dimension: 'month', chartType: 'line' }),
+    );
     expect(sql).toContain('ROWS BETWEEN 12 PRECEDING AND 12 PRECEDING');
     expect(sql).toContain('any(sum(total_revenue_usd))');
     // first year has no prior period → NULL (matches PowerBI blank), not a misleading 0
@@ -459,7 +634,9 @@ describe('EBPO catalog — windowed YoY measure', () => {
 
   // Revenue YTD = TOTALYTD: cumulative within the fiscal year, reset each year.
   test('revenue_ytd by month accumulates within the year (partitioned by year)', async () => {
-    const sql = await sqlFor(base({ measure: 'revenue_ytd', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({ measure: 'revenue_ytd', dimension: 'month', chartType: 'line' }),
+    );
     expect(sql).toContain('PARTITION BY toYear(');
     expect(sql).toContain('ROWS UNBOUNDED PRECEDING');
   });
@@ -497,14 +674,22 @@ describe('EBPO catalog — windowed YoY measure', () => {
 describe('EBPO catalog — DSO / DPO (ratio × 365)', () => {
   // DSO = DIVIDE([AR Outstanding],[Total Revenue]/365) = sum(AR)/sum(Rev)×365.
   test('dso_days compiles as AR/Revenue × 365 (ratio-of-sums, not avg)', async () => {
-    const sql = await sqlFor(base({ measure: 'dso_days', dimension: 'month', chartType: 'line' }));
-    expect(sql).toMatch(/sum\(ar_outstanding_usd\) \/ nullIf\(sum\(total_revenue_usd\), 0\) \* 365/);
+    const sql = await sqlFor(
+      base({ measure: 'dso_days', dimension: 'month', chartType: 'line' }),
+    );
+    expect(sql).toMatch(
+      /sum\(ar_outstanding_usd\) \/ nullIf\(sum\(total_revenue_usd\), 0\) \* 365/,
+    );
     expect(sql).not.toContain('avg(dso_days)');
   });
   // DPO = DIVIDE([AP Outstanding],[Total Cost]/365) = sum(AP)/sum(Cost)×365.
   test('dpo_days compiles as AP/Cost × 365 (ratio-of-sums, not avg)', async () => {
-    const sql = await sqlFor(base({ measure: 'dpo_days', dimension: 'month', chartType: 'line' }));
-    expect(sql).toMatch(/sum\(ap_outstanding_usd\) \/ nullIf\(sum\(total_cost_usd\), 0\) \* 365/);
+    const sql = await sqlFor(
+      base({ measure: 'dpo_days', dimension: 'month', chartType: 'line' }),
+    );
+    expect(sql).toMatch(
+      /sum\(ap_outstanding_usd\) \/ nullIf\(sum\(total_cost_usd\), 0\) \* 365/,
+    );
     expect(sql).not.toContain('avg(dpo_days)');
   });
 });
@@ -512,10 +697,17 @@ describe('EBPO catalog — DSO / DPO (ratio × 365)', () => {
 describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
   test('two measures by month → one view, two series columns, sum vs avg respected', async () => {
     const sql = await sqlFor(
-      base({ measure: 'total_revenue', measures: ['total_revenue', 'gross_margin_pct'], dimension: 'month', chartType: 'combo' }),
+      base({
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'gross_margin_pct'],
+        dimension: 'month',
+        chartType: 'combo',
+      }),
     );
     expect(sql).toMatch(/sum\(total_revenue_usd\).*AS "Total Revenue"/);
-    expect(sql).toMatch(/\(sum\(total_revenue_usd\) - \(sum\(total_cost_usd\) \+ sum\(total_payroll_usd\)\)\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*1.*AS "Gross Margin %"/);
+    expect(sql).toMatch(
+      /sum\(gross_margin_usd\)\s*\/\s*nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100.*AS "Gross Margin %"/,
+    );
     expect(sql).toMatch(/GROUP BY toStartOfMonth\(period_date\)/);
     // single FROM — all series come from one view
     expect((sql.match(/FROM analytics\./g) || []).length).toBe(1);
@@ -547,7 +739,12 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
 
   test('cash-flow components combo resolves to the cash-flow view', async () => {
     const sql = await sqlFor(
-      base({ measure: 'operating_cf', measures: ['operating_cf', 'investing_cf', 'financing_cf'], dimension: 'month', chartType: 'combo' }),
+      base({
+        measure: 'operating_cf',
+        measures: ['operating_cf', 'investing_cf', 'financing_cf'],
+        dimension: 'month',
+        chartType: 'combo',
+      }),
     );
     expect(sql).toContain('analytics.v_ebpo_cash_flow_monthly');
     expect(sql).toContain('"Operating Cash Flow"');
@@ -556,7 +753,12 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
 
   test('scatter emits name/x/y columns (measure-vs-measure per point)', async () => {
     const sql = await sqlFor(
-      base({ measure: 'total_revenue', measures: ['total_revenue', 'gross_margin'], dimension: 'client', chartType: 'scatter' }),
+      base({
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'gross_margin'],
+        dimension: 'client',
+        chartType: 'scatter',
+      }),
     );
     expect(sql).toMatch(/AS name/);
     expect(sql).toMatch(/sum\(total_revenue_usd\).*AS x/);
@@ -580,7 +782,12 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
 
   test('bubble adds a z (size) column', async () => {
     const sql = await sqlFor(
-      base({ measure: 'total_revenue', measures: ['total_revenue', 'collection_rate_pct', 'ar_outstanding'], dimension: 'client', chartType: 'bubble' }),
+      base({
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'collection_rate_pct', 'ar_outstanding'],
+        dimension: 'client',
+        chartType: 'bubble',
+      }),
     );
     expect(sql).toMatch(/AS x/);
     expect(sql).toMatch(/AS y/);
@@ -603,8 +810,14 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
 
   test('multi-measure with no dimension → KPI scorecard (one row per measure)', async () => {
     const r = await compileEbpoSpec(
-      { measure: 'total_revenue', measures: ['total_revenue', 'total_cost'], dimension: '', chartType: 'kpi' } as ChartSpec,
-      DB, noRows,
+      {
+        measure: 'total_revenue',
+        measures: ['total_revenue', 'total_cost'],
+        dimension: '',
+        chartType: 'kpi',
+      } as ChartSpec,
+      DB,
+      noRows,
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -639,11 +852,18 @@ describe('EBPO compiler — multi-measure (combo / dual-axis)', () => {
 
   test('measures with no common view are refused (no cross-view join guessed)', async () => {
     const r = await compileEbpoSpec(
-      { measure: 'avg_monthly_salary', measures: ['avg_monthly_salary', 'calls_handled'], dimension: 'month', chartType: 'combo' } as ChartSpec,
-      DB, noRows,
+      {
+        measure: 'avg_monthly_salary',
+        measures: ['avg_monthly_salary', 'calls_handled'],
+        dimension: 'month',
+        chartType: 'combo',
+      } as ChartSpec,
+      DB,
+      noRows,
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.refusal).toMatch(/same level of detail|can't be combined/i);
+    if (!r.ok)
+      expect(r.refusal).toMatch(/same level of detail|can't be combined/i);
   });
 });
 
@@ -657,8 +877,12 @@ describe('EBPO combo series roles — dual-axis by unit', () => {
       baseType: 'line',
       forceBar: ['total_revenue'], // user said "as bars"
     });
-    const margin = roles.find((r) => r.key === EBPO_MEASURES['gross_margin_pct']!.label)!;
-    const revenue = roles.find((r) => r.key === EBPO_MEASURES['total_revenue']!.label)!;
+    const margin = roles.find(
+      (r) => r.key === EBPO_MEASURES['gross_margin_pct']!.label,
+    )!;
+    const revenue = roles.find(
+      (r) => r.key === EBPO_MEASURES['total_revenue']!.label,
+    )!;
     expect(margin.format).toBe('percent');
     expect(margin.axis).toBe('left');
     expect(revenue.role).toBe('bar'); // honored "as bars"
@@ -678,8 +902,12 @@ describe('EBPO combo series roles — dual-axis by unit', () => {
       baseType: 'bar',
       forceLine: ['total_payroll'],
     });
-    const costPerEmployee = roles.find((r) => r.key === EBPO_MEASURES['cost_per_employee']!.label)!;
-    const payroll = roles.find((r) => r.key === EBPO_MEASURES['total_payroll']!.label)!;
+    const costPerEmployee = roles.find(
+      (r) => r.key === EBPO_MEASURES['cost_per_employee']!.label,
+    )!;
+    const payroll = roles.find(
+      (r) => r.key === EBPO_MEASURES['total_payroll']!.label,
+    )!;
     expect(costPerEmployee.axis).toBe('left');
     expect(payroll.role).toBe('line');
     expect(payroll.axis).toBe('right');
@@ -689,13 +917,33 @@ describe('EBPO combo series roles — dual-axis by unit', () => {
 describe('EBPO catalog — extended DAX measures (added, old ones preserved)', () => {
   // All 27 original DAX measures must remain registered after the extension.
   const ORIGINAL_27 = [
-    'ap_outstanding', 'ar_outstanding', 'avg_monthly_salary', 'utilization_pct',
-    'cash_balance', 'collection_rate_pct', 'csat_pct', 'dpo_days', 'dso_days',
-    'financing_cf', 'free_cash_flow', 'gross_margin', 'gross_margin_pct',
-    'investing_cf', 'operating_cf', 'payroll_to_revenue_pct', 'revenue_ly',
-    'revenue_yoy_pct', 'revenue_ytd', 'sla_compliance_pct', 'total_base_salary',
-    'total_benefits', 'total_bonus', 'total_cost', 'total_overtime',
-    'total_payroll', 'total_revenue',
+    'ap_outstanding',
+    'ar_outstanding',
+    'avg_monthly_salary',
+    'utilization_pct',
+    'cash_balance',
+    'collection_rate_pct',
+    'csat_pct',
+    'dpo_days',
+    'dso_days',
+    'financing_cf',
+    'free_cash_flow',
+    'gross_margin',
+    'gross_margin_pct',
+    'investing_cf',
+    'operating_cf',
+    'payroll_to_revenue_pct',
+    'revenue_ly',
+    'revenue_yoy_pct',
+    'revenue_ytd',
+    'sla_compliance_pct',
+    'total_base_salary',
+    'total_benefits',
+    'total_bonus',
+    'total_cost',
+    'total_overtime',
+    'total_payroll',
+    'total_revenue',
   ];
   test.each(ORIGINAL_27)('original measure %s is still registered', (id) => {
     expect(EBPO_MEASURES[id]).toBeDefined();
@@ -706,37 +954,73 @@ describe('EBPO catalog — extended DAX measures (added, old ones preserved)', (
     ['base_salary_to_payroll_pct', 'total_base_salary_usd'],
     ['benefits_to_payroll_pct', 'total_benefits_usd'],
     ['bonus_to_payroll_pct', 'total_bonus_usd'],
-  ])('%s compiles as <component>/payroll ratio-of-sums', async (measure, num) => {
-    const sql = await sqlFor(base({ measure, dimension: 'department', chartType: 'bar' }));
-    expect(sql).toMatch(new RegExp(`sum\\(${num}\\)\\s*/\\s*nullIf\\(sum\\(total_payroll_usd\\), 0\\)\\s*\\*\\s*100`));
-    expect(sql).toContain('analytics.v_ebpo_payroll_monthly');
-    expect(sql).not.toContain(`avg(${measure})`);
-  });
+  ])(
+    '%s compiles as <component>/payroll ratio-of-sums',
+    async (measure, num) => {
+      const sql = await sqlFor(
+        base({ measure, dimension: 'department', chartType: 'bar' }),
+      );
+      expect(sql).toMatch(
+        new RegExp(
+          `sum\\(${num}\\)\\s*/\\s*nullIf\\(sum\\(total_payroll_usd\\), 0\\)\\s*\\*\\s*100`,
+        ),
+      );
+      expect(sql).toContain('analytics.v_ebpo_payroll_monthly');
+      expect(sql).not.toContain(`avg(${measure})`);
+    },
+  );
 
   test('payroll_per_employee = payroll / headcount (ratio-of-sums, scale 1)', async () => {
-    const sql = await sqlFor(base({ measure: 'payroll_per_employee', dimension: 'department', chartType: 'bar' }));
-    expect(sql).toMatch(/sum\(total_payroll_usd\)\s*\/\s*nullIf\(sum\(employee_count\), 0\)\s*\*\s*1/);
+    const sql = await sqlFor(
+      base({
+        measure: 'payroll_per_employee',
+        dimension: 'department',
+        chartType: 'bar',
+      }),
+    );
+    expect(sql).toMatch(
+      /sum\(total_payroll_usd\)\s*\/\s*nullIf\(sum\(employee_count\), 0\)\s*\*\s*1/,
+    );
   });
 
   // Cost Per Employee = DIVIDE([Total Cost], DISTINCTCOUNT(EmployeeID)) — now cost-based.
   test('cost_per_employee = total cost / headcount, by business unit', async () => {
-    const sql = await sqlFor(base({ measure: 'cost_per_employee', dimension: 'business_unit', chartType: 'bar' }));
-    expect(sql).toMatch(/sum\(total_cost_usd\)\s*\/\s*nullIf\(sum\(employee_count\), 0\)\s*\*\s*1/);
+    const sql = await sqlFor(
+      base({
+        measure: 'cost_per_employee',
+        dimension: 'business_unit',
+        chartType: 'bar',
+      }),
+    );
+    expect(sql).toMatch(
+      /sum\(total_cost_usd\)\s*\/\s*nullIf\(sum\(employee_count\), 0\)\s*\*\s*1/,
+    );
     expect(sql).toContain('analytics.v_ebpo_business_unit_efficiency');
     // legacy payroll-based formula must no longer be used for cost_per_employee
     expect(sql).not.toContain('total_payroll_usd');
   });
 
-  test('cost_per_employee by month uses the precomputed monthly column when that is what the view exposes', async () => {
-    const sql = await sqlFor(base({ measure: 'cost_per_employee', dimension: 'month', chartType: 'bar' }));
-    expect(sql).toContain('analytics.v_ebpo_department_efficiency_monthly');
-    expect(sql).toContain('avg(cost_per_employee_usd)');
-    expect(sql).not.toContain('sum(undefined)');
+  test('cost_per_employee by month is refused rather than using a payroll proxy', async () => {
+    const result = await compileEbpoSpec(
+      base({
+        measure: 'cost_per_employee',
+        dimension: 'month',
+        chartType: 'bar',
+      }),
+      DB,
+      noRows,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.refusal).toMatch(/Cost per Employee.*Month/i);
   });
 
   // No. Clients = DISTINCTCOUNT(DimClient[ClientKey]) → uniqExact over client_name.
   test('no_clients counts DISTINCT clients (uniqExact), excluding blanks', async () => {
-    const r = await compileEbpoSpec({ measure: 'no_clients', dimension: '', chartType: 'kpi' } as ChartSpec, DB, noRows);
+    const r = await compileEbpoSpec(
+      { measure: 'no_clients', dimension: '', chartType: 'kpi' } as ChartSpec,
+      DB,
+      noRows,
+    );
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.sql).toMatch(/uniqExactIf\(client_name, client_name != ''\)/);
@@ -745,7 +1029,9 @@ describe('EBPO catalog — extended DAX measures (added, old ones preserved)', (
   });
 
   test('no_clients by industry groups the distinct client count', async () => {
-    const sql = await sqlFor(base({ measure: 'no_clients', dimension: 'industry', chartType: 'bar' }));
+    const sql = await sqlFor(
+      base({ measure: 'no_clients', dimension: 'industry', chartType: 'bar' }),
+    );
     expect(sql).toMatch(/uniqExactIf\(client_name/);
     expect(sql).toContain('GROUP BY');
   });
@@ -753,23 +1039,45 @@ describe('EBPO catalog — extended DAX measures (added, old ones preserved)', (
   // Avg Revenue per Client = DIVIDE([Total Revenue],[No. Clients]) — revenue SUM over the
   // DISTINCTCOUNT of clients (denominator uses no_clients' own uniqExact agg).
   test('avg_revenue_per_client = revenue / distinct clients', async () => {
-    const r = await compileEbpoSpec({ measure: 'avg_revenue_per_client', dimension: '', chartType: 'kpi' } as ChartSpec, DB, noRows);
+    const r = await compileEbpoSpec(
+      {
+        measure: 'avg_revenue_per_client',
+        dimension: '',
+        chartType: 'kpi',
+      } as ChartSpec,
+      DB,
+      noRows,
+    );
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.sql).toMatch(/sum\(total_revenue_usd\)\s*\/\s*nullIf\(uniqExactIf\(client_name, client_name != ''\), 0\)\s*\*\s*1/);
+      expect(r.sql).toMatch(
+        /sum\(total_revenue_usd\)\s*\/\s*nullIf\(uniqExactIf\(client_name, client_name != ''\), 0\)\s*\*\s*1/,
+      );
     }
   });
 
   // Total Expenses = [Total Cost] + [Total Payroll] (absolute additive, no denominator).
   test('total_expenses sums cost + payroll (no denominator)', async () => {
-    const sql = await sqlFor(base({ measure: 'total_expenses', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'total_expenses',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
     expect(sql).toContain('(sum(total_cost_usd) + sum(total_payroll_usd))');
     // absolute additive → no "/ nullIf(... ) * 100" ratio tail
     expect(sql).not.toMatch(/\* 100/);
   });
 
   test('total_expenses by client compiles from the client expense semantic view', async () => {
-    const sql = await sqlFor(base({ measure: 'total_expenses', dimension: 'client', chartType: 'bar' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'total_expenses',
+        dimension: 'client',
+        chartType: 'bar',
+      }),
+    );
     expect(sql).toContain('analytics.v_ebpo_revenue_expense_by_client');
     expect(sql).toContain('sum(total_expenses_usd)');
   });
@@ -788,7 +1096,9 @@ describe('EBPO catalog — extended DAX measures (added, old ones preserved)', (
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.sql).toContain('analytics.v_ebpo_revenue_expense_by_client_monthly');
+      expect(r.sql).toContain(
+        'analytics.v_ebpo_revenue_expense_by_client_monthly',
+      );
       expect(r.sql).toContain('sum(total_expenses_usd)');
       expect(r.sql).toContain('AS y');
     }
@@ -796,39 +1106,69 @@ describe('EBPO catalog — extended DAX measures (added, old ones preserved)', (
 
   // Expense to Revenue % = (cost + payroll) / revenue (composite-numerator ratio-of-sums).
   test('expense_to_revenue_pct = (cost+payroll)/revenue ratio-of-sums', async () => {
-    const sql = await sqlFor(base({ measure: 'expense_to_revenue_pct', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'expense_to_revenue_pct',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
     expect(sql).toContain('(sum(total_cost_usd) + sum(total_payroll_usd))');
     expect(sql).toMatch(/nullIf\(sum\(total_revenue_usd\), 0\)\s*\*\s*100/);
   });
 
   // Cost time-intelligence mirrors revenue's window measures.
   test('cost_ly is the prior-year cost (12-month lag, blank first year)', async () => {
-    const sql = await sqlFor(base({ measure: 'cost_ly', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({ measure: 'cost_ly', dimension: 'month', chartType: 'line' }),
+    );
     expect(sql).toContain('ROWS BETWEEN 12 PRECEDING AND 12 PRECEDING');
     expect(sql).toContain('any(sum(total_cost_usd))');
     expect(sql).toContain('= 0, NULL');
   });
   test('cost_yoy_pct is the YoY growth % over aggregated cost', async () => {
-    const sql = await sqlFor(base({ measure: 'cost_yoy_pct', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({ measure: 'cost_yoy_pct', dimension: 'month', chartType: 'line' }),
+    );
     expect(sql).toContain('sum(total_cost_usd)');
-    expect(sql).toMatch(/\/ nullIf\(any\(sum\(total_cost_usd\)\).*, 0\) \* 100/);
+    expect(sql).toMatch(
+      /\/ nullIf\(any\(sum\(total_cost_usd\)\).*, 0\) \* 100/,
+    );
   });
 
   // Payroll time-intelligence, including the new absolute yoy_abs window kind.
   test('payroll_ytd accumulates within the fiscal year', async () => {
-    const sql = await sqlFor(base({ measure: 'payroll_ytd', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({ measure: 'payroll_ytd', dimension: 'month', chartType: 'line' }),
+    );
     expect(sql).toContain('PARTITION BY toYear(');
     expect(sql).toContain('sum(total_payroll_usd)');
   });
   test('payroll_yoy_growth is the ABSOLUTE YoY change (no /prior, no *100)', async () => {
-    const sql = await sqlFor(base({ measure: 'payroll_yoy_growth', dimension: 'month', chartType: 'line' }));
+    const sql = await sqlFor(
+      base({
+        measure: 'payroll_yoy_growth',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
     // absolute diff: (this period − same period last year), not a percentage
-    expect(sql).toMatch(/round\(sum\(total_payroll_usd\) - any\(sum\(total_payroll_usd\)\)/);
+    expect(sql).toMatch(
+      /round\(sum\(total_payroll_usd\) - any\(sum\(total_payroll_usd\)\)/,
+    );
     expect(sql).not.toMatch(/\* 100/);
   });
   test('payroll_yoy_pct is the YoY growth % (divides by the prior year)', async () => {
-    const sql = await sqlFor(base({ measure: 'payroll_yoy_pct', dimension: 'month', chartType: 'line' }));
-    expect(sql).toMatch(/\/ nullIf\(any\(sum\(total_payroll_usd\)\).*, 0\) \* 100/);
+    const sql = await sqlFor(
+      base({
+        measure: 'payroll_yoy_pct',
+        dimension: 'month',
+        chartType: 'line',
+      }),
+    );
+    expect(sql).toMatch(
+      /\/ nullIf\(any\(sum\(total_payroll_usd\)\).*, 0\) \* 100/,
+    );
   });
 
   // New aliases resolve their owning measures (planner-prompt grounding).
@@ -856,7 +1196,9 @@ describe('EBPO catalog — coverage', () => {
     const ids = Object.keys(EBPO_MEASURES);
     expect(ids.length).toBeGreaterThanOrEqual(27);
     // Every measure must be served by at least one view (otherwise it can never compile).
-    const orphans = ids.filter((id) => resolveEbpoView(id, null, null) === null);
+    const orphans = ids.filter(
+      (id) => resolveEbpoView(id, null, null) === null,
+    );
     expect(orphans).toEqual([]);
   });
 });

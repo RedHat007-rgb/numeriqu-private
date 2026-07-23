@@ -49,6 +49,32 @@ enum SyncStatus {
   PARTIAL
 }
 
+enum PrismJobType {
+  ANALYSIS
+  EXPORT
+  BRIEFING
+}
+
+enum PrismJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum PrismActionStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PrismApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
 enum InviteStatus {
   PENDING
   ACCEPTED
@@ -169,9 +195,11 @@ model Organization {
   name        String
   slug        String      @unique
   createdById String      @map("created_by_id") @db.Uuid
-  /** Optional per-org embedded Power BI report URL, surfaced in the dashboard
+  /**
+   * Optional per-org embedded Power BI report URL, surfaced in the dashboard
    * sidebar. NULL ⇒ no Power BI button for this org (config as data, not a
-   * compiled-in per-tenant literal). */
+   * compiled-in per-tenant literal).
+   */
   powerBiUrl  String?     @map("power_bi_url")
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")
@@ -216,6 +244,10 @@ model Organization {
   signalWatchlistItems       SignalWatchlistItem[]
   signalBoardPacks           SignalBoardPack[]
   datasets                   Dataset[]
+  prismJobs                  PrismJob[]
+  prismOutboxEvents          PrismOutboxEvent[]
+  prismActionProposals       PrismActionProposal[]
+  prismApprovalEvents        PrismApprovalEvent[]
 
   @@index([createdById])
   @@map("organizations")
@@ -1048,4 +1080,86 @@ model DatasetSemanticModel {
   @@unique([datasetId, version])
   @@index([datasetId, isActive])
   @@map("dataset_semantic_models")
+}
+
+model PrismJob {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  userId         String         @map("user_id") @db.Uuid
+  type           PrismJobType
+  status         PrismJobStatus @default(QUEUED)
+  idempotencyKey String         @map("idempotency_key")
+  payload        Json
+  result         Json?
+  errorCode      String?        @map("error_code")
+  attempts       Int            @default(0)
+  availableAt    DateTime       @default(now()) @map("available_at")
+  startedAt      DateTime?      @map("started_at")
+  completedAt    DateTime?      @map("completed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([status, availableAt, createdAt])
+  @@index([organizationId, userId, createdAt])
+  @@map("prism_jobs")
+}
+
+model PrismOutboxEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  aggregateType  String    @map("aggregate_type")
+  aggregateId    String    @map("aggregate_id") @db.Uuid
+  topic          String
+  payload        Json
+  attempts       Int       @default(0)
+  availableAt    DateTime  @default(now()) @map("available_at")
+  publishedAt    DateTime? @map("published_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([publishedAt, availableAt, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("prism_outbox_events")
+}
+
+model PrismActionProposal {
+  id              String            @id @default(uuid()) @db.Uuid
+  organizationId  String            @map("organization_id") @db.Uuid
+  createdById     String            @map("created_by_id") @db.Uuid
+  sourceRequestId String            @map("source_request_id")
+  actionType      String            @map("action_type")
+  summary         String
+  preview         Json
+  riskLevel       String            @map("risk_level")
+  status          PrismActionStatus @default(PROPOSED)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  approvals    PrismApprovalEvent[]
+
+  @@unique([organizationId, sourceRequestId])
+  @@index([organizationId, status, createdAt])
+  @@map("prism_action_proposals")
+}
+
+model PrismApprovalEvent {
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String                @map("organization_id") @db.Uuid
+  proposalId     String                @map("proposal_id") @db.Uuid
+  decidedById    String                @map("decided_by_id") @db.Uuid
+  decision       PrismApprovalDecision
+  rationale      String?
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  proposal     PrismActionProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, decidedById])
+  @@index([organizationId, createdAt])
+  @@map("prism_approval_events")
 }

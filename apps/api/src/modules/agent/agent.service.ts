@@ -110,6 +110,39 @@ const SAFE_QUERY = { max_memory_usage: '536870912', max_execution_time: 20 };
 // a CEILING, not a latency target — real latency wins come from caching/parallelism.
 const LLM_CHAT_TIMEOUT_MS = 120 * 1000;
 
+function wantsValueLabelIntent(query: string): boolean {
+  const q = String(query ?? '').toLowerCase();
+  if (!q) return false;
+  if (/\b(?:values?|numbers?|amounts?)\s+instead\s+of\s+percent/.test(q))
+    return true;
+  if (/\b(?:remove|without|no|hide)\s+percent(?:age|ages)?/.test(q))
+    return true;
+  if (/\bpercent(?:age|ages)?\s+to\s+(?:values?|numbers?|amounts?)\b/.test(q))
+    return true;
+  if (
+    /\b(?:actual|real|absolute|raw|exact|whole|dollar)\b[^.]*\bvalues?\b/.test(
+      q,
+    )
+  )
+    return true;
+  return (
+    /\b(?:show|display|add|include|put|label|labelled|labeled)\b[^.]*\b(?:values?|numbers?|amounts?)\b/.test(
+      q,
+    ) && !/\bpercent(?:age|ages)?\b|%/.test(q)
+  );
+}
+
+function wantsPercentLabelIntent(query: string): boolean {
+  const q = String(query ?? '').toLowerCase();
+  if (!q) return false;
+  if (/\bpercent(?:age|ages)?\s+labels?\b/.test(q)) return true;
+  if (/\bcontribution\s+percent(?:age|ages)?\b/.test(q)) return true;
+  return (
+    /\b(?:show|display|add|with|as)\b[^.]*\bpercent(?:age|ages)?\b/.test(q) &&
+    !wantsValueLabelIntent(q)
+  );
+}
+
 // ─── Valid widget configurations ─────────────────────────────────────────────
 // These are the ONLY supported metric+grouping pairs the agent can use.
 
@@ -1362,10 +1395,32 @@ export class AgentService {
         const sql = typeof cfg?.dynamicSql === 'string' ? cfg.dynamicSql : null;
         if (sql) {
           const chartType = (widget?.chartType ?? null) as ChartType | null;
+          const queryParams =
+            cfg?.dynamicParams &&
+            typeof cfg.dynamicParams === 'object' &&
+            !Array.isArray(cfg.dynamicParams)
+              ? (cfg.dynamicParams as Record<string, unknown>)
+              : undefined;
           const data = await this.executeDynamicSql(sql, scope, {
             chartType: chartType ?? undefined,
+            queryParams,
           });
-          return this.applyRequestedRangeToRows(data, range);
+          const spec =
+            cfg?.spec &&
+            typeof cfg.spec === 'object' &&
+            !Array.isArray(cfg.spec)
+              ? (cfg.spec as Record<string, unknown>)
+              : undefined;
+          const hasPinnedDateRange =
+            !!spec?.dateRange ||
+            (!!queryParams?.dateStart && !!queryParams?.dateEnd);
+          // A chart created for an explicit calendar window owns that window.
+          // Reapplying the dashboard's default range after SQL execution can
+          // otherwise erase valid historical rows (for example, a five-month
+          // chart outside the current rolling range).
+          return hasPinnedDateRange
+            ? { data }
+            : this.applyRequestedRangeToRows(data, range);
         }
       } catch (err: any) {
         this.logger.warn(
@@ -7552,6 +7607,7 @@ export class AgentService {
             metric: 'dynamic',
             grouping: 'query',
             dynamicSql: built.dynamicSql,
+            dynamicParams: built.dynamicParams,
             display: built.display,
             spec: built.spec,
             routedView: built.routedView,
@@ -10605,8 +10661,7 @@ export class AgentService {
       // A tiny baseline can produce technically correct but decision-useless
       // five-digit growth percentages. In that case report the exact endpoints
       // and absolute direction without amplifying baseline noise.
-      const pct =
-        rawPct !== null && Math.abs(rawPct) <= 1000 ? rawPct : null;
+      const pct = rawPct !== null && Math.abs(rawPct) <= 1000 ? rawPct : null;
       const arc =
         delta === 0
           ? `holding steady around ${fmt(last.value)}`
@@ -10637,9 +10692,7 @@ export class AgentService {
     const hasNegative = points.some((point) => point.value < 0);
     const hasSignedMix = hasPositive && hasNegative;
     const sorted = [...points].sort((a, b) =>
-      hasSignedMix
-        ? Math.abs(b.value) - Math.abs(a.value)
-        : b.value - a.value,
+      hasSignedMix ? Math.abs(b.value) - Math.abs(a.value) : b.value - a.value,
     );
     const top = sorted[0]!;
     const second = sorted[1];
@@ -10952,44 +11005,12 @@ export class AgentService {
   // labels with actual values") slipped through to the LLM editor and silently no-op'd.
   // General intent, no per-question strings.
   private wantsValueLabelIntent(query: string): boolean {
-    const q = String(query ?? '').toLowerCase();
-    if (!q) return false;
-    if (/\b(?:values?|numbers?|amounts?)\s+instead\s+of\s+percent/.test(q))
-      return true;
-    if (/\b(?:remove|without|no|hide)\s+percent(?:age|ages)?/.test(q))
-      return true;
-    if (/\bpercent(?:age|ages)?\s+to\s+(?:values?|numbers?|amounts?)\b/.test(q))
-      return true;
-    // "actual / real / absolute / raw / exact / whole / dollar … value(s)" (allow words between).
-    if (
-      /\b(?:actual|real|absolute|raw|exact|whole|dollar)\b[^.]*\bvalues?\b/.test(
-        q,
-      )
-    )
-      return true;
-    // A show/display/add request that targets value(s)/number(s)/amount(s) and is NOT about percent.
-    if (
-      /\b(?:show|display|add|include|put|label|labelled|labeled)\b[^.]*\b(?:values?|numbers?|amounts?)\b/.test(
-        q,
-      ) &&
-      !/\bpercent(?:age|ages)?\b|%/.test(q)
-    )
-      return true;
-    return false;
+    return wantsValueLabelIntent(query);
   }
 
   // Phrasing-robust intent: does the user want PERCENTAGE data labels?
   private wantsPercentLabelIntent(query: string): boolean {
-    const q = String(query ?? '').toLowerCase();
-    if (!q) return false;
-    if (/\bpercent(?:age|ages)?\s+labels?\b/.test(q)) return true;
-    if (/\bcontribution\s+percent(?:age|ages)?\b/.test(q)) return true;
-    if (
-      /\b(?:show|display|add|with|as)\b[^.]*\bpercent(?:age|ages)?\b/.test(q) &&
-      !this.wantsValueLabelIntent(q)
-    )
-      return true;
-    return false;
+    return wantsPercentLabelIntent(query);
   }
 
   private applyPieDonutLabelModeToWidgets(
@@ -11382,8 +11403,8 @@ export class AgentService {
             return 'line';
           })();
 
-          const wantsValueLabels = this.wantsValueLabelIntent(lower);
-          const wantsPercentLabels = this.wantsPercentLabelIntent(lower);
+          const wantsValueLabels = wantsValueLabelIntent(lower);
+          const wantsPercentLabels = wantsPercentLabelIntent(lower);
           const display: W['display'] | undefined =
             wants(/donut/) ||
             wantsValueLabels ||
@@ -24205,10 +24226,8 @@ export class AgentService {
         !(asksApToCost && (id === 'ap_outstanding' || id === 'total_cost')) &&
         !(asksOvertimeToPayroll && id === 'total_payroll'),
     );
-    const asksGrossMarginPercentOnly =
-      /\bgross\s+margin\s*(?:percentage|percent|%)\b|\bgross\s+margin\s+pct\b/.test(
-        rawReq,
-      ) &&
+    const asksGrossMarginRatio =
+      /\bgross\s+margin\b/.test(rawReq) &&
       !/\bgross\s+profit\b/.test(rawReq) &&
       !/\bgross\s+margin\b[\s\S]{0,32}\b(?:dollars?|usd|amount|value)\b/.test(
         rawReq,
@@ -24217,7 +24236,7 @@ export class AgentService {
         rawReq,
       );
     let filteredMatched =
-      asksGrossMarginPercentOnly && exactMatched.includes('gross_margin_pct')
+      asksGrossMarginRatio && exactMatched.includes('gross_margin_pct')
         ? exactMatched.filter((id) => id !== 'gross_margin')
         : exactMatched;
     // When a derived ratio/percent measure is requested, don't silently add its
@@ -24225,7 +24244,7 @@ export class AgentService {
     // user separately asks for those raw measures in another follow-up.
     const impliedComponents: Record<string, string[]> = {
       gross_profit_pct: ['gross_margin', 'total_revenue'],
-      gross_margin_pct: ['total_expenses', 'total_revenue'],
+      gross_margin_pct: ['gross_margin', 'total_revenue'],
       payroll_to_revenue_pct: ['total_payroll', 'total_revenue'],
       cost_to_income_pct: ['total_cost', 'total_revenue'],
       fcf_margin_pct: ['free_cash_flow', 'total_revenue'],
@@ -25643,10 +25662,7 @@ export class AgentService {
       // looking at. When the base chart is a scatter/bubble (an explicit chart-type
       // request the user insisted on), keep that type — only fall back to a line when
       // the base is itself a line/bar/area trend, where a running-total line is natural.
-      const baseType: ChartType =
-        spec.chartType === 'scatter' || spec.chartType === 'bubble'
-          ? (spec.chartType as ChartType)
-          : ('line' as ChartType);
+      const baseType: ChartType = 'line';
       const selectedSpec: ChartSpec = {
         ...spec,
         measure: chosenMeasure,
@@ -25671,9 +25687,12 @@ export class AgentService {
       const label = EBPO_MEASURES[chosenMeasure]?.label ?? chosenMeasure;
       const dimLabel =
         EBPO_DIMENSIONS[String(spec.dimension)]?.label ?? spec.dimension;
-      const isScatterBase = baseType === 'scatter' || baseType === 'bubble';
+      const genericCashFlow =
+        /\bcash\s+flow\b/.test(q) &&
+        !/\b(?:free|operating|investing|financing)\s+cash\s+flow\b/.test(q);
+      const presentationLabel = genericCashFlow ? 'Cash Flow' : label;
       return {
-        summary: `Added cumulative ${label}${isScatterBase ? '' : ' as a line'}.`,
+        summary: `Added cumulative ${presentationLabel.toLowerCase()} as a line.`,
         add: [],
         remove_indices: [],
         modify: [
@@ -25682,7 +25701,7 @@ export class AgentService {
             type: baseType,
             dynamicSql: compiled.sql,
             title: this.prettifyChartTitle(
-              `Cumulative ${label}${dimLabel ? ` by ${dimLabel}` : ''}`,
+              `Cumulative ${presentationLabel}${dimLabel ? ` by ${dimLabel}` : ''}`,
             ),
             spec: selectedSpec,
             // Refresh the axis caption: the source chart may have been a scatter whose
@@ -25690,7 +25709,7 @@ export class AgentService {
             // cumulative line now plots a running total in the measure's own unit, so a
             // stale percent label would mislabel a dollar axis. Set both axes to match.
             xAxisLabel: dimLabel ? String(dimLabel) : undefined,
-            yAxisLabel: `Cumulative ${label}`,
+            yAxisLabel: `Cumulative ${presentationLabel}`,
             display: {
               ...(cfg.display ?? {}),
               valueFormat: EBPO_MEASURES[chosenMeasure]?.format ?? 'currency',
@@ -29307,7 +29326,10 @@ Output SQL ONLY — no explanation, no markdown.`;
   private async executeDynamicSql(
     sql: string,
     scope: OrgScope,
-    opts?: { chartType?: ChartType },
+    opts?: {
+      chartType?: ChartType;
+      queryParams?: Record<string, unknown>;
+    },
   ): Promise<Record<string, unknown>[]> {
     const { rows } = await this.executeDynamicSqlChecked(sql, scope, opts);
     if (opts?.chartType === 'kpi') return this.normalizeDynamicKpiRows(rows);
@@ -29359,7 +29381,10 @@ Output SQL ONLY — no explanation, no markdown.`;
   private async executeDynamicSqlChecked(
     sql: string,
     scope: OrgScope,
-    opts?: { chartType?: ChartType },
+    opts?: {
+      chartType?: ChartType;
+      queryParams?: Record<string, unknown>;
+    },
   ): Promise<{ rows: Record<string, unknown>[]; error: string | null }> {
     try {
       const normalized = this.validateAndScopeDynamicSql(sql, scope, opts);
@@ -29388,6 +29413,7 @@ Output SQL ONLY — no explanation, no markdown.`;
 
       const tryQuery = async (q: string, asOfIso: string | null) => {
         const params: Record<string, unknown> = {
+          ...(opts?.queryParams ?? {}),
           tenantId: scope.tenantId,
           externalOrgIds: scope.externalOrgIds,
         };

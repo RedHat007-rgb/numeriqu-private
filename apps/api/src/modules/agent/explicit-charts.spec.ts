@@ -4,36 +4,47 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const fn = (AgentService.prototype as any).selectWidgetsForQuery as (
       query: string,
     ) => Array<any>;
 
     const ctx = {
-      extractCompareClients: (AgentService.prototype as any).extractCompareClients,
+      extractCompareClients: (AgentService.prototype as any)
+        .extractCompareClients,
     };
 
-    const widgets = fn.call(ctx, [
-      'Create a bar chart showing total revenue for each month and highlight the highest and lowest revenue months.',
-      'Create a donut chart showing the split of total transaction value by invoice type.',
-      'Create a waterfall chart showing net monthly financial position using total credits minus total debits.',
-      'Create a waterfall chart showing monthly revenue, cost, and gross margin progression.',
-      'Create a bar chart showing revenue, payroll, and gross margin by business unit.',
-    ].join('\n'));
+    const widgets = fn.call(
+      ctx,
+      [
+        'Create a bar chart showing total revenue for each month and highlight the highest and lowest revenue months.',
+        'Create a donut chart showing the split of total transaction value by invoice type.',
+        'Create a waterfall chart showing net monthly financial position using total credits minus total debits.',
+        'Create a waterfall chart showing monthly revenue, cost, and gross margin progression.',
+        'Create a bar chart showing revenue, payroll, and gross margin by business unit.',
+      ].join('\n'),
+    );
 
     expect(Array.isArray(widgets)).toBe(true);
     expect(widgets.length).toBeGreaterThanOrEqual(3);
 
-    const revenue = widgets.find((w: any) => w.metric === 'revenue' && w.grouping === 'month');
+    const revenue = widgets.find(
+      (w: any) => w.metric === 'revenue' && w.grouping === 'month',
+    );
     expect(revenue?.type).toBe('bar');
     expect(revenue?.display?.highlightMaxMin).toBe(true);
 
-    const donut = widgets.find((w: any) => w.metric === 'invoice_value' && w.grouping === 'invoice_type');
+    const donut = widgets.find(
+      (w: any) => w.metric === 'invoice_value' && w.grouping === 'invoice_type',
+    );
     expect(donut?.type).toBe('donut');
     expect(donut?.display?.donut).toBe(true);
 
-    const wf = widgets.find((w: any) => w.metric === 'net_position' && w.grouping === 'month');
+    const wf = widgets.find(
+      (w: any) => w.metric === 'net_position' && w.grouping === 'month',
+    );
     expect(wf?.type).toBe('waterfall');
 
     const monthlyGrossMargin = widgets.find(
@@ -42,7 +53,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(monthlyGrossMargin?.type).toBe('waterfall');
 
     const businessUnitFinancials = widgets.find(
-      (w: any) => w.metric === 'bu_financials' && w.grouping === 'business_unit',
+      (w: any) =>
+        w.metric === 'bu_financials' && w.grouping === 'business_unit',
     );
     expect(businessUnitFinancials?.type).toBe('bar');
   });
@@ -51,14 +63,19 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
 
-    const explicit = parser.parseExplicitChartConstraints('switch to bar charts');
+    const explicit = parser.parseExplicitChartConstraints(
+      'switch to bar charts',
+    );
     expect(explicit?.requiredTypes).toContain('bar');
 
-    const pureEdit = parser.detectPureChartTypeEditRequest('switch to bar charts');
+    const pureEdit = parser.detectPureChartTypeEditRequest(
+      'switch to bar charts',
+    );
     expect(pureEdit).toBe('bar');
 
     const mixedEdit = parser.detectPureChartTypeEditRequest(
@@ -71,7 +88,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
 
@@ -96,7 +114,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
 
@@ -135,33 +154,60 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
 
-    expect(parser.detectIntent('switch to bar charts', true)).toBe('EDIT_DASHBOARD');
-    expect(parser.detectIntent('change the y axis from percentage to values', true)).toBe(
+    expect(parser.detectIntent('switch to bar charts', true)).toBe(
       'EDIT_DASHBOARD',
     );
-    expect(parser.detectIntent('switch to bar charts', false)).toBe('CREATE_DASHBOARD');
+    expect(
+      parser.detectIntent('change the y axis from percentage to values', true),
+    ).toBe('EDIT_DASHBOARD');
+    expect(parser.detectIntent('switch to bar charts', false)).toBe(
+      'CREATE_DASHBOARD',
+    );
   });
 
   test('recognizes CFO chart variants used by the new dataset prompts', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
     const cases: Array<[string, string]> = [
-      ['Create a heat map showing gross margin percentage by business unit and month.', 'heatmap'],
-      ['Create a Pareto chart showing clients ranked by outstanding receivables.', 'pareto'],
-      ['Create a ranked bar chart showing top clients by gross margin.', 'horizontal_bar'],
-      ['Create a clustered bar chart comparing revenue and cost by business unit.', 'bar'],
-      ['Create a 100% stacked column chart showing monthly revenue mix by business unit.', 'stacked_bar'],
+      [
+        'Create a heat map showing gross margin percentage by business unit and month.',
+        'heatmap',
+      ],
+      [
+        'Create a Pareto chart showing clients ranked by outstanding receivables.',
+        'pareto',
+      ],
+      [
+        'Create a ranked bar chart showing top clients by gross margin.',
+        'horizontal_bar',
+      ],
+      [
+        'Create a clustered bar chart comparing revenue and cost by business unit.',
+        'bar',
+      ],
+      [
+        'Create a 100% stacked column chart showing monthly revenue mix by business unit.',
+        'stacked_bar',
+      ],
       ['Create a donut chart showing revenue share by contract type.', 'donut'],
-      ['Create a waterfall chart showing revenue, cost, and gross margin by month.', 'waterfall'],
-      ['Create a scatter plot showing revenue versus gross margin by client.', 'scatter'],
+      [
+        'Create a waterfall chart showing revenue, cost, and gross margin by month.',
+        'waterfall',
+      ],
+      [
+        'Create a scatter plot showing revenue versus gross margin by client.',
+        'scatter',
+      ],
       ['Create a treemap showing revenue contribution by client.', 'treemap'],
     ];
 
@@ -175,18 +221,25 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
     const cases = [
       ['convert this to a sunburst chart', 'CHART_TYPE_UNSUPPORTED'],
       ['add sparklines inside each matrix row', 'CHART_TYPE_UNSUPPORTED'],
-      ['add a dropdown filter control for department', 'INTERACTIVE_FEATURE_UNSUPPORTED'],
+      [
+        'add a dropdown filter control for department',
+        'INTERACTIVE_FEATURE_UNSUPPORTED',
+      ],
       ['animate this treemap over months', 'INTERACTIVE_FEATURE_UNSUPPORTED'],
     ];
 
     for (const [prompt, expectedReason] of cases) {
-      const clarification = parser.detectUnsupportedOrAmbiguousAsk(prompt, false);
+      const clarification = parser.detectUnsupportedOrAmbiguousAsk(
+        prompt,
+        false,
+      );
       expect(clarification?.reason).toBe(expectedReason);
     }
 
@@ -208,9 +261,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -237,9 +296,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
 
     const refusal = svc.detectUnavailableData(
@@ -254,9 +319,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const probedViews: string[] = [];
     svc.queryRows = async (sql: string) => {
       probedViews.push(sql);
@@ -268,14 +339,17 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     await expect(
       svc.orgHasEbpoData({ tenantId: 'tenant-1', externalOrgIds: ['org-1'] }),
     ).resolves.toBe(true);
-    expect(probedViews.some((sql) => sql.includes('v_ebpo_operations_monthly'))).toBe(true);
+    expect(
+      probedViews.some((sql) => sql.includes('v_ebpo_operations_monthly')),
+    ).toBe(true);
   });
 
   test('prefers overtime percentage over raw payroll for overtime-per-payroll follow-ups', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
     const next = parser.buildEbpoComboEditSpec(
@@ -297,9 +371,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.queryRows = async (sql: string) => {
       if (sql.includes('AS movement'))
         return [{ account_name: 'Accounts Payable', movement: 900 }];
@@ -346,14 +426,24 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'AT&T', 'Total Revenue': 4843090, 'Total Cost': 3009796.24 },
         { name: 'Dell', 'Total Revenue': 4473155, 'Total Cost': 2997605.14 },
-        { name: 'United Health Group', 'Total Revenue': 4285161, 'Total Cost': 2801613.21 },
+        {
+          name: 'United Health Group',
+          'Total Revenue': 4285161,
+          'Total Cost': 2801613.21,
+        },
       ],
       error: null,
     });
@@ -365,7 +455,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
           w: {
             chartType: 'bar',
             queryConfig: {
-              dynamicSql: 'SELECT name, "Total Revenue", "Total Cost" FROM fake',
+              dynamicSql:
+                'SELECT name, "Total Revenue", "Total Cost" FROM fake',
               display: { valueFormat: 'currency' },
             },
           },
@@ -390,13 +481,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const fn = (AgentService.prototype as any).selectWidgetsForQuery as (
       query: string,
     ) => Array<any>;
     const ctx = {
-      extractCompareClients: (AgentService.prototype as any).extractCompareClients,
+      extractCompareClients: (AgentService.prototype as any)
+        .extractCompareClients,
     };
 
     const widgets = fn.call(
@@ -405,23 +498,35 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(widgets.length).toBeGreaterThanOrEqual(5);
-    expect(widgets.some((w) => w.type === 'kpi' && w.metric === 'summary')).toBe(true);
     expect(
-      widgets.some((w) => w.metric === 'balance_sheet' && w.grouping === 'summary'),
+      widgets.some((w) => w.type === 'kpi' && w.metric === 'summary'),
     ).toBe(true);
-    expect(widgets.some((w) => w.type === 'waterfall' && w.metric === 'pl')).toBe(true);
-    expect(widgets.some((w) => w.metric === 'net_income' && w.grouping === 'month')).toBe(
-      true,
-    );
+    expect(
+      widgets.some(
+        (w) => w.metric === 'balance_sheet' && w.grouping === 'summary',
+      ),
+    ).toBe(true);
+    expect(
+      widgets.some((w) => w.type === 'waterfall' && w.metric === 'pl'),
+    ).toBe(true);
+    expect(
+      widgets.some((w) => w.metric === 'net_income' && w.grouping === 'month'),
+    ).toBe(true);
   });
 
   test('applies matrix totals and threshold highlighting as deterministic edit hints', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -449,9 +554,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -461,7 +572,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             id: 'w1',
             title: 'Monthly Revenue Growth',
             chartType: 'line',
-            queryConfig: { metric: 'dynamic', grouping: 'dynamic', dynamicSql: 'SELECT 1 AS name, 1 AS value' },
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              dynamicSql: 'SELECT 1 AS name, 1 AS value',
+            },
             displayOrder: 0,
           },
         ],
@@ -477,9 +592,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -489,7 +610,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             id: 'w1',
             title: 'Balance Heatmap',
             chartType: 'heatmap',
-            queryConfig: { metric: 'dynamic', grouping: 'dynamic', dynamicSql: 'SELECT 1 AS name, 1 AS value' },
+            queryConfig: {
+              metric: 'dynamic',
+              grouping: 'dynamic',
+              dynamicSql: 'SELECT 1 AS name, 1 AS value',
+            },
             displayOrder: 0,
           },
         ],
@@ -505,9 +630,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -533,9 +664,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.queryRows = async (sql: string) => {
       if (sql.includes(' AS v,'))
         return [
@@ -545,7 +682,13 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       return [];
     };
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Jan 2026', 'Cash | Opening Balance': 10, 'Cash | Closing Balance': 12 }],
+      rows: [
+        {
+          name: 'Jan 2026',
+          'Cash | Opening Balance': 10,
+          'Cash | Closing Balance': 12,
+        },
+      ],
       error: null,
     });
 
@@ -573,15 +716,31 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
-        { name: 'Revenue', value: 100, is_total: 0, 'Gross Margin % Label': null },
+        {
+          name: 'Revenue',
+          value: 100,
+          is_total: 0,
+          'Gross Margin % Label': null,
+        },
         { name: 'Cost', value: -60, is_total: 0, 'Gross Margin % Label': null },
-        { name: 'Gross Margin', value: 40, is_total: 1, 'Gross Margin % Label': 40 },
+        {
+          name: 'Gross Margin',
+          value: 40,
+          is_total: 1,
+          'Gross Margin % Label': 40,
+        },
       ],
       error: null,
     });
@@ -599,7 +758,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
               metric: 'dynamic',
               grouping: 'dynamic',
               dynamicSql: 'SELECT name, value, is_total FROM bridge',
-              spec: { measure: 'gross_margin', dimension: 'month', chartType: 'waterfall' },
+              spec: {
+                measure: 'gross_margin',
+                dimension: 'month',
+                chartType: 'waterfall',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -620,15 +783,26 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     // Ranked by revenue (DAX TOPN([Total Revenue], DESC)): largest, then second-largest.
     svc.listTopClientsForScope = async () => ['JP Morgan', 'AT&T'];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
-        { name: 'Jan 2025', 'JP Morgan': 18700000, 'AT&T': 18200000, 'Variance %': 2.7 },
+        {
+          name: 'Jan 2025',
+          'JP Morgan': 18700000,
+          'AT&T': 18200000,
+          'Variance %': 2.7,
+        },
       ],
       error: null,
     });
@@ -651,7 +825,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
                 dimension: 'client',
                 chartType: 'bar',
                 filters: [
-                  { dimension: 'client', op: 'in', values: ['JP Morgan', 'AT&T'] },
+                  {
+                    dimension: 'client',
+                    op: 'in',
+                    values: ['JP Morgan', 'AT&T'],
+                  },
                 ],
               },
               display: { valueFormat: 'currency' },
@@ -676,7 +854,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(sql).not.toContain('avg(_base.value)');
     const series = (plan.modify[0]?.display as any)?.series ?? [];
     expect(series).toContainEqual(
-      expect.objectContaining({ key: 'Variance %', role: 'line', axis: 'right' }),
+      expect.objectContaining({
+        key: 'Variance %',
+        role: 'line',
+        axis: 'right',
+      }),
     );
   });
 
@@ -684,19 +866,32 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     // resolveSpecClientFilters resolves the superlative pair to real names.
     svc.listTopClientsForScope = async () => ['JP Morgan', 'AT&T'];
     svc.resolveSpecClientFilters = async (s: any) => ({
       ...s,
-      filters: [{ dimension: 'client', op: 'in', values: ['JP Morgan', 'AT&T'] }],
+      filters: [
+        { dimension: 'client', op: 'in', values: ['JP Morgan', 'AT&T'] },
+      ],
     });
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
-        { name: 'Jan 2025', 'JP Morgan': 18700000, 'AT&T': 18200000, 'Variance %': 2.7 },
+        {
+          name: 'Jan 2025',
+          'JP Morgan': 18700000,
+          'AT&T': 18200000,
+          'Variance %': 2.7,
+        },
       ],
       error: null,
     });
@@ -724,12 +919,18 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     if (plan?.kind !== 'build') return;
     const widget = plan.plan.dashboard.widgets[0] as any;
     expect(widget.type).toBe('combo');
-    expect(widget._sql).toContain("sumIf(total_expenses_usd, client_name = 'JP Morgan')");
+    expect(widget._sql).toContain(
+      "sumIf(total_expenses_usd, client_name = 'JP Morgan')",
+    );
     expect(widget._sql).toContain('nullIf(');
     expect(widget._sql).toContain('AS "Variance %"');
     expect(widget._sql).not.toContain('avg(_base.value)');
     expect(widget.display?.series).toContainEqual(
-      expect.objectContaining({ key: 'Variance %', role: 'line', axis: 'right' }),
+      expect.objectContaining({
+        key: 'Variance %',
+        role: 'line',
+        axis: 'right',
+      }),
     );
   });
 
@@ -737,9 +938,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     // "gross margin" = the ratio (gross_margin_pct), NOT gross-profit dollars.
     const margin = svc.buildEbpoComboEditSpec(
       { measure: 'total_revenue', dimension: 'client', chartType: 'bar' },
@@ -761,21 +968,30 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
-    expect(parser.detectLabelModeEdit('In the same chart, show contribution percentages.')).toBe(
-      'percent',
-    );
+    expect(
+      parser.detectLabelModeEdit(
+        'In the same chart, show contribution percentages.',
+      ),
+    ).toBe('percent');
   });
 
   test('adds only gross margin percentage when the follow-up explicitly asks for the percentage', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const spec = svc.buildEbpoComboEditSpec(
       {
         measure: 'total_revenue',
@@ -786,7 +1002,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       'In the same chart, add gross margin percentage for each business unit.',
     );
 
-    expect(spec?.measures).toEqual(['total_revenue', 'total_cost', 'gross_margin_pct']);
+    expect(spec?.measures).toEqual([
+      'total_revenue',
+      'total_cost',
+      'gross_margin_pct',
+    ]);
     expect(spec?.measures).not.toContain('gross_margin');
   });
 
@@ -794,9 +1014,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const spec = svc.buildEbpoComboEditSpec(
       {
         measure: 'cost_to_income_pct',
@@ -806,7 +1032,10 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       'In the same chart, add payroll-to-revenue ratio as a second line.',
     );
 
-    expect(spec?.measures).toEqual(['cost_to_income_pct', 'payroll_to_revenue_pct']);
+    expect(spec?.measures).toEqual([
+      'cost_to_income_pct',
+      'payroll_to_revenue_pct',
+    ]);
     expect(spec?.measures).not.toContain('total_payroll');
     expect(spec?.measures).not.toContain('total_revenue');
   });
@@ -815,11 +1044,19 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Jan 2024', total_revenue: 1000, payroll_to_revenue_pct: 85.1 }],
+      rows: [
+        { name: 'Jan 2024', total_revenue: 1000, payroll_to_revenue_pct: 85.1 },
+      ],
       error: null,
     });
 
@@ -835,7 +1072,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'total_revenue', dimension: 'month', chartType: 'bar' },
+              spec: {
+                measure: 'total_revenue',
+                dimension: 'month',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -847,22 +1088,33 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan.modify).toHaveLength(1);
-    expect(plan.modify[0]?.type).toBe('line');
+    // Currency columns plus a percentage series require a dual-axis combo.
+    expect(plan.modify[0]?.type).toBe('combo');
     expect(plan.modify[0]?.dynamicSql).toContain(
       'sum(total_payroll_usd) / nullIf(sum(total_revenue_usd), 0) * 100',
     );
-    expect(plan.modify[0]?.dynamicSql).not.toContain('avg(payroll_to_revenue_pct)');
+    expect(plan.modify[0]?.dynamicSql).not.toContain(
+      'avg(payroll_to_revenue_pct)',
+    );
   });
 
   test('combo follow-ups reuse semantic ratio-of-sums math for collection rate', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Client A', total_revenue: 1000, collection_rate_pct: 84.3 }],
+      rows: [
+        { name: 'Client A', total_revenue: 1000, collection_rate_pct: 84.3 },
+      ],
       error: null,
     });
 
@@ -878,7 +1130,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'total_revenue', dimension: 'client', chartType: 'bar' },
+              spec: {
+                measure: 'total_revenue',
+                dimension: 'client',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -890,20 +1146,29 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan.modify).toHaveLength(1);
-    expect(plan.modify[0]?.type).toBe('line');
+    // Currency columns plus a percentage series require a dual-axis combo.
+    expect(plan.modify[0]?.type).toBe('combo');
     expect(plan.modify[0]?.dynamicSql).toContain(
       'sum(collected_amount_usd) / nullIf(sum(invoice_amount_usd), 0) * 100',
     );
-    expect(plan.modify[0]?.dynamicSql).not.toContain('avg(collection_rate_pct)');
+    expect(plan.modify[0]?.dynamicSql).not.toContain(
+      'avg(collection_rate_pct)',
+    );
   });
 
   test('combo follow-ups reuse semantic ratio-of-sums math for DSO', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2024', total_revenue: 1000, dso_days: 37.0 }],
       error: null,
@@ -921,7 +1186,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'total_revenue', dimension: 'month', chartType: 'bar' },
+              spec: {
+                measure: 'total_revenue',
+                dimension: 'month',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -933,7 +1202,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan.modify).toHaveLength(1);
-    expect(plan.modify[0]?.type).toBe('line');
+    // Currency columns plus a days series require a dual-axis combo.
+    expect(plan.modify[0]?.type).toBe('combo');
     expect(plan.modify[0]?.dynamicSql).toContain(
       'sum(ar_outstanding_usd) / nullIf(sum(total_revenue_usd), 0) * 365',
     );
@@ -944,9 +1214,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.queryRows = async () => [];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Client A', value: 40, 'Total Revenue Label': 100 }],
@@ -965,7 +1241,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'gross_margin', dimension: 'client', chartType: 'bar' },
+              spec: {
+                measure: 'gross_margin',
+                dimension: 'client',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -985,9 +1265,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         {
@@ -1004,8 +1290,16 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       [
         {
           index: 0,
-          w: { chartType: 'stacked_bar', title: 'Financing Cash Flow', queryConfig: {} },
-          spec: { measure: 'financing_cf', dimension: 'month', chartType: 'stacked_bar' },
+          w: {
+            chartType: 'stacked_bar',
+            title: 'Financing Cash Flow',
+            queryConfig: {},
+          },
+          spec: {
+            measure: 'financing_cf',
+            dimension: 'month',
+            chartType: 'stacked_bar',
+          },
         },
       ],
       'In the same chart, display contribution percentages of each cash flow component.',
@@ -1014,22 +1308,36 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan?.modify).toHaveLength(1);
     expect(plan?.modify[0]?.type).toBe('stacked_bar');
-    expect(plan?.modify[0]?.title).toBe('Cash Flow Component Contribution by Month');
+    expect(plan?.modify[0]?.title).toBe(
+      'Cash Flow Component Contribution by Month',
+    );
     expect(plan?.modify[0]?.display).toEqual(
       expect.objectContaining({ valueFormat: 'percent', valueDecimals: 1 }),
     );
-    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Operating Cash Flow %');
-    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Investing Cash Flow %');
-    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Financing Cash Flow %');
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain(
+      'Operating Cash Flow %',
+    );
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain(
+      'Investing Cash Flow %',
+    );
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain(
+      'Financing Cash Flow %',
+    );
   });
 
   test('rebuilds gross-margin-by-industry follow-ups with revenue yoy growth from the monthly client industry view', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         {
@@ -1045,8 +1353,16 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       [
         {
           index: 0,
-          w: { chartType: 'stacked_bar', title: 'Gross Margin by Industry', queryConfig: {} },
-          spec: { measure: 'gross_margin', dimension: 'industry', chartType: 'stacked_bar' },
+          w: {
+            chartType: 'stacked_bar',
+            title: 'Gross Margin by Industry',
+            queryConfig: {},
+          },
+          spec: {
+            measure: 'gross_margin',
+            dimension: 'industry',
+            chartType: 'stacked_bar',
+          },
         },
       ],
       'In the same chart, add revenue YoY growth.',
@@ -1062,7 +1378,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         secondaryLabel: 'Revenue YoY Growth %',
       }),
     );
-    expect(plan?.modify[0]?.dynamicSql ?? '').toContain('v_ebpo_revenue_expense_by_client_monthly');
+    expect(plan?.modify[0]?.dynamicSql ?? '').toContain(
+      'v_ebpo_revenue_expense_by_client_monthly',
+    );
     expect(plan?.modify[0]?.dynamicSql ?? '').toContain('Revenue YoY Growth %');
   });
 
@@ -1070,9 +1388,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Client A', value: 40, 'Gross Margin % Average': 38 }],
@@ -1091,7 +1415,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'gross_margin_pct', dimension: 'client', chartType: 'bar' },
+              spec: {
+                measure: 'gross_margin_pct',
+                dimension: 'client',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'percent', valueDecimals: 1 },
             },
             displayOrder: 0,
@@ -1104,16 +1432,24 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(1);
     expect(plan.modify[0]?.type).toBe('bar');
-    expect(plan.modify[0]?.display?.referenceSeries).toBe('Gross Margin % Average');
+    expect(plan.modify[0]?.display?.referenceSeries).toBe(
+      'Gross Margin % Average',
+    );
   });
 
   test('prefers the existing percent series for payroll percentage reference-line follow-ups', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
@@ -1148,8 +1484,18 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
               display: {
                 valueFormat: 'currency',
                 series: [
-                  { key: 'Total Revenue', role: 'bar', axis: 'left', format: 'currency' },
-                  { key: 'Payroll / Revenue %', role: 'line', axis: 'right', format: 'percent' },
+                  {
+                    key: 'Total Revenue',
+                    role: 'bar',
+                    axis: 'left',
+                    format: 'currency',
+                  },
+                  {
+                    key: 'Payroll / Revenue %',
+                    role: 'line',
+                    axis: 'right',
+                    format: 'percent',
+                  },
                 ],
                 secondaryAxisFormat: 'percent',
                 secondaryLabel: 'Payroll / Revenue %',
@@ -1165,18 +1511,28 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(1);
     expect(plan.summary).toContain('average payroll / revenue %');
-    expect(plan.modify[0]?.display?.referenceSeries).toBe('Payroll / Revenue % Average');
+    expect(plan.modify[0]?.display?.referenceSeries).toBe(
+      'Payroll / Revenue % Average',
+    );
     expect(plan.modify[0]?.dynamicSql).toContain('Payroll / Revenue % Average');
-    expect(plan.modify[0]?.dynamicSql).toContain('avg(_base."Payroll / Revenue %")');
+    expect(plan.modify[0]?.dynamicSql).toContain(
+      'avg(_base."Payroll / Revenue %")',
+    );
   });
 
   test('falls back to display series when a combo chart spec only stores the primary measure', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
@@ -1210,8 +1566,18 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
               display: {
                 valueFormat: 'currency',
                 series: [
-                  { key: 'Total Revenue', role: 'bar', axis: 'left', format: 'currency' },
-                  { key: 'Payroll / Revenue %', role: 'line', axis: 'right', format: 'percent' },
+                  {
+                    key: 'Total Revenue',
+                    role: 'bar',
+                    axis: 'left',
+                    format: 'currency',
+                  },
+                  {
+                    key: 'Payroll / Revenue %',
+                    role: 'line',
+                    axis: 'right',
+                    format: 'percent',
+                  },
                 ],
                 secondaryAxisFormat: 'percent',
                 secondaryLabel: 'Payroll / Revenue %',
@@ -1227,16 +1593,24 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(1);
     expect(plan.summary).toContain('average payroll / revenue %');
-    expect(plan.modify[0]?.display?.referenceSeries).toBe('Payroll / Revenue % Average');
+    expect(plan.modify[0]?.display?.referenceSeries).toBe(
+      'Payroll / Revenue % Average',
+    );
   });
 
   test('breaks department payroll into payroll components instead of a fake month regroup', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.specToPlan = async (_spec: any) => ({
       kind: 'build',
@@ -1264,7 +1638,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'total_payroll', dimension: 'department', chartType: 'bar' },
+              spec: {
+                measure: 'total_payroll',
+                dimension: 'department',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -1276,7 +1654,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan.modify).toHaveLength(1);
-    expect(plan.summary).toContain('base salary, overtime, bonus, and benefits');
+    expect(plan.summary).toContain(
+      'base salary, overtime, bonus, and benefits',
+    );
     expect(plan.modify[0]?.type).toBe('stacked_bar');
     expect(plan.modify[0]?.spec?.measures).toEqual([
       'total_base_salary',
@@ -1290,9 +1670,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     expect(
       svc.detectEbpoMeasureMentions(
@@ -1310,9 +1696,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'USA', total_payroll: 1000, avg_monthly_salary: 2500 }],
       error: null,
@@ -1330,7 +1722,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'total_payroll', dimension: 'country', chartType: 'bar' },
+              spec: {
+                measure: 'total_payroll',
+                dimension: 'country',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -1343,20 +1739,30 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(1);
     expect(plan.modify[0]?.type).toBe('combo');
-    expect(plan.modify[0]?.display?.secondaryLabel).toBe('Average monthly salary');
+    expect(plan.modify[0]?.display?.secondaryLabel).toBe(
+      'Average monthly salary',
+    );
     expect(plan.modify[0]?.dynamicSql).toContain(
       'sum(total_monthly_salary_usd) / nullIf(sum(employee_count), 0)',
     );
-    expect(plan.modify[0]?.dynamicSql).not.toContain('avg(avg_monthly_salary_usd)');
+    expect(plan.modify[0]?.dynamicSql).not.toContain(
+      'avg(avg_monthly_salary_usd)',
+    );
   });
 
   test('refuses named average reference lines when the requested measure is unavailable at the current grouping', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     const plan = await svc.buildEbpoMetricEdit(
       {
@@ -1370,30 +1776,40 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              // a genuinely valid operations-by-geography chart; gross margin is NOT
-              // available at this grouping (revenue/margin have no geography relationship)
-              spec: { measure: 'calls_handled', dimension: 'country', chartType: 'bar' },
+              // A valid operations-by-geography chart. Cash balance is a company-level
+              // stock and cannot truthfully be repeated for each country.
+              spec: {
+                measure: 'calls_handled',
+                dimension: 'country',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'number' },
             },
             displayOrder: 0,
           },
         ],
       },
-      'In the same chart, add an average gross margin line.',
+      'In the same chart, add an average cash balance line.',
       { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
     );
 
     expect(plan?.modify ?? []).toHaveLength(0);
-    expect(plan?.refusal).toMatch(/gross margin/i);
+    expect(plan?.refusal).toMatch(/cash balance/i);
   });
 
   test('normalizes asset-type share follow-ups instead of plotting raw currency bars', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'Server', 'Asset Cost': 29.1, 'Net Book Value': 24.6 },
@@ -1414,7 +1830,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'asset_cost', dimension: 'asset_type', chartType: 'donut' },
+              spec: {
+                measure: 'asset_cost',
+                dimension: 'asset_type',
+                chartType: 'donut',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -1443,9 +1863,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'Telecom Support', value: 27.3 },
@@ -1483,9 +1909,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     let capturedSpec: any = null;
     svc.specToPlan = async (spec: any) => {
       capturedSpec = spec;
@@ -1546,9 +1978,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.buildEbpoMetricEdit = async () => ({
       summary: 'Updated the donut chart.',
@@ -1576,7 +2014,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'query',
-              dynamicSql: 'SELECT category AS name, amount AS value FROM some_view',
+              dynamicSql:
+                'SELECT category AS name, amount AS value FROM some_view',
               display: { labelMode: 'percent', valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -1600,12 +2039,22 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
-        { name: 'Mumbai Delivery Center / Server', value: 35800, depreciation_pct: 52.4 },
+        {
+          name: 'Mumbai Delivery Center / Server',
+          value: 35800,
+          depreciation_pct: 52.4,
+        },
         { name: 'Warsaw SSC / Laptop', value: 32100, depreciation_pct: 34.1 },
       ],
       error: null,
@@ -1643,7 +2092,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify[0]?.type).toBe('treemap');
     expect(plan.modify[0]?.dynamicSql).toContain('AS value');
     expect(plan.modify[0]?.dynamicSql).toContain('AS depreciation_pct');
-    expect(plan.modify[0]?.dynamicSql).toContain('GROUP BY delivery_center, asset_type');
+    expect(plan.modify[0]?.dynamicSql).toContain(
+      'GROUP BY delivery_center, asset_type',
+    );
     expect(plan.modify[0]?.display).toMatchObject({
       valueFormat: 'currency',
       colorMetric: 'depreciation_pct',
@@ -1656,13 +2107,27 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
-    svc.executeDynamicSqlChecked = async (_sql: string, _scope: unknown, expectedType: string) => ({
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
+    svc.executeDynamicSqlChecked = async (
+      _sql: string,
+      _scope: unknown,
+      expectedType: string,
+    ) => ({
       rows: [
         { name: 'NY HQ', value: 31.8, 'Net Book Value Label': 24300 },
-        { name: 'LA Delivery Center', value: 29.5, 'Net Book Value Label': 24700 },
+        {
+          name: 'LA Delivery Center',
+          value: 29.5,
+          'Net Book Value Label': 24700,
+        },
       ],
       error: null,
       expectedType,
@@ -1680,7 +2145,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'depreciation_pct', dimension: 'delivery_center', chartType: 'bar' },
+              spec: {
+                measure: 'depreciation_pct',
+                dimension: 'delivery_center',
+                chartType: 'bar',
+              },
               display: { valueFormat: 'percent', valueDecimals: 1 },
             },
             displayOrder: 0,
@@ -1693,7 +2162,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(1);
     expect(plan.modify[0]?.type).toBe('bar');
-    expect(plan.modify[0]?.dynamicSql).toContain('_labels.value AS "Net Book Value Label"');
+    expect(plan.modify[0]?.dynamicSql).toContain(
+      '_labels.value AS "Net Book Value Label"',
+    );
     expect(plan.modify[0]?.display).toMatchObject({
       valueFormat: 'percent',
       labelSeries: 'Net Book Value Label',
@@ -1705,9 +2176,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Center A', x: 12, y: 88 }],
       error: null,
@@ -1728,7 +2205,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan?.kind).toBe('build');
     if (plan?.kind === 'build') {
-      expect(plan.plan.dashboard.widgets[0]?._spec?.dimension).toBe('delivery_center');
+      expect(plan.plan.dashboard.widgets[0]?._spec?.dimension).toBe(
+        'delivery_center',
+      );
       expect(plan.plan.dashboard.widgets[0]?.type).toBe('scatter');
     }
   });
@@ -1737,7 +2216,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
     const parser = AgentService.prototype as any;
     const regionWidgets = parser.selectWidgetsForQuery(
@@ -1753,8 +2233,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     const hasGeoRevenue = (widgets: any[]) =>
       (widgets ?? []).some(
         (w) =>
-          (w?.metric === 'allocated_revenue' ||
-            (w?.metric === 'revenue' && geoGroupings.includes(w?.grouping))) ,
+          w?.metric === 'allocated_revenue' ||
+          (w?.metric === 'revenue' && geoGroupings.includes(w?.grouping)),
       );
     expect(hasGeoRevenue(regionWidgets)).toBe(false);
     expect(hasGeoRevenue(countryWidgets)).toBe(false);
@@ -1764,14 +2244,24 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     expect(
-      svc.detectEbpoMeasureMentions('Create a stacked column chart showing revenue by country'),
+      svc.detectEbpoMeasureMentions(
+        'Create a stacked column chart showing revenue by country',
+      ),
     ).not.toContain('allocated_revenue');
     expect(
-      svc.detectEbpoMeasureMentions('Generate a bar chart showing revenue by region'),
+      svc.detectEbpoMeasureMentions(
+        'Generate a bar chart showing revenue by region',
+      ),
     ).not.toContain('allocated_revenue');
   });
 
@@ -1779,11 +2269,19 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     expect(
-      svc.detectEbpoMeasureMentions('In the same chart, show cumulative revenue.'),
+      svc.detectEbpoMeasureMentions(
+        'In the same chart, show cumulative revenue.',
+      ),
     ).toContain('revenue_ytd');
   });
 
@@ -1791,9 +2289,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     expect(
       svc.buildEbpoComboEditSpec(
@@ -1837,9 +2341,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     expect(
       svc.buildEbpoComboEditSpec(
@@ -1857,9 +2367,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         { name: 'Client A', gross_margin: 100 },
@@ -1880,7 +2396,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
             queryConfig: {
               metric: 'dynamic',
               grouping: 'dynamic',
-              spec: { measure: 'gross_margin_pct', dimension: 'client', chartType: 'scatter' },
+              spec: {
+                measure: 'gross_margin_pct',
+                dimension: 'client',
+                chartType: 'scatter',
+              },
               display: { valueFormat: 'percent' },
             },
             displayOrder: 0,
@@ -1894,22 +2414,33 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan.modify).toHaveLength(1);
     expect(plan.modify[0]?.type).toBe('line');
     expect(plan.modify[0]?.dynamicSql).toContain('sum(_b.`value`) OVER');
-    expect(plan.modify[0]?.title).toContain('Cumulative Gross Margin');
+    // gross_margin is the dollar gross-profit measure; gross_margin_pct is the ratio.
+    expect(plan.modify[0]?.title).toContain('Cumulative Gross Profit');
   });
 
   test('recognizes same-chart follow-ups that require an existing live chart', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     expect(
-      svc.referencesExistingChart('In the same chart, add average SLA as a benchmark line.'),
+      svc.referencesExistingChart(
+        'In the same chart, add average SLA as a benchmark line.',
+      ),
     ).toBe(true);
     expect(
-      svc.referencesExistingChart('Generate a bar chart showing SLA by country.'),
+      svc.referencesExistingChart(
+        'Generate a bar chart showing SLA by country.',
+      ),
     ).toBe(false);
   });
 
@@ -1917,9 +2448,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     const plan = await svc.generateSmartPlan(
       'Generate a bar chart showing EBITDA by business unit',
@@ -1927,16 +2464,24 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan?.kind).toBe('no_data');
-    expect((plan as any)?.message ?? '').toContain('payroll is not booked by business unit');
+    expect((plan as any)?.message ?? '').toContain(
+      'payroll is not booked by business unit',
+    );
   });
 
   test('offers truthful alternatives for largest-client department expense asks instead of a dead-end refusal', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
 
     const plan = await svc.generateSmartPlan(
@@ -1945,7 +2490,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan?.kind).toBe('clarify');
-    expect(plan?.clarification?.question ?? '').toContain("can't scope department expenses");
+    expect(plan?.clarification?.question ?? '').toContain(
+      "can't scope department expenses",
+    );
     expect(plan?.clarification?.options?.map((o: any) => o.label)).toEqual([
       'Company expenses by department',
       'Payroll by department',
@@ -1957,9 +2504,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Dell', x: 54132993.54, y: 1056451 }],
       error: null,
@@ -1991,9 +2544,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.listTopClientsForScope = async () => ['AT&T'];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 5000 }],
@@ -2006,7 +2565,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         measures: ['total_revenue', 'total_cost'],
         dimension: 'month',
         chartType: 'stacked_bar',
-        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+        filters: [
+          { dimension: 'client', op: 'in', values: ['largest client'] },
+        ],
       },
       'Monthly Revenue and Expenses — Largest Client',
       true,
@@ -2030,9 +2591,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.listTopClientsForScope = async () => ['JP Morgan'];
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', GrossMargin: 4000, TotalExpenses: 7000 }],
@@ -2045,7 +2612,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         measures: ['gross_margin', 'total_expenses'],
         dimension: 'month',
         chartType: 'bar',
-        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+        filters: [
+          { dimension: 'client', op: 'in', values: ['largest client'] },
+        ],
       },
       'Gross Profit vs Expenses by Month — Largest Client',
       true,
@@ -2063,12 +2632,25 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.listTopClientsForScope = async () => ['JP Morgan'];
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 700, GrossMargin: 300 }],
+      rows: [
+        {
+          name: 'Jan 2025',
+          TotalRevenue: 1000,
+          TotalExpenses: 700,
+          GrossMargin: 300,
+        },
+      ],
       error: null,
     });
 
@@ -2079,7 +2661,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         dimension: 'month',
         chartType: 'matrix',
         recentMonths: 8,
-        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+        filters: [
+          { dimension: 'client', op: 'in', values: ['largest client'] },
+        ],
       },
       'Monthly Revenue, Expenses, and Gross Profit — Largest Client',
       true,
@@ -2097,12 +2681,25 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.listTopClientsForScope = async () => ['JP Morgan'];
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Jan 2025', TotalRevenue: 1000, TotalExpenses: 700, GrossMargin: 300 }],
+      rows: [
+        {
+          name: 'Jan 2025',
+          TotalRevenue: 1000,
+          TotalExpenses: 700,
+          GrossMargin: 300,
+        },
+      ],
       error: null,
     });
 
@@ -2112,7 +2709,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
         measures: ['total_revenue', 'total_expenses', 'gross_margin'],
         dimension: 'month',
         chartType: 'combo',
-        filters: [{ dimension: 'client', op: 'in', values: ['largest client'] }],
+        filters: [
+          { dimension: 'client', op: 'in', values: ['largest client'] },
+        ],
       },
       'Revenue, Expenses & Gross Margin — Largest Client',
       true,
@@ -2136,9 +2735,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
 
     const plan = await svc.generateSmartPlan(
@@ -2147,17 +2752,27 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     );
 
     expect(plan?.kind).toBe('no_data');
-    expect((plan as any)?.message ?? '').toContain("can’t calculate net profit for a specific client");
-    expect((plan as any)?.message ?? '').toContain('payroll is not booked by client');
+    expect((plan as any)?.message ?? '').toContain(
+      'can’t calculate net profit for a specific client',
+    );
+    expect((plan as any)?.message ?? '').toContain(
+      'payroll is not booked by client',
+    );
   });
 
   test('still allows EBITDA trend over time at company grain', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', value: -1200000 }],
       error: null,
@@ -2179,9 +2794,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     const message = svc.negativePieDonutMessage('pie', [
       { name: 'Operating Cash Flow', value: 83500000 },
@@ -2215,9 +2836,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     expect(
       svc.sameChartAxisConflict(
@@ -2249,9 +2876,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     expect(
       svc.sameChartAxisConflict(
@@ -2283,9 +2916,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Center A', x: 82, y: 95 }],
       error: null,
@@ -2305,7 +2944,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan?.kind).toBe('build');
     if (plan?.kind === 'build') {
-      expect(plan.plan.dashboard.widgets[0]?._spec?.dimension).toBe('delivery_center');
+      expect(plan.plan.dashboard.widgets[0]?._spec?.dimension).toBe(
+        'delivery_center',
+      );
       expect(plan.plan.dashboard.widgets[0]?._spec?.measures).toEqual([
         'utilization_pct',
         'sla_compliance_pct',
@@ -2317,9 +2958,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [
         {
@@ -2359,15 +3006,25 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const semanticResult = {
       kind: 'build',
       plan: {
         tools_to_execute: [],
         should_generate_dashboard: true,
-        dashboard: { title: 'Salary Distribution', description: '', widgets: [] },
+        dashboard: {
+          title: 'Salary Distribution',
+          description: '',
+          widgets: [],
+        },
         analysis_focus: 'salary distribution',
       },
     };
@@ -2391,15 +3048,25 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const semanticResult = {
       kind: 'build',
       plan: {
         tools_to_execute: [],
         should_generate_dashboard: true,
-        dashboard: { title: 'Gross Margin % vs Revenue by Client', description: '', widgets: [] },
+        dashboard: {
+          title: 'Gross Margin % vs Revenue by Client',
+          description: '',
+          widgets: [],
+        },
         analysis_focus: 'scatter',
       },
     };
@@ -2423,10 +3090,17 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
-    const quartileSql = 'SELECT name, min, q1, median, q3, max FROM salary_quartiles';
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
+    const quartileSql =
+      'SELECT name, min, q1, median, q3, max FROM salary_quartiles';
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -2464,12 +3138,25 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Gross Margin %', label: 'Gross Margin %', value: 42, format: 'percent' }],
+      rows: [
+        {
+          name: 'Gross Margin %',
+          label: 'Gross Margin %',
+          value: 42,
+          format: 'percent',
+        },
+      ],
       error: null,
     });
     const originalMeasures = [
@@ -2527,9 +3214,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', value: 1 }],
       error: null,
@@ -2542,7 +3235,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(plan?.kind).toBe('build');
     if (plan?.kind === 'build') {
       expect(plan.plan.dashboard.widgets).toHaveLength(4);
-      expect(plan.plan.dashboard.widgets.map((widget: any) => widget.title)).toEqual([
+      expect(
+        plan.plan.dashboard.widgets.map((widget: any) => widget.title),
+      ).toEqual([
         'Monthly Liquidity',
         'Monthly Profitability',
         'Monthly Employee Efficiency',
@@ -2550,7 +3245,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       ]);
       expect(
         plan.plan.dashboard.widgets.every(
-          (widget: any) => widget.type === 'line' && widget._spec?.dimension === 'month',
+          (widget: any) =>
+            widget.type === 'line' && widget._spec?.dimension === 'month',
         ),
       ).toBe(true);
     }
@@ -2560,9 +3256,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.queryRows = async () => [
       { v: 'Fresh', m: 10 },
       { v: 'Severely Late', m: 90 },
@@ -2597,9 +3299,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'USA', value: 92.7 }],
       error: null,
@@ -2621,9 +3329,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', value: 82.1 }],
       error: null,
@@ -2645,9 +3359,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Jan 2025', 'Payroll Expense': 586052 }],
       error: null,
@@ -2673,9 +3393,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'LA Delivery Center', x: 92.7, y: 84.1 }],
       error: null,
@@ -2698,25 +3424,39 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.buildEbpoSemanticPlan(
       'Generate a donut chart showing CSAT distribution',
       { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] },
     );
 
     expect(plan?.kind).toBe('no_data');
-    expect((plan as any)?.message ?? '').toContain('not additive parts of a whole');
+    expect((plan as any)?.message ?? '').toContain(
+      'not additive parts of a whole',
+    );
   });
 
   test('builds SLA by department from the department operations bridge', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Operations', value: 92.7 }],
       error: null,
@@ -2739,9 +3479,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Payroll Expense', value: 1200 }],
       error: null,
@@ -2761,9 +3507,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.specToPlan = async (spec: any) => ({
       kind: 'build',
@@ -2778,8 +3530,18 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
               display: {
                 valueFormat: 'percent',
                 series: [
-                  { key: 'SLA Compliance %', role: 'line', axis: 'left', format: 'percent' },
-                  { key: 'CSAT %', role: 'line', axis: 'left', format: 'percent' },
+                  {
+                    key: 'SLA Compliance %',
+                    role: 'line',
+                    axis: 'left',
+                    format: 'percent',
+                  },
+                  {
+                    key: 'CSAT %',
+                    role: 'line',
+                    axis: 'left',
+                    format: 'percent',
+                  },
                 ],
               },
             },
@@ -2828,9 +3590,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const fixed = svc.repairClickHouseSql(`
       SELECT
         formatDateTime(period_date, '%b %Y') AS name,
@@ -2847,9 +3615,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async (sql: string) => ({
       rows: sql.includes('Monthly Average')
         ? [{ name: 'Jan 2025', value: 10, 'value | Monthly Average': 9 }]
@@ -2867,7 +3641,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
           metric: 'dynamic',
           grouping: 'dynamic',
           dynamicSql: `SELECT name, value FROM section_${index + 1}`,
-          spec: { measure: 'total_revenue', dimension: 'month', chartType: 'line' },
+          spec: {
+            measure: 'total_revenue',
+            dimension: 'month',
+            chartType: 'line',
+          },
           display: { valueFormat: 'currency' },
         },
         displayOrder: index,
@@ -2881,21 +3659,36 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.refusal).toBeUndefined();
     expect(plan.modify).toHaveLength(4);
-    expect(plan.modify.every((edit: any) => edit.dynamicSql.includes('Monthly Average'))).toBe(
-      true,
-    );
+    expect(
+      plan.modify.every((edit: any) =>
+        edit.dynamicSql.includes('Monthly Average'),
+      ),
+    ).toBe(true);
   });
 
   test('preserves the Q35 waterfall bridge when adding gross-margin percentage labels', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Gross Margin', value: 40, is_total: 1, 'Gross Margin % Label': 40 }],
+      rows: [
+        {
+          name: 'Gross Margin',
+          value: 40,
+          is_total: 1,
+          'Gross Margin % Label': 40,
+        },
+      ],
       error: null,
     });
     const bridgeSql = "SELECT 'Revenue' AS name, 100 AS value, 0 AS is_total";
@@ -2912,7 +3705,11 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
               metric: 'dynamic',
               grouping: 'dynamic',
               dynamicSql: bridgeSql,
-              spec: { measure: 'gross_margin', dimension: 'month', chartType: 'waterfall' },
+              spec: {
+                measure: 'gross_margin',
+                dimension: 'month',
+                chartType: 'waterfall',
+              },
               display: { valueFormat: 'currency' },
             },
             displayOrder: 0,
@@ -2933,9 +3730,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async (sql: string) => ({
       rows: sql.includes('cumulative_value')
@@ -2982,14 +3785,18 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
-    svc.executeDynamicSqlChecked = async (sql: string) => ({
-      rows: sql.includes('Cumulative Cash Flow')
-        ? [{ name: 'Jan 2025', value: 12.5, 'Cumulative Cash Flow': 12.5 }]
-        : [{ name: 'Jan 2025', value: 12.5 }],
+    svc.executeDynamicSqlChecked = async () => ({
+      rows: [{ name: 'Jan 2025', value: 12.5 }],
       error: null,
     });
 
@@ -3024,16 +3831,23 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
 
     expect(plan.modify).toHaveLength(1);
     expect(plan.summary).toContain('cumulative cash flow');
-    expect(plan.modify[0]?.dynamicSql).toContain('AS "Cumulative Cash Flow"');
+    expect(plan.modify[0]?.dynamicSql).toContain('sum(_b.`value`) OVER');
+    expect(plan.modify[0]?.title).toContain('Cumulative Cash Flow');
   });
 
   test('refuses same-chart client ranking on a city chart instead of swapping the axis', async () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
 
     const plan = await svc.generateEditPlan(
@@ -3068,9 +3882,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
 
     const plan = await svc.generateEditPlan(
       {
@@ -3104,15 +3924,27 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.orgHasEbpoData = async () => true;
     svc.executeDynamicSqlChecked = async () => ({
-      rows: [{ name: 'Center A', value: 12, asset_intensity: 12, csat_pct: 91 }],
+      rows: [
+        { name: 'Center A', value: 12, asset_intensity: 12, csat_pct: 91 },
+      ],
       error: null,
     });
-    const scope = { tenantId: 't', connectionIds: [], externalOrgIds: ['ebpo'] };
+    const scope = {
+      tenantId: 't',
+      connectionIds: [],
+      externalOrgIds: ['ebpo'],
+    };
     const create = await svc.buildEbpoSemanticPlan(
       'Create a bar chart showing asset intensity by delivery center using net book value per call handled.',
       scope,
@@ -3120,7 +3952,9 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(create?.kind).toBe('build');
     if (create?.kind !== 'build') return;
     const widget = create.plan.dashboard.widgets[0] as any;
-    expect(widget._sql).toContain('net_book_value / nullIf(_operations.calls_handled, 0)');
+    expect(widget._sql).toContain(
+      'net_book_value / nullIf(_operations.calls_handled, 0)',
+    );
     expect(widget._spec?.measure).toBe('asset_intensity');
 
     const edit = await svc.generateEditPlan(
@@ -3156,9 +3990,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     svc.executeDynamicSqlChecked = async () => ({
       rows: [{ name: 'Center A', x: 82, y: 120, z: 900000 }],
       error: null,
@@ -3206,9 +4046,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const dashboard = {
       id: 'dash',
       title: 'Dashboard',
@@ -3230,15 +4076,24 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       ],
     };
 
-    const latest = await svc.generateEditPlan(dashboard, 'delete the latest chart');
+    const latest = await svc.generateEditPlan(
+      dashboard,
+      'delete the latest chart',
+    );
     expect(latest.remove_indices).toEqual([1]);
     expect(latest.summary).toContain('Vendor Spend');
 
-    const byTitle = await svc.generateEditPlan(dashboard, 'remove the revenue chart');
+    const byTitle = await svc.generateEditPlan(
+      dashboard,
+      'remove the revenue chart',
+    );
     expect(byTitle.remove_indices).toEqual([0]);
     expect(byTitle.summary).toContain('Monthly Revenue');
 
-    const byTitleWithoutChartWord = await svc.generateEditPlan(dashboard, 'delete Monthly Revenue');
+    const byTitleWithoutChartWord = await svc.generateEditPlan(
+      dashboard,
+      'delete Monthly Revenue',
+    );
     expect(byTitleWithoutChartWord.remove_indices).toEqual([0]);
 
     const byVersion = await svc.generateEditPlan(dashboard, 'delete v1');
@@ -3249,9 +4104,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -3286,9 +4147,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const plan = await svc.generateEditPlan(
       {
         id: 'dash',
@@ -3306,9 +4173,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const widget = {
       id: 'w1',
       title: 'Monthly Revenue',
@@ -3335,7 +4208,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     expect(
       svc.widgetEditHasMaterialChange(widget, {
         index: 0,
-        dynamicSql: 'SELECT month AS name, revenue AS value FROM revenue_view ORDER BY month ASC',
+        dynamicSql:
+          'SELECT month AS name, revenue AS value FROM revenue_view ORDER BY month ASC',
       }),
     ).toBe(true);
   });
@@ -3344,9 +4218,15 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
     process.env.DATABASE_URL ||= 'postgresql://user:pass@localhost:5432/db';
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { AgentService } = require('./agent.service') as typeof import('./agent.service');
+    const { AgentService } =
+      require('./agent.service') as typeof import('./agent.service');
 
-    const svc = new AgentService({} as any, {} as any, {} as any, {} as any) as any;
+    const svc = new AgentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    ) as any;
     const widget = {
       id: 'w1',
       title: 'Collection Rate',
@@ -3354,7 +4234,8 @@ describe('AgentService.selectWidgetsForQuery (explicit chart lines)', () => {
       queryConfig: {
         metric: 'dynamic',
         grouping: 'query',
-        dynamicSql: 'SELECT month AS name, collection_rate_pct AS value FROM rates_view',
+        dynamicSql:
+          'SELECT month AS name, collection_rate_pct AS value FROM rates_view',
         display: { valueFormat: 'percent', valueDecimals: 1 },
       },
       displayOrder: 0,

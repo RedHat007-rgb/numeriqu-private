@@ -6,7 +6,7 @@ import { NestFactory } from '@nestjs/core';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { resolveLlmRuntimeConfig } from './common/llm/llm-config';
 import { installLlmFetchInterceptor } from './common/llm/llm-fetch-interceptor';
-import { Logger } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 
 const repoRoot = join(__dirname, '..', '..', '..');
 const apiRoot = join(__dirname, '..');
@@ -20,7 +20,9 @@ const envFiles = [
 
 for (const envFile of envFiles) {
   if (!existsSync(envFile)) continue;
-  loadEnvFile({ path: envFile, override: true });
+  // Deployment-provided environment variables are authoritative. Local files
+  // fill gaps only; they must never replace orchestrator secrets or controls.
+  loadEnvFile({ path: envFile, override: false });
 }
 
 async function bootstrap() {
@@ -41,6 +43,13 @@ async function bootstrap() {
   // Catches ALL unhandled errors and converts them to user-friendly messages.
   // Raw stack traces, DB errors, and internal details are NEVER exposed.
   app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
 
   // ── CORS ──────────────────────────────────────────────────────────────────
   const parseOrigins = (raw: string | undefined) =>
@@ -80,7 +89,8 @@ async function bootstrap() {
       callback(new Error(`Origin ${origin} is not allowed by CORS`));
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    allowedHeaders: 'Content-Type,Authorization,x-organization-id',
+    allowedHeaders:
+      'Content-Type,Authorization,x-organization-id,Idempotency-Key',
     credentials: true,
   });
 

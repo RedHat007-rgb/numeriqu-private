@@ -22,19 +22,28 @@ export class ApiError extends Error {
    */
   toUserMessage(fallback = "Something went wrong. Please try again."): string {
     const code = this.payload?.code;
-    if (code === "INVITE_EXPIRED") return "This invite has expired. Ask an admin to resend it.";
-    if (code === "EMAIL_MISMATCH") return "Use the same email address that received the invite.";
-    if (code === "ALREADY_MEMBER") return "This user is already a member of the organization.";
-    if (code === "VALIDATION_FAILED") return "Some details look incorrect. Please review and retry.";
+    if (code === "INVITE_EXPIRED")
+      return "This invite has expired. Ask an admin to resend it.";
+    if (code === "EMAIL_MISMATCH")
+      return "Use the same email address that received the invite.";
+    if (code === "ALREADY_MEMBER")
+      return "This user is already a member of the organization.";
+    if (code === "VALIDATION_FAILED")
+      return "Some details look incorrect. Please review and retry.";
 
-    if (this.status === 401) return "Your session expired. Please sign in again.";
+    if (this.status === 401)
+      return "Your session expired. Please sign in again.";
     if (this.status === 403) return "You do not have access to this resource.";
-    if (this.status === 404) return "We could not find what you were looking for.";
+    if (this.status === 404)
+      return "We could not find what you were looking for.";
     if (this.status === 400) return fallback;
     if (this.status === 408) return "Request timed out. Please retry.";
-    if (this.status === 0) return "Request blocked by browser/extension. Disable adblock for localhost and retry.";
-    if (this.status === 429) return "Too many requests. Wait a moment and retry.";
-    if (this.status >= 500) return "Our service is having trouble right now. Please retry shortly.";
+    if (this.status === 0)
+      return "Request blocked by browser/extension. Disable adblock for localhost and retry.";
+    if (this.status === 429)
+      return "Too many requests. Wait a moment and retry.";
+    if (this.status >= 500)
+      return "Our service is having trouble right now. Please retry shortly.";
     return fallback;
   }
 }
@@ -105,9 +114,14 @@ export function getStreamApiBaseURL(): string {
 /** Backwards-compatible export so existing imports keep working. */
 export const API_BASE_URL = getApiBaseURL();
 
-function normalizeMessage(payload: ApiErrorPayload | undefined, fallback: string) {
+function normalizeMessage(
+  payload: ApiErrorPayload | undefined,
+  fallback: string,
+) {
   if (!payload?.message) return payload?.error ?? fallback;
-  return Array.isArray(payload.message) ? payload.message.join(" ") : payload.message;
+  return Array.isArray(payload.message)
+    ? payload.message.join(" ")
+    : payload.message;
 }
 
 function getOrgIdFromCookie(): string | null {
@@ -121,7 +135,10 @@ function getOrgIdFromCookie(): string | null {
 }
 
 export function createRequester(getToken: TokenProvider) {
-  return async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return async function request<T>(
+    path: string,
+    init: RequestInit = {},
+  ): Promise<T> {
     const token = await getToken();
 
     const headers = new Headers(init.headers);
@@ -135,16 +152,21 @@ export function createRequester(getToken: TokenProvider) {
       const orgId = getOrgIdFromCookie();
       if (orgId) headers.set("x-organization-id", orgId);
     }
-    if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    if (init.body && !headers.has("Content-Type"))
+      headers.set("Content-Type", "application/json");
 
     const controller = new AbortController();
     const timeoutMs =
       typeof init.signal === "undefined"
         ? // Default timeouts: keep auth/metadata snappy, allow heavier POSTs longer.
-          (init.method?.toUpperCase?.() === "GET" ? 15000 : 60000)
+          init.method?.toUpperCase?.() === "GET"
+          ? 15000
+          : 60000
         : null;
     const timeout =
-      timeoutMs === null ? null : setTimeout(() => controller.abort(), timeoutMs);
+      timeoutMs === null
+        ? null
+        : setTimeout(() => controller.abort(), timeoutMs);
 
     let response: Response;
     try {
@@ -175,7 +197,11 @@ export function createRequester(getToken: TokenProvider) {
       } catch {
         payload = undefined;
       }
-      throw new ApiError(normalizeMessage(payload, response.statusText), response.status, payload);
+      throw new ApiError(
+        normalizeMessage(payload, response.statusText),
+        response.status,
+        payload,
+      );
     }
 
     if (response.status === 204) return undefined as T;
@@ -212,6 +238,8 @@ export async function streamJsonSseLines(params: {
   body: unknown;
   onDelta: (delta: string) => void;
   onMessage?: (msg: StreamMessage) => void;
+  signal?: AbortSignal;
+  inactivityTimeoutMs?: number;
 }) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -219,15 +247,49 @@ export async function streamJsonSseLines(params: {
   if (params.token) {
     headers.Authorization = `Bearer ${params.token}`;
   }
-  // Org scoping is injected server-side via cookie in the dev proxy. For direct streaming to the API,
-  // callers should pass `x-organization-id` explicitly if needed.
+  const orgId = getOrgIdFromCookie();
+  if (orgId) headers["x-organization-id"] = orgId;
 
-  const response = await fetch(`${getStreamApiBaseURL()}${params.path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(params.body),
-    credentials: "include",
-  });
+  const controller = new AbortController();
+  const timeoutMs = Math.max(5_000, params.inactivityTimeoutMs ?? 30_000);
+  let timedOut = false;
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+  const refreshInactivityTimeout = () => {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  };
+  const abortFromCaller = () => controller.abort();
+  const cleanup = () => {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    params.signal?.removeEventListener("abort", abortFromCaller);
+  };
+  params.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  refreshInactivityTimeout();
+
+  let response: Response;
+  try {
+    response = await fetch(`${getStreamApiBaseURL()}${params.path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(params.body),
+      credentials: "include",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    cleanup();
+    if (controller.signal.aborted) {
+      throw new ApiError(
+        timedOut
+          ? "Prism did not make progress before the analysis deadline."
+          : "Analysis cancelled.",
+        timedOut ? 408 : 499,
+      );
+    }
+    throw error;
+  }
 
   if (!response.ok || !response.body) {
     let payload: ApiErrorPayload | undefined;
@@ -236,6 +298,7 @@ export async function streamJsonSseLines(params: {
     } catch {
       payload = undefined;
     }
+    cleanup();
     throw new ApiError(
       normalizeMessage(payload, "Streaming request failed."),
       response.status,
@@ -247,38 +310,55 @@ export async function streamJsonSseLines(params: {
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      refreshInactivityTimeout();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      const clean = line.startsWith("data:") ? line.slice(5).trim() : line.trim();
-      if (!clean || clean === "[DONE]") continue;
-      try {
-        const parsed = JSON.parse(clean) as StreamMessage;
-        if (parsed.type === "error") {
-          throw new ApiError(
-            (parsed.message as string) ?? "Stream interrupted.",
-            500,
-          );
-        }
-        if (params.onMessage) params.onMessage(parsed);
-        if (parsed.type === "token" && typeof parsed.content === "string") {
-          params.onDelta(parsed.content);
-        } else if (typeof parsed.token === "string") {
-          params.onDelta(parsed.token);
-        }
-      } catch (error) {
-        if (error instanceof SyntaxError) {
-          // SSE frame was raw text rather than JSON; emit as-is so streaming surfaces still see content.
-          params.onDelta(clean);
-        } else {
-          throw error;
+      for (const line of lines) {
+        const clean = line.startsWith("data:")
+          ? line.slice(5).trim()
+          : line.trim();
+        if (!clean || clean === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(clean) as StreamMessage;
+          if (parsed.type === "error") {
+            throw new ApiError(
+              (parsed.message as string) ?? "Stream interrupted.",
+              500,
+            );
+          }
+          if (params.onMessage) params.onMessage(parsed);
+          if (parsed.type === "token" && typeof parsed.content === "string") {
+            params.onDelta(parsed.content);
+          } else if (typeof parsed.token === "string") {
+            params.onDelta(parsed.token);
+          }
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            params.onDelta(clean);
+          } else {
+            throw error;
+          }
         }
       }
     }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new ApiError(
+        timedOut
+          ? "Prism did not make progress before the analysis deadline."
+          : "Analysis cancelled.",
+        timedOut ? 408 : 499,
+      );
+    }
+    throw error;
+  } finally {
+    cleanup();
+    await reader.cancel().catch(() => undefined);
   }
 }

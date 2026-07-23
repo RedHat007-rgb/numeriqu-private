@@ -1,0 +1,49 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Types, finance semantics, and production builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check workspace
+        run: pnpm check-types
+
+      - name: Validate database contracts
+        run: pnpm --filter @repo/db exec prisma validate
+
+      - name: Run Prism policy and contract evaluations
+        run: pnpm --filter api qa:prism
+
+      - name: Run API and finance-semantic tests
+        run: pnpm --filter api test -- --runInBand --forceExit
+
+      - name: Build production applications
+        run: pnpm build

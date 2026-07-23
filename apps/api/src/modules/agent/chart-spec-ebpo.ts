@@ -99,6 +99,8 @@ export interface EbpoViewDef {
   // FLATTENING subquery that joins it in and exposes every needed column unqualified,
   // aliased. Use `{db}` for the database. Defaults to `{db}.<name>`.
   from?: string;
+  /** Lower values win when several governed views can answer the same request. */
+  routingPriority?: number;
 }
 
 export interface EbpoCompileResult {
@@ -172,12 +174,9 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     ],
     derived: { num: 'gross_margin', den: 'total_revenue', scale: 100 },
   },
-  // Ratio-of-sums using the requested DAX semantics:
-  // [ (Total Revenue - Total Expenses) / Total Revenue ] * 0.01
-  // The app's percent formatter expects percent-points, so the effective SQL scale
-  // here is 1 (not 100).
-  // This is intentionally separate from Gross Profit % above, which remains
-  // revenue minus cost divided by revenue.
+  // Standard finance definition: gross profit / revenue. Keep the legacy
+  // gross_profit_pct alias for compatibility, but both resolve to the same governed
+  // ratio-of-sums rather than presenting net margin under a gross-margin label.
   gross_margin_pct: {
     id: 'gross_margin_pct',
     label: 'Gross Margin %',
@@ -194,11 +193,7 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
       'gross margin percent',
       'gross margin pct',
     ],
-    derived: {
-      num: { add: ['total_revenue'], sub: ['total_expenses'] },
-      den: 'total_revenue',
-      scale: 1,
-    },
+    derived: { num: 'gross_margin', den: 'total_revenue', scale: 100 },
   },
   // YoY = window over grain-aggregated revenue vs the same period one year prior (DAX
   // DIVIDE([Total Revenue]-[Revenue LY],[Revenue LY])). The old avg(precomputed monthly
@@ -315,7 +310,11 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
     agg: 'avg',
     kind: 'ratio',
     decimals: 1,
-    aliases: ['fcf margin', 'free cash flow margin', 'free cash flow margin percentage'],
+    aliases: [
+      'fcf margin',
+      'free cash flow margin',
+      'free cash flow margin percentage',
+    ],
     derived: { num: 'free_cash_flow', den: 'total_revenue', scale: 100 },
   },
   operating_cf_to_revenue_pct: {
@@ -962,14 +961,22 @@ export const EBPO_MEASURES: Record<string, EbpoMeasureDef> = {
   // Fixed assets (stocks). Bare "assets"/"asset value"/"fixed assets" mean the asset
   // VALUE (gross cost), never the asset COUNT — alias them here so a request like
   // "assets by country" plots the dollar value, not a row count.
-  asset_cost: M('asset_cost', 'Asset Cost', 'currency', 'sum', 'flow', undefined, [
-    'assets',
-    'asset value',
-    'total assets',
-    'fixed assets',
-    'asset base',
-    'gross asset value',
-  ]),
+  asset_cost: M(
+    'asset_cost',
+    'Asset Cost',
+    'currency',
+    'sum',
+    'flow',
+    undefined,
+    [
+      'assets',
+      'asset value',
+      'total assets',
+      'fixed assets',
+      'asset base',
+      'gross asset value',
+    ],
+  ),
   accumulated_depreciation: M(
     'accumulated_depreciation',
     'Accumulated Depreciation',
@@ -1274,6 +1281,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
   },
   {
     name: 'v_ebpo_revenue_by_client',
+    routingPriority: -10,
     hasTime: false,
     dims: ['client', 'industry'],
     measures: {
@@ -1349,7 +1357,6 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
       // ratio-of-sums revenue_per_employee (max() takes it once); NOT exposed as a
       // standalone measure, so "revenue by department" still honestly refuses.
       company_revenue_repl: 'total_revenue_usd',
-      cost_per_employee: 'cost_per_employee_usd',
     },
   },
   {
@@ -1360,8 +1367,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     // without broadcasting one company average across every department.
     name: 'v_ebpo_department_operations_monthly',
     hasTime: true,
-    from:
-      `(
+    from: `(
         WITH
           ops AS (
             SELECT
@@ -1535,7 +1541,7 @@ export const EBPO_VIEWS: EbpoViewDef[] = [
     name: 'v_ebpo_expense_accounts_monthly',
     hasTime: true,
     from:
-      "(SELECT * FROM {db}.v_ebpo_trial_balance_monthly " +
+      '(SELECT * FROM {db}.v_ebpo_trial_balance_monthly ' +
       "WHERE account_name IN ('Payroll Expense', 'Rent Expense', 'IT Infrastructure', 'Recruitment Expense', 'Depreciation')) AS ebe",
     dims: ['account'],
     measures: {
@@ -1620,7 +1626,13 @@ const decimalsFor = (m: EbpoMeasureDef) =>
 
 // Periods that make up one year at a given time grain — the window lag for YoY.
 const periodsPerYear = (dimId: string): number | null =>
-  dimId === 'month' ? 12 : dimId === 'quarter' ? 4 : dimId === 'year' ? 1 : null;
+  dimId === 'month'
+    ? 12
+    : dimId === 'quarter'
+      ? 4
+      : dimId === 'year'
+        ? 1
+        : null;
 
 const timeExpr = (dimId: string): { label: string; group: string } => {
   // The label MUST be a function of the GROUP BY key — ClickHouse rejects a SELECT
@@ -1695,8 +1707,14 @@ const measureResolvableInView = (
   if (mid in view.measures) return true;
   const nextSeen = new Set(seen);
   nextSeen.add(mid);
-  if (m.window) return view.hasTime && measureResolvableInView(view, m.window.base, nextSeen);
-  if (m.derived) return derivedRefs(m.derived).every((id) => measureResolvableInView(view, id, nextSeen));
+  if (m.window)
+    return (
+      view.hasTime && measureResolvableInView(view, m.window.base, nextSeen)
+    );
+  if (m.derived)
+    return derivedRefs(m.derived).every((id) =>
+      measureResolvableInView(view, id, nextSeen),
+    );
   return false;
 };
 const measureAggExprInView = (
@@ -1705,23 +1723,35 @@ const measureAggExprInView = (
   cond?: string,
   seen = new Set<string>(),
 ): string => {
-  if (seen.has(mid)) throw new Error(`Circular EBPO derived measure reference: ${mid}`);
+  if (seen.has(mid))
+    throw new Error(`Circular EBPO derived measure reference: ${mid}`);
   const m = EBPO_MEASURES[mid];
   if (!m) throw new Error(`Unknown EBPO measure: ${mid}`);
-  if (view.measures[mid]) {
-    return cond ? aggIfOf(m, view.measures[mid]!, cond) : aggOf(m, view.measures[mid]!);
-  }
   const nextSeen = new Set(seen);
   nextSeen.add(mid);
-  if (m.window) {
-    if (!view.hasTime) throw new Error(`Measure ${mid} requires a time-aware view`);
-    return measureAggExprInView(m.window.base, view, cond, nextSeen);
-  }
-  if (m.derived) {
+  // A governed derivation is authoritative even when a source view also exposes a
+  // precomputed convenience column. Aggregating that column (for example avg(DSO))
+  // changes the finance meaning at coarser grains; recompute from components instead.
+  const canDerive =
+    !!m.derived &&
+    derivedRefs(m.derived).every((id) =>
+      measureResolvableInView(view, id, nextSeen),
+    );
+  if (m.derived && canDerive) {
     const n = numeratorExpr(m.derived.num, view, cond, nextSeen);
     if (!m.derived.den) return n;
     const denExpr = measureAggExprInView(m.derived.den, view, cond, nextSeen);
     return `${n} / nullIf(${denExpr}, 0) * ${m.derived.scale ?? 100}`;
+  }
+  if (view.measures[mid]) {
+    return cond
+      ? aggIfOf(m, view.measures[mid]!, cond)
+      : aggOf(m, view.measures[mid]!);
+  }
+  if (m.window) {
+    if (!view.hasTime)
+      throw new Error(`Measure ${mid} requires a time-aware view`);
+    return measureAggExprInView(m.window.base, view, cond, nextSeen);
   }
   throw new Error(`Measure ${mid} is not available in view ${view.name}`);
 };
@@ -1804,6 +1834,7 @@ const scoreEbpoView = (
   breakdownId: string | null | undefined,
 ): number => {
   let score = 0;
+  score += view.routingPriority ?? 0;
   const dim = dimId ? EBPO_DIMENSIONS[dimId] : null;
   const requestedNonTime = !!dim && !dim.isTime;
   const requestedTime = !!dim?.isTime;
@@ -1856,7 +1887,13 @@ export const resolveEbpoView = (
       (!requireTime || v.hasTime),
   );
   if (candidates.length === 0) return null;
-  return candidates.sort((a, b) => scoreEbpoView(a, [measureId], dimId, breakdownId) - scoreEbpoView(b, [measureId], dimId, breakdownId))[0] ?? null;
+  return (
+    candidates.sort(
+      (a, b) =>
+        scoreEbpoView(a, [measureId], dimId, breakdownId) -
+        scoreEbpoView(b, [measureId], dimId, breakdownId),
+    )[0] ?? null
+  );
 };
 
 // Multi-measure (combo / dual-axis): find ONE view exposing EVERY measure + the
@@ -1878,9 +1915,13 @@ export const resolveEbpoViewMulti = (
       (!requireTime || v.hasTime),
   );
   if (candidates.length === 0) return null;
-  return candidates.sort(
-    (a, b) => scoreEbpoView(a, measureIds, dimId, breakdownId) - scoreEbpoView(b, measureIds, dimId, breakdownId),
-  )[0] ?? null;
+  return (
+    candidates.sort(
+      (a, b) =>
+        scoreEbpoView(a, measureIds, dimId, breakdownId) -
+        scoreEbpoView(b, measureIds, dimId, breakdownId),
+    )[0] ?? null
+  );
 };
 
 // ─── Unrelated-dimension replication (PowerBI parity) ──────────────────────────
@@ -2204,26 +2245,35 @@ const buildWhere = (
         const years = values
           .map((v) => Number(v))
           .filter((v) => Number.isInteger(v) && v >= 1900 && v <= 2100);
-        if (years.length) parts.push(`toYear(period_date) ${op} (${years.join(', ')})`);
+        if (years.length)
+          parts.push(`toYear(period_date) ${op} (${years.join(', ')})`);
         continue;
       }
       if (f.dimension === 'quarter') {
         const quarters = values
           .map((v) => {
             const m = v.match(/(?:q)?([1-4])(?:\s+|-)?(20\d{2})?/i);
-            return m ? { quarter: Number(m[1]), year: m[2] ? Number(m[2]) : null } : null;
+            return m
+              ? { quarter: Number(m[1]), year: m[2] ? Number(m[2]) : null }
+              : null;
           })
           .filter((v): v is { quarter: number; year: number | null } => !!v);
         const yearScoped = quarters.filter((v) => v.year);
         if (yearScoped.length === quarters.length && quarters.length > 0) {
           parts.push(
             `(${yearScoped
-              .map((v) => `(toQuarter(period_date) = ${v.quarter} AND toYear(period_date) = ${v.year})`)
+              .map(
+                (v) =>
+                  `(toQuarter(period_date) = ${v.quarter} AND toYear(period_date) = ${v.year})`,
+              )
               .join(' OR ')})`,
           );
         } else {
-          const qs = Array.from(new Set(quarters.map((v) => v.quarter))).filter((v) => v >= 1 && v <= 4);
-          if (qs.length) parts.push(`toQuarter(period_date) ${op} (${qs.join(', ')})`);
+          const qs = Array.from(new Set(quarters.map((v) => v.quarter))).filter(
+            (v) => v >= 1 && v <= 4,
+          );
+          if (qs.length)
+            parts.push(`toQuarter(period_date) ${op} (${qs.join(', ')})`);
         }
         continue;
       }
@@ -2231,7 +2281,8 @@ const buildWhere = (
         const monthNums = values
           .map((v) => {
             const direct = Number(v);
-            if (Number.isInteger(direct) && direct >= 1 && direct <= 12) return direct;
+            if (Number.isInteger(direct) && direct >= 1 && direct <= 12)
+              return direct;
             // Resolve a month NAME ("Jun", "June") to its 1-based number without going
             // through Date.parse — that parses "Jun 1, 2000" at LOCAL midnight, and reading
             // it back with getUTCMonth() shifts a whole month in any timezone ahead of UTC
@@ -2239,14 +2290,31 @@ const buildWhere = (
             // provenance/period filter to the wrong month.
             const key = String(v).trim().slice(0, 3).toLowerCase();
             const MONTHS: Record<string, number> = {
-              jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-              jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+              jan: 1,
+              feb: 2,
+              mar: 3,
+              apr: 4,
+              may: 5,
+              jun: 6,
+              jul: 7,
+              aug: 8,
+              sep: 9,
+              oct: 10,
+              nov: 11,
+              dec: 12,
             };
             return MONTHS[key] ?? null;
           })
-          .filter((v): v is number => Number.isInteger(v as number) && (v as number) >= 1 && (v as number) <= 12);
+          .filter(
+            (v): v is number =>
+              Number.isInteger(v as number) &&
+              (v as number) >= 1 &&
+              (v as number) <= 12,
+          );
         if (monthNums.length) {
-          parts.push(`toMonth(period_date) ${op} (${Array.from(new Set(monthNums)).join(', ')})`);
+          parts.push(
+            `toMonth(period_date) ${op} (${Array.from(new Set(monthNums)).join(', ')})`,
+          );
         }
         continue;
       }
@@ -2334,7 +2402,9 @@ export async function compileEbpoSpec(
   // Relative window ("last N months") — restrict to the most-recent N months of data.
   // Forces a time-bearing view (so the predicate has a period_date to filter on).
   const recentMonths =
-    spec.recentMonths && spec.recentMonths > 0 ? Math.floor(spec.recentMonths) : null;
+    spec.recentMonths && spec.recentMonths > 0
+      ? Math.floor(spec.recentMonths)
+      : null;
   // A month/quarter/year FILTER (e.g. "for Aug 2024") can only be honored by a
   // time-bearing view — buildWhere silently SKIPS a time filter on a lifetime view
   // (`if (dim.isTime) { if (!view.hasTime) continue; }`). Without forcing a time view
@@ -2357,7 +2427,13 @@ export async function compileEbpoSpec(
     !spec.breakdown &&
     canReplicateAcrossDim(measures[0]!, dimId, filterDims)
   ) {
-    const sql = buildReplicatedAcrossDimSql(measures[0]!, dimId, filterDims, db, topN);
+    const sql = buildReplicatedAcrossDimSql(
+      measures[0]!,
+      dimId,
+      filterDims,
+      db,
+      topN,
+    );
     if (sql)
       return {
         ok: true,
@@ -2419,7 +2495,13 @@ export async function compileEbpoSpec(
       };
     }
 
-    const mview = resolveEbpoViewMulti(measures, dimId, bdId, filterDims, wantTime)!;
+    const mview = resolveEbpoViewMulti(
+      measures,
+      dimId,
+      bdId,
+      filterDims,
+      wantTime,
+    )!;
     const mtbl = fromExpr(mview, db);
     const allStock = measures.every((m) => EBPO_MEASURES[m]!.kind === 'stock');
 
@@ -2449,7 +2531,10 @@ export async function compileEbpoSpec(
       // comparison ("top 2 clients") — mirroring the single-measure path — and otherwise
       // by the column budget (maxBreakdownCols shared across the measures). Without the
       // topN cap a "top 2 clients revenue + expenses" chart wrongly plotted every client.
-      const colBudget = Math.max(1, Math.floor(maxBreakdownCols / measures.length));
+      const colBudget = Math.max(
+        1,
+        Math.floor(maxBreakdownCols / measures.length),
+      );
       const maxValues =
         spec.topN && spec.topN > 0 ? Math.min(spec.topN, colBudget) : colBudget;
       const colRows = await runRows(
@@ -2542,13 +2627,22 @@ export async function compileEbpoSpec(
   // ── Single measure ─────────────────────────────────────────────────────────
   const measure = EBPO_MEASURES[measures[0]!]!;
   const bdId = spec.breakdown || null;
-  const view = resolveEbpoView(measures[0]!, dimId, bdId, filterDims, wantTime)!;
+  const view = resolveEbpoView(
+    measures[0]!,
+    dimId,
+    bdId,
+    filterDims,
+    wantTime,
+  )!;
   const tbl = fromExpr(view, db);
   // "Average monthly <flow>" — divide the period sum by the number of distinct months
   // (e.g. rank clients by AVERAGE monthly revenue, not the 8-month total). Only valid
   // for a flow measure on a time-bearing view; otherwise fall back to the normal expr.
   const avgMonthly =
-    !!spec.avgMonthly && measure.kind === 'flow' && view.hasTime && !!view.measures[measures[0]!];
+    !!spec.avgMonthly &&
+    measure.kind === 'flow' &&
+    view.hasTime &&
+    !!view.measures[measures[0]!];
   const value = avgMonthly
     ? `round(sum(${view.measures[measures[0]!]!}) / nullIf(count(DISTINCT toStartOfMonth(period_date)), 0), ${decimalsFor(measure)})`
     : valueExprFor(measure, view);
@@ -2618,8 +2712,7 @@ export async function compileEbpoSpec(
       // across ALL years — 48 year-month slices is not a readable composition. This is
       // exactly how Power BI groups e.g. a cash-flow donut "by month" (legend = month
       // name, summed over every year). A YEAR grain keeps its distinct years.
-      const MONTH_ABBR =
-        `['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']`;
+      const MONTH_ABBR = `['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']`;
       let compLabel = dim.label;
       let compGroup = dim.group;
       if (dimId === 'month') {
@@ -2793,8 +2886,7 @@ export async function compileEbpoSpec(
       );
       // The company-wide per-period figure(s): total (for share) and/or average (peer).
       const coCols: string[] = [];
-      if (wantsShare)
-        coCols.push(`round(sum(${rawCol}), 2) AS company_total`);
+      if (wantsShare) coCols.push(`round(sum(${rawCol}), 2) AS company_total`);
       if (wantsPeerAvg)
         coCols.push(
           `round(sum(${rawCol}) / nullIf(uniqExact(${entDim.group}), 0), 2) AS company_average`,
@@ -2886,7 +2978,9 @@ function applyTransforms(
       numericCols ??
       Array.from(
         new Set(
-          Array.from(sql.matchAll(/\bAS\s+(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_]\w*))/g))
+          Array.from(
+            sql.matchAll(/\bAS\s+(?:"([^"]+)"|`([^`]+)`|([a-zA-Z_]\w*))/g),
+          )
             .map((m) => m[1] ?? m[2] ?? m[3]!)
             // Exclude the label column and the internal `__ord` ordering helper, which
             // the recent-N wrap drops via `* EXCEPT (__ord)` (so _b has no __ord column).
@@ -3014,7 +3108,9 @@ export function ebpoComboSeriesRoles(
     .filter((d): d is EbpoMeasureDef => !!d);
   if (defs.length === 0) return [];
   const leftFormat = defs[0]!.format;
-  const baseIsLine = /line|area/.test(String(opts?.baseType ?? '').toLowerCase());
+  const baseIsLine = /line|area/.test(
+    String(opts?.baseType ?? '').toLowerCase(),
+  );
   const forceLine = new Set(opts?.forceLine ?? []);
   const forceBar = new Set(opts?.forceBar ?? []);
 

@@ -61,8 +61,144 @@ export interface CompileContext {
   analyticsDb: string;
   tenantId: string;
   externalOrgIds: string[];
+  /** Optional caller-governed period constraint. Values are query parameters,
+   * never interpolated into SQL. */
+  dateRange?: { start: string; end: string };
+  period?: {
+    kind:
+      | 'MTD'
+      | 'QTD'
+      | 'YTD'
+      | 'LAST_N_DAYS'
+      | 'LAST_N_WEEKS'
+      | 'LAST_N_MONTHS'
+      | 'LAST_N_QUARTERS'
+      | 'LAST_N_YEARS';
+    value?: number;
+  };
   /** Hard row cap; always applied. */
   maxRows?: number;
+}
+
+function compilePeriodConstraint(
+  ctx: CompileContext,
+  time: SemanticModel['time'] | undefined,
+  table: string,
+): CompileResult {
+  if (!ctx.dateRange && !ctx.period) return { ok: true, sql: '', params: {} };
+  if (!time || time.table !== table) {
+    return {
+      ok: false,
+      reason: 'selected capability cannot apply the requested period',
+    };
+  }
+  const column = ident(time.column);
+  if (ctx.dateRange) {
+    return {
+      ok: true,
+      sql: ` AND ${column} >= {dateStart:Date} AND ${column} <= {dateEnd:Date}`,
+      params: { dateStart: ctx.dateRange.start, dateEnd: ctx.dateRange.end },
+    };
+  }
+  const period = ctx.period!;
+  const anchor = `(SELECT max(${column}) FROM ${ident(ctx.analyticsDb)}.${ident(table)} WHERE ${SCOPE_WHERE})`;
+  const value = Math.max(1, Math.floor(period.value ?? 1));
+  const start =
+    period.kind === 'MTD'
+      ? `toStartOfMonth(${anchor})`
+      : period.kind === 'QTD'
+        ? `toStartOfQuarter(${anchor})`
+        : period.kind === 'YTD'
+          ? `toStartOfYear(${anchor})`
+          : period.kind === 'LAST_N_DAYS'
+            ? `addDays(${anchor}, -${value - 1})`
+            : period.kind === 'LAST_N_WEEKS'
+              ? `addDays(${anchor}, -${value * 7 - 1})`
+              : period.kind === 'LAST_N_MONTHS'
+                ? `addMonths(toStartOfMonth(${anchor}), -${value - 1})`
+                : period.kind === 'LAST_N_QUARTERS'
+                  ? `addMonths(toStartOfMonth(${anchor}), -${value * 3 - 1})`
+                  : `addDays(addYears(${anchor}, -${value}), 1)`;
+  return { ok: true, sql: ` AND ${column} >= ${start}`, params: {} };
+}
+
+/**
+ * Apply user-governed constraints to any compiler result at the final SQL
+ * boundary. This keeps every chart shape (single-series, multi-series,
+ * distribution, comparison, and future compilers) under the same enforcement
+ * policy instead of relying on each SQL branch to remember filters.
+ */
+export function applyEngineSpecConstraints(
+  result: CompileResult,
+  spec: EngineChartSpec,
+  model: SemanticModel,
+  ctx: CompileContext,
+  table: string,
+  options: { includeTime?: boolean } = {},
+): CompileResult {
+  if (!result.ok) return result;
+
+  const constraintParts: string[] = [];
+  const constraintParams: Record<string, unknown> = {};
+  if (options.includeTime !== false) {
+    const time = compilePeriodConstraint(
+      {
+        ...ctx,
+        dateRange: spec.dateRange ?? ctx.dateRange,
+        period: spec.period ?? ctx.period,
+      },
+      model.time,
+      table,
+    );
+    if (!time.ok) return time;
+    if (time.sql) constraintParts.push(time.sql);
+    Object.assign(constraintParams, time.params);
+  }
+
+  for (const [index, filter] of (spec.filters ?? []).entries()) {
+    const dimension = model.dimensions.find(
+      (candidate) => candidate.key === filter.dimensionKey,
+    );
+    if (!dimension)
+      return {
+        ok: false,
+        reason: `unknown filter dimension: ${filter.dimensionKey}`,
+      };
+    if (dimension.table !== table)
+      return { ok: false, reason: 'cross-table filter not supported' };
+    const values = Array.from(
+      new Set(
+        filter.values
+          .map(String)
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!values.length)
+      return {
+        ok: false,
+        reason: `filter has no values: ${filter.dimensionKey}`,
+      };
+    const parameter = `constraintFilter${index}`;
+    constraintParts.push(
+      ` AND ${ident(dimension.column)} ${filter.operator === 'not_in' ? 'NOT IN' : 'IN'} ({${parameter}:Array(String)})`,
+    );
+    constraintParams[parameter] = values;
+  }
+
+  if (!constraintParts.length) return result;
+  const marker = `WHERE ${SCOPE_WHERE}`;
+  if (!result.sql.includes(marker))
+    return {
+      ok: false,
+      reason: 'compiled query has no enforceable scope boundary',
+    };
+  const suffix = constraintParts.join('');
+  return {
+    ok: true,
+    sql: result.sql.split(marker).join(`${marker}${suffix}`),
+    params: { ...result.params, ...constraintParams },
+  };
 }
 
 /** Collision-proof column name used by the analytic/headline query. ClickHouse
@@ -245,9 +381,15 @@ function yAxisTitleFor(m: SemanticMeasure): string {
   if (m.unit === 'USD') return 'USD';
   if (m.unit === '%') return 'Percent';
   const semanticName = `${m.key} ${m.label}`;
-  if (/^hours?$/i.test(m.unit) || /(?:^|[_\s])hours?(?:$|[_\s])/i.test(semanticName))
+  if (
+    /^hours?$/i.test(m.unit) ||
+    /(?:^|[_\s])hours?(?:$|[_\s])/i.test(semanticName)
+  )
     return 'Hours';
-  if (/^days?$/i.test(m.unit) || /(?:^|[_\s])days?(?:$|[_\s])/i.test(semanticName))
+  if (
+    /^days?$/i.test(m.unit) ||
+    /(?:^|[_\s])days?(?:$|[_\s])/i.test(semanticName)
+  )
     return 'Days';
   if (
     /^(?:min|minutes?)$/i.test(m.unit) ||
@@ -261,7 +403,9 @@ function yAxisTitleFor(m: SemanticMeasure): string {
     : m.label;
 }
 
-function yAxisTitleForMeasures(measures: SemanticMeasure[]): string | undefined {
+function yAxisTitleForMeasures(
+  measures: SemanticMeasure[],
+): string | undefined {
   if (!measures.length) return undefined;
   const titles = Array.from(new Set(measures.map((m) => yAxisTitleFor(m))));
   return titles.length === 1 ? titles[0] : titles.join(' / ');
@@ -339,10 +483,27 @@ export function buildEngineDisplay(
       const format = unitFormat(measure.unit);
       const prefix = measures.length > 1 ? `${measure.label} — ` : '';
       return [
-        { key: `${prefix}Current Year`, role: 'line' as const, axis: 'left' as const, format },
-        { key: `${prefix}Previous Year`, role: 'line' as const, axis: 'left' as const, format },
+        {
+          key: `${prefix}Current Year`,
+          role: 'line' as const,
+          axis: 'left' as const,
+          format,
+        },
+        {
+          key: `${prefix}Previous Year`,
+          role: 'line' as const,
+          axis: 'left' as const,
+          format,
+        },
         ...(spec.showVariancePct
-          ? [{ key: `${prefix}Variance %`, role: 'line' as const, axis: 'right' as const, format: 'percent' as const }]
+          ? [
+              {
+                key: `${prefix}Variance %`,
+                role: 'line' as const,
+                axis: 'right' as const,
+                format: 'percent' as const,
+              },
+            ]
           : []),
       ];
     });
@@ -350,12 +511,17 @@ export function buildEngineDisplay(
       chartType: spec.showVariancePct ? 'combo' : spec.chartType,
       valueFormat: primaryFmt,
       xAxisLabel: xAxisLabel ?? 'Period',
-      yAxisLabel: measures.every((measure) => unitFormat(measure.unit) === primaryFmt)
+      yAxisLabel: measures.every(
+        (measure) => unitFormat(measure.unit) === primaryFmt,
+      )
         ? yAxisTitleFor(measures[0]!)
         : 'Value',
       series: comparisonSeries,
       ...(spec.showVariancePct
-        ? { secondaryAxisFormat: 'percent' as const, secondaryLabel: 'Variance (%)' }
+        ? {
+            secondaryAxisFormat: 'percent' as const,
+            secondaryLabel: 'Variance (%)',
+          }
         : {}),
     });
   }
@@ -449,7 +615,8 @@ export function buildEngineDisplay(
     // shared axis. Keep genuinely comparable aggregations together, but give a
     // differently aggregated measure its own line/right axis.
     const sameScale =
-      fmt === primaryFmt && (spec.clustered || m.expr.kind === primaryAggregation);
+      fmt === primaryFmt &&
+      (spec.clustered || m.expr.kind === primaryAggregation);
     // Scheduled/target/capacity measures are comparison envelopes, not another
     // component of an additive stack. Draw them as a line on the same unit axis;
     // stacking scheduled work days on top of present/leave days would double-count
@@ -463,17 +630,18 @@ export function buildEngineDisplay(
       );
     return {
       key: m.label,
-      role: spec.chartType === 'combo'
-        ? i === 0
-          ? 'bar'
-          : 'line'
-        : spec.clustered
-        ? 'bar'
-        : isStackReference
-          ? 'line'
-          : i === 0 || sameScale
-            ? baseRole
-            : 'line',
+      role:
+        spec.chartType === 'combo'
+          ? i === 0
+            ? 'bar'
+            : 'line'
+          : spec.clustered
+            ? 'bar'
+            : isStackReference
+              ? 'line'
+              : i === 0 || sameScale
+                ? baseRole
+                : 'line',
       axis: i === 0 || sameScale ? 'left' : 'right',
       format: fmt,
     };
@@ -493,7 +661,10 @@ export function buildEngineDisplay(
     ...(xAxisLabel ? { xAxisLabel } : {}),
     yAxisLabel: yAxisTitleFor(measures[0]!),
     ...(right
-      ? { secondaryAxisFormat: right.format, secondaryLabel: rightAxisLabel ?? right.key }
+      ? {
+          secondaryAxisFormat: right.format,
+          secondaryLabel: rightAxisLabel ?? right.key,
+        }
       : {}),
   });
 }
@@ -702,7 +873,9 @@ export function compileSeriesSql(
         `toFloat64(${current}) AS ${quoteAlias(`${prefix}Current Year`)}`,
         `toFloat64(${previous}) AS ${quoteAlias(`${prefix}Previous Year`)}`,
         ...(spec.showVariancePct
-          ? [`round(100 * (toFloat64(${current}) - toFloat64(${previous})) / nullIf(abs(toFloat64(${previous})), 0), 4) AS ${quoteAlias(`${prefix}Variance %`)}`]
+          ? [
+              `round(100 * (toFloat64(${current}) - toFloat64(${previous})) / nullIf(abs(toFloat64(${previous})), 0), 4) AS ${quoteAlias(`${prefix}Variance %`)}`,
+            ]
           : []),
       ];
     });
@@ -742,7 +915,9 @@ export function compileSeriesSql(
           ),
         ) ??
         resolved.find((measure) =>
-          /\bdebit\b/i.test(`${measure.key} ${measure.label}`.replace(/_/g, ' ')),
+          /\bdebit\b/i.test(
+            `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+          ),
         );
       const credit =
         resolved.find((measure) =>
@@ -751,7 +926,9 @@ export function compileSeriesSql(
           ),
         ) ??
         resolved.find((measure) =>
-          /\bcredit\b/i.test(`${measure.key} ${measure.label}`.replace(/_/g, ' ')),
+          /\bcredit\b/i.test(
+            `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+          ),
         );
       const dimColumn = ident(primaryDim.column);
       const openingExpr = measureValueExpr(opening);
@@ -885,10 +1062,12 @@ export function compileSeriesSql(
     const leaf = dims.at(-1)!;
     const parents = dims.slice(0, -1);
     const aggregate = measureValueExpr(resolved[0]!);
-    const supplemental = resolved.slice(1).map(
-      (measure) =>
-        `toFloat64(${measureValueExpr(measure)}) AS ${quoteAlias(measure.label)}`,
-    );
+    const supplemental = resolved
+      .slice(1)
+      .map(
+        (measure) =>
+          `toFloat64(${measureValueExpr(measure)}) AS ${quoteAlias(measure.label)}`,
+      );
     const parentPath = parents
       .map((dimension) => `toString(${ident(dimension.column)})`)
       .join(`, ' › ', `);
@@ -1191,6 +1370,9 @@ export function compileSpec(
   }
   const table = resolved[0]!.sourceTable;
 
+  const periodConstraint = compilePeriodConstraint(ctx, model.time, table);
+  if (!periodConstraint.ok) return periodConstraint;
+
   const selectParts: string[] = [];
   const groupParts: string[] = [];
 
@@ -1241,7 +1423,7 @@ export function compileSpec(
   const sql =
     `SELECT ${selectParts.join(', ')}\n` +
     `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
-    `WHERE ${SCOPE_WHERE}` +
+    `WHERE ${SCOPE_WHERE}${periodConstraint.sql}` +
     groupBy +
     having +
     orderBy +
@@ -1250,7 +1432,11 @@ export function compileSpec(
   return {
     ok: true,
     sql,
-    params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    params: {
+      tenantId: ctx.tenantId,
+      externalOrgIds: ctx.externalOrgIds,
+      ...periodConstraint.params,
+    },
   };
 }
 
@@ -1265,18 +1451,29 @@ export function compileSpec(
 export function compileRatioComponentsTotal(
   measure: SemanticMeasure,
   ctx: CompileContext,
+  time?: SemanticModel['time'],
 ): CompileResult {
   if (measure.expr.kind !== 'ratio_of_sums') {
     return { ok: false, reason: `not a ratio measure: ${measure.key}` };
   }
   const { numerator, denominator } = measure.expr;
+  const periodConstraint = compilePeriodConstraint(
+    ctx,
+    time,
+    measure.sourceTable,
+  );
+  if (!periodConstraint.ok) return periodConstraint;
   const sql =
     `SELECT sum(${ident(numerator)}) AS \`num\`, sum(${ident(denominator)}) AS \`den\`\n` +
     `FROM ${ident(ctx.analyticsDb)}.${ident(measure.sourceTable)}\n` +
-    `WHERE ${SCOPE_WHERE}`;
+    `WHERE ${SCOPE_WHERE}${periodConstraint.sql}`;
   return {
     ok: true,
     sql,
-    params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    params: {
+      tenantId: ctx.tenantId,
+      externalOrgIds: ctx.externalOrgIds,
+      ...periodConstraint.params,
+    },
   };
 }

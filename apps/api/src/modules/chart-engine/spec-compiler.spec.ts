@@ -1,4 +1,5 @@
 import {
+  applyEngineSpecConstraints,
   compileSpec,
   compileNameValueSql,
   compileSeriesSql,
@@ -141,6 +142,158 @@ describe('compileRatioComponentsTotal — ratio reconciliation tripwire', () => 
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toMatch(/not a ratio measure/i);
+  });
+});
+
+describe('compileSpec — governed period constraints', () => {
+  const spec: EngineChartSpec = {
+    chartType: 'line',
+    measureKeys: ['revenue'],
+    timeGrain: 'month',
+    title: 'Revenue trend',
+  };
+  const ratioMeasure = model.measures.find(
+    (measure) => measure.key === 'gross_margin_pct',
+  )!;
+
+  it('binds an explicit date range without interpolating values into SQL', () => {
+    const result = compileSpec(spec, model, {
+      ...ctx,
+      dateRange: { start: '2025-01-01', end: '2025-12-31' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sql).toContain(
+      'period_date >= {dateStart:Date} AND period_date <= {dateEnd:Date}',
+    );
+    expect(result.sql).not.toContain('2025-01-01');
+    expect(result.params).toMatchObject({
+      dateStart: '2025-01-01',
+      dateEnd: '2025-12-31',
+    });
+  });
+
+  it('derives a rolling-week boundary from the scoped maximum source date', () => {
+    const result = compileSpec(spec, model, {
+      ...ctx,
+      period: { kind: 'LAST_N_WEEKS', value: 4 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sql).toContain('addDays((SELECT max(period_date)');
+    expect(result.sql).toContain(', -27)');
+    expect(result.sql).toContain('tenant_id = {tenantId:String}');
+    expect(result.sql).toContain('org_id IN ({externalOrgIds:Array(String)})');
+  });
+
+  it('refuses a requested period when the capability has no compatible time axis', () => {
+    const result = compileSpec(
+      spec,
+      { ...model, time: undefined },
+      { ...ctx, period: { kind: 'YTD' } },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'selected capability cannot apply the requested period',
+    });
+  });
+
+  it('applies the identical date range to ratio reconciliation components', () => {
+    const result = compileRatioComponentsTotal(
+      ratioMeasure,
+      {
+        ...ctx,
+        dateRange: { start: '2025-01-01', end: '2025-03-31' },
+      },
+      model.time,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sql).toContain(
+      'period_date >= {dateStart:Date} AND period_date <= {dateEnd:Date}',
+    );
+    expect(result.params).toMatchObject({
+      dateStart: '2025-01-01',
+      dateEnd: '2025-03-31',
+    });
+  });
+
+  it('governs rendered SQL with the same date range and catalog-backed filters', () => {
+    const governedSpec: EngineChartSpec = {
+      ...spec,
+      dateRange: { start: '2025-04-01', end: '2025-06-30' },
+      filters: [
+        {
+          dimensionKey: 'business_unit',
+          operator: 'in',
+          values: ['Support'],
+        },
+      ],
+    };
+    const result = applyEngineSpecConstraints(
+      compileNameValueSql(governedSpec, model, ctx),
+      governedSpec,
+      model,
+      ctx,
+      'v_fact',
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sql).toContain(
+      'period_date >= {dateStart:Date} AND period_date <= {dateEnd:Date}',
+    );
+    expect(result.sql).toContain(
+      'business_unit IN ({constraintFilter0:Array(String)})',
+    );
+    expect(result.params).toMatchObject({
+      dateStart: '2025-04-01',
+      dateEnd: '2025-06-30',
+      constraintFilter0: ['Support'],
+    });
+    expect(result.sql).not.toContain('2025-04-01');
+    expect(result.sql).not.toContain("'Support'");
+  });
+
+  it('refuses filters that are not available on the selected cube', () => {
+    const foreignModel: SemanticModel = {
+      ...model,
+      dimensions: [
+        ...model.dimensions,
+        {
+          key: 'foreign_dimension',
+          label: 'Foreign Dimension',
+          table: 'another_view',
+          column: 'foreign_dimension',
+        },
+      ],
+    };
+    const governedSpec: EngineChartSpec = {
+      ...spec,
+      filters: [
+        {
+          dimensionKey: 'foreign_dimension',
+          operator: 'in',
+          values: ['A'],
+        },
+      ],
+    };
+    const result = applyEngineSpecConstraints(
+      compileNameValueSql(governedSpec, foreignModel, ctx),
+      governedSpec,
+      foreignModel,
+      ctx,
+      'v_fact',
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'cross-table filter not supported',
+    });
   });
 });
 
@@ -574,9 +727,27 @@ describe('buildEngineDisplay axis assignment', () => {
     const cashModel: SemanticModel = {
       ...model,
       measures: [
-        { key: 'net_cash', label: 'Net Cash Flow', unit: 'USD', sourceTable: 'v_fact', expr: { kind: 'sum', column: 'net_cash' } },
-        { key: 'gl_cash', label: 'General Ledger Cash Movement', unit: 'USD', sourceTable: 'v_fact', expr: { kind: 'sum', column: 'gl_cash' } },
-        { key: 'difference', label: 'Cash Reconciliation Difference', unit: 'USD', sourceTable: 'v_fact', expr: { kind: 'sum', column: 'difference' } },
+        {
+          key: 'net_cash',
+          label: 'Net Cash Flow',
+          unit: 'USD',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'net_cash' },
+        },
+        {
+          key: 'gl_cash',
+          label: 'General Ledger Cash Movement',
+          unit: 'USD',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'gl_cash' },
+        },
+        {
+          key: 'difference',
+          label: 'Cash Reconciliation Difference',
+          unit: 'USD',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'difference' },
+        },
       ],
     };
     const d = buildEngineDisplay(
@@ -865,7 +1036,12 @@ describe('buildEngineDisplay axis assignment', () => {
     expect(display.series).toEqual([
       { key: 'Present Days', role: 'bar', axis: 'left', format: 'number' },
       { key: 'Paid Leave Days', role: 'bar', axis: 'left', format: 'number' },
-      { key: 'Scheduled Work Days', role: 'line', axis: 'left', format: 'number' },
+      {
+        key: 'Scheduled Work Days',
+        role: 'line',
+        axis: 'left',
+        format: 'number',
+      },
     ]);
     expect(display.yAxisLabel).toBe('Days');
   });
@@ -939,18 +1115,26 @@ describe('buildEngineDisplay axis assignment', () => {
       ...model,
       measures: [
         model.measures[0]!,
-        ...['gross_profit', 'ebitda', 'operating_profit', 'net_profit'].map((key) => ({
-          key,
-          label: key.replace(/_/g, ' '),
-          unit: 'USD',
-          sourceTable: 'v_fact',
-          expr: { kind: 'sum' as const, column: `${key}_usd` },
-        })),
+        ...['gross_profit', 'ebitda', 'operating_profit', 'net_profit'].map(
+          (key) => ({
+            key,
+            label: key.replace(/_/g, ' '),
+            unit: 'USD',
+            sourceTable: 'v_fact',
+            expr: { kind: 'sum' as const, column: `${key}_usd` },
+          }),
+        ),
       ],
     };
     const spec: EngineChartSpec = {
       chartType: 'line',
-      measureKeys: ['revenue', 'gross_profit', 'ebitda', 'operating_profit', 'net_profit'],
+      measureKeys: [
+        'revenue',
+        'gross_profit',
+        'ebitda',
+        'operating_profit',
+        'net_profit',
+      ],
       timeGrain: 'month',
       comparison: 'previous_year',
       showVariancePct: true,
@@ -960,7 +1144,9 @@ describe('buildEngineDisplay axis assignment', () => {
     expect(display.chartType).toBe('combo');
     expect(display.secondaryAxisFormat).toBe('percent');
     expect(display.series).toHaveLength(15);
-    expect(display.series?.filter((series) => series.axis === 'right')).toHaveLength(5);
+    expect(
+      display.series?.filter((series) => series.axis === 'right'),
+    ).toHaveLength(5);
     const compiled = compileSeriesSql(spec, profitModel, ctx);
     expect(compiled.ok).toBe(true);
     if (!compiled.ok) return;

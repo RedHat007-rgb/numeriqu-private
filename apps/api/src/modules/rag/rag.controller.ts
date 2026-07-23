@@ -7,15 +7,18 @@ import {
   HttpStatus,
   Param,
   Post,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { SupabaseAuthGuard } from '../../common/guards/supabase-auth.guard';
 import { CurrentUser } from '../../common/decorators/user.decorator';
 import type { AuthUser } from '../../common/decorators/user.decorator';
 import { OrganizationContextService } from '../org-context/org-context.service';
 import { RagService } from './rag.service';
+import { normalizePrismTone } from './prism-policy';
+import { PrismQueryDto } from './prism-query.dto';
 
 @Controller('rag')
 @UseGuards(SupabaseAuthGuard)
@@ -35,11 +38,17 @@ export class RagController {
     @CurrentUser() user: AuthUser,
     @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    }, { organizationId });
-    return this.ragService.listSessions(context.organization.id, context.user.id);
+    const context = await this.organizationContext.ensureContext(
+      {
+        id: user.id,
+        email: user.email,
+      },
+      { organizationId },
+    );
+    return this.ragService.listSessions(
+      context.organization.id,
+      context.user.id,
+    );
   }
 
   @Get('sessions/:id')
@@ -48,10 +57,13 @@ export class RagController {
     @Param('id') id: string,
     @Headers('x-organization-id') organizationId?: string,
   ) {
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    }, { organizationId });
+    const context = await this.organizationContext.ensureContext(
+      {
+        id: user.id,
+        email: user.email,
+      },
+      { organizationId },
+    );
     const session = await this.ragService.getSession(
       context.organization.id,
       context.user.id,
@@ -66,17 +78,27 @@ export class RagController {
   @Post('query')
   async query(
     @CurrentUser() user: AuthUser,
-    @Body() body: { query: string; sessionId?: string },
+    @Body() body: PrismQueryDto,
     @Headers('x-organization-id') organizationId: string | undefined,
+    @Req() request: Request,
     @Res() response: Response,
   ) {
     if (!body?.query?.trim()) {
       throw new HttpException('Query is required.', HttpStatus.BAD_REQUEST);
     }
-    const context = await this.organizationContext.ensureContext({
-      id: user.id,
-      email: user.email,
-    }, { organizationId });
+    if (body.query.length > 4_000) {
+      throw new HttpException(
+        'Query must be 4,000 characters or fewer.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const context = await this.organizationContext.ensureContext(
+      {
+        id: user.id,
+        email: user.email,
+      },
+      { organizationId },
+    );
 
     response.setHeader('Content-Type', 'text/event-stream');
     response.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -84,18 +106,28 @@ export class RagController {
     response.setHeader('X-Accel-Buffering', 'no');
     response.flushHeaders();
 
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    request.once('aborted', abort);
+    response.once('close', abort);
+
     try {
       for await (const chunk of this.ragService.query(
         context.organization.id,
         context.user.id,
         body.query,
         body.sessionId,
+        normalizePrismTone(body.tone),
+        controller.signal,
       )) {
+        if (controller.signal.aborted || response.destroyed) break;
         response.write(`data: ${chunk}\n`);
         (response as any).flush?.();
       }
     } finally {
-      response.end();
+      request.off('aborted', abort);
+      response.off('close', abort);
+      if (!response.destroyed) response.end();
     }
   }
 }

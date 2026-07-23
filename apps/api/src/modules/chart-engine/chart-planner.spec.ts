@@ -51,6 +51,23 @@ const model: SemanticModel = {
 };
 
 describe('ChartPlanner.parsePlannerResponse', () => {
+  it('does not add an unrequested growth metric to its base KPI', () => {
+    expect(
+      fieldMatchScore(
+        'What were net profit and net margin in 2025?',
+        'net_profit_growth_pct',
+        'Net Profit Growth %',
+      ),
+    ).toBe(0);
+    expect(
+      fieldMatchScore(
+        'What was net profit growth percentage in 2025?',
+        'net_profit_growth_pct',
+        'Net Profit Growth %',
+      ),
+    ).toBeGreaterThanOrEqual(8);
+  });
+
   it('deterministically plans an explicit multi-dimensional point chart', () => {
     const pointModel: SemanticModel = {
       ...model,
@@ -83,20 +100,19 @@ describe('ChartPlanner.parsePlannerResponse', () => {
   it('matches a one-word attendance metric when its Days suffix is generic', () => {
     const question =
       'Create a stacked column chart showing Present, Paid Leave, Sick Leave, and Unpaid Absent by month.';
-    expect(fieldMatchScore(question, 'present_days', 'Present Days')).toBeGreaterThanOrEqual(8);
+    expect(
+      fieldMatchScore(question, 'present_days', 'Present Days'),
+    ).toBeGreaterThanOrEqual(8);
   });
 
   it('does not match a non-productive metric from a productive-hours request', () => {
-    const question = 'Create a bar chart showing productive hours by department.';
+    const question =
+      'Create a bar chart showing productive hours by department.';
     expect(
       fieldMatchScore(question, 'productive_hours', 'Productive Hours'),
     ).toBeGreaterThanOrEqual(8);
     expect(
-      fieldMatchScore(
-        question,
-        'non_productive_hours',
-        'Non Productive Hours',
-      ),
+      fieldMatchScore(question, 'non_productive_hours', 'Non Productive Hours'),
     ).toBe(0);
   });
 
@@ -193,11 +209,7 @@ describe('ChartPlanner.parsePlannerResponse', () => {
       ),
     ).toBe(0);
     expect(
-      fieldMatchScore(
-        question,
-        'total_cash_outflow_usd',
-        'Total Cash Outflow',
-      ),
+      fieldMatchScore(question, 'total_cash_outflow_usd', 'Total Cash Outflow'),
     ).toBe(0);
     expect(
       fieldMatchScore(
@@ -213,9 +225,9 @@ describe('ChartPlanner.parsePlannerResponse', () => {
     expect(
       fieldMatchScore(question, 'payroll_balance_usd', 'Payroll Balance'),
     ).toBe(0);
-    expect(
-      fieldMatchScore(question, 'cash_balance_usd', 'Cash Balance'),
-    ).toBe(0);
+    expect(fieldMatchScore(question, 'cash_balance_usd', 'Cash Balance')).toBe(
+      0,
+    );
     expect(
       fieldMatchScore(question, 'payroll_cost_usd', 'Payroll Cost'),
     ).toBeGreaterThanOrEqual(8);
@@ -315,7 +327,8 @@ describe('ChartPlanner.parsePlannerResponse', () => {
   });
 
   it('does not select an unrelated average percentage from aggregation words alone', () => {
-    const question = 'Create a bar chart showing average SLA compliance percentage by client.';
+    const question =
+      'Create a bar chart showing average SLA compliance percentage by client.';
     expect(
       fieldMatchScore(
         question,
@@ -340,12 +353,12 @@ describe('ChartPlanner.parsePlannerResponse', () => {
 
   it('does not confuse a service-line dimension with a requested line chart', () => {
     expect(
-      requestedChartType(
-        'Create a bar chart showing revenue by service line.',
-      ),
+      requestedChartType('Create a bar chart showing revenue by service line.'),
     ).toBe('bar');
     expect(
-      requestedChartType('Create a line chart showing revenue by service line.'),
+      requestedChartType(
+        'Create a line chart showing revenue by service line.',
+      ),
     ).toBe('line');
   });
 
@@ -508,28 +521,44 @@ describe('ChartPlanner.parsePlannerResponse', () => {
           label: 'Opening Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'opening_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'opening_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'debit_balance_usd',
           label: 'Debit Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'debit_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'debit_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'credit_balance_usd',
           label: 'Credit Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'credit_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'credit_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'closing_balance_usd',
           label: 'Closing Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'closing_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'closing_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'debit_movement_usd',
@@ -565,7 +594,8 @@ describe('ChartPlanner.parsePlannerResponse', () => {
           dimensionKey: 'account_type',
           breakdownKey: 'account_sub_type',
           timeGrain: 'year',
-          title: 'Opening, Debit, Credit, and Closing Balance by Account Type and Fiscal Year',
+          title:
+            'Opening, Debit, Credit, and Closing Balance by Account Type and Fiscal Year',
         }),
     );
     expect(result.ok).toBe(true);
@@ -607,28 +637,44 @@ describe('ChartPlanner.parsePlannerResponse', () => {
           label: 'Opening Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'opening_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'opening_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'debit_balance_usd',
           label: 'Debit Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'debit_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'debit_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'credit_balance_usd',
           label: 'Credit Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'credit_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'credit_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'closing_balance_usd',
           label: 'Closing Balance',
           unit: 'USD',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'closing_balance_usd', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'closing_balance_usd',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'debit_movement_usd',
@@ -663,7 +709,8 @@ describe('ChartPlanner.parsePlannerResponse', () => {
       ],
       dimensionKey: 'account_type',
       timeGrain: 'year',
-      title: 'Opening, Debit, Credit, and Closing Balance by Account Type and Fiscal Year',
+      title:
+        'Opening, Debit, Credit, and Closing Balance by Account Type and Fiscal Year',
     };
     const result = await planEdit(
       'In the same chart, highlight the account type with the largest closing balance change.',
@@ -681,7 +728,9 @@ describe('ChartPlanner.parsePlannerResponse', () => {
     expect(result.spec.measureKeys).toEqual(prior.measureKeys);
     expect(result.spec.breakdownKey).toBeUndefined();
     expect(result.spec.highlightTopN).toBe(1);
-    expect(result.spec.highlightChangeFromMeasureKey).toBe('opening_balance_usd');
+    expect(result.spec.highlightChangeFromMeasureKey).toBe(
+      'opening_balance_usd',
+    );
     expect(result.spec.highlightChangeToMeasureKey).toBe('closing_balance_usd');
   });
 
@@ -1991,7 +2040,14 @@ describe('ChartPlanner.planChart (with a fake LLM)', () => {
           label: 'Cost Family',
           table: 'v',
           column: 'cost_family',
-          sampleValues: ['Labor', 'People', 'Technology', 'Facility', 'Third-party', 'SG&A'],
+          sampleValues: [
+            'Labor',
+            'People',
+            'Technology',
+            'Facility',
+            'Third-party',
+            'SG&A',
+          ],
         },
       ],
       measures: [
@@ -2389,7 +2445,11 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
           label: 'Employee Headcount',
           unit: 'count',
           sourceTable: 'v',
-          expr: { kind: 'last_value', column: 'employee_headcount', orderBy: 'period_date' },
+          expr: {
+            kind: 'last_value',
+            column: 'employee_headcount',
+            orderBy: 'period_date',
+          },
         },
         {
           key: 'productive_hours_percentage',
@@ -2480,12 +2540,13 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     const created = await planChart(
       'Create a line chart showing monthly revenue, gross profit, EBITDA, operating profit, and net profit.',
       profitModel,
-      async () => JSON.stringify({
-        chartType: 'line',
-        measureKeys: ['total_revenue_usd'],
-        timeGrain: 'month',
-        title: 'Monthly Profitability',
-      }),
+      async () =>
+        JSON.stringify({
+          chartType: 'line',
+          measureKeys: ['total_revenue_usd'],
+          timeGrain: 'month',
+          title: 'Monthly Profitability',
+        }),
     );
     expect(created.ok).toBe(true);
     if (!created.ok) return;
@@ -2550,10 +2611,38 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     const agingModel: SemanticModel = {
       ...model,
       measures: [
-        { key: 'outstanding_receivable_usd', label: 'Outstanding Receivable', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'outstanding_receivable_usd' } },
-        { key: 'average_days_sales_outstanding', label: 'Average Days Sales Outstanding', unit: 'days', sourceTable: 'v', expr: { kind: 'mean', column: 'average_days_sales_outstanding' } },
-        { key: 'current_receivable_usd', label: 'Current Receivable', unit: 'USD', sourceTable: 'v', expr: { kind: 'last_value', column: 'current_receivable_usd', orderBy: 'period_date' } },
-        { key: 'overdue_receivable_usd', label: 'Overdue Receivable', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'overdue_receivable_usd' } },
+        {
+          key: 'outstanding_receivable_usd',
+          label: 'Outstanding Receivable',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'outstanding_receivable_usd' },
+        },
+        {
+          key: 'average_days_sales_outstanding',
+          label: 'Average Days Sales Outstanding',
+          unit: 'days',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'average_days_sales_outstanding' },
+        },
+        {
+          key: 'current_receivable_usd',
+          label: 'Current Receivable',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: {
+            kind: 'last_value',
+            column: 'current_receivable_usd',
+            orderBy: 'period_date',
+          },
+        },
+        {
+          key: 'overdue_receivable_usd',
+          label: 'Overdue Receivable',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'overdue_receivable_usd' },
+        },
       ],
     };
     const prior = {
@@ -2584,13 +2673,63 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     const payableModel: SemanticModel = {
       ...model,
       measures: [
-        { key: 'invoice_amount_usd', label: 'Invoice Amount', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'invoice_amount_usd' } },
-        { key: 'paid_amount_usd', label: 'Paid Amount', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'paid_amount_usd' } },
-        { key: 'cash_outflow_vendor_payments_usd', label: 'Cash Outflow Vendor Payments', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'cash_outflow_vendor_payments_usd' } },
-        { key: 'outstanding_payable_usd', label: 'Outstanding Payable', unit: 'USD', sourceTable: 'v', expr: { kind: 'last_value', column: 'outstanding_payable_usd', orderBy: 'period_date' } },
-        { key: 'average_days_payable_outstanding', label: 'Average Days Payable Outstanding', unit: 'days', sourceTable: 'v', expr: { kind: 'mean', column: 'average_days_payable_outstanding' } },
-        { key: 'current_payable_usd', label: 'Current Payable', unit: 'USD', sourceTable: 'v', expr: { kind: 'last_value', column: 'current_payable_usd', orderBy: 'period_date' } },
-        { key: 'overdue_payable_usd', label: 'Overdue Payable', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'overdue_payable_usd' } },
+        {
+          key: 'invoice_amount_usd',
+          label: 'Invoice Amount',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'invoice_amount_usd' },
+        },
+        {
+          key: 'paid_amount_usd',
+          label: 'Paid Amount',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'paid_amount_usd' },
+        },
+        {
+          key: 'cash_outflow_vendor_payments_usd',
+          label: 'Cash Outflow Vendor Payments',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'cash_outflow_vendor_payments_usd' },
+        },
+        {
+          key: 'outstanding_payable_usd',
+          label: 'Outstanding Payable',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: {
+            kind: 'last_value',
+            column: 'outstanding_payable_usd',
+            orderBy: 'period_date',
+          },
+        },
+        {
+          key: 'average_days_payable_outstanding',
+          label: 'Average Days Payable Outstanding',
+          unit: 'days',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'average_days_payable_outstanding' },
+        },
+        {
+          key: 'current_payable_usd',
+          label: 'Current Payable',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: {
+            kind: 'last_value',
+            column: 'current_payable_usd',
+            orderBy: 'period_date',
+          },
+        },
+        {
+          key: 'overdue_payable_usd',
+          label: 'Overdue Payable',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'overdue_payable_usd' },
+        },
       ],
     };
     const prior = {
@@ -2627,25 +2766,95 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
       ...model,
       dimensions: [
         ...model.dimensions,
-        { key: 'delivery_center', label: 'Delivery Center', table: 'v', column: 'delivery_center' },
+        {
+          key: 'delivery_center',
+          label: 'Delivery Center',
+          table: 'v',
+          column: 'delivery_center',
+        },
       ],
       measures: [
         ...model.measures,
-        { key: 'invoice_amount_usd', label: 'Invoice Amount', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'invoice_amount_usd' } },
-        { key: 'collected_amount_usd', label: 'Collected Amount', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'collected_amount_usd' } },
-        { key: 'write_off_amount_usd', label: 'Write-off Amount', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'write_off_amount_usd' } },
-        { key: 'outstanding_receivable_usd', label: 'Outstanding Balance', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'outstanding_receivable_usd' } },
-        { key: 'total_payroll_usd', label: 'Payroll Cost', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'total_payroll_usd' } },
-        { key: 'employee_headcount', label: 'Employee Headcount', unit: 'count', sourceTable: 'v', expr: { kind: 'max', column: 'employee_headcount' } },
-        { key: 'revenue_growth_pct', label: 'Revenue Growth %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'revenue_growth_pct' } },
-        { key: 'ebitda_growth_pct', label: 'EBITDA Growth %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'ebitda_growth_pct' } },
-        { key: 'sla_compliance_pct', label: 'SLA %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'sla_compliance_pct' } },
-        { key: 'csat_pct', label: 'CSAT %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'csat_pct' } },
+        {
+          key: 'invoice_amount_usd',
+          label: 'Invoice Amount',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'invoice_amount_usd' },
+        },
+        {
+          key: 'collected_amount_usd',
+          label: 'Collected Amount',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'collected_amount_usd' },
+        },
+        {
+          key: 'write_off_amount_usd',
+          label: 'Write-off Amount',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'write_off_amount_usd' },
+        },
+        {
+          key: 'outstanding_receivable_usd',
+          label: 'Outstanding Balance',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'outstanding_receivable_usd' },
+        },
+        {
+          key: 'total_payroll_usd',
+          label: 'Payroll Cost',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'total_payroll_usd' },
+        },
+        {
+          key: 'employee_headcount',
+          label: 'Employee Headcount',
+          unit: 'count',
+          sourceTable: 'v',
+          expr: { kind: 'max', column: 'employee_headcount' },
+        },
+        {
+          key: 'revenue_growth_pct',
+          label: 'Revenue Growth %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'revenue_growth_pct' },
+        },
+        {
+          key: 'ebitda_growth_pct',
+          label: 'EBITDA Growth %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'ebitda_growth_pct' },
+        },
+        {
+          key: 'sla_compliance_pct',
+          label: 'SLA %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'sla_compliance_pct' },
+        },
+        {
+          key: 'csat_pct',
+          label: 'CSAT %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'csat_pct' },
+        },
       ],
     };
     const arPrior = {
       chartType: 'stacked_bar' as const,
-      measureKeys: ['invoice_amount_usd', 'collected_amount_usd', 'write_off_amount_usd', 'outstanding_receivable_usd'],
+      measureKeys: [
+        'invoice_amount_usd',
+        'collected_amount_usd',
+        'write_off_amount_usd',
+        'outstanding_receivable_usd',
+      ],
       dimensionKey: 'client_name',
       title: 'AR by Client',
     };
@@ -2689,7 +2898,11 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
 
     const workforcePrior = {
       chartType: 'bubble' as const,
-      measureKeys: ['total_revenue_usd', 'total_payroll_usd', 'employee_headcount'],
+      measureKeys: [
+        'total_revenue_usd',
+        'total_payroll_usd',
+        'employee_headcount',
+      ],
       dimensionKey: 'business_unit',
       breakdownKey: 'client_name',
       title: 'Revenue vs Payroll',
@@ -2701,11 +2914,16 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
       async () => JSON.stringify(workforcePrior),
     );
     expect(workforce.ok).toBe(true);
-    if (workforce.ok) expect(workforce.spec.highlightCostWithoutRevenue).toBe(true);
+    if (workforce.ok)
+      expect(workforce.spec.highlightCostWithoutRevenue).toBe(true);
 
     const growthPrior = {
       chartType: 'bubble' as const,
-      measureKeys: ['revenue_growth_pct', 'ebitda_growth_pct', 'gross_margin_pct'],
+      measureKeys: [
+        'revenue_growth_pct',
+        'ebitda_growth_pct',
+        'gross_margin_pct',
+      ],
       dimensionKey: 'delivery_center',
       title: 'Growth vs Growth',
     };
@@ -2713,11 +2931,21 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
       'In the same chart, use gross margin as the bubble size and highlight combinations with low SLA or CSAT.',
       growthPrior,
       highlightModel,
-      async () => JSON.stringify({ ...growthPrior, measureKeys: [...growthPrior.measureKeys, 'sla_compliance_pct', 'csat_pct'] }),
+      async () =>
+        JSON.stringify({
+          ...growthPrior,
+          measureKeys: [
+            ...growthPrior.measureKeys,
+            'sla_compliance_pct',
+            'csat_pct',
+          ],
+        }),
     );
     expect(growth.ok).toBe(true);
     if (growth.ok) {
-      expect(growth.spec.measureKeys).toEqual(expect.arrayContaining(['sla_compliance_pct', 'csat_pct']));
+      expect(growth.spec.measureKeys).toEqual(
+        expect.arrayContaining(['sla_compliance_pct', 'csat_pct']),
+      );
       expect(growth.spec.highlightLowPerformance).toBe(true);
     }
   });
@@ -2726,11 +2954,41 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     const payrollModel: SemanticModel = {
       ...model,
       measures: [
-        { key: 'total_payroll_usd', label: 'Total Payroll', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'total_payroll_usd' } },
-        { key: 'paid_hours', label: 'Paid Hours', unit: 'hours', sourceTable: 'v', expr: { kind: 'sum', column: 'paid_hours' } },
-        { key: 'productive_hours', label: 'Productive Hours', unit: 'hours', sourceTable: 'v', expr: { kind: 'sum', column: 'productive_hours' } },
-        { key: 'average_payroll_cost_per_paid_hour', label: 'Average Payroll Cost Per Paid Hour', unit: 'USD', sourceTable: 'v', expr: { kind: 'mean', column: 'average_payroll_cost_per_paid_hour' } },
-        { key: 'overtime_hours', label: 'Overtime Hours', unit: 'hours', sourceTable: 'v', expr: { kind: 'sum', column: 'overtime_hours' } },
+        {
+          key: 'total_payroll_usd',
+          label: 'Total Payroll',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'total_payroll_usd' },
+        },
+        {
+          key: 'paid_hours',
+          label: 'Paid Hours',
+          unit: 'hours',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'paid_hours' },
+        },
+        {
+          key: 'productive_hours',
+          label: 'Productive Hours',
+          unit: 'hours',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'productive_hours' },
+        },
+        {
+          key: 'average_payroll_cost_per_paid_hour',
+          label: 'Average Payroll Cost Per Paid Hour',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'average_payroll_cost_per_paid_hour' },
+        },
+        {
+          key: 'overtime_hours',
+          label: 'Overtime Hours',
+          unit: 'hours',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'overtime_hours' },
+        },
       ],
     };
     const prior = {
@@ -2770,10 +3028,34 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     const bubbleModel: SemanticModel = {
       ...model,
       measures: [
-        { key: 'total_payroll_usd', label: 'Total Payroll', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'total_payroll_usd' } },
-        { key: 'productive_hours', label: 'Productive Hours', unit: 'hours', sourceTable: 'v', expr: { kind: 'sum', column: 'productive_hours' } },
-        { key: 'overtime_hours', label: 'Overtime Hours', unit: 'hours', sourceTable: 'v', expr: { kind: 'sum', column: 'overtime_hours' } },
-        { key: 'overtime_usd', label: 'Overtime', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'overtime_usd' } },
+        {
+          key: 'total_payroll_usd',
+          label: 'Total Payroll',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'total_payroll_usd' },
+        },
+        {
+          key: 'productive_hours',
+          label: 'Productive Hours',
+          unit: 'hours',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'productive_hours' },
+        },
+        {
+          key: 'overtime_hours',
+          label: 'Overtime Hours',
+          unit: 'hours',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'overtime_hours' },
+        },
+        {
+          key: 'overtime_usd',
+          label: 'Overtime',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'overtime_usd' },
+        },
       ],
     };
     const prior = {
@@ -2807,10 +3089,34 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     const operationsModel: SemanticModel = {
       ...model,
       measures: [
-        { key: 'capacity_hours', label: 'Capacity Hours', unit: 'hours', sourceTable: 'v', expr: { kind: 'sum', column: 'capacity_hours' } },
-        { key: 'working_hours', label: 'Working Hours', unit: 'hours', sourceTable: 'v', expr: { kind: 'sum', column: 'working_hours' } },
-        { key: 'occupancy_pct', label: 'Occupancy %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'occupancy_pct' } },
-        { key: 'utilization_pct', label: 'Utilization %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'utilization_pct' } },
+        {
+          key: 'capacity_hours',
+          label: 'Capacity Hours',
+          unit: 'hours',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'capacity_hours' },
+        },
+        {
+          key: 'working_hours',
+          label: 'Working Hours',
+          unit: 'hours',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'working_hours' },
+        },
+        {
+          key: 'occupancy_pct',
+          label: 'Occupancy %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'occupancy_pct' },
+        },
+        {
+          key: 'utilization_pct',
+          label: 'Utilization %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'utilization_pct' },
+        },
       ],
     };
     const prior = {
@@ -2827,7 +3133,11 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
         JSON.stringify({
           ...prior,
           chartType: 'combo',
-          measureKeys: [...prior.measureKeys, 'occupancy_pct', 'utilization_pct'],
+          measureKeys: [
+            ...prior.measureKeys,
+            'occupancy_pct',
+            'utilization_pct',
+          ],
         }),
     );
     expect(result.ok).toBe(true);
@@ -2840,39 +3150,96 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
       dimensions: [
         ...model.dimensions,
         { key: 'region', label: 'Region', table: 'v', column: 'region' },
-        { key: 'service_line', label: 'Service Line', table: 'v', column: 'service_line' },
+        {
+          key: 'service_line',
+          label: 'Service Line',
+          table: 'v',
+          column: 'service_line',
+        },
       ],
       measures: [
         ...model.measures,
-        { key: 'gross_profit_usd', label: 'Gross Profit', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'gross_profit_usd' } },
-        { key: 'total_payroll_usd', label: 'Total Payroll', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'total_payroll_usd' } },
-        { key: 'utilization_pct', label: 'Utilization %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'utilization_pct' } },
-        { key: 'sla_compliance_pct', label: 'SLA Compliance %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'sla_compliance_pct' } },
-        { key: 'csat_pct', label: 'CSAT %', unit: '%', sourceTable: 'v', expr: { kind: 'mean', column: 'csat_pct' } },
-        { key: 'outstanding_receivable_usd', label: 'Outstanding Receivable', unit: 'USD', sourceTable: 'v', expr: { kind: 'sum', column: 'outstanding_receivable_usd' } },
+        {
+          key: 'gross_profit_usd',
+          label: 'Gross Profit',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'gross_profit_usd' },
+        },
+        {
+          key: 'total_payroll_usd',
+          label: 'Total Payroll',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'total_payroll_usd' },
+        },
+        {
+          key: 'utilization_pct',
+          label: 'Utilization %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'utilization_pct' },
+        },
+        {
+          key: 'sla_compliance_pct',
+          label: 'SLA Compliance %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'sla_compliance_pct' },
+        },
+        {
+          key: 'csat_pct',
+          label: 'CSAT %',
+          unit: '%',
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'csat_pct' },
+        },
+        {
+          key: 'outstanding_receivable_usd',
+          label: 'Outstanding Receivable',
+          unit: 'USD',
+          sourceTable: 'v',
+          expr: { kind: 'sum', column: 'outstanding_receivable_usd' },
+        },
       ],
     };
     const created = await planChart(
       'Create an executive drill-down dashboard showing revenue, profitability, payroll, utilization, service quality, and receivables.',
       executiveModel,
-      async () => JSON.stringify({ chartType: 'kpi', measureKeys: ['total_revenue_usd'], title: 'Executive dashboard' }),
+      async () =>
+        JSON.stringify({
+          chartType: 'kpi',
+          measureKeys: ['total_revenue_usd'],
+          title: 'Executive dashboard',
+        }),
     );
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    expect(created.spec.measureKeys).toEqual(expect.arrayContaining([
-      'total_revenue_usd', 'gross_profit_usd', 'total_payroll_usd',
-      'utilization_pct', 'sla_compliance_pct', 'csat_pct',
-      'outstanding_receivable_usd',
-    ]));
+    expect(created.spec.measureKeys).toEqual(
+      expect.arrayContaining([
+        'total_revenue_usd',
+        'gross_profit_usd',
+        'total_payroll_usd',
+        'utilization_pct',
+        'sla_compliance_pct',
+        'csat_pct',
+        'outstanding_receivable_usd',
+      ]),
+    );
     const edited = await planEdit(
       'In the same dashboard, enable drill-down from region to client and service line.',
       created.spec,
       executiveModel,
-      async () => JSON.stringify({ ...created.spec, dimensionKey: 'service_line' }),
+      async () =>
+        JSON.stringify({ ...created.spec, dimensionKey: 'service_line' }),
     );
     expect(edited.ok).toBe(true);
     if (edited.ok) {
-      expect(edited.spec.hierarchyKeys).toEqual(['region', 'client_name', 'service_line']);
+      expect(edited.spec.hierarchyKeys).toEqual([
+        'region',
+        'client_name',
+        'service_line',
+      ]);
       expect(edited.spec.dimensionKey).toBe('region');
       expect(edited.spec.measureKeys).toEqual(created.spec.measureKeys);
     }
@@ -2931,10 +3298,7 @@ describe('ChartPlanner.planEdit (conversational refinement, fake LLM)', () => {
     const planned = await planChart(question, reconciliationModel, async () =>
       JSON.stringify({
         chartType: 'bar',
-        measureKeys: [
-          'general_ledger_debit_usd',
-          'general_ledger_credit_usd',
-        ],
+        measureKeys: ['general_ledger_debit_usd', 'general_ledger_credit_usd'],
         title: 'Ledger reconciliation',
       }),
     );

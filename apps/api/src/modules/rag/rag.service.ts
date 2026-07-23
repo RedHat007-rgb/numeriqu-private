@@ -1,4 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
 import type { PrismaClient } from '@repo/db';
 import {
   CLICKHOUSE_ANALYTICS_TOKEN,
@@ -6,24 +8,64 @@ import {
 } from '../../database/database.module';
 import type { ClickHouseClient } from '@clickhouse/client';
 import {
-  getLlmProviderLabel,
-  resolveLlmRuntimeConfig,
-  type LlmProvider,
-} from '../../common/llm/llm-config';
+  classifyPrismScope,
+  prismGreeting,
+  prismScopeRefusal,
+  type PrismTone,
+} from './prism-policy';
+import {
+  formatPrismMoney,
+  formatPrismPercentage,
+  safePercentage,
+} from './prism-calculations';
+import {
+  planPrismQuery,
+  type PrismIntent,
+  type PrismPlan,
+} from './prism-planner';
+import {
+  ChartEngineService,
+  type EngineAnswer,
+} from '../chart-engine/chart-engine.service';
+import { PrismModelGateway } from './prism-model.gateway';
+import { capabilityAnswerEnvelope } from './prism-presenter';
+import type { PrismEvidenceSummary } from './prism-contracts';
+import { validatePrismOutput } from './prism-output-validator';
+import { PrismRuntimeService } from './prism-runtime.service';
+import { PRISM_SEMANTIC_VERSION } from './prism-contracts';
+import { PrismWorkloadService } from './prism-workload.service';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface FinancialContext {
+  source: 'invoices' | 'none';
   connectionCount: number;
   externalOrgIds: string[];
   connectionIds: string[];
   summary: {
+    revenueAvailable: boolean;
+    receivablesAvailable: boolean;
+    invoiceMetricsAvailable: boolean;
     totalRevenue: number;
     openAmount: number;
     overdueAmount: number;
     overdueCount: number;
     invoiceCount: number;
     avgInvoiceValue: number;
+    currency: string | null;
+    mixedCurrencies: boolean;
+    periodCount: number;
+    coverageStart: string | null;
+    coverageEnd: string | null;
+    currencyBreakdown: Array<{
+      currency: string;
+      totalRevenue: number;
+      openAmount: number;
+      overdueAmount: number;
+      overdueCount: number;
+      invoiceCount: number;
+      avgInvoiceValue: number;
+    }>;
   };
   monthlyTrend: Array<{ month: string; revenue: number; invoiceCount: number }>;
   entityBreakdown: Array<{
@@ -31,25 +73,67 @@ interface FinancialContext {
     provider: string;
     totalRevenue: number;
     invoiceCount: number;
-    currency: string;
+    currency: string | null;
   }>;
   invoiceStatusBreakdown: Array<{
     status: string;
     count: number;
     amount: number;
   }>;
-  ventureMetrics: {
-    burnRate: number;
-    runwayMonths: number;
-    cashOnHand: number;
-    efficiencyRatio: number;
-  };
-  semanticSnippets: string[];
   computedAt: string;
+  qualityIssues: string[];
+}
+
+type NumericCell = string | number | null | undefined;
+
+type ActiveConnection = {
+  id: string;
+  externalOrganizationId: string;
+  provider: string;
+  metadata: unknown;
+};
+
+type InvoiceSummaryRow = {
+  currency?: string | null;
+  total_revenue: NumericCell;
+  open_amount: NumericCell;
+  overdue_amount: NumericCell;
+  overdue_count: NumericCell;
+  invoice_count: NumericCell;
+  avg_invoice: NumericCell;
+};
+type InvoiceTrendRow = {
+  month: string;
+  revenue: NumericCell;
+  invoice_count: NumericCell;
+};
+type InvoiceEntityRow = {
+  org_name?: string | null;
+  provider?: string | null;
+  currency?: string | null;
+  total_revenue: NumericCell;
+  invoice_count: NumericCell;
+};
+type InvoiceStatusRow = {
+  status?: string | null;
+  invoice_count: NumericCell;
+  total_amount: NumericCell;
+};
+
+function numeric(value: NumericCell): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function textValue(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value)
+    : '';
 }
 
 type TimeRange =
   | { kind: 'ALL_TIME' }
+  | { kind: 'DATE_RANGE'; start: string; end: string; label: string }
   | { kind: 'MTD' }
   | { kind: 'QTD' }
   | { kind: 'YTD' }
@@ -64,294 +148,65 @@ const SAFE_QUERY_SETTINGS = {
   max_execution_time: 25,
 };
 
-// ─── Intent Classification ────────────────────────────────────────────────────
-
-const FINANCE_KEYWORDS = [
-  'revenue',
-  'income',
-  'profit',
-  'margin',
-  'expense',
-  'cost',
-  'invoice',
-  'bill',
-  'payment',
-  'overdue',
-  'cashflow',
-  'cash flow',
-  'budget',
-  'forecast',
-  'tax',
-  'vat',
-  'gst',
-  'balance',
-  'account',
-  'ledger',
-  'xero',
-  'quickbooks',
-  'currency',
-  'financial',
-  'money',
-  'debt',
-  'credit',
-  'debit',
-  'growth',
-  'trend',
-  'quarter',
-  'monthly',
-  'annual',
-  'ytd',
-  'mtd',
-  'risk',
-  'exposure',
-  'profitability',
-  'roi',
-  'working capital',
-  'ar',
-  'ap',
-  'receivable',
-  'payable',
-  'loss',
-  'gain',
-  'asset',
-  'liability',
-  'equity',
-  'numeriqu',
-  'burn',
-  'runway',
-  'ebitda',
-  'mrr',
-  'arr',
-  'cac',
-  'ltv',
-  'churn',
-  'dso',
-  'dpo',
-  'collections',
-  'aging',
-  'liquidity',
-  'solvency',
-  'gross margin',
-  'net margin',
-  'operating margin',
-  'breakeven',
-  'entity',
-  'subsidiary',
-  'segment',
-  'department',
-  'bank',
-  'transfer',
-  'saas',
-  'subscription',
-  'recurring',
-  'audit',
-  'reconcile',
-];
-
-const GREETING_PATTERNS = [
-  'hi',
-  'hello',
-  'hey',
-  'sup',
-  'help',
-  'who are you',
-  'what can you do',
-  'what do you do',
-];
-
-function classifyIntent(query: string): 'greeting' | 'financial' | 'off_topic' {
-  const q = query.toLowerCase().trim();
-  if (
-    GREETING_PATTERNS.some(
-      (g) => q === g || q.startsWith(g + ' ') || q.startsWith(g + '!'),
-    )
-  ) {
-    return 'greeting';
-  }
-  if (q.length < 15) return 'financial';
-  if (FINANCE_KEYWORDS.some((kw) => q.includes(kw))) return 'financial';
-  return 'off_topic';
-}
-
-// ─── Prompt Builder ───────────────────────────────────────────────────────────
-
-const RAG_ADVISOR_SYSTEM_PROMPT = `You are Prism — NumeriQ's evidence-first finance calculator.
-
-Your job:
-- Answer ONLY what the user asked.
-- Use ONLY the numbers in the LIVE FINANCIAL INTELLIGENCE BLOCK (no outside knowledge, no guessing).
-
-Hard constraints:
-1) No suggestions, no recommendations, no next steps. Do not tell the user what to do.
-2) Be audit-friendly: show the formula and the exact values used.
-3) If a metric is not available, say: "Not available in the current gold layer."
-4) If the question is ambiguous, ask a clarifying question and provide 4–7 options.
-
-Preferred format:
-- A short direct answer (1–3 lines)
-- Then a CALCULATION section showing the math
-- Then a DATA USED section listing the exact inputs (numbers)`;
-
-function buildFactBlock(ctx: FinancialContext): string {
-  const $$ = (n: number) =>
-    n >= 1_000_000
-      ? `$${(n / 1_000_000).toFixed(2)}M`
-      : n >= 1_000
-        ? `$${(n / 1_000).toFixed(1)}K`
-        : `$${n.toFixed(0)}`;
-
-  // ── Derived: MoM and 3-month trend ─────────────────────────────────────────
-  const trend = ctx.monthlyTrend;
-  const momChange = (() => {
-    if (trend.length < 2) return 'N/A';
-    const last = trend[trend.length - 1]!;
-    const prev = trend[trend.length - 2]!;
-    const pct =
-      prev.revenue > 0
-        ? ((last.revenue - prev.revenue) / prev.revenue) * 100
-        : 0;
-    return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-  })();
-
-  const qoqChange = (() => {
-    if (trend.length < 6) return 'N/A';
-    const recentQ = trend.slice(-3).reduce((s, r) => s + r.revenue, 0);
-    const prevQ = trend.slice(-6, -3).reduce((s, r) => s + r.revenue, 0);
-    const pct = prevQ > 0 ? ((recentQ - prevQ) / prevQ) * 100 : 0;
-    return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-  })();
-
-  const peakMonth =
-    trend.length > 0
-      ? trend.reduce((a, b) => (b.revenue > a.revenue ? b : a), trend[0]!)
-      : null;
-
-  // ── Derived: AR health ──────────────────────────────────────────────────────
-  const s = ctx.summary;
-  const overdueRate =
-    s.openAmount > 0
-      ? ((s.overdueAmount / s.openAmount) * 100).toFixed(1)
-      : '0.0';
-  const collectionEfficiency =
-    s.totalRevenue > 0
-      ? (((s.totalRevenue - s.openAmount) / s.totalRevenue) * 100).toFixed(1)
-      : '0.0';
-
-  // ── Derived: Venture / runway ───────────────────────────────────────────────
-  const vm = ctx.ventureMetrics;
-  const runwayCliff = (() => {
-    if (vm.runwayMonths <= 0 || vm.burnRate <= 0) return 'N/A';
-    const d = new Date();
-    d.setMonth(d.getMonth() + Math.floor(vm.runwayMonths));
-    return d.toISOString().slice(0, 7);
-  })();
-
-  const burnMultiple =
-    vm.burnRate > 0 && s.totalRevenue > 0
-      ? (vm.burnRate / (s.totalRevenue / Math.max(trend.length, 1))).toFixed(
-          2,
-        ) + 'x'
-      : 'N/A';
-
-  // ── Derived: Entity concentration ──────────────────────────────────────────
-  const totalEntRevenue = ctx.entityBreakdown.reduce(
-    (s, e) => s + e.totalRevenue,
-    0,
-  );
-  const entities =
-    ctx.entityBreakdown
-      .map((e) => {
-        const share =
-          totalEntRevenue > 0
-            ? ((e.totalRevenue / totalEntRevenue) * 100).toFixed(0)
-            : '0';
-        return `${e.orgName}[${e.provider}]: ${$$(e.totalRevenue)} (${share}% share, ${e.invoiceCount} inv)`;
-      })
-      .join('\n  ') || 'none';
-
-  const topEntityShare =
-    ctx.entityBreakdown.length > 0 && totalEntRevenue > 0
-      ? (
-          (ctx.entityBreakdown[0]!.totalRevenue / totalEntRevenue) *
-          100
-        ).toFixed(0) + '%'
-      : 'N/A';
-
-  // ── Derived: Invoice status breakdown ──────────────────────────────────────
-  const statuses =
-    ctx.invoiceStatusBreakdown
-      .map(
-        (s) =>
-          `${s.status}: ${s.count} inv / ${$$(s.amount)}${s.status.toLowerCase() === 'overdue' ? ' ⚠️' : ''}`,
-      )
-      .join('\n  ') || 'none';
-
-  // ── 12-month trend series ───────────────────────────────────────────────────
-  const trendSeries =
-    trend
-      .slice(-12)
-      .map((r) => `${r.month}:${$$(r.revenue)}(${r.invoiceCount})`)
-      .join(', ') || 'none';
-
-  return `
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-LIVE FINANCIAL INTELLIGENCE BLOCK
-As of: ${ctx.computedAt.slice(0, 16)} UTC | Connections: ${ctx.connectionCount} active ERPs
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-[REVENUE SUMMARY]
-Total Revenue:         ${$$(s.totalRevenue)}
-Avg Invoice Value:     ${$$(s.avgInvoiceValue)}
-Total Invoices:        ${s.invoiceCount}
-Collection Efficiency: ${collectionEfficiency}%
-
-[ACCOUNTS RECEIVABLE]
-Open AR:               ${$$(s.openAmount)}
-Overdue AR:            ${$$(s.overdueAmount)} (${s.overdueCount} invoices — ${overdueRate}% of open)
-
-[VENTURE HEALTH]
-Monthly Burn:          ${$$(vm.burnRate)}/mo
-Cash on Hand:          ${$$(vm.cashOnHand)}
-Runway:                ${vm.runwayMonths} months (cliff: ${runwayCliff})
-Burn Multiple:         ${burnMultiple}
-Efficiency Ratio:      ${vm.efficiencyRatio}x
-
-[REVENUE MOMENTUM]
-MoM Change:            ${momChange}
-QoQ Change:            ${qoqChange}
-Peak Month:            ${peakMonth ? `${peakMonth.month} @ ${$$(peakMonth.revenue)}` : 'N/A'}
-
-[ENTITY BREAKDOWN — concentration risk]
-Top Entity Share:      ${topEntityShare}
-  ${entities}
-
-[INVOICE STATUS PORTFOLIO]
-  ${statuses}
-
-[12-MONTH REVENUE SERIES]
-  ${trendSeries}
-${ctx.semanticSnippets.length > 0 ? '\n[SEMANTIC CONTEXT]\n  ' + ctx.semanticSnippets.slice(0, 4).join('\n  ') : ''}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
-}
-
-function buildMessages(
-  ctx: FinancialContext,
-  history: Array<{ role: string; content: string }>,
-  userQuery: string,
-): Array<{ role: string; content: string }> {
-  const factBlock = buildFactBlock(ctx);
-  const systemContent = `${RAG_ADVISOR_SYSTEM_PROMPT}\n\n${factBlock}`;
-  return [
-    { role: 'system', content: systemContent },
-    ...history.slice(-12),
-    { role: 'user', content: userQuery },
-  ];
-}
-
 // ─── Prism Query Helpers ──────────────────────────────────────────────────────
 
 function parseTimeRangeFromQuery(query: string): TimeRange | null {
   const q = query.toLowerCase();
+  const quarterFirst = q.match(/\bq([1-4])\s+(20\d{2})\b/);
+  const yearFirstQuarter = q.match(/\b(20\d{2})\s+q([1-4])\b/);
+  if (quarterFirst || yearFirstQuarter) {
+    const quarter = Number(quarterFirst?.[1] ?? yearFirstQuarter?.[2]);
+    const year = Number(quarterFirst?.[2] ?? yearFirstQuarter?.[1]);
+    const startMonth = (quarter - 1) * 3 + 1;
+    const endMonth = startMonth + 2;
+    const endDay = new Date(Date.UTC(year, endMonth, 0)).getUTCDate();
+    return {
+      kind: 'DATE_RANGE',
+      start: `${year}-${String(startMonth).padStart(2, '0')}-01`,
+      end: `${year}-${String(endMonth).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`,
+      label: `Q${quarter} ${year}`,
+    };
+  }
+
+  const monthNames: Record<string, number> = {
+    january: 1,
+    february: 2,
+    march: 3,
+    april: 4,
+    may: 5,
+    june: 6,
+    july: 7,
+    august: 8,
+    september: 9,
+    october: 10,
+    november: 11,
+    december: 12,
+  };
+  const monthYear = q.match(
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(20\d{2})\b/,
+  );
+  if (monthYear) {
+    const month = monthNames[monthYear[1]];
+    const year = Number(monthYear[2]);
+    const endDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return {
+      kind: 'DATE_RANGE',
+      start: `${year}-${String(month).padStart(2, '0')}-01`,
+      end: `${year}-${String(month).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`,
+      label: `${monthYear[1][0].toUpperCase()}${monthYear[1].slice(1)} ${year}`,
+    };
+  }
+
+  const calendarYear = q.match(/\b(20\d{2})\b/);
+  if (calendarYear && !/\bfy\s*20\d{2}\b/.test(q)) {
+    const year = Number(calendarYear[1]);
+    return {
+      kind: 'DATE_RANGE',
+      start: `${year}-01-01`,
+      end: `${year}-12-31`,
+      label: String(year),
+    };
+  }
   if (/\b(all time|all-time|lifetime|since inception)\b/.test(q))
     return { kind: 'ALL_TIME' };
   if (/\b(mtd|month to date|month-to-date|this month)\b/.test(q))
@@ -405,7 +260,7 @@ function parseTimeRangeFromQuery(query: string): TimeRange | null {
 function queryNeedsRangeClarification(query: string): boolean {
   const q = query.toLowerCase();
   const impliesPeriod =
-    /\b(compare|comparison|trend|month|monthly|quarter|quarterly|qoq|mom|growth|decline|increase|decrease|change|delta|over time)\b/.test(
+    /\b(compare|comparison|trend|month|monthly|quarter|quarterly|qoq|mom|growth|decline|increase|decrease|change|delta|over time|fy\s*20\d{2})\b/.test(
       q,
     );
   if (!impliesPeriod) return false;
@@ -414,6 +269,7 @@ function queryNeedsRangeClarification(query: string): boolean {
 
 function formatRangeLabel(range: TimeRange): string {
   if (range.kind === 'ALL_TIME') return 'All time';
+  if (range.kind === 'DATE_RANGE') return range.label;
   if (range.kind === 'MTD') return 'Month to date';
   if (range.kind === 'QTD') return 'Quarter to date';
   if (range.kind === 'YTD') return 'Year to date';
@@ -426,185 +282,462 @@ function formatRangeLabel(range: TimeRange): string {
   return 'All time';
 }
 
-function formatMoney(value: number): string {
-  const abs = Math.abs(value);
-  const sign = value < 0 ? '-' : '';
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
+function enginePeriodFromRange(range: TimeRange): {
+  dateRange?: { start: string; end: string };
+  period?: {
+    kind:
+      | 'MTD'
+      | 'QTD'
+      | 'YTD'
+      | 'LAST_N_DAYS'
+      | 'LAST_N_WEEKS'
+      | 'LAST_N_MONTHS'
+      | 'LAST_N_QUARTERS'
+      | 'LAST_N_YEARS';
+    value?: number;
+  };
+} {
+  if (range.kind === 'DATE_RANGE') {
+    return { dateRange: { start: range.start, end: range.end } };
+  }
+  if (range.kind === 'ALL_TIME') return {};
+  if (range.kind === 'MTD' || range.kind === 'QTD' || range.kind === 'YTD') {
+    return { period: { kind: range.kind } };
+  }
+  if (range.kind === 'LAST_N_DAYS')
+    return { period: { kind: range.kind, value: range.days } };
+  if (range.kind === 'LAST_N_WEEKS')
+    return { period: { kind: range.kind, value: range.weeks } };
+  if (range.kind === 'LAST_N_MONTHS')
+    return { period: { kind: range.kind, value: range.months } };
+  if (range.kind === 'LAST_N_QUARTERS')
+    return { period: { kind: range.kind, value: range.quarters } };
+  return { period: { kind: range.kind, value: range.years } };
+}
+
+function timeRangeFromPlan(plan: PrismPlan | null): TimeRange | null {
+  if (!plan || plan.timeRange === 'UNSPECIFIED') return null;
+  if (
+    plan.timeRange === 'ALL_TIME' ||
+    plan.timeRange === 'MTD' ||
+    plan.timeRange === 'QTD' ||
+    plan.timeRange === 'YTD'
+  ) {
+    return { kind: plan.timeRange };
+  }
+  const count = Math.max(1, Math.floor(plan.periodCount));
+  if (plan.timeRange === 'LAST_N_DAYS')
+    return { kind: 'LAST_N_DAYS', days: count };
+  if (plan.timeRange === 'LAST_N_WEEKS')
+    return { kind: 'LAST_N_WEEKS', weeks: count };
+  if (plan.timeRange === 'LAST_N_MONTHS')
+    return { kind: 'LAST_N_MONTHS', months: count };
+  if (plan.timeRange === 'LAST_N_QUARTERS')
+    return { kind: 'LAST_N_QUARTERS', quarters: count };
+  if (plan.timeRange === 'LAST_N_YEARS')
+    return { kind: 'LAST_N_YEARS', years: count };
+  return null;
 }
 
 function pct(n: number): string {
-  if (!Number.isFinite(n)) return '0.0%';
-  return `${n.toFixed(1)}%`;
+  return formatPrismPercentage(Number.isFinite(n) ? n : null);
+}
+
+function humanizeCapabilityKey(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatCapabilityDimension(
+  key: string,
+  value: unknown,
+  answer: Extract<EngineAnswer, { ok: true }>,
+): string {
+  if (key !== 'period' || typeof value !== 'string') return String(value);
+  const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime())) return value;
+  if (answer.spec.timeGrain === 'year') return String(date.getUTCFullYear());
+  if (answer.spec.timeGrain === 'quarter')
+    return `Q${Math.floor(date.getUTCMonth() / 3) + 1} ${date.getUTCFullYear()}`;
+  if (answer.spec.timeGrain === 'month')
+    return new Intl.DateTimeFormat('en', {
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(date);
+  return new Intl.DateTimeFormat('en', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(date);
+}
+
+function formatCapabilityValue(
+  value: unknown,
+  unit: string,
+  valueRepresentation: Extract<
+    EngineAnswer,
+    { ok: true }
+  >['measures'][number]['valueRepresentation'],
+): string {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return 'Unavailable';
+  if (/^[A-Z]{3}$/.test(unit)) return formatPrismMoney(amount, unit);
+  if (unit === '%')
+    return formatPrismPercentage(
+      valueRepresentation === 'ratio' ? amount * 100 : amount,
+    );
+  const formatted = new Intl.NumberFormat('en', {
+    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+  }).format(amount);
+  if (unit === 'count' || !unit) return formatted;
+  return `${formatted} ${unit}`;
+}
+
+function buildCapabilityAnswer(
+  answer: Extract<EngineAnswer, { ok: true }>,
+  range: TimeRange,
+  tone: PrismTone,
+): string {
+  const heading = tone === 'friendly' ? 'Here’s the result' : 'Direct answer';
+  const measureKeys = new Set(answer.measures.map((measure) => measure.key));
+  const rows = answer.rows.slice(0, 24);
+  const lines: string[] = [`**${heading} — ${formatRangeLabel(range)}**`];
+
+  if (rows.length === 0) {
+    return [
+      ...lines,
+      `No verified records matched the selected scope. Prism will not present missing data as zero.`,
+    ].join('\n\n');
+  }
+
+  for (const row of rows) {
+    const dimensions = Object.entries(row)
+      .filter(
+        ([key, value]) =>
+          !measureKeys.has(key) &&
+          value != null &&
+          !(rows.length === 1 && key === 'period'),
+      )
+      .map(
+        ([key, value]) =>
+          `${humanizeCapabilityKey(key)}: ${formatCapabilityDimension(key, value, answer)}`,
+      );
+    const values = answer.measures
+      .filter((measure) => row[measure.key] != null)
+      .map(
+        (measure) =>
+          `${measure.label}: ${formatCapabilityValue(row[measure.key], measure.unit, measure.valueRepresentation)}`,
+      );
+    if (values.length) {
+      lines.push(`- ${[...dimensions, ...values].join(' · ')}`);
+    }
+  }
+
+  lines.push(
+    ``,
+    `**CALCULATION**`,
+    `- Calculated from the governed metric definitions for the selected organization and period.`,
+  );
+  if (answer.rows.length > rows.length) {
+    lines.push(
+      `- Showing ${rows.length} of ${answer.rows.length} verified rows.`,
+    );
+  }
+  return lines.join('\n');
+}
+
+function capabilityEvidence(
+  answer: EngineAnswer,
+  range: TimeRange,
+): PrismEvidenceSummary {
+  const verified = answer.ok && answer.rows.length > 0;
+  return {
+    status: verified ? 'verified' : 'unavailable',
+    period: formatRangeLabel(range),
+    calculatedAt: new Date().toISOString(),
+    checks: [
+      { code: 'tenant_scope', passed: true },
+      { code: 'governed_metric', passed: answer.ok },
+      { code: 'unit_validation', passed: answer.ok },
+      { code: 'reconciliation', passed: answer.ok },
+    ],
+    limitations: answer.ok
+      ? answer.rows.length === 0
+        ? ['No verified records matched the requested scope.']
+        : []
+      : [
+          'The requested metric is not available in the governed capability catalog.',
+        ],
+  };
+}
+
+function contextEvidence(
+  ctx: FinancialContext,
+  range: TimeRange,
+): PrismEvidenceSummary {
+  const partial = ctx.qualityIssues.length > 0;
+  const available =
+    ctx.connectionCount > 0 &&
+    !ctx.qualityIssues.includes('summary_unavailable');
+  return {
+    status: !available ? 'unavailable' : partial ? 'partial' : 'verified',
+    period: formatRangeLabel(range),
+    calculatedAt: ctx.computedAt,
+    checks: [
+      { code: 'tenant_scope', passed: true },
+      { code: 'governed_metric', passed: available },
+      { code: 'unit_validation', passed: !ctx.summary.mixedCurrencies },
+      { code: 'reconciliation', passed: available && !partial },
+    ],
+    limitations: [
+      ...ctx.qualityIssues,
+      ...(ctx.summary.mixedCurrencies
+        ? ['Monetary values use multiple currencies and were not consolidated.']
+        : []),
+    ],
+  };
 }
 
 function buildDeterministicPrismAnswer(
   query: string,
   ctx: FinancialContext,
   range: TimeRange,
+  tone: PrismTone,
+  plannedIntent?: PrismIntent,
 ): string | null {
   const q = query.toLowerCase();
   const scope = formatRangeLabel(range);
   const s = ctx.summary;
 
-  const asksForAdvice =
-    /\b(should i|what should|recommend|recommendation|suggest|next step|action plan)\b/.test(
+  const heading = tone === 'friendly' ? 'Here’s the result' : 'Direct answer';
+  const currency = s.currency;
+
+  if (ctx.connectionCount === 0) {
+    return [
+      `**${heading}**`,
+      `I don't have an active finance connection for this organization, so I can't calculate this reliably yet.`,
+      ``,
+      `Connect or refresh an accounting source, then ask the question again.`,
+    ].join('\n');
+  }
+
+  if (ctx.qualityIssues.includes('summary_unavailable')) {
+    return [
+      `**${heading}**`,
+      `The required financial totals are temporarily unavailable, so I won't present a number that cannot be verified.`,
+      ``,
+      `Please retry after the finance data refresh completes.`,
+    ].join('\n');
+  }
+
+  const asksForMoney =
+    /\b(revenue|income|sales|invoice|open|outstanding|unpaid|overdue|burn|runway|cash|profit|margin|expense|cost|entity|entities|client|customer|status)\b/.test(
       q,
     );
-  if (asksForAdvice) {
+  if (asksForMoney && s.mixedCurrencies) {
+    const lines = s.currencyBreakdown.map(
+      (row) =>
+        `- **${row.currency}:** revenue ${formatPrismMoney(row.totalRevenue, row.currency)}; open ${formatPrismMoney(row.openAmount, row.currency)}; overdue ${formatPrismMoney(row.overdueAmount, row.currency)}`,
+    );
     return [
-      `I can’t provide recommendations in Prism.`,
+      `**${heading} — ${scope}**`,
+      `Your selected scope contains multiple currencies. I have kept them separate because combining them without an approved FX policy would be misleading.`,
       ``,
-      `What do you want to calculate?`,
-      `- Revenue (total / trend)`,
-      `- Open invoices / overdue exposure`,
-      `- Invoice status breakdown`,
-      `- Entity breakdown (top entities by revenue)`,
-      `- Burn / runway (if available)`,
+      ...lines,
+      ``,
+      `**Required decision**`,
+      `Choose a reporting currency and an approved exchange-rate policy if you want a consolidated result.`,
     ].join('\n');
   }
 
   const asksProfit =
+    plannedIntent === 'profitability' ||
     /\b(net profit|profit|margin|ebitda|gross margin|net margin|operating margin)\b/.test(
       q,
     );
   if (asksProfit) {
     return [
-      `Not available in the current gold layer.`,
+      `**${heading}**`,
+      `Profit and margin are not calculable from the currently verified inputs. Revenue is available, but a reconciled expense measure is not.`,
       ``,
       `CALCULATION`,
       `- Profit/margin requires a verified expenses/bills model (not present here).`,
       ``,
       `DATA USED`,
-      `- Revenue (scope: ${scope}): ${formatMoney(s.totalRevenue)}`,
-      `- Open invoices (scope: ${scope}): ${formatMoney(s.openAmount)}`,
+      `- Revenue (${scope}): ${formatPrismMoney(s.totalRevenue, currency)}`,
+      `- Open invoices (${scope}): ${formatPrismMoney(s.openAmount, currency)}`,
     ].join('\n');
   }
 
-  const wantsOverdue = /\boverdue\b/.test(q);
-  const wantsOpen = /\b(open|outstanding|unpaid|accounts receivable|ar)\b/.test(
-    q,
-  );
-  const wantsRunway = /\b(runway|burn|cash on hand|cliff)\b/.test(q);
+  const wantsOverdue = plannedIntent === 'receivables' || /\boverdue\b/.test(q);
+  const wantsOpen =
+    plannedIntent === 'receivables' ||
+    /\b(open|outstanding|unpaid|accounts receivable|ar)\b/.test(q);
+  const wantsRunway =
+    plannedIntent === 'liquidity_runway' ||
+    /\b(runway|burn|cash on hand|cliff)\b/.test(q);
   const wantsStatus =
-    /\b(status|paid|authorised|submitted|draft|breakdown)\b/.test(q) &&
-    /\binvoice\b/.test(q);
+    plannedIntent === 'invoice_status' ||
+    (/\b(status|paid|authorised|submitted|draft|breakdown)\b/.test(q) &&
+      /\binvoice\b/.test(q));
   const wantsEntities =
-    /\b(entity|entities|org|organization|client|customers?)\b/.test(q) &&
-    (/\btop\b/.test(q) || /\bcompare\b/.test(q) || /\bbreakdown\b/.test(q));
+    plannedIntent === 'entity_breakdown' ||
+    (/\b(entity|entities|org|organization|client|customers?)\b/.test(q) &&
+      (/\btop\b/.test(q) || /\bcompare\b/.test(q) || /\bbreakdown\b/.test(q)));
   const wantsTrend =
-    /\b(trend|monthly|month|month-wise|over time|mom|qoq|quarter)\b/.test(q) &&
-    /\b(revenue|income|invoic)\b/.test(q);
-  const wantsRevenue = /\b(revenue|income|invoic(ed)?|sales)\b/.test(q);
+    plannedIntent === 'revenue_trend' ||
+    (/\b(trend|monthly|month|month-wise|over time|mom|qoq|quarter)\b/.test(q) &&
+      /\b(revenue|income|invoic)\b/.test(q));
+  const wantsRevenue =
+    plannedIntent === 'revenue_summary' ||
+    /\b(revenue|income|invoic(ed)?|sales)\b/.test(q);
+
+  if ((wantsRevenue || wantsTrend) && !s.revenueAvailable) {
+    return [
+      `**${heading}**`,
+      `Revenue is unavailable for this organization in the selected period. Prism found no verified revenue records and will not present that as zero.`,
+      ``,
+      `Refresh the finance dataset or choose a period with loaded data, then retry.`,
+    ].join('\n');
+  }
 
   if (wantsOverdue || wantsOpen) {
-    const overdueRate =
-      s.openAmount > 0 ? (s.overdueAmount / s.openAmount) * 100 : 0;
-    return [
-      `**Answer (scope: ${scope})**`,
-      `- Open invoices: ${formatMoney(s.openAmount)}`,
-      `- Overdue: ${formatMoney(s.overdueAmount)} across ${s.overdueCount} invoices`,
+    if (!s.receivablesAvailable) {
+      return `**${heading}**\n\nReceivables are not available in the verified dataset for this organization, so Prism cannot calculate open or overdue exposure reliably.`;
+    }
+    const overdueRate = safePercentage(s.overdueAmount, s.openAmount);
+    const lines = [
+      `**${heading} — ${scope}**`,
+      `- Open invoices: ${formatPrismMoney(s.openAmount, currency)}`,
+      s.invoiceMetricsAvailable
+        ? `- Overdue: ${formatPrismMoney(s.overdueAmount, currency)} across ${s.overdueCount} invoices`
+        : `- Overdue: ${formatPrismMoney(s.overdueAmount, currency)}`,
       ``,
       `**CALCULATION**`,
-      `- Overdue rate = Overdue / Open = ${formatMoney(s.overdueAmount)} / ${formatMoney(s.openAmount)} = ${pct(overdueRate)}`,
+      overdueRate === null
+        ? `- Overdue rate: not calculable because the open balance is zero.`
+        : `- Overdue rate = Overdue ÷ Open = ${formatPrismMoney(s.overdueAmount, currency)} ÷ ${formatPrismMoney(s.openAmount, currency)} = ${pct(overdueRate)}`,
       ``,
       `**DATA USED**`,
-      `- Open invoices: ${formatMoney(s.openAmount)}`,
-      `- Overdue amount: ${formatMoney(s.overdueAmount)}`,
+      `- Open invoices: ${formatPrismMoney(s.openAmount, currency)}`,
+      `- Overdue amount: ${formatPrismMoney(s.overdueAmount, currency)}`,
       `- Overdue invoice count: ${s.overdueCount}`,
-    ].join('\n');
+    ];
+    if (s.coverageEnd) lines.push('', `- Balance date: ${s.coverageEnd}`);
+    return lines.join('\n');
   }
 
   if (wantsRunway) {
-    const vm = ctx.ventureMetrics;
-    const cliff = (() => {
-      if (!vm.runwayMonths || vm.runwayMonths <= 0) return 'N/A';
-      const d = new Date();
-      d.setMonth(d.getMonth() + Math.floor(vm.runwayMonths));
-      return d.toISOString().slice(0, 10);
-    })();
     return [
-      `**Answer (scope: ${scope})**`,
-      `- Burn rate: ${formatMoney(vm.burnRate)} / month`,
-      `- Cash on hand (derived): ${formatMoney(vm.cashOnHand)}`,
-      `- Runway: ${vm.runwayMonths} months (cliff ≈ ${cliff})`,
+      `**${heading}**`,
+      `Runway is not calculable from the currently verified inputs.`,
       ``,
-      `**CALCULATION**`,
-      `- Runway (months) = Cash on hand / Burn rate`,
+      `**Required inputs**`,
+      `- Reconciled cash balance as of a specific date`,
+      `- Governed monthly net-burn definition and period`,
       ``,
-      `**DATA USED**`,
-      `- Burn rate: ${formatMoney(vm.burnRate)}`,
-      `- Cash on hand: ${formatMoney(vm.cashOnHand)}`,
+      `Invoice values are not a cash balance, so Prism will not use them as a substitute.`,
     ].join('\n');
   }
 
   if (wantsStatus) {
+    if (ctx.source !== 'invoices') {
+      return `**${heading}**\n\nInvoice-status detail is not available in this organization's verified finance dataset, so Prism cannot produce that breakdown reliably.`;
+    }
+    if (ctx.qualityIssues.includes('status_breakdown_unavailable')) {
+      return `**${heading}**\n\nThe invoice-status breakdown is temporarily unavailable, so I can't verify this result yet.`;
+    }
     const top = ctx.invoiceStatusBreakdown.slice(0, 8);
     const total = top.reduce((sum, row) => sum + (row.amount || 0), 0);
     const lines = top.map((row) => {
-      const share = total > 0 ? (row.amount / total) * 100 : 0;
-      return `- ${row.status}: ${row.count} invoices · ${formatMoney(row.amount)} (${pct(share)})`;
+      const shareValue = safePercentage(row.amount, total);
+      const share = shareValue === null ? 'share unavailable' : pct(shareValue);
+      return `- ${row.status}: ${row.count} invoices · ${formatPrismMoney(row.amount, currency)} (${share})`;
     });
     return [
-      `**Answer (scope: ${scope})**`,
+      `**${heading} — ${scope}**`,
       ...lines,
       ``,
-      `**DATA USED**`,
-      `- Invoice status aggregation from fact invoices (top ${top.length} statuses).`,
+      `**Coverage**`,
+      `- ${top.length} invoice statuses in the authorized scope.`,
     ].join('\n');
   }
 
   if (wantsEntities) {
+    if (ctx.qualityIssues.includes('entity_breakdown_unavailable')) {
+      return `**${heading}**\n\nThe entity comparison is temporarily unavailable, so I can't verify this result yet.`;
+    }
     const top = ctx.entityBreakdown.slice(0, 6);
     const total = ctx.entityBreakdown.reduce(
       (sum, row) => sum + (row.totalRevenue || 0),
       0,
     );
     const lines = top.map((row) => {
-      const share = total > 0 ? (row.totalRevenue / total) * 100 : 0;
-      return `- ${row.orgName} (${row.provider}): ${formatMoney(row.totalRevenue)} · ${row.invoiceCount} invoices · ${pct(share)} share`;
+      const shareValue = safePercentage(row.totalRevenue, total);
+      const share =
+        shareValue === null ? 'share unavailable' : `${pct(shareValue)} share`;
+      return s.invoiceMetricsAvailable
+        ? `- ${row.orgName} (${row.provider}): ${formatPrismMoney(row.totalRevenue, row.currency)} · ${row.invoiceCount} invoices · ${share}`
+        : `- ${row.orgName}: ${formatPrismMoney(row.totalRevenue, row.currency)} · ${share}`;
     });
     return [
-      `**Answer (scope: ${scope})**`,
+      `**${heading} — ${scope}**`,
       ...lines,
       ``,
       `**CALCULATION**`,
       `- Share % = Entity revenue / Total revenue across entities`,
       ``,
-      `**DATA USED**`,
-      `- Entity breakdown (org_name + provider) from fact invoices.`,
+      `**Calculation basis**`,
+      `- Entity share = entity revenue ÷ total revenue in the same currency and scope.`,
     ].join('\n');
   }
 
   if (wantsTrend) {
+    if (ctx.qualityIssues.includes('trend_unavailable')) {
+      return `**${heading}**\n\nThe time-series data is temporarily unavailable, so I can't verify this trend yet.`;
+    }
     const series = ctx.monthlyTrend.slice(-12);
-    const lines = series.map(
-      (row) =>
-        `- ${row.month}: ${formatMoney(row.revenue)} · ${row.invoiceCount} invoices`,
+    const lines = series.map((row) =>
+      s.invoiceMetricsAvailable
+        ? `- ${row.month}: ${formatPrismMoney(row.revenue, currency)} · ${row.invoiceCount} invoices`
+        : `- ${row.month}: ${formatPrismMoney(row.revenue, currency)}`,
     );
     return [
-      `**Answer (scope: ${scope})**`,
+      `**${heading} — ${scope}**`,
       ...lines,
       ``,
-      `**DATA USED**`,
-      `- Monthly aggregation: toStartOfMonth(issued_at) grouped sums.`,
+      `**Calculation basis**`,
+      `- Verified revenue grouped by calendar month.`,
     ].join('\n');
   }
 
   if (wantsRevenue) {
-    return [
-      `**Answer (scope: ${scope})**`,
-      `- Revenue: ${formatMoney(s.totalRevenue)}`,
-      `- Invoices: ${s.invoiceCount}`,
-      `- Avg invoice value: ${formatMoney(s.avgInvoiceValue)}`,
-      ``,
-      `**CALCULATION**`,
-      `- Avg invoice = Revenue / Invoice count (from aggregation)`,
-      ``,
-      `**DATA USED**`,
-      `- Revenue, invoice count, and avg invoice value from fact invoices.`,
-    ].join('\n');
+    const lines = [
+      `**${heading} — ${scope}**`,
+      `- Revenue: ${formatPrismMoney(s.totalRevenue, currency)}`,
+    ];
+    if (s.coverageStart && s.coverageEnd) {
+      lines.push(`- Coverage: ${s.coverageStart} to ${s.coverageEnd}`);
+    }
+    if (s.invoiceMetricsAvailable) {
+      lines.push(
+        `- Invoices: ${s.invoiceCount}`,
+        `- Average invoice value: ${formatPrismMoney(s.avgInvoiceValue, currency)}`,
+        ``,
+        `**CALCULATION**`,
+        `- Average invoice value = Revenue ÷ invoice count`,
+      );
+    } else {
+      lines.push(
+        ``,
+        `**CALCULATION**`,
+        `- Sum of verified monthly revenue across ${s.periodCount} loaded periods.`,
+      );
+    }
+    return lines.join('\n');
   }
 
   return null;
@@ -615,9 +748,6 @@ function buildDeterministicPrismAnswer(
 @Injectable()
 export class RagService {
   private readonly logger = new Logger(RagService.name);
-  private readonly OLLAMA_URL: string;
-  private readonly OLLAMA_MODEL: string;
-  private readonly llmProvider: LlmProvider;
   private readonly analyticsDb: string;
   private readonly ctxCache = new Map<
     string,
@@ -629,12 +759,16 @@ export class RagService {
     @Inject(PRISMA_TOKEN) private readonly prisma: PrismaClient,
     @Inject(CLICKHOUSE_ANALYTICS_TOKEN)
     private readonly clickhouse: ClickHouseClient,
+    private readonly chartEngine: ChartEngineService,
+    private readonly prismModel: PrismModelGateway,
+    private readonly prismRuntime: PrismRuntimeService,
+    private readonly prismWorkload: PrismWorkloadService,
   ) {
-    const llm = resolveLlmRuntimeConfig('llama3:latest');
-    this.llmProvider = llm.provider;
-    this.OLLAMA_URL = llm.url;
-    this.OLLAMA_MODEL = llm.model;
-    this.analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
+    const analyticsDb = process.env.CLICKHOUSE_ANALYTICS_DB || 'analytics';
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(analyticsDb)) {
+      throw new Error('CLICKHOUSE_ANALYTICS_DB must be a valid identifier.');
+    }
+    this.analyticsDb = analyticsDb;
   }
 
   // ─── Public Query Entry Point ──────────────────────────────────────────────
@@ -644,51 +778,47 @@ export class RagService {
     userId: string,
     userQuery: string,
     sessionId?: string,
+    tone: PrismTone = 'professional',
+    signal?: AbortSignal,
   ): AsyncGenerator<string> {
     const startTime = Date.now();
-
-    // ── Session management ──────────────────────────────────────────────────
-    const session = sessionId
-      ? await this.prisma.ragChatSession.findFirst({
-          where: { id: sessionId, organizationId, userId },
-        })
-      : null;
-
-    const currentSession =
-      session ??
-      (await this.prisma.ragChatSession.create({
-        data: { organizationId, userId, title: userQuery.slice(0, 80) },
-      }));
-
-    await this.prisma.ragChatMessage.create({
-      data: {
-        sessionId: currentSession.id,
-        organizationId,
-        role: 'USER',
-        content: userQuery,
+    const requestId = randomUUID();
+    signal?.throwIfAborted();
+    const span = trace.getTracer('prism').startSpan('prism.query', {
+      attributes: {
+        'prism.request_id': requestId,
+        'prism.tone': tone,
       },
     });
 
-    // Load conversation history for multi-turn context
-    const historyRows = await this.prisma.ragChatMessage.findMany({
-      where: { sessionId: currentSession.id },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    });
-    const history = [...historyRows]
-      .reverse()
-      .slice(0, -1)
-      .map((m) => ({
-        role: m.role.toLowerCase() === 'user' ? 'user' : 'assistant',
-        content: m.content,
-      }));
-
     try {
-      // ── Intent classification — fast paths before LLM ──────────────────
-      const intent = classifyIntent(userQuery);
+      // ── Session management ────────────────────────────────────────────────
+      const session = sessionId
+        ? await this.prisma.ragChatSession.findFirst({
+            where: { id: sessionId, organizationId, userId },
+          })
+        : null;
 
-      if (intent === 'greeting') {
-        const text = `Hi — I'm **Prism**.\n\nAsk me for calculations from your live accounting data (revenue, invoice counts, overdue exposure, entity breakdowns, trends). I answer with math + the exact inputs used.\n\nWhat do you want to calculate?`;
+      const currentSession =
+        session ??
+        (await this.prisma.ragChatSession.create({
+          data: { organizationId, userId, title: userQuery.slice(0, 80) },
+        }));
+
+      await this.prisma.ragChatMessage.create({
+        data: {
+          sessionId: currentSession.id,
+          organizationId,
+          role: 'USER',
+          content: userQuery,
+        },
+      });
+
+      // ── Finance boundary ────────────────────────────────────────────────
+      const scopeDecision = classifyPrismScope(userQuery);
+
+      if (scopeDecision.kind === 'greeting') {
+        const text = prismGreeting(tone);
         yield this.chunk('status', { message: 'Ready.' });
         yield this.chunk('token', { content: text });
         await this.prisma.ragChatMessage.create({
@@ -701,6 +831,7 @@ export class RagService {
         });
         yield this.chunk('done', {
           metrics: {
+            requestId,
             totalMs: Date.now() - startTime,
             mode: 'greeting',
             sessionId: currentSession.id,
@@ -709,8 +840,8 @@ export class RagService {
         return;
       }
 
-      if (intent === 'off_topic') {
-        const text = `I'm specialized in financial intelligence only. I can help you with:\n\n• **Revenue analysis** — trends, growth, concentration risk\n• **Cash flow** — DSO, DPO, cash conversion cycle\n• **Expense management** — burn rate, efficiency, anomalies\n• **Entity performance** — comparing your connected organizations\n• **Venture metrics** — runway, burn, efficiency ratio\n\nPlease ask anything related to your financial data.`;
+      if (scopeDecision.kind !== 'finance') {
+        const text = prismScopeRefusal(scopeDecision);
         yield this.chunk('status', { message: 'Domain check.' });
         yield this.chunk('token', { content: text });
         await this.prisma.ragChatMessage.create({
@@ -723,12 +854,31 @@ export class RagService {
         });
         yield this.chunk('done', {
           metrics: {
+            requestId,
             totalMs: Date.now() - startTime,
-            mode: 'domain-gate',
+            mode:
+              scopeDecision.kind === 'off_topic'
+                ? 'domain-gate'
+                : 'policy-gate',
             sessionId: currentSession.id,
           },
         });
         return;
+      }
+
+      // OpenAI interprets natural language into a strict allow-listed plan. It
+      // cannot access data or calculate values; failure safely falls back to
+      // deterministic intent parsing below.
+      yield this.chunk('status', {
+        message: 'Understanding the finance request…',
+      });
+      let plan: PrismPlan | null = null;
+      try {
+        plan = await planPrismQuery(userQuery, this.prismModel, signal);
+      } catch (error) {
+        this.logger.warn(
+          `[Prism] OpenAI planner unavailable; using safe fallback: ${error instanceof Error ? error.message : 'unknown error'}`,
+        );
       }
 
       // ── Context retrieval ──────────────────────────────────────────────
@@ -736,7 +886,8 @@ export class RagService {
         message: 'Loading live financial intelligence...',
       });
 
-      const parsedRange = parseTimeRangeFromQuery(userQuery);
+      const parsedRange =
+        parseTimeRangeFromQuery(userQuery) ?? timeRangeFromPlan(plan);
       const range: TimeRange = parsedRange ?? { kind: 'ALL_TIME' };
 
       if (queryNeedsRangeClarification(userQuery)) {
@@ -770,9 +921,121 @@ export class RagService {
 
         yield this.chunk('done', {
           metrics: {
+            requestId,
             totalMs: Date.now() - startTime,
             mode: 'clarify',
             sessionId: currentSession.id,
+          },
+        });
+        return;
+      }
+
+      // Registry-backed organizations are served exclusively through the
+      // generated semantic capability catalog. Prism does not know physical
+      // view or column names; the chart engine discovers, validates, compiles,
+      // scopes, and reconciles the selected metric.
+      const activeConnections = await this.prisma.erpConnection.findMany({
+        where: { organizationId, status: 'ACTIVE' },
+        select: { externalOrganizationId: true, updatedAt: true },
+      });
+      const externalOrgIds = activeConnections
+        .map((connection) => connection.externalOrganizationId)
+        .filter(Boolean);
+      const semanticScope = {
+        organizationId,
+        tenantId: organizationId,
+        externalOrgIds,
+        ...enginePeriodFromRange(range),
+      };
+      const latestSync = await this.prisma.syncJob.findFirst({
+        where: { organizationId, status: 'SUCCEEDED' },
+        orderBy: { completedAt: 'desc' },
+        select: { completedAt: true },
+      });
+      const sourceWatermark =
+        latestSync?.completedAt?.toISOString() ??
+        activeConnections
+          .map((connection) => connection.updatedAt.toISOString())
+          .sort()
+          .at(-1) ??
+        'no-source-watermark';
+      const useSemanticEngine =
+        (await this.chartEngine.isEngineOnlyOrg(organizationId)) ||
+        (await this.chartEngine.hasScopedCubeData(semanticScope));
+
+      if (useSemanticEngine) {
+        signal?.throwIfAborted();
+        yield this.chunk('status', {
+          message: 'Calculating verified metrics…',
+        });
+
+        let text: string;
+        if (externalOrgIds.length === 0) {
+          text =
+            "**Direct answer**\n\nI don't have an active finance connection for this organization, so I can't calculate this reliably yet.";
+        } else {
+          const answer = await this.awaitAnalysis(
+            this.prismRuntime.cached(
+              {
+                organizationId,
+                capability: userQuery.normalize('NFKC').trim().toLowerCase(),
+                period: this.rangeKey(range),
+                semanticVersion: PRISM_SEMANTIC_VERSION,
+                sourceWatermark,
+              },
+              () =>
+                this.prismWorkload.withPermit(organizationId, () =>
+                  this.chartEngine.answer(semanticScope, userQuery),
+                ),
+            ),
+            signal,
+          );
+          text = answer.ok
+            ? buildCapabilityAnswer(answer, range, tone)
+            : '**Direct answer**\n\nThe requested figure is not available in the governed finance capabilities for this organization and period. Prism has not substituted another metric or presented missing data as zero.';
+          const evidence = capabilityEvidence(answer, range);
+          const structuredAnswer = answer.ok
+            ? capabilityAnswerEnvelope(
+                answer,
+                formatRangeLabel(range),
+                tone,
+                evidence,
+              )
+            : null;
+          const validation = structuredAnswer
+            ? validatePrismOutput(structuredAnswer, text)
+            : { ok: true as const };
+          if (!validation.ok) {
+            this.logger.error(
+              `[Prism] Output validation refused answer: ${validation.reasons.join(',')}`,
+            );
+            text =
+              '**Direct answer**\n\nThe verified result could not be presented safely. Prism has not substituted or estimated a value.';
+          }
+          yield this.chunk('answer', {
+            evidence,
+            ...(structuredAnswer && validation.ok
+              ? { answer: structuredAnswer }
+              : {}),
+          });
+        }
+
+        yield this.chunk('token', { content: text });
+        await this.prisma.ragChatMessage.create({
+          data: {
+            sessionId: currentSession.id,
+            organizationId,
+            role: 'ASSISTANT',
+            content: text,
+          },
+        });
+        yield this.chunk('done', {
+          metrics: {
+            requestId,
+            totalMs: Date.now() - startTime,
+            mode: 'semantic-capability',
+            sessionId: currentSession.id,
+            scope: formatRangeLabel(range),
           },
         });
         return;
@@ -785,11 +1048,7 @@ export class RagService {
         ctx = cached.ctx;
         this.backgroundRefresh(cacheKey, organizationId, range); // warm for next request
       } else {
-        ctx = await this.fetchFinancialContext(
-          organizationId,
-          userQuery,
-          range,
-        );
+        ctx = await this.fetchFinancialContext(organizationId, range);
         this.ctxCache.set(cacheKey, {
           ctx,
           expiresAt: Date.now() + this.CACHE_TTL_MS,
@@ -802,15 +1061,25 @@ export class RagService {
           totalRevenue: ctx.summary.totalRevenue,
           openAmount: ctx.summary.openAmount,
           overdueAmount: ctx.summary.overdueAmount,
-          invoiceCount: ctx.summary.invoiceCount,
-          runway: ctx.ventureMetrics.runwayMonths,
-          burnRate: ctx.ventureMetrics.burnRate,
+          invoiceCount: ctx.summary.invoiceMetricsAvailable
+            ? ctx.summary.invoiceCount
+            : null,
           entityCount: ctx.entityBreakdown.length,
           connectionCount: ctx.connectionCount,
-          trend: ctx.monthlyTrend.slice(-6),
+          trend: ctx.summary.mixedCurrencies ? [] : ctx.monthlyTrend.slice(-6),
           scope: formatRangeLabel(range),
+          currency: ctx.summary.currency,
+          mixedCurrencies: ctx.summary.mixedCurrencies,
+          computedAt: ctx.computedAt,
         },
       });
+      if (ctx.qualityIssues.length > 0) {
+        yield this.chunk('warning', {
+          message:
+            'Some finance data is temporarily unavailable. Prism will omit any result that cannot be verified.',
+          codes: ctx.qualityIssues,
+        });
+      }
 
       // ── Deterministic Prism answer (default) ──────────────────────────
       yield this.chunk('status', { message: 'Calculating…' });
@@ -819,8 +1088,13 @@ export class RagService {
         userQuery,
         ctx,
         range,
+        tone,
+        plan?.intent,
       );
       if (deterministic) {
+        yield this.chunk('answer', {
+          evidence: contextEvidence(ctx, range),
+        });
         yield this.chunk('token', { content: deterministic });
         await this.prisma.ragChatMessage.create({
           data: {
@@ -832,8 +1106,11 @@ export class RagService {
         });
         yield this.chunk('done', {
           metrics: {
+            requestId,
             totalMs: Date.now() - startTime,
-            mode: 'deterministic',
+            mode: plan
+              ? 'openai-planned-deterministic'
+              : 'deterministic-fallback',
             sessionId: currentSession.id,
             scope: formatRangeLabel(range),
           },
@@ -887,208 +1164,64 @@ export class RagService {
       });
       yield this.chunk('done', {
         metrics: {
+          requestId,
           totalMs: Date.now() - startTime,
           mode: 'clarify',
           sessionId: currentSession.id,
         },
       });
       return;
-
-      // ── LLM streaming (optional, feature-flagged) ─────────────────────
-      // Set `PRISM_ENABLE_LLM=1` to allow the model to answer beyond deterministic templates.
-      /* c8 ignore next  */
-      if (process.env.PRISM_ENABLE_LLM !== '1') return;
-
-      yield this.chunk('status', {
-        message: 'Analyzing your financial data...',
+    } catch (error: unknown) {
+      if (signal?.aborted) return;
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const stack = error instanceof Error ? error.stack : undefined;
+      span.recordException(error instanceof Error ? error : new Error(message));
+      span.setStatus({ code: SpanStatusCode.ERROR, message });
+      this.logger.error(`[Prism] Query failed: ${message}`, stack);
+      yield this.chunk('error', {
+        message:
+          '**The verified finance result is temporarily unavailable.** Please retry shortly. Prism has not produced an estimate or substituted missing data.',
       });
-
-      const messages = buildMessages(ctx, history, userQuery);
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 300_000);
-
-      let response: Response;
-      try {
-        response = await fetch(`${this.OLLAMA_URL}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            model: this.OLLAMA_MODEL,
-            messages,
-            stream: true,
-            options: {
-              temperature: 0.08,
-              num_predict: 2048,
-              num_ctx: 8192,
-              top_p: 0.92,
-              top_k: 40,
-              repeat_penalty: 1.1,
-              stop: ['<|eot_id|>', '<|end_of_text|>'],
-            },
-          }),
-        });
-      } catch (fetchErr: any) {
-        clearTimeout(timeout);
-        throw new Error(
-          fetchErr.name === 'AbortError' ? 'AI_TIMEOUT' : 'AI_ENGINE_OFFLINE',
-        );
-      }
-
-      if (!response.ok) {
-        clearTimeout(timeout);
-        throw new Error('AI_ENGINE_OFFLINE');
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        clearTimeout(timeout);
-        throw new Error('AI_ENGINE_OFFLINE');
-      }
-      const streamReader = reader as ReadableStreamDefaultReader<Uint8Array>;
-
-      const decoder = new TextDecoder();
-      let fullContent = '';
-      let streamBuffer = '';
-      let lineCarry = '';
-      let tokenCount = 0;
-
-      while (true) {
-        const { done, value } = await streamReader.read();
-        if (done) break;
-
-        lineCarry += decoder.decode(value, { stream: true });
-        const lines = lineCarry.split('\n');
-        lineCarry = lines.pop() ?? '';
-
-        let streamDone = false;
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let parsed: { message?: { content?: string }; done?: boolean };
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            continue;
-          }
-
-          const token = parsed.message?.content;
-          if (token) {
-            fullContent += token;
-            streamBuffer += token;
-            if (streamBuffer.length >= 8) {
-              yield this.chunk('token', { content: streamBuffer });
-              tokenCount++;
-              streamBuffer = '';
-            }
-          }
-          if (parsed.done === true) {
-            streamDone = true;
-            break;
-          }
-        }
-        if (streamDone) break;
-      }
-
-      // Handle leftover carry
-      if (lineCarry.trim()) {
-        try {
-          const parsed = JSON.parse(lineCarry.trim()) as {
-            message?: { content?: string };
-          };
-          const tail = parsed.message?.content;
-          if (tail) {
-            fullContent += tail;
-            streamBuffer += tail;
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-
-      // Final flush
-      if (streamBuffer) {
-        yield this.chunk('token', { content: streamBuffer });
-        tokenCount++;
-      }
-
-      clearTimeout(timeout);
-
-      await this.prisma.ragChatMessage.create({
-        data: {
-          sessionId: currentSession.id,
-          organizationId,
-          role: 'ASSISTANT',
-          content: fullContent.trim() || 'Analysis complete.',
-          contextSnapshot: {
-            tokens: tokenCount,
-            latencyMs: Date.now() - startTime,
-          } as any,
-        },
-      });
-
-      yield this.chunk('done', {
-        metrics: {
-          totalMs: Date.now() - startTime,
-          tokens: tokenCount,
-          mode: 'rag-advisor',
-          sessionId: currentSession.id,
-          model: this.OLLAMA_MODEL,
-        },
-      });
-    } catch (err: any) {
-      const msg = err.name === 'AbortError' ? 'AI_TIMEOUT' : err.message;
-      this.logger.error(`[RAG:Fatal] ${msg}`);
-
-      let userMessage: string;
-      if (msg === 'AI_ENGINE_OFFLINE' || msg?.includes('ECONNREFUSED')) {
-        userMessage =
-          '**AI engine is warming up.** Your financial data is available on the dashboard while the advisor initializes. Please try again in 30 seconds.';
-      } else if (msg === 'AI_TIMEOUT') {
-        userMessage =
-          '**Analysis is taking longer than expected.** This usually happens with very large datasets. Please try a more specific question or try again.';
-      } else {
-        userMessage =
-          '**Something went wrong.** Our team has been notified. Please try again — your data is safe.';
-      }
-
-      yield this.chunk('error', { message: userMessage });
+    } finally {
+      span.setAttribute('prism.latency_ms', Date.now() - startTime);
+      span.end();
     }
+  }
+
+  private async awaitAnalysis<T>(
+    analysis: Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const configured = Number(process.env.PRISM_ANALYSIS_TIMEOUT_MS);
+    const timeoutMs =
+      Number.isFinite(configured) && configured >= 5_000 ? configured : 30_000;
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+
+    return await new Promise<T>((resolve, reject) => {
+      const abort = () =>
+        reject(
+          combined.reason instanceof Error
+            ? combined.reason
+            : new Error('Prism analysis deadline exceeded.'),
+        );
+      combined.addEventListener('abort', abort, { once: true });
+      analysis.then(resolve, reject).finally(() => {
+        combined.removeEventListener('abort', abort);
+      });
+    });
   }
 
   // ─── Health Check ──────────────────────────────────────────────────────────
 
-  async health() {
-    let ollamaOnline = false;
-    let modelLoaded = false;
-    try {
-      const res = await fetch(`${this.OLLAMA_URL}/api/tags`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { models?: Array<{ name: string }> };
-        ollamaOnline = true;
-        modelLoaded = (data.models ?? []).some((m) =>
-          m.name.startsWith(this.OLLAMA_MODEL.split(':')[0] ?? ''),
-        );
-      }
-    } catch {
-      /* offline */
-    }
-
-    const backendLabel = getLlmProviderLabel(this.llmProvider);
-
+  health() {
     return {
-      status: ollamaOnline ? 'operational' : 'degraded',
-      advisory: ollamaOnline
-        ? `NumeriQ Intelligence ready — ${backendLabel}: ${this.OLLAMA_MODEL}`
-        : `${backendLabel} offline at ${this.OLLAMA_URL}`,
-      ollama: ollamaOnline,
-      provider: this.llmProvider,
-      backendUrl: this.OLLAMA_URL,
-      model: this.OLLAMA_MODEL,
-      modelLoaded,
+      status: 'operational',
+      advisory: 'Prism verified-finance engine ready.',
+      mode: 'openai-planned-verified-finance',
       uptime: process.uptime(),
+      runtime: this.prismRuntime.snapshot(),
+      workload: this.prismWorkload.snapshot(),
     };
   }
 
@@ -1130,6 +1263,8 @@ export class RagService {
 
   private timeWhere(range?: TimeRange | null): string {
     if (!range || range.kind === 'ALL_TIME') return '';
+    if (range.kind === 'DATE_RANGE')
+      return `AND issued_at >= toDateTime('${range.start} 00:00:00') AND issued_at < addDays(toDateTime('${range.end} 00:00:00'), 1)`;
     if (range.kind === 'MTD') return `AND issued_at >= toStartOfMonth(now())`;
     if (range.kind === 'QTD') return `AND issued_at >= toStartOfQuarter(now())`;
     if (range.kind === 'YTD') return `AND issued_at >= toStartOfYear(now())`;
@@ -1148,6 +1283,8 @@ export class RagService {
 
   private rangeKey(range?: TimeRange | null): string {
     if (!range) return 'ALL_TIME';
+    if (range.kind === 'DATE_RANGE')
+      return `DATE_RANGE:${range.start}:${range.end}`;
     if (
       range.kind === 'ALL_TIME' ||
       range.kind === 'MTD' ||
@@ -1166,7 +1303,6 @@ export class RagService {
 
   private async fetchFinancialContext(
     organizationId: string,
-    query?: string,
     range?: TimeRange | null,
   ): Promise<FinancialContext> {
     const connections = await this.prisma.erpConnection.findMany({
@@ -1180,53 +1316,85 @@ export class RagService {
     });
 
     if (connections.length === 0) {
-      return this.emptyContext(organizationId);
+      return this.emptyContext();
     }
 
     const connectionIds = connections.map((c) => c.id);
     const externalOrgIds = connections
       .map((c) => c.externalOrganizationId)
-      .filter(Boolean) as string[];
+      .filter(Boolean);
 
-    const [summary, trend, entities, statusBreakdown, venture, snippets] =
+    const [summary, trend, entities, statusBreakdown] =
       await Promise.allSettled([
-        this.fetchSummary(connectionIds, range),
-        this.fetchMonthlyTrend(externalOrgIds, range),
-        this.fetchEntityBreakdown(connectionIds, connections, range),
-        this.fetchStatusBreakdown(connectionIds, range),
-        this.fetchVentureMetrics(connectionIds, range),
-        this.fetchSemanticSnippets(organizationId, query),
+        this.fetchSummary(organizationId, connectionIds, range),
+        this.fetchMonthlyTrend(organizationId, externalOrgIds, range),
+        this.fetchEntityBreakdown(
+          organizationId,
+          connectionIds,
+          connections,
+          range,
+        ),
+        this.fetchStatusBreakdown(organizationId, connectionIds, range),
       ]);
 
+    const qualityIssues = [
+      summary.status === 'rejected' ? 'summary_unavailable' : null,
+      summary.status === 'fulfilled' &&
+      summary.value.currencyBreakdown.length === 0
+        ? 'summary_unavailable'
+        : null,
+      trend.status === 'rejected' ? 'trend_unavailable' : null,
+      entities.status === 'rejected' ? 'entity_breakdown_unavailable' : null,
+      statusBreakdown.status === 'rejected'
+        ? 'status_breakdown_unavailable'
+        : null,
+    ].filter((issue): issue is string => issue !== null);
+
     return {
+      source: 'invoices',
       connectionCount: connections.length,
       externalOrgIds,
       connectionIds,
       summary:
         summary.status === 'fulfilled'
-          ? summary.value
+          ? {
+              ...summary.value,
+              revenueAvailable: summary.value.currencyBreakdown.length > 0,
+              receivablesAvailable: summary.value.currencyBreakdown.length > 0,
+              invoiceMetricsAvailable:
+                summary.value.currencyBreakdown.length > 0,
+              periodCount: 0,
+              coverageStart: null,
+              coverageEnd: null,
+            }
           : {
+              revenueAvailable: false,
+              receivablesAvailable: false,
+              invoiceMetricsAvailable: false,
               totalRevenue: 0,
               openAmount: 0,
               overdueAmount: 0,
               overdueCount: 0,
               invoiceCount: 0,
               avgInvoiceValue: 0,
+              currency: null,
+              mixedCurrencies: false,
+              periodCount: 0,
+              coverageStart: null,
+              coverageEnd: null,
+              currencyBreakdown: [],
             },
       monthlyTrend: trend.status === 'fulfilled' ? trend.value : [],
       entityBreakdown: entities.status === 'fulfilled' ? entities.value : [],
       invoiceStatusBreakdown:
         statusBreakdown.status === 'fulfilled' ? statusBreakdown.value : [],
-      ventureMetrics:
-        venture.status === 'fulfilled'
-          ? venture.value
-          : { burnRate: 0, runwayMonths: 0, cashOnHand: 0, efficiencyRatio: 0 },
-      semanticSnippets: snippets.status === 'fulfilled' ? snippets.value : [],
       computedAt: new Date().toISOString(),
+      qualityIssues,
     };
   }
 
   private async fetchSummary(
+    organizationId: string,
     connectionIds: string[],
     range?: TimeRange | null,
   ) {
@@ -1234,6 +1402,7 @@ export class RagService {
     const result = await this.clickhouse.query({
       query: `
         SELECT
+          upperUTF8(ifNull(nullIf(currency, ''), 'UNKNOWN'))             AS currency,
           count()                                                        AS invoice_count,
           coalesce(sumIf(total_amount, total_amount > 0), 0)             AS total_revenue,
           coalesce(avgIf(total_amount, total_amount > 0), 0)             AS avg_invoice,
@@ -1241,26 +1410,56 @@ export class RagService {
           coalesce(sumIf(total_amount, total_amount > 0 AND lowerUTF8(status) IN ('overdue')), 0) AS overdue_amount,
           coalesce(countIf(lowerUTF8(status) = 'overdue'), 0)           AS overdue_count
         FROM ${this.analyticsDb}.fact_accounting_invoices
-        WHERE connection_id IN ({connectionIds:Array(String)})
+        WHERE tenant_id = {organizationId:String}
+          AND connection_id IN ({connectionIds:Array(String)})
           ${time}
+        GROUP BY currency
+        ORDER BY currency ASC
       `,
-      query_params: { connectionIds },
+      query_params: { organizationId, connectionIds },
       format: 'JSONEachRow',
       clickhouse_settings: SAFE_QUERY_SETTINGS,
     });
-    const rows: any[] = await result.json();
-    const r = rows[0] ?? {};
+    const rows = await result.json<InvoiceSummaryRow>();
+    const currencyBreakdown = rows.map((r) => ({
+      currency: String(r.currency || 'UNKNOWN'),
+      totalRevenue: numeric(r.total_revenue),
+      openAmount: numeric(r.open_amount),
+      overdueAmount: numeric(r.overdue_amount),
+      overdueCount: Math.floor(numeric(r.overdue_count)),
+      invoiceCount: Math.floor(numeric(r.invoice_count)),
+      avgInvoiceValue: numeric(r.avg_invoice),
+    }));
+    const totals = currencyBreakdown.reduce(
+      (acc, row) => ({
+        totalRevenue: acc.totalRevenue + row.totalRevenue,
+        openAmount: acc.openAmount + row.openAmount,
+        overdueAmount: acc.overdueAmount + row.overdueAmount,
+        overdueCount: acc.overdueCount + row.overdueCount,
+        invoiceCount: acc.invoiceCount + row.invoiceCount,
+      }),
+      {
+        totalRevenue: 0,
+        openAmount: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+        invoiceCount: 0,
+      },
+    );
+    const single = currencyBreakdown.length === 1 ? currencyBreakdown[0] : null;
     return {
-      totalRevenue: parseFloat(r.total_revenue) || 0,
-      openAmount: parseFloat(r.open_amount) || 0,
-      overdueAmount: parseFloat(r.overdue_amount) || 0,
-      overdueCount: parseInt(r.overdue_count) || 0,
-      invoiceCount: parseInt(r.invoice_count) || 0,
-      avgInvoiceValue: parseFloat(r.avg_invoice) || 0,
+      ...totals,
+      avgInvoiceValue:
+        totals.invoiceCount > 0 ? totals.totalRevenue / totals.invoiceCount : 0,
+      currency:
+        single && single.currency !== 'UNKNOWN' ? single.currency : null,
+      mixedCurrencies: currencyBreakdown.length > 1,
+      currencyBreakdown,
     };
   }
 
   private async fetchMonthlyTrend(
+    organizationId: string,
     externalOrgIds: string[],
     range?: TimeRange | null,
   ) {
@@ -1273,27 +1472,29 @@ export class RagService {
           coalesce(sumIf(total_amount, total_amount > 0), 0) AS revenue,
           count()                                            AS invoice_count
         FROM ${this.analyticsDb}.fact_accounting_invoices
-        WHERE org_id IN ({externalOrgIds:Array(String)})
+        WHERE tenant_id = {organizationId:String}
+          AND org_id IN ({externalOrgIds:Array(String)})
           ${time}
         GROUP BY month
         ORDER BY month ASC
         LIMIT 48
       `,
-      query_params: { externalOrgIds },
+      query_params: { organizationId, externalOrgIds },
       format: 'JSONEachRow',
       clickhouse_settings: SAFE_QUERY_SETTINGS,
     });
-    const rows: any[] = await result.json();
+    const rows = await result.json<InvoiceTrendRow>();
     return rows.map((r) => ({
-      month: r.month as string,
-      revenue: parseFloat(r.revenue) || 0,
-      invoiceCount: parseInt(r.invoice_count) || 0,
+      month: r.month,
+      revenue: numeric(r.revenue),
+      invoiceCount: Math.floor(numeric(r.invoice_count)),
     }));
   }
 
   private async fetchEntityBreakdown(
+    organizationId: string,
     connectionIds: string[],
-    connections: any[],
+    connections: ActiveConnection[],
     range?: TimeRange | null,
   ) {
     const time = this.timeWhere(range);
@@ -1306,45 +1507,50 @@ export class RagService {
           coalesce(sumIf(total_amount, total_amount > 0), 0) AS total_revenue,
           count()                    AS invoice_count
         FROM ${this.analyticsDb}.fact_accounting_invoices
-        WHERE connection_id IN ({connectionIds:Array(String)})
+        WHERE tenant_id = {organizationId:String}
+          AND connection_id IN ({connectionIds:Array(String)})
           ${time}
         GROUP BY org_name, provider
         ORDER BY total_revenue DESC
       `,
-      query_params: { connectionIds },
+      query_params: { organizationId, connectionIds },
       format: 'JSONEachRow',
       clickhouse_settings: SAFE_QUERY_SETTINGS,
     });
-    const rows: any[] = await result.json();
+    const rows = await result.json<InvoiceEntityRow>();
 
     // Seed from prisma metadata if ClickHouse returns empty
     if (rows.length === 0) {
       return connections.map((c) => {
-        const meta = (c.metadata as Record<string, any>) ?? {};
+        const meta =
+          c.metadata && typeof c.metadata === 'object'
+            ? (c.metadata as Record<string, unknown>)
+            : {};
         return {
           orgName:
-            meta.orgName ??
-            meta.companyId ??
-            c.externalOrganizationId ??
+            (textValue(meta.orgName) ||
+              textValue(meta.companyId) ||
+              c.externalOrganizationId) ??
             'Unknown',
-          provider: c.provider as string,
+          provider: c.provider,
           totalRevenue: 0,
           invoiceCount: 0,
-          currency: 'USD',
+          currency: null,
         };
       });
     }
 
     return rows.map((r) => ({
-      orgName: (r.org_name as string) || 'Unknown Entity',
-      provider: (r.provider as string) || 'unknown',
-      totalRevenue: parseFloat(r.total_revenue) || 0,
-      invoiceCount: parseInt(r.invoice_count) || 0,
-      currency: (r.currency as string) || 'USD',
+      orgName: r.org_name || 'Unknown Entity',
+      provider: r.provider || 'unknown',
+      totalRevenue: numeric(r.total_revenue),
+      invoiceCount: Math.floor(numeric(r.invoice_count)),
+      currency: r.currency || null,
     }));
   }
 
   private async fetchStatusBreakdown(
+    organizationId: string,
     connectionIds: string[],
     range?: TimeRange | null,
   ) {
@@ -1356,93 +1562,23 @@ export class RagService {
           count()                        AS invoice_count,
           coalesce(sumIf(total_amount, total_amount > 0), 0) AS total_amount
         FROM ${this.analyticsDb}.fact_accounting_invoices
-        WHERE connection_id IN ({connectionIds:Array(String)})
+        WHERE tenant_id = {organizationId:String}
+          AND connection_id IN ({connectionIds:Array(String)})
           ${time}
         GROUP BY status
         ORDER BY total_amount DESC
         LIMIT 20
       `,
-      query_params: { connectionIds },
+      query_params: { organizationId, connectionIds },
       format: 'JSONEachRow',
       clickhouse_settings: SAFE_QUERY_SETTINGS,
     });
-    const rows: any[] = await result.json();
+    const rows = await result.json<InvoiceStatusRow>();
     return rows.map((r) => ({
-      status: (r.status as string) || 'UNKNOWN',
-      count: parseInt(r.invoice_count) || 0,
-      amount: parseFloat(r.total_amount) || 0,
+      status: r.status || 'UNKNOWN',
+      count: Math.floor(numeric(r.invoice_count)),
+      amount: numeric(r.total_amount),
     }));
-  }
-
-  private async fetchVentureMetrics(
-    connectionIds: string[],
-    range?: TimeRange | null,
-  ) {
-    try {
-      const time = this.timeWhere(range);
-      const result = await this.clickhouse.query({
-        query: `
-          SELECT
-            coalesce(avg(monthly_outflow), 0) AS burn_rate,
-            coalesce(sum(monthly_net), 0)     AS total_inflow
-          FROM (
-            SELECT
-              toStartOfMonth(issued_at)    AS month,
-              sum(abs(total_amount))       AS monthly_outflow,
-              sum(total_amount)            AS monthly_net
-            FROM ${this.analyticsDb}.fact_accounting_invoices
-            WHERE connection_id IN ({connectionIds:Array(String)})
-              AND total_amount < 0
-              ${time}
-            GROUP BY month
-            ORDER BY month DESC
-            LIMIT 3
-          )
-        `,
-        query_params: { connectionIds },
-        format: 'JSONEachRow',
-        clickhouse_settings: SAFE_QUERY_SETTINGS,
-      });
-      const rows: any[] = await result.json();
-      const r = rows[0] ?? {};
-      const burn = parseFloat(r.burn_rate) || 0;
-      const inflow = parseFloat(r.total_inflow) || 0;
-      return {
-        burnRate: Math.round(burn),
-        runwayMonths: burn > 0 ? Math.round((inflow / burn) * 10) / 10 : 0,
-        cashOnHand: Math.round(inflow),
-        efficiencyRatio: burn > 0 ? Math.round((inflow / burn) * 100) / 100 : 0,
-      };
-    } catch {
-      return {
-        burnRate: 0,
-        runwayMonths: 0,
-        cashOnHand: 0,
-        efficiencyRatio: 0,
-      };
-    }
-  }
-
-  private async fetchSemanticSnippets(tenantId: string, query?: string) {
-    if (!tenantId) return [];
-    try {
-      const result = await this.clickhouse.query({
-        query: `
-          SELECT text_content
-          FROM ${this.analyticsDb}.rag_context_invoices
-          WHERE tenant_id = {tenantId:String}
-            ${query ? `AND hasAny(splitByNonAlpha(lower(text_content)), splitByNonAlpha(lower({query:String})))` : ''}
-          LIMIT 5
-        `,
-        query_params: { tenantId, ...(query ? { query } : {}) },
-        format: 'JSONEachRow',
-        clickhouse_settings: SAFE_QUERY_SETTINGS,
-      });
-      const rows: any[] = await result.json();
-      return rows.map((r) => String(r.text_content ?? '')).filter(Boolean);
-    } catch {
-      return [];
-    }
   }
 
   private backgroundRefresh(
@@ -1450,7 +1586,7 @@ export class RagService {
     organizationId: string,
     range: TimeRange,
   ) {
-    this.fetchFinancialContext(organizationId, undefined, range)
+    this.fetchFinancialContext(organizationId, range)
       .then((ctx) =>
         this.ctxCache.set(cacheKey, {
           ctx,
@@ -1462,30 +1598,34 @@ export class RagService {
       });
   }
 
-  private emptyContext(organizationId: string): FinancialContext {
+  private emptyContext(): FinancialContext {
     return {
+      source: 'none',
       connectionCount: 0,
       externalOrgIds: [],
       connectionIds: [],
       summary: {
+        revenueAvailable: false,
+        receivablesAvailable: false,
+        invoiceMetricsAvailable: false,
         totalRevenue: 0,
         openAmount: 0,
         overdueAmount: 0,
         overdueCount: 0,
         invoiceCount: 0,
         avgInvoiceValue: 0,
+        currency: null,
+        mixedCurrencies: false,
+        periodCount: 0,
+        coverageStart: null,
+        coverageEnd: null,
+        currencyBreakdown: [],
       },
       monthlyTrend: [],
       entityBreakdown: [],
       invoiceStatusBreakdown: [],
-      ventureMetrics: {
-        burnRate: 0,
-        runwayMonths: 0,
-        cashOnHand: 0,
-        efficiencyRatio: 0,
-      },
-      semanticSnippets: [],
       computedAt: new Date().toISOString(),
+      qualityIssues: [],
     };
   }
 

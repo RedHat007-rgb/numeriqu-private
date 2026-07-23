@@ -39,6 +39,7 @@ export const PLANNER_OUTPUT_CONTRACT = `Return ONLY a JSON object:
   "breakdownKey": "<optional second dimension used for series/color>",
   "hierarchyKeys": ["<optional ordered dimensions for a hierarchical visual such as a treemap>"],
   "timeGrain": "day|month|quarter|year (optional)",
+  "filters": [{"dimensionKey":"<catalog dimension key>","operator":"in|not_in","values":["<exact observed catalog value>"]}] (optional),
   "comparison": "previous_year|yoy_growth_pct (optional; use instead of duplicating a measure key)",
   "normalize": <optional boolean — true for percentage contribution / share of total / % of total by category (100%-stacked)>,
   "topN": <optional integer>,
@@ -91,6 +92,9 @@ export function buildPlannerPrompt(model: SemanticModel): string {
     '- A dashboard, KPI dashboard, or scorecard request is expressible as one kpi spec containing all requested measures; keep its optional grouping dimension. Do not refuse merely because it mixes several metrics or units.',
     '- Use combo when the user asks for a combo/dual-axis visual, donut for donut (not pie), and treemap/waterfall/heatmap/bubble exactly when requested.',
     '- For "by X and Y", heatmaps, stacked series, or nested category visuals, set dimensionKey to the primary axis/category and breakdownKey to the second dimension. For a monthly chart "by category", set timeGrain and dimensionKey; the dimension becomes the series breakdown.',
+    '- A line chart, area chart, or time-series chart over an explicit calendar window must use the matching timeGrain; never collapse the entire window into one Total point.',
+    '- When the user qualifies a category (for example a status, class, type, region, or account classification), add a filter using ONLY an exact observed value from the relevant catalog dimension. Include every observed value required by the requested business category. If the catalog cannot express the qualifier, refuse honestly.',
+    '- Never put dates, days, weeks, months, quarters, years, periods, or time columns in filters. Calendar constraints are enforced separately and deterministically by the runtime.',
     '',
     PLANNER_OUTPUT_CONTRACT,
   ].join('\n');

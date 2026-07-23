@@ -36,6 +36,7 @@ import type {
 } from './semantic-model.types';
 import { planAcrossCubes, type Cube } from './cube-router';
 import {
+  applyEngineSpecConstraints,
   buildEngineDisplay,
   compileDistributionSql,
   compileNameValueSql,
@@ -45,6 +46,11 @@ import {
   compileSpec,
   type EngineDisplay,
 } from './spec-compiler';
+import {
+  applyRequestConstraints,
+  validateChartRows,
+  validateRequestFidelity,
+} from './request-constraints';
 import { verifyScoped, reconcileForExpr } from './result-verifier';
 import { isRowPolicyEnabled, tenantQuerySettings } from './ch-tenant-setting';
 import {
@@ -77,6 +83,19 @@ export interface EngineScope {
   organizationId: string;
   tenantId: string;
   externalOrgIds: string[];
+  dateRange?: { start: string; end: string };
+  period?: {
+    kind:
+      | 'MTD'
+      | 'QTD'
+      | 'YTD'
+      | 'LAST_N_DAYS'
+      | 'LAST_N_WEEKS'
+      | 'LAST_N_MONTHS'
+      | 'LAST_N_QUARTERS'
+      | 'LAST_N_YEARS';
+    value?: number;
+  };
 }
 
 export type EngineAnswer =
@@ -90,6 +109,10 @@ export type EngineAnswer =
       /** The SQL the widget should actually store — single-series (name,value) for
        * one measure, or multi-series (name + one column per measure) for several. */
       dynamicSql: string;
+      /** Non-scope parameters required by dynamicSql (date bounds and catalog
+       * filters). Tenant parameters are always supplied from the authenticated
+       * request when the widget executes and are never persisted here. */
+      dynamicParams: Record<string, unknown>;
       title: string;
       /** The spec's requested chart type. */
       chartType: string;
@@ -102,6 +125,13 @@ export type EngineAnswer =
       /** Whether this answer created a fresh chart or edited an existing one. */
       mode: 'create' | 'edit';
       rows: Array<Record<string, unknown>>;
+      measures: Array<{
+        key: string;
+        label: string;
+        unit: string;
+        /** Ratios are stored as fractions; percentage-point source metrics are not. */
+        valueRepresentation: 'native' | 'ratio' | 'percentage_points';
+      }>;
     }
   | { ok: false; reason: string };
 
@@ -141,6 +171,10 @@ export class ChartEngineService {
   private readonly cubeCache = new Map<
     string,
     { model: SemanticModel; at: number }
+  >();
+  private readonly scopedDataCache = new Map<
+    string,
+    { available: boolean; at: number }
   >();
 
   constructor(
@@ -185,7 +219,15 @@ export class ChartEngineService {
         reason: `no cube could answer: ${plan.reasons.join(' | ')}`,
       };
 
-    return this.shapeAnswer(scope, plan.cube, plan.spec, 'create');
+    const spec = applyRequestConstraints(question, plan.spec, plan.cube.model);
+    const fidelityFailure = validateRequestFidelity(
+      question,
+      spec,
+      plan.cube.model,
+    );
+    if (fidelityFailure)
+      return { ok: false, reason: `request fidelity: ${fidelityFailure}` };
+    return this.shapeAnswer(scope, plan.cube, spec, 'create');
   }
 
   /**
@@ -234,7 +276,10 @@ export class ChartEngineService {
         : undefined;
       if (plan.reason.includes('added measure is unavailable')) {
         const requestedMeasureText =
-          instruction.split(/\badd\b/i).slice(1).join(' add ') || instruction;
+          instruction
+            .split(/\badd\b/i)
+            .slice(1)
+            .join(' add ') || instruction;
         const compatible = cubes
           .map((candidate) => {
             if (
@@ -243,17 +288,16 @@ export class ChartEngineService {
                 !candidate.model.time.grains.includes(priorSpec.timeGrain))
             )
               return null;
-            const reboundPrior = priorMeasureLabels.map((label) =>
-              candidate.model.measures
-                .map((measure) => ({
-                  measure,
-                  score: fieldMatchScore(label, measure.key, measure.label),
-                }))
-                .sort((a, b) => b.score - a.score)[0],
+            const reboundPrior = priorMeasureLabels.map(
+              (label) =>
+                candidate.model.measures
+                  .map((measure) => ({
+                    measure,
+                    score: fieldMatchScore(label, measure.key, measure.label),
+                  }))
+                  .sort((a, b) => b.score - a.score)[0],
             );
-            if (
-              reboundPrior.some((match) => !match || match.score < 4)
-            )
+            if (reboundPrior.some((match) => !match || match.score < 4))
               return null;
             const priorKeys = new Set(
               reboundPrior.map((match) => match!.measure.key),
@@ -327,10 +371,26 @@ export class ChartEngineService {
                   : ''
             }`,
           };
+          const constrainedReboundSpec = applyRequestConstraints(
+            instruction,
+            reboundSpec,
+            compatible.candidate.model,
+            { preserveTimeAxis: true },
+          );
+          const reboundFailure = validateRequestFidelity(
+            instruction,
+            constrainedReboundSpec,
+            compatible.candidate.model,
+          );
+          if (reboundFailure)
+            return {
+              ok: false,
+              reason: `request fidelity: ${reboundFailure}`,
+            };
           return this.shapeAnswer(
             scope,
             compatible.candidate,
-            reboundSpec,
+            constrainedReboundSpec,
             'edit',
           );
         }
@@ -367,20 +427,45 @@ export class ChartEngineService {
           ? { clustered: true }
           : {}),
       };
+      const constrainedReroutedSpec = applyRequestConstraints(
+        instruction,
+        reroutedSpec,
+        rerouted.cube.model,
+        { preserveTimeAxis: true },
+      );
+      const reroutedFailure = validateRequestFidelity(
+        instruction,
+        constrainedReroutedSpec,
+        rerouted.cube.model,
+      );
+      if (reroutedFailure)
+        return {
+          ok: false,
+          reason: `request fidelity: ${reroutedFailure}`,
+        };
       return this.shapeAnswer(
         scope,
         rerouted.cube,
-        reroutedSpec,
+        constrainedReroutedSpec,
         'edit',
       );
     }
 
     // If the user explicitly asked for a separate/second axis, guarantee the added
     // measure genuinely warrants one (different unit) — the LLM alone is unreliable here.
-    const spec = opts.wantsSeparateAxis
+    const plannedSpec = opts.wantsSeparateAxis
       ? preferDistinctAxisMeasure(plan.spec, priorSpec.measureKeys, cube.model)
       : plan.spec;
-
+    const spec = applyRequestConstraints(instruction, plannedSpec, cube.model, {
+      preserveTimeAxis: true,
+    });
+    const fidelityFailure = validateRequestFidelity(
+      instruction,
+      spec,
+      cube.model,
+    );
+    if (fidelityFailure)
+      return { ok: false, reason: `request fidelity: ${fidelityFailure}` };
     return this.shapeAnswer(scope, cube, spec, 'edit');
   }
 
@@ -400,8 +485,27 @@ export class ChartEngineService {
       analyticsDb: this.analyticsDb,
       tenantId: scope.tenantId,
       externalOrgIds: scope.externalOrgIds,
+      ...((spec.dateRange ?? scope.dateRange)
+        ? { dateRange: spec.dateRange ?? scope.dateRange }
+        : {}),
+      ...((spec.period ?? scope.period)
+        ? { period: spec.period ?? scope.period }
+        : {}),
     };
-    const compiled = compileSpec(spec, cube.model, ctx);
+    const baseCompiled = compileSpec(spec, cube.model, ctx);
+    const primaryMeasure = cube.model.measures.find(
+      (measure) => measure.key === spec.measureKeys[0],
+    );
+    if (!primaryMeasure)
+      return { ok: false, reason: 'selected measure is unavailable' };
+    const compiled = applyEngineSpecConstraints(
+      baseCompiled,
+      spec,
+      cube.model,
+      ctx,
+      primaryMeasure.sourceTable,
+      { includeTime: false },
+    );
     if (!compiled.ok) return { ok: false, reason: compiled.reason };
 
     const multi = spec.measureKeys.length > 1;
@@ -410,12 +514,19 @@ export class ChartEngineService {
       (!!spec.timeGrain && !!spec.dimensionKey) ||
       spec.comparison === 'previous_year' ||
       spec.comparison === 'yoy_growth_pct';
-    const dyn =
+    const baseDyn =
       spec.chartType === 'box_plot' || spec.chartType === 'histogram'
         ? compileDistributionSql(spec, cube.model, ctx)
         : multi || hasSeriesBreakdown
           ? compileSeriesSql(spec, cube.model, ctx)
           : compileNameValueSql(spec, cube.model, ctx);
+    const dyn = applyEngineSpecConstraints(
+      baseDyn,
+      spec,
+      cube.model,
+      ctx,
+      primaryMeasure.sourceTable,
+    );
     if (!dyn.ok) return { ok: false, reason: dyn.reason };
 
     // Safety net #1 (always, zero-cost): never execute an unscoped query. Both
@@ -438,6 +549,15 @@ export class ChartEngineService {
     );
     const rows = this.normalizeCompiledRows(rawRows, spec);
 
+    const renderedRows = await this.queryJson<Record<string, unknown>>(
+      dyn.sql,
+      dyn.params as Record<string, unknown>,
+      this.tenantSettings(scope),
+    );
+    const rowFailure = validateChartRows(spec, renderedRows);
+    if (rowFailure)
+      return { ok: false, reason: `result fidelity: ${rowFailure}` };
+
     // Safety net #2 (guarded): reconcile the headline against an independent
     // recomputation. ADDITIVE measures tie sum(parts) to an independent grand
     // total (catches join fan-out / duplication). RATIO measures tie the charted
@@ -457,9 +577,16 @@ export class ChartEngineService {
 
     let display = buildEngineDisplay(spec, cube.model);
     const changeHighlights = this.highlightNamesByMeasureChange(spec, rows);
-    const weakPerformanceHighlights = this.highlightNamesByWeakPerformance(spec, rows);
-    const costWithoutRevenueHighlights = this.highlightNamesByCostWithoutRevenue(spec, rows);
-    const lowPerformanceHighlights = this.highlightNamesByLowPerformance(spec, rows);
+    const weakPerformanceHighlights = this.highlightNamesByWeakPerformance(
+      spec,
+      rows,
+    );
+    const costWithoutRevenueHighlights =
+      this.highlightNamesByCostWithoutRevenue(spec, rows);
+    const lowPerformanceHighlights = this.highlightNamesByLowPerformance(
+      spec,
+      rows,
+    );
     const extremeHighlights = this.highlightNamesByExtremes(spec, rows);
     const derivedHighlights = [
       ...changeHighlights,
@@ -503,6 +630,11 @@ export class ChartEngineService {
       sql: compiled.sql,
       nameValueSql: dyn.sql,
       dynamicSql: dyn.sql,
+      dynamicParams: Object.fromEntries(
+        Object.entries(dyn.params).filter(
+          ([key]) => key !== 'tenantId' && key !== 'externalOrgIds',
+        ),
+      ),
       title: spec.title,
       chartType: spec.chartType,
       widgetChartType: display.chartType,
@@ -510,6 +642,24 @@ export class ChartEngineService {
       valueFormat: display.valueFormat,
       mode,
       rows: answerRows,
+      measures: spec.measureKeys.flatMap((key) => {
+        const measure = cube.model.measures.find((item) => item.key === key);
+        return measure
+          ? [
+              {
+                key: measure.key,
+                label: measure.label,
+                unit: measure.unit,
+                valueRepresentation:
+                  measure.expr.kind === 'ratio_of_sums'
+                    ? ('ratio' as const)
+                    : measure.unit === '%'
+                      ? ('percentage_points' as const)
+                      : ('native' as const),
+              },
+            ]
+          : [];
+      }),
     };
   }
 
@@ -629,7 +779,12 @@ export class ChartEngineService {
       .filter((row) => {
         const revenue = Number(row[revenueKey]);
         const cost = Number(row[costKey]);
-        return Number.isFinite(revenue) && Number.isFinite(cost) && Math.abs(revenue) <= 0.000001 && cost > 0;
+        return (
+          Number.isFinite(revenue) &&
+          Number.isFinite(cost) &&
+          Math.abs(revenue) <= 0.000001 &&
+          cost > 0
+        );
       })
       .map((row) => row[spec.dimensionKey!])
       .filter((name): name is string | number => name != null)
@@ -642,14 +797,24 @@ export class ChartEngineService {
   ): string[] {
     if (!spec.dimensionKey || !spec.highlightLowPerformance || rows.length < 2)
       return [];
-    const qualityKeys = spec.measureKeys.filter((key) => /sla|csat|quality/i.test(key));
+    const qualityKeys = spec.measureKeys.filter((key) =>
+      /sla|csat|quality/i.test(key),
+    );
     if (!qualityKeys.length) return [];
     const medians = new Map<string, number>();
     for (const key of qualityKeys) {
-      const values = rows.map((row) => Number(row[key])).filter(Number.isFinite).sort((a, b) => a - b);
+      const values = rows
+        .map((row) => Number(row[key]))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
       if (!values.length) continue;
       const mid = Math.floor(values.length / 2);
-      medians.set(key, values.length % 2 ? values[mid]! : (values[mid - 1]! + values[mid]!) / 2);
+      medians.set(
+        key,
+        values.length % 2
+          ? values[mid]!
+          : (values[mid - 1]! + values[mid]!) / 2,
+      );
     }
     return rows
       .map((row) => ({
@@ -677,9 +842,7 @@ export class ChartEngineService {
         name: row[spec.dimensionKey!],
         value: Number(row[measureKey]),
       }))
-      .filter(
-        (item) => item.name != null && Number.isFinite(item.value),
-      );
+      .filter((item) => item.name != null && Number.isFinite(item.value));
     if (values.length < 2) return [];
     const names: string[] = [];
     if (spec.highlightExtremes === 'max' || spec.highlightExtremes === 'both') {
@@ -719,7 +882,7 @@ export class ChartEngineService {
     );
     if (!measure) return null;
     if (measure.expr.kind === 'ratio_of_sums') {
-      return this.reconcileRatioHeadline(scope, cube, measure, rows);
+      return this.reconcileRatioHeadline(scope, cube, spec, measure, rows);
     }
     // Only additive (sum) headlines are part-reconcilable against a grand total;
     // stocks/means/distinct-counts are levels, not sums (see reconcileForExpr).
@@ -740,13 +903,29 @@ export class ChartEngineService {
       analyticsDb: this.analyticsDb,
       tenantId: scope.tenantId,
       externalOrgIds: scope.externalOrgIds,
+      ...((spec.dateRange ?? scope.dateRange)
+        ? { dateRange: spec.dateRange ?? scope.dateRange }
+        : {}),
+      ...((spec.period ?? scope.period)
+        ? { period: spec.period ?? scope.period }
+        : {}),
     };
     const totalSpec: EngineChartSpec = {
       chartType: 'kpi',
       measureKeys: [measure.key],
+      ...(spec.dateRange ? { dateRange: spec.dateRange } : {}),
+      ...(spec.period ? { period: spec.period } : {}),
+      ...(spec.filters?.length ? { filters: spec.filters } : {}),
       title: 'total',
     };
-    const totalCompiled = compileSpec(totalSpec, cube.model, ctx);
+    const totalCompiled = applyEngineSpecConstraints(
+      compileSpec(totalSpec, cube.model, ctx),
+      totalSpec,
+      cube.model,
+      ctx,
+      measure.sourceTable,
+      { includeTime: false },
+    );
     if (!totalCompiled.ok) return null;
     let total: number;
     try {
@@ -795,6 +974,7 @@ export class ChartEngineService {
   private async reconcileRatioHeadline(
     scope: EngineScope,
     cube: Cube,
+    spec: EngineChartSpec,
     measure: Cube['model']['measures'][number],
     rows: Array<Record<string, unknown>>,
   ): Promise<string | null> {
@@ -804,19 +984,42 @@ export class ChartEngineService {
       analyticsDb: this.analyticsDb,
       tenantId: scope.tenantId,
       externalOrgIds: scope.externalOrgIds,
+      ...((spec.dateRange ?? scope.dateRange)
+        ? { dateRange: spec.dateRange ?? scope.dateRange }
+        : {}),
+      ...((spec.period ?? scope.period)
+        ? { period: spec.period ?? scope.period }
+        : {}),
     };
 
     // The charted grand-total ratio (ungrouped) — what the headline asserts.
     const totalSpec: EngineChartSpec = {
       chartType: 'kpi',
       measureKeys: [measure.key],
+      ...(spec.dateRange ? { dateRange: spec.dateRange } : {}),
+      ...(spec.period ? { period: spec.period } : {}),
+      ...(spec.filters?.length ? { filters: spec.filters } : {}),
       title: 'total',
     };
-    const totalCompiled = compileSpec(totalSpec, cube.model, ctx);
+    const totalCompiled = applyEngineSpecConstraints(
+      compileSpec(totalSpec, cube.model, ctx),
+      totalSpec,
+      cube.model,
+      ctx,
+      measure.sourceTable,
+      { includeTime: false },
+    );
     if (!totalCompiled.ok) return null;
 
     // Independent raw re-sum of the numerator/denominator columns.
-    const components = compileRatioComponentsTotal(measure, ctx);
+    const components = applyEngineSpecConstraints(
+      compileRatioComponentsTotal(measure, ctx, cube.model.time),
+      totalSpec,
+      cube.model,
+      ctx,
+      measure.sourceTable,
+      { includeTime: false },
+    );
     if (!components.ok) return null;
 
     let charted: number;
@@ -921,6 +1124,46 @@ export class ChartEngineService {
    */
   async isEngineOnlyOrg(organizationId: string): Promise<boolean> {
     return (await this.registeredCubeViews(organizationId)) !== null;
+  }
+
+  /**
+   * Detect governed cube data from the verified tenant scope itself. This keeps
+   * routing data-driven when an older organization predates the Dataset registry,
+   * without hardcoding organization IDs or silently falling back to invoice-only
+   * tables that do not represent its finance model.
+   */
+  async hasScopedCubeData(scope: EngineScope): Promise<boolean> {
+    if (scope.externalOrgIds.length === 0) return false;
+    const cacheKey = `${scope.organizationId}:${scope.externalOrgIds.slice().sort().join(',')}`;
+    const cached = this.scopedDataCache.get(cacheKey);
+    if (cached && this.nowMs() - cached.at < CUBE_CACHE_TTL_MS) {
+      return cached.available;
+    }
+
+    const views = await this.resolveCubeViews(scope.organizationId);
+    const checks = await Promise.all(
+      views.map(async (view) => {
+        try {
+          const [row] = await this.queryJson<{ present: number }>(
+            `SELECT 1 AS present FROM ${this.chIdent(this.analyticsDb)}.${this.chIdent(view)} WHERE tenant_id = {tenantId:String} AND org_id IN ({externalOrgIds:Array(String)}) LIMIT 1`,
+            {
+              tenantId: scope.tenantId,
+              externalOrgIds: scope.externalOrgIds,
+            },
+            this.tenantSettings(scope),
+          );
+          return Number(row?.present ?? 0) === 1;
+        } catch (error) {
+          this.logger.debug(
+            `scoped cube probe skipped ${view}: ${(error as Error).message}`,
+          );
+          return false;
+        }
+      }),
+    );
+    const available = checks.some(Boolean);
+    this.scopedDataCache.set(cacheKey, { available, at: this.nowMs() });
+    return available;
   }
 
   /** Identifier guard for names that flow into DDL/DISTINCT from blueprints. */

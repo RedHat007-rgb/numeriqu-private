@@ -159,6 +159,14 @@ export interface SemanticModel {
   builtBy: 'auto' | 'auto+review';
 }
 
+/** Catalog-backed category predicate. Values are discovered from the active
+ * dataset model and are always emitted as query parameters by the compiler. */
+export interface EngineSpecFilter {
+  dimensionKey: string;
+  operator: 'in' | 'not_in';
+  values: string[];
+}
+
 /** The planner's structured output — chart intent expressed in model terms. */
 export interface EngineChartSpec {
   chartType:
@@ -196,6 +204,22 @@ export interface EngineChartSpec {
   hierarchyKeys?: string[];
   /** Optional time grain when the user wants a trend. */
   timeGrain?: 'day' | 'month' | 'quarter' | 'year';
+  /** Deterministically extracted absolute period; never authored by the planner. */
+  dateRange?: { start: string; end: string };
+  /** Deterministically extracted relative period; anchored to the dataset maximum. */
+  period?:
+    | { kind: 'MTD' | 'QTD' | 'YTD' }
+    | {
+        kind:
+          | 'LAST_N_DAYS'
+          | 'LAST_N_WEEKS'
+          | 'LAST_N_MONTHS'
+          | 'LAST_N_QUARTERS'
+          | 'LAST_N_YEARS';
+        value: number;
+      };
+  /** Catalog-backed predicates extracted from concrete dimension values. */
+  filters?: EngineSpecFilter[];
   /** Optional aligned comparison series derived from the same measure. */
   comparison?: 'previous_year' | 'yoy_growth_pct';
   /** Include the aligned percentage variance beside current/prior-year values. */

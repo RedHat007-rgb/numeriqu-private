@@ -10,6 +10,8 @@ import type {
   ChatSessionSummary,
   HealthResponse,
   StreamQueryParams,
+  PrismOpportunity,
+  PrismScenarioResult,
 } from "./types";
 
 export class RagApi {
@@ -27,7 +29,8 @@ export class RagApi {
       credentials: "include",
       cache: "no-store",
     });
-    if (!response.ok) throw new ApiError("RAG health check failed.", response.status);
+    if (!response.ok)
+      throw new ApiError("RAG health check failed.", response.status);
     return (await response.json()) as HealthResponse;
   }
 
@@ -37,6 +40,41 @@ export class RagApi {
 
   session(id: string) {
     return this.request<ChatSessionDetail>(`/rag/sessions/${id}`);
+  }
+
+  createBriefing(prompt: string, period: string, idempotencyKey: string) {
+    return this.request<{ id: string; status: string; createdAt: string }>(
+      "/rag/jobs/briefings",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify({ prompt, period }),
+      },
+    );
+  }
+
+  job(id: string) {
+    return this.request<{
+      id: string;
+      status: string;
+      result?: Record<string, unknown> | null;
+    }>(`/rag/jobs/${id}`);
+  }
+
+  opportunities() {
+    return this.request<PrismOpportunity[]>("/rag/opportunities");
+  }
+
+  evaluateScenario(input: {
+    baseline: string;
+    unit: "currency" | "percent" | "number";
+    currency?: string;
+    assumptions: Array<{ label: string; basisPoints: number }>;
+  }) {
+    return this.request<PrismScenarioResult>(
+      "/rag/decisions/scenarios/evaluate",
+      { method: "POST", body: JSON.stringify(input) },
+    );
   }
 
   async streamQuery(params: StreamQueryParams) {
@@ -49,9 +87,14 @@ export class RagApi {
         query: params.query,
         history: params.history,
         sessionId: params.sessionId ?? undefined,
+        tone: params.tone ?? "professional",
       },
       onDelta: params.onDelta,
       onMessage: params.onMessage,
+      signal: params.signal,
+      inactivityTimeoutMs: Number(
+        process.env.NEXT_PUBLIC_PRISM_STREAM_TIMEOUT_MS ?? 30_000,
+      ),
     });
   }
 }

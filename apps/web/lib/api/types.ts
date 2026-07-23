@@ -317,11 +317,24 @@ export type DashboardResponse = {
     smallestClientConcentrationPct?: number;
     topBusinessUnitName?: string | null;
     topBusinessUnitMarginPct?: number;
-    businessUnits?: Array<{ name: string; revenue: number; cost: number; marginPct: number }>;
+    businessUnits?: Array<{
+      name: string;
+      revenue: number;
+      cost: number;
+      marginPct: number;
+    }>;
     costElements?: Array<{ name: string; value: number }>;
-    headcountByDepartment?: Array<{ name: string; headcount: number; payroll: number }>;
+    headcountByDepartment?: Array<{
+      name: string;
+      headcount: number;
+      payroll: number;
+    }>;
     headcountByGeography?: Array<{ name: string; headcount: number }>;
-    smallestDepartment?: { name: string; headcount: number; payroll: number } | null;
+    smallestDepartment?: {
+      name: string;
+      headcount: number;
+      payroll: number;
+    } | null;
     smallestGeography?: { name: string; headcount: number } | null;
     deliveryCenters?: Array<{
       name: string;
@@ -482,7 +495,11 @@ export type ChartConfig = {
     colorMetricFormat?: "currency" | "number" | "percent" | null;
     showTotals?: boolean | null;
     conditionalThreshold?: number | null;
-    conditionalThresholdMode?: "columnAverage" | "rowAverage" | "overallAverage" | null;
+    conditionalThresholdMode?:
+      | "columnAverage"
+      | "rowAverage"
+      | "overallAverage"
+      | null;
     conditionalColor?: "green" | "red" | null;
     highlightExtremes?: "max" | "min" | "both" | null;
     highlightNegative?: boolean;
@@ -631,6 +648,70 @@ export type StreamQueryParams = {
   query: string;
   history?: ChatMessage[];
   sessionId?: string | null;
+  tone?: PrismTone;
+  signal?: AbortSignal;
   onDelta: (delta: string) => void;
   onMessage?: (msg: StreamControlMessage) => void;
+};
+
+export type PrismTone = "executive" | "professional" | "friendly";
+
+export type PrismAnswerEnvelope = {
+  contractVersion: "2026-07-22";
+  semanticVersion: string;
+  tone: PrismTone;
+  title: string;
+  period: string;
+  metrics: Array<{
+    key: string;
+    label: string;
+    value: number | null;
+    formattedValue: string;
+    unit: "currency" | "percent" | "number" | "days" | "count";
+    currency?: string;
+  }>;
+  visualization?: {
+    kind: "line" | "bar" | "table";
+    title: string;
+    dimensionLabel: string;
+    rows: Array<Record<string, string | number | null>>;
+    series: Array<{
+      key: string;
+      label: string;
+      unit: "currency" | "percent" | "number" | "days" | "count";
+      currency?: string;
+    }>;
+  };
+  evidence: Record<string, unknown>;
+  actions: Array<{
+    id: "compare_period" | "explain_drivers" | "create_briefing";
+    label: string;
+    prompt: string;
+  }>;
+};
+
+export type PrismOpportunity = {
+  id: string;
+  label: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  prompt: string;
+  dataAsOf: string;
+};
+
+export type PrismScenarioResult = {
+  contractVersion: "prism-scenario-1";
+  authority: "user_assumptions";
+  unit: "currency" | "percent" | "number";
+  currency?: string;
+  baseline: string;
+  result: string;
+  totalImpact: string;
+  steps: Array<{
+    label: string;
+    basisPoints: number;
+    before: string;
+    after: string;
+    impact: string;
+  }>;
+  formula: string;
 };

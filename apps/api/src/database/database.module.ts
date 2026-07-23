@@ -74,7 +74,8 @@ export const PRISMA_TOKEN = 'PrismaClient';
             'dbt_transformer',
           password:
             config.get<string>('CLICKHOUSE_ANALYTICS_PASSWORD') ||
-            'dbt_pass_123',
+            config.get<string>('CLICKHOUSE_PASSWORD') ||
+            '',
           database:
             config.get<string>('CLICKHOUSE_ANALYTICS_DB') || 'analytics',
         });

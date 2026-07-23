@@ -43,6 +43,9 @@ jobs:
         run: pnpm --filter api build
 
       - name: Validate database contracts
+        env:
+          # Validation only parses the schema; it does not connect to this database.
+          DIRECT_URL: postgresql://prisma:prisma@localhost:5432/prisma
         run: pnpm --filter @repo/db exec prisma validate
 
       - name: Run Prism policy and contract evaluations

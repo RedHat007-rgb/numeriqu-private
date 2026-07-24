@@ -776,16 +776,19 @@ export function buildSfinSemanticCubeDdls(
         c.cost_family AS cost_family,
         c.expense_account_name AS expense_account_name,
         c.total_cost_usd AS total_cost_usd,
-        ifNull(r.total_revenue_usd, 0) AS total_revenue_usd,
+        ifNull(r.total_revenue_usd, 0) / greatest(c.family_row_count, 1) AS total_revenue_usd,
         0.0 AS cost_pct_of_revenue,
-        ifNull(r.ebitda_usd, 0) / greatest(r.cost_row_count, 1) AS ebitda_usd,
+        ifNull(r.ebitda_usd, 0) / greatest(c.family_row_count, 1) AS ebitda_usd,
         if(ifNull(r.total_revenue_usd, 0) = 0, 0,
           100 * ifNull(r.ebitda_usd, 0) / ifNull(r.total_revenue_usd, 0)) AS ebitda_margin_pct
       FROM (
         SELECT tenant_id, org_id, any(org_name) AS org_name, toStartOfMonth(period_date) AS period_date,
           account_name AS expense_account_name,
           account_group AS cost_family,
-          sumIf(abs(pl_amount_usd), account_type != 'Revenue') AS total_cost_usd
+          sumIf(abs(pl_amount_usd), account_type != 'Revenue') AS total_cost_usd,
+          count() OVER (
+            PARTITION BY tenant_id, org_id, toStartOfMonth(period_date), account_group
+          ) AS family_row_count
         FROM ${db}.v_sfin_gl_semantic
         WHERE account_type != 'Revenue'
         GROUP BY tenant_id, org_id, period_date, cost_family, expense_account_name
@@ -793,8 +796,7 @@ export function buildSfinSemanticCubeDdls(
       LEFT JOIN (
         SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date,
           sum(total_revenue_usd) AS total_revenue_usd,
-          sum(ebitda_usd) AS ebitda_usd,
-          countIf(account_type != 'Revenue') AS cost_row_count
+          sum(ebitda_usd) AS ebitda_usd
         FROM ${db}.v_sfin_gl_semantic GROUP BY tenant_id, org_id, period_date
       ) r USING (tenant_id, org_id, period_date)`,
 

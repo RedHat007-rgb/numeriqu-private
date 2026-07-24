@@ -723,6 +723,23 @@ describe('compileSeriesSql multi-series output', () => {
 });
 
 describe('buildEngineDisplay axis assignment', () => {
+  it('publishes a semantic format for every mixed-unit KPI column', () => {
+    const display = buildEngineDisplay(
+      {
+        chartType: 'kpi',
+        measureKeys: ['revenue', 'gross_margin_pct', 'dso_days'],
+        dimensionKey: 'client',
+        title: 'Client scorecard',
+      },
+      model,
+    );
+    expect(display.series?.map(({ key, format }) => [key, format])).toEqual([
+      ['Revenue', 'currency'],
+      ['Gross Margin %', 'percent'],
+      ['Dso Days', 'number'],
+    ]);
+  });
+
   it('renders an explicitly requested same-unit combo as a bar plus lines', () => {
     const cashModel: SemanticModel = {
       ...model,
@@ -812,6 +829,94 @@ describe('buildEngineDisplay axis assignment', () => {
     expect(d.secondaryLabel).toBe('Clients');
   });
 
+  it('accepts hierarchy-only grouping for point charts', () => {
+    const hierarchyModel: SemanticModel = {
+      ...model,
+      dimensions: [
+        ...model.dimensions,
+        {
+          key: 'delivery_center',
+          label: 'Delivery Center',
+          table: 'v_fact',
+          column: 'delivery_center',
+        },
+      ],
+    };
+    const result = compileSeriesSql(
+      {
+        chartType: 'scatter',
+        measureKeys: ['revenue', 'gross_margin_pct'],
+        hierarchyKeys: ['business_unit', 'client', 'delivery_center'],
+        title: 'Performance hierarchy',
+      },
+      hierarchyModel,
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.sql).toContain('business_unit');
+      expect(result.sql).toContain('client_name');
+      expect(result.sql).toContain('delivery_center');
+    }
+  });
+
+  it('compiles KPI hierarchy metadata into visible leaf scorecard rows', () => {
+    const hierarchyModel: SemanticModel = {
+      ...model,
+      dimensions: [
+        ...model.dimensions,
+        {
+          key: 'delivery_center',
+          label: 'Delivery Center',
+          table: 'v_fact',
+          column: 'delivery_center',
+        },
+      ],
+    };
+    const result = compileSeriesSql(
+      {
+        chartType: 'kpi',
+        measureKeys: ['revenue', 'gross_margin_pct'],
+        hierarchyKeys: ['business_unit', 'client', 'delivery_center'],
+        title: 'Executive drill-down',
+      },
+      hierarchyModel,
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.sql).toContain(
+        "concat(toString(business_unit), ' › ', toString(client_name), ' › ', toString(delivery_center)) AS name",
+      );
+      expect(result.sql).toContain(
+        'GROUP BY business_unit, client_name, delivery_center',
+      );
+      expect(result.sql).toContain('AS "Revenue"');
+      expect(result.sql).toContain('AS "Gross Margin %"');
+    }
+  });
+
+  it('compiles a single-measure treemap hierarchy into path rows', () => {
+    const result = compileSeriesSql(
+      {
+        chartType: 'treemap',
+        measureKeys: ['revenue'],
+        hierarchyKeys: ['business_unit', 'client'],
+        title: 'Revenue hierarchy',
+      },
+      model,
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.sql).toContain('AS path');
+      expect(result.sql).toContain('GROUP BY business_unit, client_name');
+      expect(result.sql).not.toContain("SELECT 'Total'");
+    }
+  });
+
   it('single measure → just a value format, no series', () => {
     const spec: EngineChartSpec = {
       chartType: 'bar',
@@ -884,6 +989,45 @@ describe('buildEngineDisplay axis assignment', () => {
     );
     expect(display.labelSeries).toBe('Revenue');
     expect(display.valueFormat).toBe('currency');
+  });
+
+  it('keeps a component dimension stacked while plotting added measures once per period', () => {
+    const componentModel: SemanticModel = {
+      ...model,
+      measures: [
+        ...model.measures,
+        {
+          key: 'benchmark',
+          label: 'Benchmark',
+          unit: 'USD',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'benchmark_usd' },
+        },
+      ],
+    };
+    const spec: EngineChartSpec = {
+      chartType: 'stacked_area',
+      measureKeys: ['revenue', 'benchmark'],
+      dimensionKey: 'business_unit',
+      timeGrain: 'month',
+      componentMode: true,
+      title: 'Components and benchmark',
+    };
+    const compiled = compileSeriesSql(spec, componentModel, ctx);
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.sql).toContain(
+        'toString(business_unit) AS series',
+      );
+      expect(compiled.sql).toContain("'Benchmark' AS series");
+      expect(compiled.sql).toContain('GROUP BY toStartOfMonth(period_date)');
+    }
+    const display = buildEngineDisplay(spec, componentModel);
+    expect(display.chartType).toBe('combo');
+    expect(display.series?.[1]).toMatchObject({
+      key: 'Benchmark',
+      role: 'line',
+    });
   });
 
   it('a $ measure + a % measure → dual-axis COMBO (%, line, right)', () => {

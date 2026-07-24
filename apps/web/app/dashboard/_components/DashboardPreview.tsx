@@ -3227,14 +3227,23 @@ export function renderChart(
         axis: s.axis === "right" ? "right" : "left",
         format: (s.format ?? "number") as ComboFmt,
       }));
-      // Defensive: any numeric column the backend didn't describe is added as a line.
+      const configuredOverlayOnly =
+        metaRaw.some((item) => item.role === "line") &&
+        orderedKeys.some((key) => !metaRaw.some((item) => item.key === key));
+      // Long-form component queries have runtime-derived category keys, so the
+      // backend can describe the benchmark overlay but cannot enumerate every
+      // future category name. Treat those unmatched keys as primary component
+      // bars on the chart's value axis; in other partial-metadata cases retain
+      // the conservative line/right-axis fallback.
       for (const k of orderedKeys)
         if (!series.some((s) => s.key === k))
           series.push({
             key: k,
-            role: "line",
-            axis: "right",
-            format: "number",
+            role: configuredOverlayOnly ? "bar" : "line",
+            axis: configuredOverlayOnly ? "left" : "right",
+            format: configuredOverlayOnly
+              ? ((chart.config.display?.valueFormat as ComboFmt) ?? "number")
+              : "number",
           });
     } else {
       // Legacy heuristic fallback (non-EBPO combos without series metadata).
@@ -3329,11 +3338,17 @@ export function renderChart(
 
     const barSeries = series.filter((s) => s.role === "bar");
     const lineSeries = series.filter((s) => s.role === "line");
+    const hasRenderedRightSeries = series.some(
+      (s) => s.axis === "right" && hasFiniteValueKey(data, s.key),
+    );
     const usesRight =
-      series.some((s) => s.axis === "right") ||
+      hasRenderedRightSeries ||
       chart.config.display?.referenceAxis === "right" ||
-      (!!chart.config.display?.secondaryAxisFormat && lineSeries.length > 0);
-    const usesFarRight = series.some((s) => s.axis === "farRight");
+      (!!chart.config.display?.secondaryAxisFormat &&
+        lineSeries.some((s) => hasFiniteValueKey(data, s.key)));
+    const usesFarRight = series.some(
+      (s) => s.axis === "farRight" && hasFiniteValueKey(data, s.key),
+    );
     const leftFmt: ComboFmt =
       series.find((s) => s.axis === "left")?.format ??
       (chart.config.display?.valueFormat as ComboFmt) ??
@@ -3420,6 +3435,9 @@ export function renderChart(
     const barSize = barSeries.length > 1 ? 28 : 56;
     const shouldStackBars =
       chart.config.spec?.chartType === "stacked_bar" && barSeries.length > 1;
+    const shouldStackAreas =
+      chart.config.spec?.chartType === "stacked_area" &&
+      barSeries.length > 1;
     const comboBarLabelMode = pointLabelMode(
       comboData.length,
       Math.max(1, barSeries.length),
@@ -3645,41 +3663,57 @@ export function renderChart(
                 }}
               />
             )}
-            {barSeries.map((s, i) => (
-              <Bar
-                key={s.key}
-                yAxisId={s.axis}
-                dataKey={s.key}
-                name={s.key === "value" ? "value" : prettySeriesName(s.key)}
-                fill={BAR_COLORS[i % BAR_COLORS.length]}
-                radius={[6, 6, 0, 0]}
-                maxBarSize={barSize}
-                stackId={shouldStackBars ? "primary" : undefined}
-              >
-                {comboBarLabelMode !== "none" && (
-                  <LabelList
-                    dataKey={s.key}
-                    content={
-                      comboBarLabelMode === "latest"
-                        ? latestOnlyLabel(
-                            comboData as DataRow[],
-                            s.key,
-                            (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n),
-                            i,
-                            0,
-                          )
-                        : thinnedLabel(
-                            comboBarLabelMode === "full"
-                              ? 1
-                              : labelStride(comboData.length),
-                            (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n),
-                            -4,
-                          )
-                    }
-                  />
-                )}
-              </Bar>
-            ))}
+            {barSeries.map((s, i) =>
+              shouldStackAreas ? (
+                <Area
+                  key={s.key}
+                  yAxisId={s.axis}
+                  type="monotone"
+                  dataKey={s.key}
+                  name={s.key === "value" ? "value" : prettySeriesName(s.key)}
+                  stackId="primary"
+                  stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                  fill={LINE_COLORS[i % LINE_COLORS.length]}
+                  fillOpacity={0.28}
+                  strokeWidth={1.5}
+                  connectNulls
+                />
+              ) : (
+                <Bar
+                  key={s.key}
+                  yAxisId={s.axis}
+                  dataKey={s.key}
+                  name={s.key === "value" ? "value" : prettySeriesName(s.key)}
+                  fill={BAR_COLORS[i % BAR_COLORS.length]}
+                  radius={[6, 6, 0, 0]}
+                  maxBarSize={barSize}
+                  stackId={shouldStackBars ? "primary" : undefined}
+                >
+                  {comboBarLabelMode !== "none" && (
+                    <LabelList
+                      dataKey={s.key}
+                      content={
+                        comboBarLabelMode === "latest"
+                          ? latestOnlyLabel(
+                              comboData as DataRow[],
+                              s.key,
+                              (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n),
+                              i,
+                              0,
+                            )
+                          : thinnedLabel(
+                              comboBarLabelMode === "full"
+                                ? 1
+                                : labelStride(comboData.length),
+                              (n) => fmtFor(fmtMap.get(s.key) ?? leftFmt)(n),
+                              -4,
+                            )
+                      }
+                    />
+                  )}
+                </Bar>
+              ),
+            )}
             {lineSeries.map((s, i) => {
               const color = LINE_COLORS[i % LINE_COLORS.length];
               return (
@@ -6024,9 +6058,111 @@ export function renderChart(
       count: "text-blue-400",
       overdue: "text-amber-400",
     };
+    const reserved = new Set([
+      "name",
+      "label",
+      "value",
+      "format",
+      "icon",
+      "series",
+    ]);
+    const wideKeys = Array.from(
+      new Set(
+        data.flatMap((item) =>
+          Object.keys(item as Record<string, unknown>).filter(
+            (key) =>
+              !reserved.has(key) &&
+              !key.startsWith("_") &&
+              Number.isFinite(
+                Number((item as Record<string, unknown>)[key]),
+              ),
+          ),
+        ),
+      ),
+    );
+    const seriesFormats = new Map(
+      (chart.config.display?.series ?? []).map((series) => [
+        series.key,
+        series.format,
+      ]),
+    );
+    const formatKpiValue = (key: string, value: unknown) => {
+      const format =
+        seriesFormats.get(key) ?? chart.config.display?.valueFormat ?? "number";
+      return format === "currency"
+        ? fmtCurrency(Number(value) || 0)
+        : format === "percent"
+          ? fmtPercent(Number(value) || 0)
+          : fmtNumber(Number(value) || 0);
+    };
+
+    // Dynamic KPI/scorecard queries return a generic wide-row contract:
+    //   { name, "Revenue": ..., "Margin %": ..., ... }
+    // Render multiple named rows as a scorecard matrix instead of treating each
+    // row as a legacy {label,value} card (which displayed undefined as zero).
+    if (
+      wideKeys.length > 0 &&
+      data.length > 1 &&
+      data.some((item) => String((item as any).name ?? "") !== "Total")
+    ) {
+      return (
+        <div className="h-full w-full overflow-auto rounded-xl border border-default">
+          <table className="min-w-full border-collapse text-xs">
+            <thead className="sticky top-0 z-10 bg-bg-elevated">
+              <tr>
+                <th className="px-3 py-2 text-left font-bold text-text-secondary">
+                  Name
+                </th>
+                {wideKeys.map((key) => (
+                  <th
+                    key={key}
+                    className="whitespace-nowrap px-3 py-2 text-right font-bold text-text-secondary"
+                  >
+                    {key}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((item, index) => (
+                <tr
+                  key={`${String((item as any).name ?? index)}-${index}`}
+                  className="border-t border-default/70"
+                >
+                  <td className="whitespace-nowrap px-3 py-2 font-semibold text-text-primary">
+                    {String((item as any).name ?? `Row ${index + 1}`)}
+                  </td>
+                  {wideKeys.map((key) => (
+                    <td
+                      key={key}
+                      className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-text-secondary"
+                    >
+                      {formatKpiValue(key, (item as any)[key])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    const cardData =
+      wideKeys.length > 0 && data[0]
+        ? wideKeys.map((key) => ({
+            label: key,
+            value: (data[0] as any)[key],
+            format:
+              seriesFormats.get(key) ??
+              chart.config.display?.valueFormat ??
+              "number",
+            icon: "",
+          }))
+        : data;
     return (
       <div className="grid h-full w-full grid-cols-2 gap-2 p-1 md:grid-cols-3">
-        {data.map((item, i) => {
+        {cardData.map((item, i) => {
           const d = item as any;
           const fmt =
             d.format === "currency"

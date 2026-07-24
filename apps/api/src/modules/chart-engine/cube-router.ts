@@ -14,12 +14,13 @@
 import {
   fieldMatchScore,
   meaningfulWords,
-  planChart,
-  planExplicitPointChart,
   requestedChartType,
   type LlmCaller,
-  type PlanResult,
 } from './chart-planner';
+import {
+  planGloballyAcrossCubes,
+  type PlannerClarification,
+} from './global-chart-planner';
 import type { EngineChartSpec, SemanticModel } from './semantic-model.types';
 
 export interface Cube {
@@ -29,7 +30,11 @@ export interface Cube {
 
 export type CubePlan =
   | { ok: true; cube: Cube; spec: EngineChartSpec }
-  | { ok: false; reasons: string[] };
+  | {
+      ok: false;
+      reasons: string[];
+      clarification?: PlannerClarification;
+    };
 
 const tokens = (s: string) =>
   new Set(
@@ -88,6 +93,23 @@ function dimensionRequested(
     (w) => qWords.has(w) && !measureWords.has(w),
   );
   if (!categoryIdentityMissing && distinctive.length > 0) return true; // user named the dimension distinctly
+  const exactMemberMentions = new Set(
+    (dim.sampleValues ?? [])
+      .map((value) =>
+        String(value)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim(),
+      )
+      .filter(
+        (phrase) =>
+          phrase &&
+          ` ${question.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `.includes(
+            ` ${phrase} `,
+          ),
+      ),
+  );
+  if (exactMemberMentions.size >= 2) return true;
   // Otherwise: only keep if the user named a SPECIFIC multi-word value of it
   // (e.g. "JP Morgan") — not a lone measure-word collision with a sample value.
   const nameOnly = fieldMatchScore(question, dim.key, dim.label);
@@ -251,105 +273,43 @@ export function preselectCubes(
 }
 
 /**
- * Plan the question against every (shortlisted) cube, then pick the
- * highest-scoring valid plan. Order is only a tie-breaker, so a specific cube can
- * no longer be pre-empted by an earlier cube's loose match.
+ * Give OpenAI one coherent, auto-derived catalog spanning every available cube.
+ * The model chooses the business interpretation and cube; deterministic code
+ * only validates the returned keys and presentation constraints.
  */
 export async function planAcrossCubes(
   question: string,
   cubes: Cube[],
   callLlm: LlmCaller,
+  fidelityQuestion = question,
 ): Promise<CubePlan> {
-  const reasons: string[] = [];
-  const candidates: Array<{
-    cube: Cube;
-    spec: EngineChartSpec;
-    score: number;
-  }> = [];
-
-  // Only LLM-plan the cubes lexically relevant to the question — the per-cube LLM
-  // call is the dominant cost. Falls back to all cubes when the match is ambiguous.
-  // Keep the model-facing surface bounded. Four independently validated cubes
-  // are enough to resolve lexical ties without multiplying latency and spend by
-  // every dataset view. A question with no catalog overlap is unsupported; do
-  // not ask a model to invent a mapping across the entire physical schema.
-  const shortlist = preselectCubes(question, cubes, 4, 1).filter(
-    (cube) => cubeLexScore(question, cube) > 0,
+  const planned = await planGloballyAcrossCubes(
+    question,
+    cubes,
+    callLlm,
+    fidelityQuestion,
   );
-
-  // Exact X-versus-Y plans are cheap and catalog-validated, so evaluate them
-  // across every cube before lexical shortlisting. A wide cross-domain cube can
-  // otherwise rank just outside the top-N shortlist even though it is the only
-  // cube that contains both measures and all requested groupings.
-  const deterministicViews = new Set<string>();
-  for (const cube of cubes) {
-    const deterministicPointPlan = planExplicitPointChart(question, cube.model);
-    if (!deterministicPointPlan) continue;
-    deterministicViews.add(cube.view);
-    candidates.push({
-      cube,
-      spec: deterministicPointPlan,
-      score: scorePlan(question, cube, deterministicPointPlan) + 20,
-    });
+  if (!planned.ok) return planned;
+  if (
+    (planned.spec.chartType === 'scatter' ||
+      planned.spec.chartType === 'bubble') &&
+    planned.spec.measureKeys.length < 2
+  ) {
+    return {
+      ok: false,
+      reasons: ['point chart requires at least two catalog measures'],
+    };
   }
-
-  // When at least one exact catalog-backed point plan exists, do not let a
-  // loosely related LLM plan (for example invoice/outstanding-payable for a
-  // revenue/payroll request) compete on dimension vocabulary and win. The
-  // deterministic candidates already satisfy both axes and all groupings.
-  const plannedCubes = deterministicViews.size
-    ? []
-    : shortlist.filter((cube) => !deterministicViews.has(cube.view));
-  const planned = await Promise.all(
-    plannedCubes.map(async (cube) => {
-      try {
-        return {
-          ok: true as const,
-          cube,
-          result: await planChart(question, cube.model, callLlm),
-        };
-      } catch (error) {
-        return { ok: false as const, cube, error: error as Error };
-      }
-    }),
+  const faithful = stripUnrequestedGrouping(
+    question,
+    planned.spec,
+    planned.cube.model,
   );
-
-  for (const item of planned) {
-    const cube = item.cube;
-    if (!item.ok) {
-      reasons.push(`${cube.view}: ${item.error.message}`);
-      continue;
-    }
-    const r: PlanResult = item.result;
-    if (!r.ok) {
-      reasons.push(`${cube.view}: ${r.reason}`);
-      continue;
-    }
-    if (
-      (r.spec.chartType === 'scatter' || r.spec.chartType === 'bubble') &&
-      r.spec.measureKeys.length < 2
-    ) {
-      reasons.push(
-        `${cube.view}: point chart requires at least two catalog measures`,
-      );
-      continue;
-    }
-    // Enforce "only group when the user asked": drop a spurious dimension/breakdown
-    // the LLM added on its own, so a plain "total revenue" is a single total, not a
-    // per-category split.
-    const spec = stripUnrequestedGrouping(question, r.spec, cube.model);
-    candidates.push({ cube, spec, score: scorePlan(question, cube, spec) });
-  }
-
-  if (!candidates.length) return { ok: false, reasons };
-  candidates.sort((a, b) => b.score - a.score); // stable: keeps cube order on ties
-  const best = candidates[0]!;
   // Presentation words are a hard user constraint. Re-apply them at the final
-  // routing boundary so no candidate selection or future router refinement can
-  // return a different chart type than an explicitly requested bar/line/etc.
+  // validation boundary; this is chart grammar, not dataset/business logic.
   const explicitType = requestedChartType(question);
   const spec = explicitType
-    ? { ...best.spec, chartType: explicitType }
-    : best.spec;
-  return { ok: true, cube: best.cube, spec };
+    ? { ...faithful, chartType: explicitType }
+    : faithful;
+  return { ok: true, cube: planned.cube, spec };
 }

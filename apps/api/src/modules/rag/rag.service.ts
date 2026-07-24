@@ -13,6 +13,8 @@ import {
   prismScopeRefusal,
   type PrismTone,
 } from './prism-policy';
+import { generatePrismGreeting } from './prism-conversation';
+import { composePrismAnswer } from './prism-answer-composer';
 import {
   formatPrismMoney,
   formatPrismPercentage,
@@ -396,23 +398,12 @@ function formatCapabilityValue(
   return `${formatted} ${unit}`;
 }
 
-function buildCapabilityAnswer(
+function capabilityFactLines(
   answer: Extract<EngineAnswer, { ok: true }>,
-  range: TimeRange,
-  tone: PrismTone,
-): string {
-  const heading = tone === 'friendly' ? 'Here’s the result' : 'Direct answer';
+): string[] {
   const measureKeys = new Set(answer.measures.map((measure) => measure.key));
   const rows = answer.rows.slice(0, 24);
-  const lines: string[] = [`**${heading} — ${formatRangeLabel(range)}**`];
-
-  if (rows.length === 0) {
-    return [
-      ...lines,
-      `No verified records matched the selected scope. Prism will not present missing data as zero.`,
-    ].join('\n\n');
-  }
-
+  const facts: string[] = [];
   for (const row of rows) {
     const dimensions = Object.entries(row)
       .filter(
@@ -432,19 +423,38 @@ function buildCapabilityAnswer(
           `${measure.label}: ${formatCapabilityValue(row[measure.key], measure.unit, measure.valueRepresentation)}`,
       );
     if (values.length) {
-      lines.push(`- ${[...dimensions, ...values].join(' · ')}`);
+      facts.push(`- ${[...dimensions, ...values].join(' · ')}`);
     }
   }
+  return facts;
+}
 
+// Deterministic fallback rendering. Used when the OpenAI answer composer is
+// unavailable or returns an ungrounded figure — a query never depends on the
+// model for its numbers.
+function buildCapabilityAnswer(
+  answer: Extract<EngineAnswer, { ok: true }>,
+  range: TimeRange,
+  tone: PrismTone,
+): string {
+  const heading = tone === 'friendly' ? 'Here’s the result' : 'Direct answer';
+  const lines: string[] = [`**${heading} — ${formatRangeLabel(range)}**`];
+
+  if (answer.rows.length === 0) {
+    return [
+      ...lines,
+      `No verified records matched the selected scope. Prism will not present missing data as zero.`,
+    ].join('\n\n');
+  }
+
+  lines.push(...capabilityFactLines(answer));
   lines.push(
     ``,
     `**CALCULATION**`,
     `- Calculated from the governed metric definitions for the selected organization and period.`,
   );
-  if (answer.rows.length > rows.length) {
-    lines.push(
-      `- Showing ${rows.length} of ${answer.rows.length} verified rows.`,
-    );
+  if (answer.rows.length > 24) {
+    lines.push(`- Showing 24 of ${answer.rows.length} verified rows.`);
   }
   return lines.join('\n');
 }
@@ -818,7 +828,21 @@ export class RagService {
       const scopeDecision = classifyPrismScope(userQuery);
 
       if (scopeDecision.kind === 'greeting') {
-        const text = prismGreeting(tone);
+        // Prism writes the greeting with the model (tone-aware); it falls back
+        // to the deterministic greeting on any timeout/failure. Capped short so
+        // a greeting never inherits the full analysis latency budget, and the
+        // generator rejects any output containing a figure (numbers are never
+        // model-authored).
+        const greetingSignal = signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(8_000)])
+          : AbortSignal.timeout(8_000);
+        const text =
+          (await generatePrismGreeting(
+            this.prismModel,
+            tone,
+            userQuery,
+            greetingSignal,
+          )) ?? prismGreeting(tone);
         yield this.chunk('status', { message: 'Ready.' });
         yield this.chunk('token', { content: text });
         await this.prisma.ragChatMessage.create({
@@ -990,9 +1014,33 @@ export class RagService {
             ),
             signal,
           );
-          text = answer.ok
-            ? buildCapabilityAnswer(answer, range, tone)
-            : '**Direct answer**\n\nThe requested figure is not available in the governed finance capabilities for this organization and period. Prism has not substituted another metric or presented missing data as zero.';
+          if (answer.ok) {
+            // OpenAI explains the VERIFIED figures in natural language. The
+            // numbers come from the governed engine; the composer rejects any
+            // figure the model invents and we fall back to the deterministic
+            // rendering. Capped so composition cannot exhaust the request.
+            const composeSignal = signal
+              ? AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+              : AbortSignal.timeout(20_000);
+            const composed = await composePrismAnswer(
+              this.prismModel,
+              {
+                tone,
+                rangeLabel: formatRangeLabel(range),
+                title: answer.title,
+                factLines: capabilityFactLines(answer),
+                note:
+                  answer.rows.length > 24
+                    ? `Showing 24 of ${answer.rows.length} verified rows.`
+                    : undefined,
+              },
+              composeSignal,
+            );
+            text = composed ?? buildCapabilityAnswer(answer, range, tone);
+          } else {
+            text =
+              '**Direct answer**\n\nThe requested figure is not available in the governed finance capabilities for this organization and period. Prism has not substituted another metric or presented missing data as zero.';
+          }
           const evidence = capabilityEvidence(answer, range);
           const structuredAnswer = answer.ok
             ? capabilityAnswerEnvelope(

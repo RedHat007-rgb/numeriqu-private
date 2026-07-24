@@ -873,7 +873,8 @@ describe('ChartPlanner.parsePlannerResponse', () => {
           key: 'average_monthly_salary',
           label: 'Average Monthly Salary',
           unit: 'USD',
-          expr: { kind: 'avg', column: 'average_monthly_salary' },
+          sourceTable: 'v',
+          expr: { kind: 'mean', column: 'average_monthly_salary' },
         },
       ],
     };
@@ -911,6 +912,7 @@ describe('ChartPlanner.parsePlannerResponse', () => {
           key: 'total_payroll_usd',
           label: 'Total Payroll',
           unit: 'USD',
+          sourceTable: 'v',
           expr: { kind: 'sum', column: 'total_payroll_usd' },
         },
       ],

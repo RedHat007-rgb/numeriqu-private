@@ -435,7 +435,17 @@ function resetZoomEnhanced(id){const chart=charts[id],state=zoomStateEnhanced[id
 function panZoomEnhanced(id,dx,dy){const chart=charts[id],canvas=document.getElementById(id);if(!chart||!canvas)return;captureZoomBoundsEnhanced(id,chart);Object.entries(chart.scales).forEach(([key,s])=>{if(s.type==='category')return;const pixels=s.axis==='x'?canvas.clientWidth:canvas.clientHeight,delta=(s.max-s.min)*(s.axis==='x'?-dx:dy)/Math.max(pixels,1);chart.options.scales[key].min=s.min+delta;chart.options.scales[key].max=s.max+delta});chart.update('none');canvas.closest('.chart-wrap')?.classList.add('chart-zoomed')}
 function setupChartZoomEnhanced(){if(layoutEditingEnhanced)return;Object.entries(charts).forEach(([id,chart])=>{if(!zoomableChartEnhanced(chart))return;const canvas=document.getElementById(id),wrap=canvas?.closest('.chart-wrap');if(!canvas||!wrap||wrap.dataset.zoomReady==='true')return;wrap.dataset.zoomReady='true';wrap.classList.add('zoom-enabled');captureZoomBoundsEnhanced(id,chart);const controls=document.createElement('div');controls.className='zoom-controls';controls.innerHTML=`<button class="zoom-btn" title="Zoom in">+</button><button class="zoom-btn" title="Zoom out">−</button><button class="zoom-btn reset" title="Reset zoom">Reset</button>`;wrap.appendChild(controls);const buttons=controls.querySelectorAll('button');buttons[0].onclick=e=>{e.stopPropagation();applyZoomEnhanced(id,.72)};buttons[1].onclick=e=>{e.stopPropagation();applyZoomEnhanced(id,1.38)};buttons[2].onclick=e=>{e.stopPropagation();resetZoomEnhanced(id)};canvas.addEventListener('wheel',e=>{if(e.ctrlKey||e.metaKey)return;e.preventDefault();const r=canvas.getBoundingClientRect(),center=(e.clientX-r.left)/Math.max(r.width,1);applyZoomEnhanced(id,e.deltaY<0?.82:1.22,center)},{passive:false});let dragging=false,last=null;canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;dragging=true;last=[e.clientX,e.clientY];wrap.classList.add('chart-panning');canvas.setPointerCapture?.(e.pointerId)});canvas.addEventListener('pointermove',e=>{if(!dragging)return;panZoomEnhanced(id,e.clientX-last[0],e.clientY-last[1]);last=[e.clientX,e.clientY]});const stop=()=>{dragging=false;wrap.classList.remove('chart-panning')};canvas.addEventListener('pointerup',stop);canvas.addEventListener('pointercancel',stop)})}
 function harmonizePaletteEnhanced(){Object.assign(COLORS,{blue:'#0077FF',cyan:'#00C7D2',purple:'#9B4DFF',pink:'#F06BAE',orange:'#F6AD55',green:'#42D6A4',red:'#F36B7F',gold:'#F3C85C'});Chart.defaults.color='#b8c8df';Chart.defaults.borderColor='#38527499';if(Chart.defaults.plugins?.legend?.labels)Chart.defaults.plugins.legend.labels.color='#d0dded'}
-function afterDashboardRenderEnhanced(){Object.keys(zoomStateEnhanced).forEach(k=>delete zoomStateEnhanced[k]);harmonizePaletteEnhanced();applyLayoutEnhanced();setTimeout(setupChartZoomEnhanced,0)}
+let platformDashboardPayload=null;
+function applyPlatformLabels(){
+  if(!platformDashboardPayload)return;
+  const source=platformDashboardPayload?.connectedOrgs?.[0]?.orgName||'Numeriqu platform';
+  const subtitle=document.querySelector('.period-summary span');
+  if(subtitle)subtitle.textContent=`Live ${source} finance data · synchronized from the platform`;
+  document.querySelectorAll('.brief-tag').forEach(el=>{
+    if(el.textContent?.toLowerCase().includes('ebpo finance stream'))el.textContent='Live Platform Finance Stream';
+  });
+}
+function afterDashboardRenderEnhanced(){Object.keys(zoomStateEnhanced).forEach(k=>delete zoomStateEnhanced[k]);harmonizePaletteEnhanced();applyLayoutEnhanced();applyPlatformLabels();setTimeout(setupChartZoomEnhanced,0)}
 
 function overviewPageInteractiveEnhanced(){let html=overviewPageFinalEnhanced();html=html.replace(/<section class="platform-card">(?:(?!<\/section>)[\s\S])*Client profitability ranking(?:(?!<\/section>)[\s\S])*<\/section>/,operationalStrainPanelEnhanced());return withDrillEnhanced(html)}
 function pnlPageInteractiveEnhanced(){return withDrillEnhanced(pnlPageFinalEnhanced())}
@@ -452,6 +462,38 @@ function workforceChartsInteractiveEnhanced(){workforceChartsCompleteEnhanced();
 
 const PAGES={overview:[overviewPageInteractiveEnhanced,overviewChartsInteractiveEnhanced],pnl:[pnlPageInteractiveEnhanced,pnlChartsInteractiveEnhanced],cash:[cashPageInteractiveEnhanced,cashChartsInteractiveEnhanced],balance:[balancePageInteractiveEnhanced,balanceChartsInteractiveEnhanced],arap:[arapPageInteractiveEnhanced,arapChartsInteractiveEnhanced],workforce:[workforcePageInteractiveEnhanced,workforceChartsInteractiveEnhanced]};
 function render(){destroyCharts();document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===state.page));document.getElementById('headerPeriod').textContent=periodLabel();const main=document.getElementById('mainArea');main.innerHTML=PAGES[state.page][0]();afterDashboardRenderEnhanced();requestAnimationFrame(()=>{PAGES[state.page][1]();setupChartZoomEnhanced()})}
+function applyPlatformDashboardData(payload){
+  const trend=payload?.charts?.monthlyTrend;
+  if(!Array.isArray(trend)||!trend.length)return;
+  platformDashboardPayload=payload;
+  const liveMonths=[];
+  trend.forEach(row=>{
+    const month=String(row?.month||'').slice(0,7);
+    if(!/^\d{4}-\d{2}$/.test(month))return;
+    const target=DATA.monthly[month]||(DATA.monthly[month]={});
+    if(Number.isFinite(row.revenue))target.revenue=row.revenue;
+    if(Number.isFinite(row.cogs))target.cogs=row.cogs;
+    if(Number.isFinite(row.payroll))target.payroll=row.payroll;
+    liveMonths.push(month);
+  });
+  if(!liveMonths.length)return;
+  liveMonths.sort();
+  DATA.metadata.minMonth=liveMonths[0];
+  DATA.metadata.maxMonth=liveMonths.at(-1);
+  MONTHS.splice(0,MONTHS.length,...Object.keys(DATA.monthly).filter(month=>month>=DATA.metadata.minMonth&&month<=DATA.metadata.maxMonth).sort());
+  state.start=DATA.metadata.minMonth;
+  state.end=DATA.metadata.maxMonth;
+  const startDate=document.getElementById('startDate');
+  const endDate=document.getElementById('endDate');
+  if(startDate)startDate.value=state.start+'-01';
+  if(endDate)endDate.value=state.end+'-31';
+  render();
+}
+window.addEventListener('message',event=>{
+  if(event.origin!==window.location.origin)return;
+  if(event.data?.type==='numeriq:dashboard-data')applyPlatformDashboardData(event.data.payload);
+});
+if(window.parent!==window)window.parent.postMessage({type:'numeriq:dashboard-ready'},window.location.origin);
 function setPreset(value){document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.preset===String(value)));if(value==='all'){document.getElementById('startDate').value=DATA.metadata.minMonth+'-01';document.getElementById('endDate').value=DATA.metadata.maxMonth+'-31'}else{document.getElementById('startDate').value=value+'-01-01';document.getElementById('endDate').value=value+'-12-31'}applyDates()}
 function applyDates(){const s=document.getElementById('startDate').value.slice(0,7),e=document.getElementById('endDate').value.slice(0,7);if(!s||!e||s>e){alert('Please choose a valid start date before the end date.');return}state.start=s<DATA.metadata.minMonth?DATA.metadata.minMonth:s;state.end=e>DATA.metadata.maxMonth?DATA.metadata.maxMonth:e;document.querySelectorAll('.preset').forEach(b=>{const exact=b.dataset.preset==='all'?state.start===DATA.metadata.minMonth&&state.end===DATA.metadata.maxMonth:state.start===b.dataset.preset+'-01'&&state.end===b.dataset.preset+'-12';b.classList.toggle('active',exact)});render()}
 document.addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>{state.page=b.dataset.page;render();window.scrollTo({top:0,behavior:'smooth'})}));document.querySelectorAll('.preset').forEach(b=>b.addEventListener('click',()=>setPreset(b.dataset.preset)));document.getElementById('applyDates').addEventListener('click',applyDates);render()});

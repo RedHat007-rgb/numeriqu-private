@@ -262,7 +262,7 @@ export function ExecutiveBriefCard({
                 CFO command brief
               </span>
               <span className="rounded-full border border-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#d7e5fa]">
-                {cfo?.mode === "ebpo" ? "Live EBPO finance stream" : "Awaiting live finance stream"}
+                {cfo?.mode === "generic" ? "Awaiting live finance stream" : "Live platform finance stream"}
               </span>
             </div>
             <h2 className="mt-4 font-display text-[2rem] font-bold leading-[1.05] tracking-[-0.045em] text-white md:text-[2.9rem]">

@@ -13,6 +13,14 @@
   --purple: #9b4dff;
 }
 
+@font-face {
+  font-family: "Numeriq Geist";
+  src: url("/fonts/GeistVF.woff") format("woff");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 html {
   background: #0a1128;
 }
@@ -23,6 +31,28 @@ body {
     radial-gradient(900px 480px at 100% 0%, rgba(0, 119, 255, 0.12), transparent 58%),
     #0a1128;
   color: #ffffff;
+  font-family: "Numeriq Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.mono,
+.kpi-value,
+.brief-signal-value,
+.decision-value,
+.watch-value,
+.tm-value,
+.rank-metric,
+.strain-value,
+.date-controls input {
+  font-family: "Numeriq Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.grid2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid2 > * {
+  min-width: 0;
 }
 
 .topbar,
@@ -102,6 +132,11 @@ input:focus-visible,
 
   .main {
     overflow-x: hidden;
+  }
+
+  .grid2,
+  .grid3 {
+    grid-template-columns: 1fr;
   }
 }
 

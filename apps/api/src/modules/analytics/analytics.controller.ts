@@ -70,18 +70,35 @@ export class AnalyticsController {
     })();
 
     const [profile, monthlyTrend, executive] = await Promise.all([
-      this.financialData.getFinancialProfile(organizationId),
+      this.financialData.getFinancialProfile(organizationId, range as any),
       this.financialData.getMonthlyRevenueTrend(organizationId, range as any),
       this.financialData.getExecutiveSnapshot(organizationId, range as any),
     ]);
 
     // Build Recharts-ready monthly trend (range-filtered server-side)
-    const trendMap = new Map<string, { revenue: number; expenses: number; invoices: number }>();
+    const trendMap = new Map<string, {
+      revenue: number;
+      expenses: number;
+      cogs: number;
+      grossProfit: number;
+      payroll: number;
+      invoices: number;
+    }>();
     for (const row of monthlyTrend) {
       const month = (row.month ?? '').slice(0, 7);
-      const existing = trendMap.get(month) || { revenue: 0, expenses: 0, invoices: 0 };
+      const existing = trendMap.get(month) || {
+        revenue: 0,
+        expenses: 0,
+        cogs: 0,
+        grossProfit: 0,
+        payroll: 0,
+        invoices: 0,
+      };
       existing.revenue += Math.abs(parseFloat(row.revenue) || 0);
       existing.expenses += Math.abs(parseFloat(row.expenses ?? row.total_cost ?? 0) || 0);
+      existing.cogs += Math.abs(parseFloat(row.cogs ?? row.total_cost ?? 0) || 0);
+      existing.grossProfit += parseFloat(row.gross_profit ?? row.gross_margin ?? 0) || 0;
+      existing.payroll += Math.abs(parseFloat(row.payroll ?? row.total_payroll ?? 0) || 0);
       existing.invoices += parseInt(row.invoice_count) || 0;
       trendMap.set(month, existing);
     }
@@ -93,6 +110,13 @@ export class AnalyticsController {
         month,
         revenue: Math.round(data.revenue),
         expenses: Math.round(data.expenses),
+        cogs: Math.round(data.cogs),
+        grossProfit: Math.round(data.grossProfit),
+        grossMarginPct:
+          data.revenue > 0
+            ? Math.round((data.grossProfit / data.revenue) * 10000) / 100
+            : 0,
+        payroll: Math.round(data.payroll),
         invoices: data.invoices,
       }));
 
@@ -169,6 +193,8 @@ export class AnalyticsController {
 
     const chartRevenue = monthlyChart.reduce((s, m) => s + (m.revenue || 0), 0);
     const chartExpenses = monthlyChart.reduce((s, m) => s + (m.expenses || 0), 0);
+    const chartCogs = monthlyChart.reduce((s, m) => s + (m.cogs || 0), 0);
+    const chartGrossProfit = monthlyChart.reduce((s, m) => s + (m.grossProfit || 0), 0);
     const totalRevenue =
       executive?.totalRevenue ??
       (range && range.kind !== 'ALL_TIME'
@@ -189,14 +215,23 @@ export class AnalyticsController {
     const profitMargin = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 10000) / 100 : 0;
     // Gross margin = gross profit / revenue over the selected range (ratio-of-sums, not
     // avg-of-ratios). For EBPO this is revenue - direct cost (excludes payroll/overhead);
-    // generic profiles have no COGS split, so gross profit falls back to net profit.
-    const grossProfit = executive ? executive.grossMargin : netProfit;
+    // Sample-GL tenants now expose their COGS split through the monthly trend too.
+    // Only legacy providers without COGS data fall back to net profit.
+    const totalCogs = executive?.totalCost ?? (chartCogs > 0 ? chartCogs : undefined);
+    const grossProfit = executive
+      ? executive.grossMargin
+      : chartRevenue > 0 && (chartCogs > 0 || chartGrossProfit !== 0)
+        ? chartGrossProfit
+        : netProfit;
     const grossMarginPct = totalRevenue > 0 ? Math.round((grossProfit / totalRevenue) * 10000) / 100 : 0;
 
-    const openInvoiceAmount = executive?.arOutstanding ?? profile.expenses?.totalExpenses ?? 0;
-    const openInvoiceCount = executive?.arLineCount ?? profile.expenses?.totalBills ?? 0;
-    const overdueAmount = executive?.overdueAmount ?? profile.expenses?.overdueAmount ?? 0;
-    const overdueCount = executive?.overdueCount ?? profile.expenses?.overdueCount ?? 0;
+    const openInvoiceAmount = executive?.arOutstanding ?? profile.arOutstanding ?? 0;
+    const openInvoiceCount =
+      executive?.arLineCount ?? profile.openInvoiceCount ?? profile.expenses?.totalBills ?? 0;
+    const overdueAmount =
+      executive?.overdueAmount ?? profile.overdueAmount ?? profile.expenses?.overdueAmount ?? 0;
+    const overdueCount =
+      executive?.overdueCount ?? profile.overdueCount ?? profile.expenses?.overdueCount ?? 0;
     const connectedOrgsResolved =
       executive
         ? [{
@@ -225,6 +260,7 @@ export class AnalyticsController {
       kpis: {
         totalRevenue,
         totalExpenses,
+        totalCogs,
         netProfit,
         profitMargin,
         grossProfit,
@@ -293,44 +329,69 @@ export class AnalyticsController {
             workforceCountries: executive.workforceCountries,
           }
         : {
-            mode: 'generic',
+            mode: (profile.businessUnits?.length ?? 0) > 0 ? 'star_schema' : 'generic',
             headline: 'This view summarizes live financial coverage across your connected entities.',
             cashBalance: profile.ventureMetrics?.cashOnHand ?? 0,
-            workingCapital: 0,
-            freeCashFlow: 0,
-            operatingCashFlow: 0,
-            grossMarginPct: profitMargin,
-            payrollToRevenuePct: 0,
-            dsoDays: 0,
-            dpoDays: 0,
-            cashConversionDays: 0,
-            slaCompliancePct: 0,
-            utilizationPct: 0,
-            csatPct: 0,
-            apOutstanding: 0,
-            topClientName: null,
-            topClientRevenue: 0,
-            topClientConcentrationPct: 0,
-            smallestClientName: null,
-            smallestClientRevenue: 0,
-            smallestClientConcentrationPct: 0,
+            workingCapital: profile.workingCapital ?? 0,
+            freeCashFlow: profile.freeCashFlow ?? 0,
+            operatingCashFlow: profile.operatingCashFlow ?? 0,
+            grossMarginPct,
+            payrollToRevenuePct: profile.payrollToRevenuePct ?? 0,
+            dsoDays: profile.dsoDays ?? 0,
+            dpoDays: profile.dpoDays ?? 0,
+            cashConversionDays: (profile.dsoDays ?? 0) - (profile.dpoDays ?? 0),
+            slaCompliancePct: profile.slaCompliancePct ?? 0,
+            utilizationPct: profile.utilizationPct ?? 0,
+            csatPct: profile.csatPct ?? 0,
+            apOutstanding: profile.apOutstanding ?? 0,
+            topClientName: profile.topClientName ?? null,
+            topClientRevenue: profile.topClientRevenue ?? 0,
+            topClientConcentrationPct: profile.topClientConcentrationPct ?? 0,
+            smallestClientName: profile.smallestClientName ?? null,
+            smallestClientRevenue: profile.smallestClientRevenue ?? 0,
+            smallestClientConcentrationPct: profile.smallestClientConcentrationPct ?? 0,
             topBusinessUnitName: null,
             topBusinessUnitMarginPct: 0,
-            businessUnits: [],
-            costElements: [],
-            headcountByDepartment: [],
-            headcountByGeography: [],
-            smallestDepartment: null,
-            smallestGeography: null,
-            deliveryCenters: [],
+            businessUnits: profile.businessUnits ?? [],
+            costElements: profile.costElements ?? [],
+            headcountByDepartment: profile.headcountByDepartment ?? [],
+            headcountByGeography: profile.headcountByGeography ?? [],
+            smallestDepartment: profile.smallestDepartment ?? null,
+            smallestGeography: profile.smallestGeography ?? null,
+            deliveryCenters: profile.deliveryCenters ?? [],
             avgHandleTimeMinutes: 0,
             ticketsResolved: 0,
+            workforceHeadcount: profile.workforceHeadcount ?? 0,
+            workforcePayroll: profile.workforcePayroll ?? 0,
+            workforceCountries: profile.workforceCountries ?? 0,
           },
       charts: {
         monthlyTrend: monthlyChart,
         orgBreakdown,
         invoiceStatus,
-        cashflowWaterfall: executive?.cashflowWaterfall ?? [],
+        cashflowWaterfall:
+          executive?.cashflowWaterfall ??
+          (totalRevenue > 0
+            ? [
+                { name: 'Revenue', value: totalRevenue, fill: '#22c77e' },
+                { name: 'Spend', value: -totalExpenses, fill: '#f0556b' },
+                {
+                  name: 'Operating CF',
+                  value: profile.operatingCashFlow ?? 0,
+                  fill: '#00c7d2',
+                },
+                {
+                  name: 'Free Cash Flow',
+                  value: profile.freeCashFlow ?? 0,
+                  fill: '#4f8cff',
+                },
+                {
+                  name: 'Working Capital',
+                  value: profile.workingCapital ?? 0,
+                  fill: '#9b4dff',
+                },
+              ]
+            : []),
       },
       connectedOrgs: connectedOrgsResolved,
       insights: executive?.insights ?? [],

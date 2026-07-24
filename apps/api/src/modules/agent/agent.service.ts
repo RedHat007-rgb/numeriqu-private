@@ -4737,6 +4737,33 @@ export class AgentService {
     // ── cogs/account (bar) — cost of goods / direct costs only ───────────────
     if (metric === 'cogs' && grouping === 'account') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
+      // The trial balance is the reconciled source for an unbounded P&L request.
+      // Journal rows can contain repeated operational postings and should only be
+      // used when a date range requires period-level filtering.
+      if (!range) {
+        const trialBalanceRows = await this.queryRows<any>(
+          `SELECT
+             coalesce(nullIf(account_name, ''), 'Unknown Account') AS account_name,
+             round(abs(sum(toFloat64(net_balance))), 0) AS total_cogs
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})
+             AND account_type = 'Cost of Goods Sold'
+             AND account_name != ''
+           GROUP BY account_name
+           HAVING total_cogs > 0
+           ORDER BY total_cogs DESC
+           LIMIT 20`,
+          { externalOrgIds: scope.externalOrgIds },
+        );
+        if (trialBalanceRows.length > 0) {
+          return {
+            data: trialBalanceRows.map((row) => ({
+              name: String(row.account_name),
+              value: this.num(row.total_cogs),
+            })),
+          };
+        }
+      }
       const rows = await this.queryRows<any>(
         `SELECT
            coalesce(nullIf(account_name, ''), 'Unknown Account') AS account_name,
@@ -4907,20 +4934,20 @@ export class AgentService {
     // ── gross_profit/month (line) — revenue minus COGS ───────────────────────
     if (metric === 'gross_profit' && grouping === 'month') {
       if (scope.externalOrgIds.length === 0) return { data: [] };
-      // Gross Profit = Net Income + OpEx (monthly from gl_dump) = Revenue - COGS.
-      // COGS doesn't have monthly gl_dump entries — use annual from trial_balance
-      // and distribute: GP/month = (annual_rev - annual_cogs) / 12.
-      // Monthly variation comes from OpEx (gl_dump has monthly Expense entries).
-      const glOpexRows = await this.queryRows<any>(
+      // Gross profit is strictly Revenue − COGS. The prior fallback varied gross
+      // profit using OpEx deviation, which mixed operating expenses into a gross
+      // margin measure. Use monthly COGS when present; otherwise distribute the
+      // reconciled annual COGS across the available months.
+      const glCogsRows = await this.queryRows<any>(
         `SELECT formatDateTime(toStartOfMonth(date), '%b %y') AS month,
                 toStartOfMonth(date) AS month_start,
-                round(sumIf(toFloat64(debit), account_type = 'Expense'), 0) AS opex
+                round(sumIf(toFloat64(debit), account_type = 'Cost of Goods Sold'), 0) AS cogs
          FROM ${glTbl}
          WHERE org_id IN ({externalOrgIds:Array(String)}) AND date IS NOT NULL
          GROUP BY month, month_start ORDER BY month_start ASC`,
         { externalOrgIds: scope.externalOrgIds },
       );
-      if (glOpexRows.length > 0) {
+      if (glCogsRows.length > 0) {
         const [annualRows] = await Promise.all([
           this.queryRows<any>(
             `SELECT round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev,
@@ -4931,20 +4958,21 @@ export class AgentService {
         ]);
         const annualRev = this.num((annualRows[0] as any)?.rev ?? 0);
         const annualCogs = this.num((annualRows[0] as any)?.cogs ?? 0);
-        const annualGP = annualRev - annualCogs;
-        const n = glOpexRows.length || 12;
-        const avgMonthlyGP = Math.round(annualGP / n);
-        // Adjust monthly by OpEx deviation from average to show variation
-        const avgOpex = Math.round(
-          glOpexRows.reduce((s: number, r: any) => s + this.num(r.opex), 0) / n,
+        const n = glCogsRows.length || 12;
+        const monthlyRevenue = annualRev / n;
+        const monthlyCogsTotal = glCogsRows.reduce(
+          (sum: number, row: any) => sum + this.num(row.cogs),
+          0,
         );
+        const fallbackMonthlyCogs = annualCogs / n;
         return {
-          data: (glOpexRows as any[])
+          data: (glCogsRows as any[])
             .map((r) => {
-              const opexDev = Math.round(this.num(r.opex)) - avgOpex;
+              const monthlyCogs =
+                monthlyCogsTotal > 0 ? this.num(r.cogs) : fallbackMonthlyCogs;
               return {
                 name: String(r.month),
-                value: avgMonthlyGP - opexDev,
+                value: Math.round(monthlyRevenue - monthlyCogs),
                 _s: String(r.month_start),
               };
             })
@@ -5001,16 +5029,30 @@ export class AgentService {
       );
       if (glCogsRows2.length > 0) {
         const annualRevRows2 = await this.queryRows<any>(
-          `SELECT round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev FROM ${tbTbl} WHERE org_id IN ({externalOrgIds:Array(String)})`,
+          `SELECT
+             round(abs(sumIf(toFloat64(net_balance), account_type = 'Income')), 0) AS rev,
+             round(abs(sumIf(toFloat64(net_balance), account_type = 'Cost of Goods Sold')), 0) AS cogs
+           FROM ${tbTbl}
+           WHERE org_id IN ({externalOrgIds:Array(String)})`,
           { externalOrgIds: scope.externalOrgIds },
         );
         const annualRev2 = this.num((annualRevRows2[0] as any)?.rev ?? 0);
-        const monthlyRev2 = Math.round(annualRev2 / (glCogsRows2.length || 12));
+        const annualCogs2 = this.num((annualRevRows2[0] as any)?.cogs ?? 0);
+        const periodCount = glCogsRows2.length || 12;
+        const monthlyRev2 = annualRev2 / periodCount;
+        const monthlyCogsTotal2 = glCogsRows2.reduce(
+          (sum: number, row: any) => sum + this.num(row.cogs),
+          0,
+        );
+        const fallbackMonthlyCogs2 = annualCogs2 / periodCount;
         return {
           data: (glCogsRows2 as any[])
             .map((r) => {
               const rev = monthlyRev2;
-              const cogs = Math.round(this.num(r.cogs));
+              const cogs =
+                monthlyCogsTotal2 > 0
+                  ? this.num(r.cogs)
+                  : fallbackMonthlyCogs2;
               return {
                 name: String(r.month),
                 value:

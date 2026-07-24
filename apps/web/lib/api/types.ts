@@ -274,6 +274,7 @@ export type DashboardResponse = {
   kpis: {
     totalRevenue: number;
     totalExpenses: number;
+    totalCogs?: number;
     netProfit: number;
     profitMargin: number;
     grossProfit?: number;
@@ -294,7 +295,7 @@ export type DashboardResponse = {
     efficiencyMultiplier: number;
   };
   cfo?: {
-    mode: "generic" | "ebpo";
+    mode: "generic" | "ebpo" | "star_schema";
     headline: string;
     cashBalance: number;
     workingCapital: number;
@@ -360,6 +361,10 @@ export type DashboardResponse = {
       month: string;
       revenue: number;
       expenses: number;
+      cogs?: number;
+      grossProfit?: number;
+      grossMarginPct?: number;
+      payroll?: number;
       invoices: number;
     }>;
     orgBreakdown: Array<{

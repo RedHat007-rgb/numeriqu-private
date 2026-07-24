@@ -162,7 +162,7 @@ export function BusinessUnitBreakdownCard({
       eyebrow="Portfolio mix"
       title="Where revenue and margin concentrate by business unit"
       icon={Building2}
-      emptyLabel="No business-unit revenue in scope yet. Once EBPO revenue is synced, this card ranks each unit by revenue and gross margin."
+      emptyLabel="No business-unit revenue is available for the selected scope."
       items={barUnits.map((u) => ({
         name: u.name,
         valueLabel: formatMoneyWithCurrency(u.revenue, currency),
@@ -280,7 +280,7 @@ export function WorkforceByDepartmentCard({
       eyebrow="Workforce"
       title="How headcount and payroll are distributed by department"
       icon={Layers}
-      emptyLabel="No department headcount in scope yet. Once payroll is synced, this card ranks departments by headcount and monthly payroll."
+      emptyLabel="No department headcount is available for the selected scope."
       items={depts.map((d) => ({
         name: d.name,
         valueLabel: `${formatNumber(d.headcount)} FTE`,
@@ -323,7 +323,7 @@ export function WorkforceByGeographyCard({ dashboard }: { dashboard: DashboardRe
       eyebrow="Global footprint"
       title="Where the delivery workforce sits by geography"
       icon={MapPin}
-      emptyLabel="No geographic headcount in scope yet. Once payroll is synced, this card ranks countries by delivery headcount."
+      emptyLabel="No geographic headcount is available for the selected scope."
       items={geos.map((g) => ({
         name: g.name,
         valueLabel: `${formatNumber(g.headcount)} FTE`,
@@ -372,7 +372,7 @@ export function DeliveryCenterScorecardCard({ dashboard }: { dashboard: Dashboar
       eyebrow="Service delivery"
       title="Which delivery centers protect SLA and utilization"
       icon={Gauge}
-      emptyLabel="No delivery-center operations in scope yet. Once operations data is synced, this card ranks centers by SLA with utilization and CSAT."
+      emptyLabel="No delivery-center operations are available for the selected scope."
       items={barCenters.map((c) => ({
         name: c.name,
         // Label every number so a first-time reader knows what it is: the bar + big value

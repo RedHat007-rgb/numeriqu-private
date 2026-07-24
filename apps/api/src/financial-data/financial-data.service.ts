@@ -42,6 +42,18 @@ export class FinancialDataService {
     );
   }
 
+  private isStarSchemaOrg(activeConns: Array<{ metadata: any }>): boolean {
+    return activeConns.some(
+      (c) => (c.metadata as Record<string, any>)?.source === 'star_schema_dataset',
+    );
+  }
+
+  private starSchemaPrefix(activeConns: Array<{ metadata: any }>): string {
+    const metadata = (activeConns[0]?.metadata as Record<string, any>) || {};
+    const candidate = String(metadata.tablePrefix ?? metadata.cubePrefix ?? 'sfin');
+    return /^[a-z][a-z0-9_]*$/i.test(candidate) ? candidate : 'sfin';
+  }
+
   private isEbpoOrg(
     activeConns: Array<{
       externalOrganizationId: string;
@@ -61,7 +73,7 @@ export class FinancialDataService {
    * Get the organization-level financial profile for a tenant.
    * Routes to GL-based queries for sample orgs, invoice-based for real Xero/QB orgs.
    */
-  async getFinancialProfile(tenantId: string): Promise<FinancialProfile> {
+  async getFinancialProfile(tenantId: string, range?: any): Promise<FinancialProfile> {
     this.logger.log(
       `[GroundTruth] Building financial profile for tenant=${tenantId}`,
     );
@@ -69,8 +81,17 @@ export class FinancialDataService {
     // SECURE ISOLATION: Fetch strictly verified and active orchestration pipelines.
     const activeConns = await prisma.erpConnection.findMany({
       where: { organizationId: tenantId, status: 'ACTIVE' },
-      select: { externalOrganizationId: true, provider: true, metadata: true },
+      select: {
+        externalOrganizationId: true,
+        displayName: true,
+        provider: true,
+        metadata: true,
+      },
     });
+
+    if (this.isStarSchemaOrg(activeConns)) {
+      return this.getStarSchemaProfile(tenantId, activeConns, range);
+    }
 
     // Route to GL-based queries for sample data orgs
     if (this.isSampleGLOrg(activeConns)) {
@@ -608,6 +629,14 @@ export class FinancialDataService {
    */
   private ebpoLatestAnchor(): string {
     return `(SELECT max(period_date) FROM ${this.dbName}.v_ebpo_kpi_monthly WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String})`;
+  }
+
+  private starSchemaLatestAnchor(prefix: string): string {
+    return `(SELECT max(period_date) FROM ${this.dbName}.v_${prefix}_pl_monthly WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String})`;
+  }
+
+  private sampleGlLatestAnchor(): string {
+    return `(SELECT max(date) FROM ${this.dbName}.sample_gl_dump WHERE tenant_id = {tenantId:String} AND org_id = {orgId:String})`;
   }
 
   /**
@@ -1315,6 +1344,14 @@ export class FinancialDataService {
           any(org_name) AS org_name,
           round(sum(total_revenue_usd), 2) AS revenue,
           round(sum(total_cost_usd + total_payroll_usd), 2) AS expenses,
+          round(sum(total_cost_usd), 2) AS cogs,
+          round(sum(gross_margin_usd), 2) AS gross_profit,
+          round(
+            sum(gross_margin_usd) /
+            nullIf(sum(total_revenue_usd), 0) * 100,
+            2
+          ) AS gross_margin_pct,
+          round(sum(total_payroll_usd), 2) AS payroll,
           0 AS invoice_count,
           'USD' AS currency
         FROM (
@@ -1324,6 +1361,7 @@ export class FinancialDataService {
             org_name,
             total_revenue_usd,
             total_cost_usd,
+            gross_margin_usd,
             total_payroll_usd
           FROM ${this.dbName}.v_ebpo_kpi_monthly
           WHERE tenant_id = {tenantId:String}
@@ -1332,6 +1370,69 @@ export class FinancialDataService {
         ) monthly_kpis
         GROUP BY month, org_id
         ORDER BY month ASC
+      `,
+      query_params: { tenantId, orgId },
+      format: 'JSONEachRow',
+      clickhouse_settings: SAFE_QUERY_SETTINGS,
+    });
+    return (await result.json()) as any[];
+  }
+
+  private async getStarSchemaMonthlyKpiTrend(
+    tenantId: string,
+    orgId: string,
+    prefix: string,
+    range?: any,
+  ): Promise<any[]> {
+    const time = this.timeWhere(
+      range,
+      'p.period_date',
+      this.starSchemaLatestAnchor(prefix),
+    );
+    const result = await this.clickhouse.query({
+      query: `
+        SELECT
+          p.period_date AS month,
+          'star_schema' AS provider,
+          p.org_id,
+          any(p.org_name) AS org_name,
+          round(sum(p.total_revenue_usd), 2) AS revenue,
+          round(sum(
+            p.total_cogs_usd +
+            p.total_sga_usd +
+            p.finance_cost_usd +
+            p.tax_expense_usd
+          ), 2) AS expenses,
+          round(sum(p.total_cogs_usd), 2) AS cogs,
+          round(sum(p.gross_profit_usd), 2) AS gross_profit,
+          round(
+            sum(p.gross_profit_usd) /
+            nullIf(sum(p.total_revenue_usd), 0) * 100,
+            2
+          ) AS gross_margin_pct,
+          round(any(coalesce(pay.payroll, 0)), 2) AS payroll,
+          0 AS invoice_count,
+          'USD' AS currency
+        FROM ${this.dbName}.v_${prefix}_pl_monthly p
+        LEFT JOIN (
+          SELECT
+            tenant_id,
+            org_id,
+            period_date,
+            sum(total_payroll_usd) AS payroll
+          FROM ${this.dbName}.v_${prefix}_payroll_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+          GROUP BY tenant_id, org_id, period_date
+        ) pay
+          ON pay.tenant_id = p.tenant_id
+          AND pay.org_id = p.org_id
+          AND pay.period_date = p.period_date
+        WHERE p.tenant_id = {tenantId:String}
+          AND p.org_id = {orgId:String}
+          ${time}
+        GROUP BY p.period_date, p.org_id
+        ORDER BY p.period_date ASC
       `,
       query_params: { tenantId, orgId },
       format: 'JSONEachRow',
@@ -1349,9 +1450,18 @@ export class FinancialDataService {
       const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
       if (activeOrgIds.length === 0) return [];
 
+      if (this.isStarSchemaOrg(activeConns)) {
+        return this.getStarSchemaMonthlyKpiTrend(
+          tenantId,
+          activeOrgIds[0],
+          this.starSchemaPrefix(activeConns),
+          range,
+        );
+      }
+
       // Route to GL-based trend for sample orgs
       if (this.isSampleGLOrg(activeConns)) {
-        return this.getSampleGLMonthlyRevenue(tenantId, activeOrgIds[0]);
+        return this.getSampleGLMonthlyRevenue(tenantId, activeOrgIds[0], range);
       }
 
       if (this.isEbpoOrg(activeConns)) {
@@ -1610,6 +1720,430 @@ export class FinancialDataService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // WORKBOOK STAR-SCHEMA QUERIES
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private async getStarSchemaProfile(
+    tenantId: string,
+    activeConns: Array<{
+      externalOrganizationId: string;
+      displayName?: string | null;
+      provider: string;
+      metadata: any;
+    }>,
+    range?: any,
+  ): Promise<FinancialProfile> {
+    const orgId = activeConns[0]?.externalOrganizationId ?? '';
+    const orgName =
+      (activeConns[0]?.metadata as Record<string, any>)?.orgName ??
+      activeConns[0]?.displayName ??
+      activeConns[0]?.externalOrganizationId ??
+      'Workbook organization';
+    const prefix = this.starSchemaPrefix(activeConns);
+    const rangeFilter = this.timeWhere(
+      range,
+      'period_date',
+      this.starSchemaLatestAnchor(prefix),
+    );
+    const invoiceRangeFilter = this.timeWhere(
+      range,
+      'invoice_date',
+      this.starSchemaLatestAnchor(prefix),
+    );
+    const postingRangeFilter = this.timeWhere(
+      range,
+      'g.posting_date',
+      this.starSchemaLatestAnchor(prefix),
+    );
+    const dimensionDateRangeFilter = this.timeWhere(
+      range,
+      'd.date',
+      this.starSchemaLatestAnchor(prefix),
+    );
+    const [
+      rows,
+      cashResult,
+      arResult,
+      apResult,
+      operationsResult,
+      businessUnitResult,
+      payrollMixResult,
+      departmentResult,
+      geographyResult,
+      deliveryResult,
+      clientResult,
+    ] = await Promise.all([
+      this.getStarSchemaMonthlyKpiTrend(tenantId, orgId, prefix, range),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            round(argMax(closing_cash_balance_usd, period_date), 2) AS cash_balance,
+            round(sumIf(net_cash_flow_usd, positionCaseInsensitive(cash_flow_activity, 'Operating') > 0), 2) AS operating_cash_flow,
+            round(
+              sumIf(net_cash_flow_usd, positionCaseInsensitive(cash_flow_activity, 'Operating') > 0) +
+              sumIf(net_cash_flow_usd, positionCaseInsensitive(cash_flow_activity, 'Investing') > 0),
+              2
+            ) AS free_cash_flow
+          FROM ${this.dbName}.v_${prefix}_cashflow_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${rangeFilter}
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            round(sum(outstanding_balance_usd), 2) AS outstanding,
+            round(
+              sum(days_sales_outstanding) /
+              nullIf(sum(days_sales_outstanding_wt), 0),
+              2
+            ) AS dso_days,
+            (
+              SELECT countIf(outstanding_balance_usd > 0)
+              FROM ${this.dbName}.${prefix}_fact_accounts_receivable
+              WHERE tenant_id = {tenantId:String}
+                AND org_id = {orgId:String}
+                ${invoiceRangeFilter}
+            ) AS open_count,
+            (
+              SELECT round(sumIf(outstanding_balance_usd, days_past_due > 0), 2)
+              FROM ${this.dbName}.${prefix}_fact_accounts_receivable
+              WHERE tenant_id = {tenantId:String}
+                AND org_id = {orgId:String}
+                ${invoiceRangeFilter}
+            ) AS overdue_amount,
+            (
+              SELECT countIf(outstanding_balance_usd > 0 AND days_past_due > 0)
+              FROM ${this.dbName}.${prefix}_fact_accounts_receivable
+              WHERE tenant_id = {tenantId:String}
+                AND org_id = {orgId:String}
+                ${invoiceRangeFilter}
+            ) AS overdue_count
+          FROM ${this.dbName}.v_${prefix}_ar_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            AND period_date = (
+              SELECT max(period_date)
+              FROM ${this.dbName}.v_${prefix}_ar_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id = {orgId:String}
+                ${rangeFilter}
+            )
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            round(sum(outstanding_balance_usd), 2) AS outstanding,
+            round(
+              sum(days_payable_outstanding) /
+              nullIf(sum(days_payable_outstanding_wt), 0),
+              2
+            ) AS dpo_days
+          FROM ${this.dbName}.v_${prefix}_ap_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            AND period_date = (
+              SELECT max(period_date)
+              FROM ${this.dbName}.v_${prefix}_ap_monthly
+              WHERE tenant_id = {tenantId:String}
+                AND org_id = {orgId:String}
+                ${rangeFilter}
+            )
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            round(sum(sla_compliance_pct) / nullIf(sum(sla_compliance_pct_wt), 0), 2) AS sla_pct,
+            round(sum(utilization_pct) / nullIf(sum(utilization_pct_wt), 0), 2) AS utilization_pct,
+            round(sum(csat_pct) / nullIf(sum(csat_pct_wt), 0), 2) AS csat_pct
+          FROM ${this.dbName}.v_${prefix}_operations_monthly
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${rangeFilter}
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            coalesce(nullIf(b.business_unit_name, ''), 'Unassigned') AS name,
+            round(sumIf(g.pl_amount_usd, g.account_type = 'Revenue'), 2) AS revenue,
+            round(sumIf(g.pl_amount_usd, g.account_type = 'Direct Cost (COS)'), 2) AS cost,
+            round(
+              (
+                sumIf(g.pl_amount_usd, g.account_type = 'Revenue') -
+                sumIf(g.pl_amount_usd, g.account_type = 'Direct Cost (COS)')
+              ) / nullIf(sumIf(g.pl_amount_usd, g.account_type = 'Revenue'), 0) * 100,
+              2
+            ) AS margin_pct
+          FROM ${this.dbName}.${prefix}_fact_general_ledger g
+          LEFT JOIN ${this.dbName}.${prefix}_dim_business_unit b
+            ON b.tenant_id = g.tenant_id
+            AND b.org_id = g.org_id
+            AND b.business_unit_key = g.business_unit_key
+          WHERE g.tenant_id = {tenantId:String}
+            AND g.org_id = {orgId:String}
+            AND g.account_type IN ('Revenue', 'Direct Cost (COS)')
+            ${postingRangeFilter}
+          GROUP BY name
+          HAVING revenue > 0
+          ORDER BY revenue DESC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            round(sum(p.basic_salary_usd), 2) AS basic_salary,
+            round(sum(p.overtime_usd), 2) AS overtime,
+            round(sum(
+              p.incentives_usd +
+              p.performance_bonus_usd +
+              p.joining_bonus_usd +
+              p.retention_bonus_usd +
+              p.variable_pay_usd
+            ), 2) AS variable_pay,
+            round(sum(
+              p.employer_contributions_usd +
+              p.medical_benefits_usd +
+              p.insurance_usd +
+              p.shift_allowance_usd +
+              p.transport_allowance_usd +
+              p.meal_allowance_usd +
+              p.leave_encashment_usd
+            ), 2) AS benefits
+          FROM ${this.dbName}.${prefix}_fact_payroll p
+          INNER JOIN ${this.dbName}.${prefix}_dim_date d
+            ON d.tenant_id = p.tenant_id
+            AND d.org_id = p.org_id
+            AND d.date_key = p.date_key
+          WHERE p.tenant_id = {tenantId:String}
+            AND p.org_id = {orgId:String}
+            ${dimensionDateRangeFilter}
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            coalesce(nullIf(department, ''), 'Unassigned') AS name,
+            round(argMax(employee_headcount, period_date), 0) AS headcount,
+            round(sum(total_payroll_usd), 2) AS payroll
+          FROM ${this.dbName}.v_${prefix}_department_workforce_semantic
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${rangeFilter}
+          GROUP BY name
+          HAVING headcount > 0
+          ORDER BY headcount DESC, payroll DESC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            coalesce(nullIf(country, ''), 'Unassigned') AS name,
+            uniqExact(employee_id) AS headcount
+          FROM ${this.dbName}.v_${prefix}_employee_semantic
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+          GROUP BY name
+          HAVING headcount > 0
+          ORDER BY headcount DESC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            coalesce(nullIf(delivery_center, ''), 'Unassigned') AS name,
+            round(avg(sla_compliance_pct), 2) AS sla_pct,
+            round(avg(utilization_pct), 2) AS utilization_pct,
+            round(avg(csat_pct), 2) AS csat_pct
+          FROM ${this.dbName}.v_${prefix}_delivery_scorecard_semantic
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${rangeFilter}
+          GROUP BY name
+          ORDER BY sla_pct DESC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+      this.clickhouse.query({
+        query: `
+          SELECT
+            coalesce(nullIf(client_name, ''), 'Unassigned') AS name,
+            round(sum(total_revenue_usd), 2) AS revenue,
+            round(sum(gross_profit_usd), 2) AS gross_profit
+          FROM ${this.dbName}.v_${prefix}_client_scorecard_semantic
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${rangeFilter}
+          GROUP BY name
+          HAVING revenue > 0
+          ORDER BY revenue DESC
+        `,
+        query_params: { tenantId, orgId },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      }),
+    ]);
+    const cash = ((await cashResult.json()) as any[])[0] ?? {};
+    const ar = ((await arResult.json()) as any[])[0] ?? {};
+    const ap = ((await apResult.json()) as any[])[0] ?? {};
+    const operations = ((await operationsResult.json()) as any[])[0] ?? {};
+    const businessUnitRows = (await businessUnitResult.json()) as any[];
+    const payrollMix = ((await payrollMixResult.json()) as any[])[0] ?? {};
+    const departmentRows = (await departmentResult.json()) as any[];
+    const geographyRows = (await geographyResult.json()) as any[];
+    const deliveryRows = (await deliveryResult.json()) as any[];
+    const clientRows = (await clientResult.json()) as any[];
+    const revenue = rows.reduce((sum, row) => sum + (parseFloat(row.revenue) || 0), 0);
+    const expenses = rows.reduce((sum, row) => sum + (parseFloat(row.expenses) || 0), 0);
+    const payroll = rows.reduce((sum, row) => sum + (parseFloat(row.payroll) || 0), 0);
+    const netProfit = revenue - expenses;
+    const cashBalance = parseFloat(cash.cash_balance) || 0;
+    const arOutstanding = parseFloat(ar.outstanding) || 0;
+    const apOutstanding = parseFloat(ap.outstanding) || 0;
+    const businessUnits = businessUnitRows.map((row) => ({
+      name: String(row.name),
+      revenue: parseFloat(row.revenue) || 0,
+      cost: parseFloat(row.cost) || 0,
+      marginPct: parseFloat(row.margin_pct) || 0,
+    }));
+    const costElements = [
+      { name: 'Basic salary', value: parseFloat(payrollMix.basic_salary) || 0 },
+      { name: 'Variable pay', value: parseFloat(payrollMix.variable_pay) || 0 },
+      { name: 'Benefits', value: parseFloat(payrollMix.benefits) || 0 },
+      { name: 'Overtime', value: parseFloat(payrollMix.overtime) || 0 },
+    ]
+      .filter((row) => row.value > 0)
+      .sort((a, b) => b.value - a.value);
+    const headcountByDepartment = departmentRows.map((row) => ({
+      name: String(row.name),
+      headcount: parseInt(row.headcount) || 0,
+      payroll: parseFloat(row.payroll) || 0,
+    }));
+    const headcountByGeography = geographyRows.map((row) => ({
+      name: String(row.name),
+      headcount: parseInt(row.headcount) || 0,
+    }));
+    const deliveryCenters = deliveryRows.map((row) => ({
+      name: String(row.name),
+      slaPct: parseFloat(row.sla_pct) || 0,
+      utilizationPct: parseFloat(row.utilization_pct) || 0,
+      csatPct: parseFloat(row.csat_pct) || 0,
+      callsHandled: 0,
+    }));
+    const topClient = clientRows[0] ?? {};
+    const smallestClient = clientRows[clientRows.length - 1] ?? {};
+    const topClientRevenue = parseFloat(topClient.revenue) || 0;
+    const smallestClientRevenue = parseFloat(smallestClient.revenue) || 0;
+
+    return {
+      tenantId,
+      revenue: {
+        totalRevenue: revenue,
+        avgInvoiceValue: 0,
+        totalInvoices: 0,
+        minInvoice: 0,
+        maxInvoice: 0,
+        providerCount: 1,
+        orgCount: 1,
+        currencyCount: 1,
+      },
+      expenses: {
+        totalExpenses: expenses,
+        totalBills: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+      },
+      netProfit,
+      profitMargin: revenue > 0 ? Math.round((netProfit / revenue) * 10000) / 100 : 0,
+      invoiceStats: { byStatusAndOrg: [] },
+      accountSummary: { byTypeAndOrg: [] },
+      connectedOrgs: [{
+        provider: 'star_schema',
+        orgId,
+        orgName,
+        invoiceCount: 0,
+        totalRevenue: revenue,
+        currency: 'USD',
+      }],
+      budgetSummary: [],
+      bankSummary: { total_transfers: 0, total_volume: cashBalance },
+      ventureMetrics: {
+        burnRate: Math.round(expenses / Math.max(rows.length, 1)),
+        runwayMonths:
+          expenses > 0
+            ? Math.round((cashBalance / (expenses / Math.max(rows.length, 1))) * 10) / 10
+            : 0,
+        cashOnHand: cashBalance,
+        efficiencyMultiplier:
+          expenses > 0 ? Math.round((revenue / expenses) * 100) / 100 : 0,
+      },
+      workingCapital: arOutstanding - apOutstanding,
+      arOutstanding,
+      apOutstanding,
+      openInvoiceCount: parseInt(ar.open_count) || 0,
+      overdueAmount: parseFloat(ar.overdue_amount) || 0,
+      overdueCount: parseInt(ar.overdue_count) || 0,
+      operatingCashFlow: parseFloat(cash.operating_cash_flow) || 0,
+      freeCashFlow: parseFloat(cash.free_cash_flow) || 0,
+      payrollToRevenuePct: revenue > 0 ? (payroll / revenue) * 100 : 0,
+      dsoDays: parseFloat(ar.dso_days) || 0,
+      dpoDays: parseFloat(ap.dpo_days) || 0,
+      slaCompliancePct: parseFloat(operations.sla_pct) || 0,
+      utilizationPct: parseFloat(operations.utilization_pct) || 0,
+      csatPct: parseFloat(operations.csat_pct) || 0,
+      businessUnits,
+      costElements,
+      headcountByDepartment,
+      headcountByGeography,
+      smallestDepartment:
+        [...headcountByDepartment].sort((a, b) => a.headcount - b.headcount)[0] ?? null,
+      smallestGeography:
+        [...headcountByGeography].sort((a, b) => a.headcount - b.headcount)[0] ?? null,
+      deliveryCenters,
+      workforceHeadcount: headcountByGeography.reduce((sum, row) => sum + row.headcount, 0),
+      workforcePayroll: headcountByDepartment.reduce((sum, row) => sum + row.payroll, 0),
+      workforceCountries: headcountByGeography.length,
+      topClientName: String(topClient.name ?? '') || null,
+      topClientRevenue,
+      topClientConcentrationPct: revenue > 0 ? (topClientRevenue / revenue) * 100 : 0,
+      smallestClientName: String(smallestClient.name ?? '') || null,
+      smallestClientRevenue,
+      smallestClientConcentrationPct:
+        revenue > 0 ? (smallestClientRevenue / revenue) * 100 : 0,
+      computedAt: new Date().toISOString(),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // GL-BASED SAMPLE DATA QUERIES
   // Used when the ERP connection metadata has { source: "sample_gl_v2" }.
   // Queries analytics.sample_gl_dump + analytics.sample_trial_balance instead of
@@ -1798,25 +2332,27 @@ export class FinancialDataService {
    * Monthly revenue trend for sample GL org — uses credit amounts where account_type = 'Income'.
    * Called by getMonthlyRevenueTrend() when the org is a sample GL org.
    */
-  private async getSampleGLMonthlyRevenue(tenantId: string, orgId: string): Promise<any[]> {
+  private async getSampleGLMonthlyRevenue(
+    tenantId: string,
+    orgId: string,
+    range?: any,
+  ): Promise<any[]> {
     try {
+      const time = this.timeWhere(range, 'date', this.sampleGlLatestAnchor());
       const res = await this.clickhouse.query({
         query: `
           SELECT
-            toStartOfMonth(date)    AS month,
-            ABS(sum(credit - debit)) AS revenue,
-            count(*)                AS invoice_count
+            toStartOfMonth(date) AS month,
+            abs(sumIf(credit - debit, account_type = 'Income')) AS revenue,
+            abs(sumIf(debit - credit, account_type = 'Cost of Goods Sold')) AS cogs,
+            abs(sumIf(debit - credit, account_type = 'Expense')) AS operating_expenses,
+            countIf(account_type = 'Income') AS invoice_count
           FROM ${this.dbName}.sample_gl_dump
           WHERE tenant_id = {tenantId:String}
             AND org_id    = {orgId:String}
             AND date IS NOT NULL
-            AND account_number IN (
-              SELECT account_number
-              FROM ${this.dbName}.sample_trial_balance
-              WHERE tenant_id  = {tenantId:String}
-                AND org_id     = {orgId:String}
-                AND account_type = 'Income'
-            )
+            AND account_type IN ('Income', 'Cost of Goods Sold', 'Expense')
+            ${time}
           GROUP BY month
           ORDER BY month ASC
         `,
@@ -1825,15 +2361,25 @@ export class FinancialDataService {
         clickhouse_settings: SAFE_QUERY_SETTINGS,
       });
       const rows: any[] = await res.json();
-      return rows.map((r) => ({
-        month:         (r.month ?? '').slice(0, 7),
-        provider:      'sample',
-        org_id:        orgId,
-        org_name:      'Sample Company 2024',
-        revenue:       String(parseFloat(r.revenue) || 0),
-        invoice_count: String(parseInt(r.invoice_count) || 0),
-        currency:      'USD',
-      }));
+      return rows.map((r) => {
+        const revenue = parseFloat(r.revenue) || 0;
+        const cogs = parseFloat(r.cogs) || 0;
+        const operatingExpenses = parseFloat(r.operating_expenses) || 0;
+        const grossProfit = revenue - cogs;
+        return {
+          month: (r.month ?? '').slice(0, 7),
+          provider: 'sample',
+          org_id: orgId,
+          org_name: 'Sample Company 2024',
+          revenue: String(revenue),
+          expenses: String(cogs + operatingExpenses),
+          cogs: String(cogs),
+          gross_profit: String(grossProfit),
+          gross_margin_pct: String(revenue > 0 ? (grossProfit / revenue) * 100 : 0),
+          invoice_count: String(parseInt(r.invoice_count) || 0),
+          currency: 'USD',
+        };
+      });
     } catch (e: any) {
       this.logger.error(`[GL] Monthly revenue query failed: ${e.message}`);
       return [];
@@ -1863,6 +2409,36 @@ export interface FinancialProfile {
   budgetSummary: any[];
   bankSummary: { total_transfers: number; total_volume: number };
   ventureMetrics: VentureMetrics;
+  workingCapital?: number;
+  arOutstanding?: number;
+  apOutstanding?: number;
+  openInvoiceCount?: number;
+  overdueAmount?: number;
+  overdueCount?: number;
+  operatingCashFlow?: number;
+  freeCashFlow?: number;
+  payrollToRevenuePct?: number;
+  dsoDays?: number;
+  dpoDays?: number;
+  slaCompliancePct?: number;
+  utilizationPct?: number;
+  csatPct?: number;
+  businessUnits?: EbpoBusinessUnitRow[];
+  costElements?: EbpoCostElementRow[];
+  headcountByDepartment?: EbpoDepartmentRow[];
+  headcountByGeography?: EbpoGeographyRow[];
+  smallestDepartment?: EbpoDepartmentRow | null;
+  smallestGeography?: EbpoGeographyRow | null;
+  deliveryCenters?: EbpoDeliveryCenterRow[];
+  workforceHeadcount?: number;
+  workforcePayroll?: number;
+  workforceCountries?: number;
+  topClientName?: string | null;
+  topClientRevenue?: number;
+  topClientConcentrationPct?: number;
+  smallestClientName?: string | null;
+  smallestClientRevenue?: number;
+  smallestClientConcentrationPct?: number;
   computedAt: string;
 }
 

@@ -663,7 +663,7 @@ export function OverviewPage() {
             interactive={!isEditing}
             eyebrow="Gross Margin Percentage"
             value={formatPercentDelta((dashboard.kpis.grossMarginPct ?? dashboard.kpis.profitMargin) / 100)}
-            detail={`${formatMoneyWithCurrency(dashboard.kpis.grossProfit ?? dashboard.kpis.netProfit, prefs.currencyDisplay)} gross profit`}
+            detail={`${formatMoneyWithCurrency(dashboard.kpis.grossProfit ?? dashboard.kpis.netProfit, prefs.currencyDisplay)} gross profit${dashboard.kpis.totalCogs === undefined ? "" : ` · ${formatMoneyWithCurrency(dashboard.kpis.totalCogs, prefs.currencyDisplay)} COGS`}`}
           />
         );
       case "open-invoices":

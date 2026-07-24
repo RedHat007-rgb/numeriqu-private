@@ -17,9 +17,10 @@ import * as dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const API = process.env.BATTERY_API || 'http://127.0.0.1:3000';
-const ORG = '4d1aa04c-0983-4f6a-8705-fe9c10b27c62'; // numeriqu-demo
-const EMAIL = 'demo3@numeriqu.com';
-const QUESTIONS = JSON.parse(
+const ORG =
+  process.env.BATTERY_ORG || '4d1aa04c-0983-4f6a-8705-fe9c10b27c62';
+const EMAIL = process.env.BATTERY_EMAIL || 'demo3@numeriqu.com';
+const ALL_QUESTIONS = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, 'astra-questions.json'), 'utf8'),
 ) as Array<{
   no: string;
@@ -27,7 +28,22 @@ const QUESTIONS = JSON.parse(
   main: string;
   followup: string | null;
 }>;
-const OUT = path.resolve(__dirname, 'astra-results.jsonl');
+const START = Math.max(0, Number(process.env.BATTERY_START || '0'));
+const LIMIT = Math.max(1, Number(process.env.BATTERY_LIMIT || '999'));
+const requestedNumbers = new Set(
+  String(process.env.BATTERY_NUMBERS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const QUESTIONS = requestedNumbers.size
+  ? ALL_QUESTIONS.filter((question) =>
+      requestedNumbers.has(String(Number(question.no))),
+    )
+  : ALL_QUESTIONS.slice(START, START + LIMIT);
+const OUT = process.env.BATTERY_OUT
+  ? path.resolve(process.env.BATTERY_OUT)
+  : path.resolve(__dirname, 'astra-results.jsonl');
 
 let COOKIE = '';
 
@@ -36,7 +52,7 @@ async function api(
   pathname: string,
   body?: unknown,
   timeoutMs = 150000,
-): Promise<{ status: number; json: any; setCookie: string[] }> {
+): Promise<{ status: number; json: any; raw: string; setCookie: string[] }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -58,7 +74,7 @@ async function api(
     } catch {
       json = { _raw: text.slice(0, 200) };
     }
-    return { status: res.status, json, setCookie };
+    return { status: res.status, json, raw: text, setCookie };
   } finally {
     clearTimeout(timer);
   }
@@ -75,12 +91,18 @@ async function login() {
   );
 }
 
-async function latestSessionId(): Promise<string | undefined> {
-  const r = await api('GET', '/agent/sessions');
-  const list = Array.isArray(r.json)
-    ? r.json
-    : (r.json?.sessions ?? r.json?.data ?? []);
-  return list[0]?.id;
+function parseSse(raw: string): any[] {
+  return raw
+    .split('\n')
+    .map((line) => (line.startsWith('data:') ? line.slice(5).trim() : ''))
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
 }
 
 /** Pull the salient fields from the freshly-built dashboard for auditing. */
@@ -106,19 +128,50 @@ function summarizeDashboard(j: any) {
 
 async function runQuery(query: string, sessionId?: string) {
   const t0 = Date.now();
-  const r = await api(
+  let r = await api(
     'POST',
     '/agent/query',
     sessionId ? { query, sessionId } : { query },
   );
+  if (r.status === 401) {
+    await login();
+    r = await api(
+      'POST',
+      '/agent/query',
+      sessionId ? { query, sessionId } : { query },
+    );
+  }
   const ms = Date.now() - t0;
-  const dash = await api('GET', '/agent/dashboards/latest');
+  const chunks = parseSse(r.raw);
+  const done = [...chunks].reverse().find((chunk) => chunk?.type === 'done');
+  const resolvedSessionId =
+    done?.metrics?.sessionId ?? sessionId ?? undefined;
+  const clarification = [...chunks]
+    .reverse()
+    .find((chunk) => chunk?.type === 'clarify');
+  let dash = resolvedSessionId
+    ? await api('GET', `/agent/sessions/${resolvedSessionId}/dashboard`)
+    : null;
+  if (dash?.status === 401 && resolvedSessionId) {
+    await login();
+    dash = await api(
+      'GET',
+      `/agent/sessions/${resolvedSessionId}/dashboard`,
+    );
+  }
   return {
     status: r.status,
     ms,
+    sessionId: resolvedSessionId,
+    needsInput: Boolean(done?.metrics?.needsInput),
     summary:
-      r.status === 201 || r.status === 200
-        ? summarizeDashboard(dash.json)
+      clarification
+        ? {
+            clarification: clarification.question,
+            options: clarification.options,
+          }
+        : (r.status === 201 || r.status === 200) && dash?.status === 200
+          ? summarizeDashboard(dash.json)
         : { error: r.json },
   };
 }
@@ -131,7 +184,7 @@ async function main() {
     n++;
     try {
       const mainRes = await runQuery(q.main);
-      const sid = await latestSessionId();
+      const sid = mainRes.sessionId;
       let fu: any = null;
       if (q.followup && sid) fu = await runQuery(q.followup, sid);
       const rec = {

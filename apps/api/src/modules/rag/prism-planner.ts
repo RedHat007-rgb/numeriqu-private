@@ -1,19 +1,15 @@
 import { PRISM_POLICY_VERSION, PRISM_PROMPT_VERSION } from './prism-contracts';
 import type { PrismModelPort } from './prism-model.gateway';
+import {
+  PRISM_INTENTS,
+  capabilityPlannerGuidance,
+  type PrismIntent,
+} from './prism-capabilities';
 
-export const PRISM_INTENTS = [
-  'revenue_summary',
-  'revenue_trend',
-  'receivables',
-  'invoice_status',
-  'entity_breakdown',
-  'profitability',
-  'liquidity_runway',
-  'finance_explanation',
-  'clarify',
-] as const;
-
-export type PrismIntent = (typeof PRISM_INTENTS)[number];
+// The capability catalog (prism-capabilities.ts) is the single source of truth
+// for allow-listed intents. Re-exported here so existing consumers are stable.
+export { PRISM_INTENTS };
+export type { PrismIntent };
 
 export type PrismPlan = {
   contractVersion: typeof PRISM_PROMPT_VERSION;
@@ -118,7 +114,9 @@ export async function planPrismQuery(
     system:
       `You are the intent planner for Prism, a finance-only business advisor. ` +
       `Return contractVersion=${PRISM_PROMPT_VERSION} and policyVersion=${PRISM_POLICY_VERSION}. ` +
-      'Never answer the question, invent a value, write SQL, request internal system details, or broaden access. Map the request to one allow-listed intent. Use UNSPECIFIED when the user did not state a time range. periodCount is zero unless a LAST_N_* range was explicitly stated. Clarify only when executing the financial request would require a material missing choice.',
+      'Never answer the question, invent a value, write SQL, request internal system details, or broaden access. Map the request to one allow-listed intent.\n' +
+      `${capabilityPlannerGuidance()}\n` +
+      'Use UNSPECIFIED when the user did not state a time range. periodCount is zero unless a LAST_N_* range was explicitly stated. Clarify only when executing the financial request would require a material missing choice.',
     user: query,
   });
   return isPlan(parsed) ? parsed : null;

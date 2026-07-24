@@ -263,6 +263,25 @@ export function parsePlannerResponse(
     ...(obj.showVariancePct === true ? { showVariancePct: true } : {}),
     ...(obj.normalize === true ? { normalize: true } : {}),
     ...(obj.highlightNegative === true ? { highlightNegative: true } : {}),
+    ...(obj.highlightWeakPerformance === true
+      ? { highlightWeakPerformance: true }
+      : {}),
+    ...(obj.highlightCostWithoutRevenue === true
+      ? { highlightCostWithoutRevenue: true }
+      : {}),
+    ...(obj.highlightLowPerformance === true
+      ? { highlightLowPerformance: true }
+      : {}),
+    ...(obj.highlightExtremes === 'max' ||
+    obj.highlightExtremes === 'min' ||
+    obj.highlightExtremes === 'both'
+      ? {
+          highlightExtremes: obj.highlightExtremes as
+            | 'max'
+            | 'min'
+            | 'both',
+        }
+      : {}),
     ...(Number.isInteger(Number(obj.highlightTopN)) &&
     Number(obj.highlightTopN) > 0
       ? { highlightTopN: Number(obj.highlightTopN) }

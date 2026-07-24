@@ -1,0 +1,117 @@
+:root {
+  --bg: #0a1128;
+  --panel: #141f46;
+  --panel2: #1c2a5a;
+  --border: rgba(255, 255, 255, 0.1);
+  --soft: rgba(255, 255, 255, 0.06);
+  --text: #ffffff;
+  --muted: #b2c4dc;
+  --muted2: #6482b4;
+  --brand: #0077ff;
+  --blue: #0077ff;
+  --cyan: #00c7d2;
+  --purple: #9b4dff;
+}
+
+html {
+  background: #0a1128;
+}
+
+body {
+  background:
+    radial-gradient(900px 520px at 12% -8%, rgba(155, 77, 255, 0.13), transparent 60%),
+    radial-gradient(900px 480px at 100% 0%, rgba(0, 119, 255, 0.12), transparent 58%),
+    #0a1128;
+  color: #ffffff;
+}
+
+.topbar,
+.controlbar {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.topbar {
+  background: linear-gradient(180deg, rgba(15, 24, 55, 0.98), rgba(10, 17, 40, 0.98));
+}
+
+.controlbar {
+  background: rgba(10, 17, 40, 0.94);
+}
+
+.brand-mark,
+.preset.active,
+.apply-btn {
+  background: linear-gradient(135deg, #0077ff, #9b4dff);
+  color: #ffffff;
+  box-shadow: 0 0 22px rgba(0, 119, 255, 0.28);
+}
+
+.nav-item.active {
+  border-color: rgba(0, 119, 255, 0.42);
+  background: linear-gradient(135deg, rgba(0, 119, 255, 0.2), rgba(155, 77, 255, 0.1));
+  box-shadow: inset 0 -2px 0 #0077ff;
+}
+
+.kpi-card,
+.card,
+.platform-card,
+.client-snapshot-card,
+.brief-board,
+.brief-signal,
+.watch-item {
+  border-color: rgba(0, 119, 255, 0.16);
+}
+
+.command-brief {
+  border-color: rgba(0, 119, 255, 0.24);
+  background:
+    radial-gradient(circle at 0 0, rgba(0, 119, 255, 0.18), transparent 34%),
+    radial-gradient(circle at 100% 0, rgba(155, 77, 255, 0.14), transparent 38%),
+    linear-gradient(150deg, #0f1837, #0a1128 72%);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.nav-item,
+.preset,
+.apply-btn,
+.layout-btn,
+.drill-trigger,
+.drill-close,
+.drill-crumb,
+.zoom-btn {
+  min-height: 40px;
+}
+
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #00c7d2;
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .nav-item,
+  .preset,
+  .apply-btn {
+    min-height: 44px;
+  }
+
+  .main {
+    overflow-x: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

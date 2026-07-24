@@ -18,6 +18,7 @@ import {
   PanelsLeftBottom,
   ArrowLeft,
   BarChart3,
+  Gauge,
   ExternalLink,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -31,6 +32,7 @@ const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon:
   { href: "/dashboard", label: "Overview", description: "What changed, at a glance", icon: LayoutDashboard },
   { href: "/dashboard/signals", label: "Signals", description: "Investigate finance changes", icon: Radar },
   { href: "/dashboard/dashboards", label: "Dashboards", description: "Saved decision surfaces", icon: LineChart },
+  { href: "/dashboard/new-dashboard", label: "New Dashboard", description: "CFO insights command center", icon: Gauge },
   { href: "/dashboard/rag", label: "Prism", description: "Evidence-first answers, cited", icon: Search },
   { href: "/dashboard/agent", label: "Astra", description: "Turn questions into dashboards", icon: Bot },
   { href: "/dashboard/messages", label: "Messages", description: "Team conversations and direct messages", icon: MessageSquare },

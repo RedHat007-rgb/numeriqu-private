@@ -105,7 +105,6 @@ async function bootstrap() {
 ║  RAG Layer:    POST /rag/query    (independent)              ║
 ║  Agent Layer:  POST /agent/query  (independent)              ║
 ║  Analytics:    GET  /analytics/insights                      ║
-║  Legacy:       POST /ai/query     (deprecated, backward compat)║
 ║  Health:       GET  /rag/health   GET /agent/health          ║
 ╚══════════════════════════════════════════════════════════════╝
   `);

@@ -8,6 +8,7 @@ import {
 } from './prism-contracts';
 import type { PrismTone } from './prism-policy';
 import { formatPrismMoney, formatPrismPercentage } from './prism-calculations';
+import { followUpActionsFor } from './prism-capabilities';
 
 function unitFor(
   measure: Extract<EngineAnswer, { ok: true }>['measures'][number],
@@ -133,22 +134,6 @@ export function capabilityAnswerEnvelope(
         }
       : {}),
     evidence,
-    actions: [
-      {
-        id: 'compare_period',
-        label: 'Compare period',
-        prompt: `Compare ${answer.title} with the previous period.`,
-      },
-      {
-        id: 'explain_drivers',
-        label: 'Explain drivers',
-        prompt: `Explain the verified drivers of ${answer.title}.`,
-      },
-      {
-        id: 'create_briefing',
-        label: 'Create briefing',
-        prompt: `Create an executive finance briefing for ${answer.title}.`,
-      },
-    ],
+    actions: followUpActionsFor(answer.title),
   };
 }

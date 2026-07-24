@@ -192,17 +192,64 @@ function extractFilters(
 ): EngineSpecFilter[] {
   const q = question.toLocaleLowerCase();
   const filters: EngineSpecFilter[] = [];
+  const measurePhrases = model.measures.flatMap((measure) =>
+    [measure.key, measure.label]
+      .map((value) =>
+        value
+          .toLocaleLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim(),
+      )
+      .filter(Boolean),
+  );
+  const commaCount = (q.match(/,/g) ?? []).length;
   for (const dimension of model.dimensions) {
     const values = (dimension.sampleValues ?? [])
       .map(String)
       .map((value) => value.trim())
       .filter(
-        (value) =>
-          value.length >= 3 &&
-          new RegExp(
-            `(?:^|[^a-z0-9])${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^a-z0-9])`,
+        (value) => {
+          if (value.length < 3) return false;
+          const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const match = new RegExp(
+            `(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`,
             'i',
-          ).test(q),
+          ).exec(q);
+          if (!match) return false;
+
+          // A sample member can share its text with a measure (for example the
+          // account-type member "Revenue" and the measure "Total Revenue").
+          // In that case the metric mention is not evidence of a categorical
+          // filter. The model may still choose a filter when the surrounding
+          // language explicitly asks to narrow the result.
+          const normalizedValue = value
+            .toLocaleLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+          const overlapsMentionedMeasure = measurePhrases.some(
+            (phrase) =>
+              (` ${phrase} `.includes(` ${normalizedValue} `) ||
+                ` ${normalizedValue} `.includes(` ${phrase} `)) &&
+              ` ${q.replace(/[^a-z0-9]+/g, ' ')} `.includes(
+                ` ${normalizedValue} `,
+              ),
+          );
+          const preceding = q.slice(Math.max(0, match.index - 48), match.index);
+          const explicitSelection =
+            /\b(?:for|where|only|among|excluding|except|include|including)\s+(?:the\s+)?$/i.test(
+              preceding,
+            );
+          if (overlapsMentionedMeasure && !explicitSelection) return false;
+
+          // Lists in visualization requests often describe the components to
+          // plot, not a partial member filter. Sample values are intentionally
+          // incomplete, so deriving a filter from only the sampled members
+          // would silently drop unsampled categories. In an enumerated clause,
+          // only apply deterministic filtering when selection language is
+          // explicit; otherwise leave semantic interpretation to OpenAI.
+          if (commaCount >= 2 && !explicitSelection) return false;
+          return true;
+        },
       );
     if (values.length) {
       filters.push({
@@ -293,11 +340,20 @@ export function applyRequestConstraints(
   question: string,
   spec: EngineChartSpec,
   model: SemanticModel,
-  options: { preserveTimeAxis?: boolean } = {},
+  options: {
+    preserveTimeAxis?: boolean;
+    preserveNormalization?: boolean;
+  } = {},
 ): EngineChartSpec {
   const constraints = extractRequestConstraints(question, model);
+  // Deterministic extraction intentionally avoids inferring filters from a
+  // partial sample of an enumerated member list. A planner-authored filter is
+  // different: it is the model's grounded interpretation of the complete
+  // request and must survive constraint application.
+  const plannerFilters = spec.filters ?? [];
   const next: EngineChartSpec = {
     ...spec,
+    ...(spec.filters ? { filters: plannerFilters } : {}),
     ...(constraints.dateRange ? { dateRange: constraints.dateRange } : {}),
     ...(constraints.period ? { period: constraints.period } : {}),
     ...(constraints.topN ? { topN: constraints.topN } : {}),
@@ -306,7 +362,7 @@ export function applyRequestConstraints(
     ...(constraints.filters.length
       ? {
           filters: [
-            ...(spec.filters ?? []).filter(
+            ...plannerFilters.filter(
               (existing) =>
                 !constraints.filters.some(
                   (nextFilter) =>
@@ -318,9 +374,20 @@ export function applyRequestConstraints(
         }
       : {}),
   };
+  const explicitlyRequestsNormalization =
+    /\b(?:share|percentage|percent)\s+of\s+(?:the\s+)?total\b|\b100\s*%\s*stacked\b|\bnormalize(?:d)?\b/i.test(
+      question,
+    );
+  if (
+    next.normalize &&
+    !explicitlyRequestsNormalization &&
+    !options.preserveNormalization
+  )
+    delete next.normalize;
   if (
     next.timeGrain &&
     !constraints.requiresTimeAxis &&
+    !next.comparison &&
     !options.preserveTimeAxis
   )
     delete next.timeGrain;
@@ -337,52 +404,6 @@ export function validateRequestFidelity(
   );
   if (arithmetic) {
     return 'requested arithmetic is not explicitly represented by the chart specification';
-  }
-
-  const genericQualifiers = new Set([
-    'all',
-    'bottom',
-    'by',
-    'each',
-    'highest',
-    'largest',
-    'lowest',
-    'smallest',
-    'top',
-    'total',
-    'per',
-  ]);
-  for (const dimension of model.dimensions) {
-    const noun = dimension.label
-      .toLowerCase()
-      .split(/\s+/)
-      .find(
-        (word) =>
-          !['name', 'type', 'group', 'class', 'category'].includes(word),
-      );
-    if (!noun) continue;
-    const qualifier = question
-      .toLowerCase()
-      .match(new RegExp(`\\b([a-z][a-z-]*)\\s+${noun}s?\\b`))?.[1];
-    if (!qualifier || genericQualifiers.has(qualifier)) continue;
-    const represented = (spec.filters ?? []).some((filter) => {
-      const filteredDimension = model.dimensions.find(
-        (candidate) => candidate.key === filter.dimensionKey,
-      );
-      const filteredNoun = filteredDimension?.label
-        .toLowerCase()
-        .split(/\s+/)
-        .find(
-          (word) =>
-            !['name', 'type', 'group', 'class', 'category'].includes(word),
-        );
-      return (
-        filteredNoun === noun ||
-        filter.values.some((value) => value.toLowerCase().includes(qualifier))
-      );
-    });
-    if (!represented)
-      return `requested category qualifier is not represented: ${qualifier} ${noun}`;
   }
 
   const questionMentionsCatalogMeasure = model.measures.some(

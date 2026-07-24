@@ -570,6 +570,16 @@ export function buildEngineDisplay(
     return decorate({
       chartType: spec.chartType,
       valueFormat: primaryFmt,
+      ...(spec.chartType === 'kpi' && measures.length
+        ? {
+            series: measures.map((measure) => ({
+              key: measure.label,
+              role: 'bar' as const,
+              axis: 'left' as const,
+              format: unitFormat(measure.unit),
+            })),
+          }
+        : {}),
       ...(xAxisLabel ? { xAxisLabel } : {}),
       ...(measures[0] ? { yAxisLabel: yAxisTitleFor(measures[0]) } : {}),
     });
@@ -628,10 +638,16 @@ export function buildEngineDisplay(
       /\b(?:scheduled|target|capacity|net|variance|change|difference)\b/i.test(
         m.label,
       );
+    const isComponentOverlay =
+      spec.componentMode === true &&
+      spec.chartType === 'stacked_area' &&
+      i > 0;
     return {
       key: m.label,
       role:
-        spec.chartType === 'combo'
+        isComponentOverlay
+          ? 'line'
+          : spec.chartType === 'combo'
           ? i === 0
             ? 'bar'
             : 'line'
@@ -642,7 +658,7 @@ export function buildEngineDisplay(
               : i === 0 || sameScale
                 ? baseRole
                 : 'line',
-      axis: i === 0 || sameScale ? 'left' : 'right',
+      axis: i === 0 || sameScale || isComponentOverlay ? 'left' : 'right',
       format: fmt,
     };
   });
@@ -654,8 +670,15 @@ export function buildEngineDisplay(
     rightMeasures.length > 1 ? yAxisTitleForMeasures(rightMeasures) : undefined;
   const hasBarOverlay =
     baseRole === 'bar' && series.some((item) => item.role === 'line');
+  const hasComponentOverlay =
+    spec.componentMode === true &&
+    spec.chartType === 'stacked_area' &&
+    measures.length > 1;
   return decorate({
-    chartType: right || hasBarOverlay ? 'combo' : spec.chartType,
+    chartType:
+      right || hasBarOverlay || hasComponentOverlay
+        ? 'combo'
+        : spec.chartType,
     valueFormat: primaryFmt,
     series,
     ...(xAxisLabel ? { xAxisLabel } : {}),
@@ -715,6 +738,46 @@ export function compileSeriesSql(
     return { ok: false, reason: 'unknown hierarchy dimension' };
   if (hierarchyDims.some((dimension) => dimension!.table !== table))
     return { ok: false, reason: 'cross-table not supported' };
+
+  // A hierarchy on a KPI/scorecard must affect the query, not live only as
+  // inert metadata. Return one wide scorecard row per hierarchy leaf with the
+  // complete catalog-derived path as its name. This keeps every requested
+  // level visible and works for arbitrary runtime dimensions and measures.
+  if (spec.chartType === 'kpi' && hierarchyDims.length >= 2) {
+    const dims = hierarchyDims as SemanticDimension[];
+    const path = dims
+      .map((dimension) => `toString(${ident(dimension.column)})`)
+      .join(`, ' › ', `);
+    const groupBy = dims.map((dimension) => ident(dimension.column)).join(', ');
+    const values = resolved
+      .map(
+        (measure) =>
+          `${measureValueExpr(measure)} AS ${quoteAlias(measure.label)}`,
+      )
+      .join(', ');
+    const having = resolved
+      .map(
+        (measure) =>
+          `abs(ifNull(${quoteAlias(measure.label)}, 0)) > 0.000000000001`,
+      )
+      .join(' OR ');
+    const maxRows = ctx.maxRows ?? 5000;
+    const limit =
+      spec.topN && spec.topN > 0 ? Math.min(spec.topN, maxRows) : maxRows;
+    const sql =
+      `SELECT concat(${path}) AS name, ${values}\n` +
+      `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
+      `WHERE ${SCOPE_WHERE}\n` +
+      `GROUP BY ${groupBy}\n` +
+      `HAVING ${having}\n` +
+      `ORDER BY ${quoteAlias(resolved[0]!.label)} ${spec.sort === 'asc' ? 'ASC' : 'DESC'}\n` +
+      `LIMIT ${limit}`;
+    return {
+      ok: true,
+      sql,
+      params: { tenantId: ctx.tenantId, externalOrgIds: ctx.externalOrgIds },
+    };
+  }
 
   // Multi-dimensional visuals use a generic long-form contract:
   //   name = primary category/time, series = breakdown value, value = aggregate.
@@ -983,7 +1046,12 @@ export function compileSeriesSql(
       };
     if (spec.timeGrain && !model.time)
       return { ok: false, reason: 'no time column' };
-    if (!primaryDim && !explicitBreakdown && !spec.timeGrain) {
+    if (
+      !primaryDim &&
+      !explicitBreakdown &&
+      hierarchyDims.length === 0 &&
+      !spec.timeGrain
+    ) {
       return {
         ok: false,
         reason: 'point chart requires a category or time dimension',
@@ -1123,10 +1191,13 @@ export function compileSeriesSql(
           spec.chartType === 'stacked_area') &&
         !spec.clustered &&
         index > 0 &&
-        (unitFormat(m.unit) !== primaryFormat ||
+        (spec.componentMode === true ||
+          unitFormat(m.unit) !== primaryFormat ||
           m.expr.kind !== primaryAggregation);
       const seriesExpr = isOverlay
         ? stringLiteral(m.label)
+        : spec.componentMode === true && index === 0
+          ? `toString(${ident(seriesDim.column)})`
         : resolved.length === 1
           ? `toString(${ident(seriesDim.column)})`
           : `concat(toString(${ident(seriesDim.column)}), ' — ', ${stringLiteral(m.label)})`;

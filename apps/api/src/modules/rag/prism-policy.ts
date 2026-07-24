@@ -22,7 +22,7 @@ const FINANCE_DOMAINS: ReadonlyArray<{
     id: 'financial_reporting',
     patterns: [
       /\b(financial statement|income statement|balance sheet|cash flow statement|p&l|profit and loss|general ledger|trial balance)\b/i,
-      /\b(revenue|sales|income|expense|cost|profit|loss|margin|ebitda|ebit|gross profit|net income)\b/i,
+      /\b(revenue|sales|income|expenses?|costs?|profit(?:ability|able|s)?|loss|margins?|ebitda|ebit|gross profit|net income)\b/i,
     ],
   },
   {
@@ -83,6 +83,11 @@ const FINANCE_DOMAINS: ReadonlyArray<{
     ],
   },
 ];
+
+/** Ids of the governed finance domains, for cross-module consistency checks. */
+export const FINANCE_DOMAIN_IDS: readonly string[] = FINANCE_DOMAINS.map(
+  (domain) => domain.id,
+);
 
 const GREETING =
   /^(hi|hello|hey|good (morning|afternoon|evening)|who are you|what can you do|help)[!.?\s]*$/i;

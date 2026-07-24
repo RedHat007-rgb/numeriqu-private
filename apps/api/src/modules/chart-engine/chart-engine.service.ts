@@ -35,6 +35,7 @@ import type {
   SemanticModel,
 } from './semantic-model.types';
 import { planAcrossCubes, type Cube } from './cube-router';
+import type { PlannerClarification } from './global-chart-planner';
 import {
   applyEngineSpecConstraints,
   buildEngineDisplay,
@@ -59,12 +60,7 @@ import {
   type MaterializeResult,
 } from './cube-materializer';
 import type { CubeBlueprint } from './cube-builder';
-import {
-  fieldMatchScore,
-  planEdit,
-  preferDistinctAxisMeasure,
-  type LlmCaller,
-} from './chart-planner';
+import type { LlmCaller } from './chart-planner';
 import { resolveLlmRuntimeConfig } from '../../common/llm/llm-config';
 
 const NUMERIC_TYPE_RE = /\b(Int|UInt|Float|Decimal)/i;
@@ -133,7 +129,11 @@ export type EngineAnswer =
         valueRepresentation: 'native' | 'ratio' | 'percentage_points';
       }>;
     }
-  | { ok: false; reason: string };
+  | {
+      ok: false;
+      reason: string;
+      clarification?: PlannerClarification;
+    };
 
 interface StatsRow {
   row_count: number | string;
@@ -217,6 +217,7 @@ export class ChartEngineService {
       return {
         ok: false,
         reason: `no cube could answer: ${plan.reasons.join(' | ')}`,
+        ...(plan.clarification ? { clarification: plan.clarification } : {}),
       };
 
     const spec = applyRequestConstraints(question, plan.spec, plan.cube.model);
@@ -245,228 +246,74 @@ export class ChartEngineService {
     opts: { wantsSeparateAxis?: boolean } = {},
   ): Promise<EngineAnswer> {
     const cubes = await this.getCubes(scope.organizationId);
-    const cube = cubes.find((c) => c.view === routedView);
-    if (!cube)
+    const priorCube = cubes.find((cube) => cube.view === routedView);
+    if (!priorCube)
       return {
         ok: false,
         reason: `chart's cube is not available: ${routedView}`,
       };
 
-    const plan = await planEdit(
-      instruction,
-      priorSpec,
-      cube.model,
-      this.llmCaller(),
+    const priorMeasureLabels = priorSpec.measureKeys.map(
+      (key) =>
+        priorCube.model.measures.find((measure) => measure.key === key)?.label ??
+        key.replace(/_/g, ' '),
     );
-    if (!plan.ok) {
-      // The active cube may not contain the newly requested metric even though a
-      // purpose-built scorecard cube does. Re-plan the COMPLETE intent across all
-      // cubes, preserving the old chart's measures/grouping/type. This prevents a
-      // false-success edit (title changes, data does not) and avoids dropping the
-      // original measure when the fresh route only sees "add payroll cost".
-      const priorMeasureLabels = priorSpec.measureKeys.map(
-        (key) =>
-          cube.model.measures.find((measure) => measure.key === key)?.label ??
-          key.replace(/_/g, ' '),
-      );
-      const priorDimensionLabel = priorSpec.dimensionKey
-        ? (cube.model.dimensions.find(
-            (dimension) => dimension.key === priorSpec.dimensionKey,
-          )?.label ?? priorSpec.dimensionKey.replace(/_/g, ' '))
-        : undefined;
-      if (plan.reason.includes('added measure is unavailable')) {
-        const requestedMeasureText =
-          instruction
-            .split(/\badd\b/i)
-            .slice(1)
-            .join(' add ') || instruction;
-        const compatible = cubes
-          .map((candidate) => {
-            if (
-              priorSpec.timeGrain &&
-              (!candidate.model.time ||
-                !candidate.model.time.grains.includes(priorSpec.timeGrain))
-            )
-              return null;
-            const reboundPrior = priorMeasureLabels.map(
-              (label) =>
-                candidate.model.measures
-                  .map((measure) => ({
-                    measure,
-                    score: fieldMatchScore(label, measure.key, measure.label),
-                  }))
-                  .sort((a, b) => b.score - a.score)[0],
-            );
-            if (reboundPrior.some((match) => !match || match.score < 4))
-              return null;
-            const priorKeys = new Set(
-              reboundPrior.map((match) => match!.measure.key),
-            );
-            const added = candidate.model.measures
-              .filter((measure) => !priorKeys.has(measure.key))
-              .map((measure) => ({
-                measure,
-                score: fieldMatchScore(
-                  requestedMeasureText,
-                  measure.key,
-                  measure.label,
-                ),
-              }))
-              .sort((a, b) => b.score - a.score)[0];
-            const dimension = priorDimensionLabel
-              ? candidate.model.dimensions
-                  .map((item) => ({
-                    dimension: item,
-                    score: fieldMatchScore(
-                      priorDimensionLabel,
-                      item.key,
-                      item.label,
-                    ),
-                  }))
-                  .sort((a, b) => b.score - a.score)[0]
-              : undefined;
-            if (
-              !added ||
-              added.score < 4 ||
-              (priorDimensionLabel && (!dimension || dimension.score < 4))
-            )
-              return null;
-            return {
-              candidate,
-              reboundPrior,
-              added,
-              dimension,
-              score:
-                reboundPrior.reduce((sum, match) => sum + match!.score, 0) +
-                added.score +
-                (dimension?.score ?? 0) +
-                (priorSpec.timeGrain ? 4 : 0) -
-                candidate.model.measures.length / 1000,
-            };
-          })
-          .filter((item): item is NonNullable<typeof item> => !!item)
-          .sort((a, b) => b.score - a.score)[0];
-        if (compatible) {
-          const measureKeys = [
-            ...compatible.reboundPrior.map((match) => match!.measure.key),
-            compatible.added.measure.key,
-          ];
-          const measureLabels = measureKeys.map(
-            (key) =>
-              compatible.candidate.model.measures.find(
-                (measure) => measure.key === key,
-              )?.label ?? key.replace(/_/g, ' '),
-          );
-          const reboundSpec: EngineChartSpec = {
-            ...priorSpec,
-            measureKeys,
-            ...(compatible.dimension
-              ? { dimensionKey: compatible.dimension.dimension.key }
-              : {}),
-            title: `${measureLabels.join(' and ')}${
-              compatible.dimension
-                ? ` by ${compatible.dimension.dimension.label}`
-                : priorSpec.timeGrain
-                  ? ` by ${priorSpec.timeGrain}`
-                  : ''
-            }`,
-          };
-          const constrainedReboundSpec = applyRequestConstraints(
-            instruction,
-            reboundSpec,
-            compatible.candidate.model,
-            { preserveTimeAxis: true },
-          );
-          const reboundFailure = validateRequestFidelity(
-            instruction,
-            constrainedReboundSpec,
-            compatible.candidate.model,
-          );
-          if (reboundFailure)
-            return {
-              ok: false,
-              reason: `request fidelity: ${reboundFailure}`,
-            };
-          return this.shapeAnswer(
-            scope,
-            compatible.candidate,
-            constrainedReboundSpec,
-            'edit',
-          );
-        }
-      }
-      const completeIntent = [
-        `Create a ${priorSpec.chartType.replace(/_/g, ' ')} chart showing ${priorMeasureLabels.join(' and ')}`,
-        priorSpec.timeGrain ? `${priorSpec.timeGrain}ly` : '',
-        priorDimensionLabel ? `by ${priorDimensionLabel}.` : '.',
-        instruction,
-      ]
-        .filter(Boolean)
-        .join(' ');
-      const rerouted = await planAcrossCubes(
-        completeIntent,
-        cubes,
-        this.llmCaller(),
-      );
-      if (!rerouted.ok) return { ok: false, reason: plan.reason };
-      const plannedReroutedSpec = opts.wantsSeparateAxis
-        ? preferDistinctAxisMeasure(
-            rerouted.spec,
-            priorSpec.measureKeys,
-            rerouted.cube.model,
-          )
-        : rerouted.spec;
-      // Cross-cube re-planning rebuilds the data intent, but an additive metric
-      // follow-up must not discard an explicitly requested presentation mode.
-      // Preserve clustered/grouped columns when the reroute retained the same
-      // base chart type; a genuine chart-type change still wins.
-      const reroutedSpec: EngineChartSpec = {
-        ...plannedReroutedSpec,
-        ...(priorSpec.clustered &&
-        plannedReroutedSpec.chartType === priorSpec.chartType
-          ? { clustered: true }
+    const priorDimensionLabel = priorSpec.dimensionKey
+      ? (priorCube.model.dimensions.find(
+          (dimension) => dimension.key === priorSpec.dimensionKey,
+        )?.label ?? priorSpec.dimensionKey.replace(/_/g, ' '))
+      : undefined;
+    const completeIntent = [
+      'EDIT THE CURRENT CHART. CURRENT CHART STATE is authoritative. Preserve every current measure, grouping, filter, comparison, and presentation choice unless the user explicitly changes it.',
+      `Current source cubeView: ${priorCube.view}.`,
+      `Current exact validated spec: ${JSON.stringify(priorSpec)}.`,
+      `Current chart type: ${priorSpec.chartType}.`,
+      `Current measures: ${priorMeasureLabels.join(', ')}.`,
+      priorDimensionLabel
+        ? `Current grouping: ${priorDimensionLabel}.`
+        : 'Current chart has no categorical grouping.',
+      priorSpec.timeGrain
+        ? `Current time grain: ${priorSpec.timeGrain}.`
+        : 'Current chart has no time grain.',
+      opts.wantsSeparateAxis
+        ? 'The user explicitly requested a separate/secondary axis.'
+        : '',
+      `User change request: ${instruction}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    // An edit is anchored to the chart's validated source. Giving the model the
+    // entire catalog here lets it reinterpret "this chart" as a choice among
+    // unrelated charts/cubes and can silently change the chart's semantics.
+    // The current cube is runtime-discovered from the persisted widget config;
+    // no dataset-specific mapping is involved.
+    const planned = await planAcrossCubes(
+      completeIntent,
+      [priorCube],
+      this.llmCaller(),
+      instruction,
+    );
+    if (!planned.ok) {
+      return {
+        ok: false,
+        reason: `edit could not be planned: ${planned.reasons.join(' | ')}`,
+        ...(planned.clarification
+          ? { clarification: planned.clarification }
           : {}),
       };
-      const constrainedReroutedSpec = applyRequestConstraints(
-        instruction,
-        reroutedSpec,
-        rerouted.cube.model,
-        { preserveTimeAxis: true },
-      );
-      const reroutedFailure = validateRequestFidelity(
-        instruction,
-        constrainedReroutedSpec,
-        rerouted.cube.model,
-      );
-      if (reroutedFailure)
-        return {
-          ok: false,
-          reason: `request fidelity: ${reroutedFailure}`,
-        };
-      return this.shapeAnswer(
-        scope,
-        rerouted.cube,
-        constrainedReroutedSpec,
-        'edit',
-      );
     }
-
-    // If the user explicitly asked for a separate/second axis, guarantee the added
-    // measure genuinely warrants one (different unit) — the LLM alone is unreliable here.
-    const plannedSpec = opts.wantsSeparateAxis
-      ? preferDistinctAxisMeasure(plan.spec, priorSpec.measureKeys, cube.model)
-      : plan.spec;
-    const spec = applyRequestConstraints(instruction, plannedSpec, cube.model, {
+    const spec = applyRequestConstraints(instruction, planned.spec, planned.cube.model, {
       preserveTimeAxis: true,
+      preserveNormalization: true,
     });
     const fidelityFailure = validateRequestFidelity(
       instruction,
       spec,
-      cube.model,
+      planned.cube.model,
     );
     if (fidelityFailure)
       return { ok: false, reason: `request fidelity: ${fidelityFailure}` };
-    return this.shapeAnswer(scope, cube, spec, 'edit');
+    return this.shapeAnswer(scope, planned.cube, spec, 'edit');
   }
 
   /**
@@ -511,6 +358,7 @@ export class ChartEngineService {
     const multi = spec.measureKeys.length > 1;
     const hasSeriesBreakdown =
       !!spec.breakdownKey ||
+      !!spec.hierarchyKeys?.length ||
       (!!spec.timeGrain && !!spec.dimensionKey) ||
       spec.comparison === 'previous_year' ||
       spec.comparison === 'yoy_growth_pct';
@@ -604,6 +452,20 @@ export class ChartEngineService {
       };
     }
     let answerRows = rows;
+
+    if (spec.hierarchyKeys?.length) {
+      answerRows = renderedRows.map((row) => {
+        const normalized: Record<string, unknown> = { name: row.name };
+        for (const key of spec.measureKeys) {
+          const measure = cube.model.measures.find((item) => item.key === key);
+          normalized[key] =
+            row[key] ??
+            (measure ? row[measure.label] : undefined) ??
+            (spec.measureKeys.length === 1 ? row.value : undefined);
+        }
+        return normalized;
+      });
+    }
 
     // The analytic/headline query deliberately uses the raw base measure so its
     // source-total reconciliation remains independent. A YoY chart, however,
@@ -1340,6 +1202,8 @@ export class ChartEngineService {
    */
   private llmCaller(): LlmCaller {
     const cfg = resolveLlmRuntimeConfig('llama3:latest');
+    const plannerModel =
+      process.env.CHART_ENGINE_OPENAI_MODEL?.trim() || cfg.model;
     return async (system: string, user: string): Promise<string> => {
       if (cfg.provider === 'openai') {
         const res = await fetch(`${cfg.url}/chat/completions`, {
@@ -1349,7 +1213,7 @@ export class ChartEngineService {
             Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           },
           body: JSON.stringify({
-            model: cfg.model,
+            model: plannerModel,
             messages: [
               { role: 'system', content: system },
               { role: 'user', content: user },

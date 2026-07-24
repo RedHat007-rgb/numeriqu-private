@@ -7534,6 +7534,32 @@ export class AgentService {
     ) {
       let engineUnanswered = false;
       try {
+        if (existingSession) {
+          const priorAssistant = await this.prisma.agentChatMessage.findFirst({
+            where: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+          const priorMetadata =
+            priorAssistant?.metadata &&
+            typeof priorAssistant.metadata === 'object'
+              ? (priorAssistant.metadata as Record<string, unknown>)
+              : null;
+          if (
+            priorMetadata?.kind === 'engine_clarification' &&
+            typeof priorMetadata.originalQuestion === 'string'
+          ) {
+            queryText = [
+              priorMetadata.originalQuestion,
+              `User clarification: ${userQuery}`,
+            ].join('\n');
+            spec = parseQuerySpec(queryText);
+          }
+        }
+
         const engineScope = await this.getOrgScope(organizationId, role);
         const scope = {
           organizationId,
@@ -7580,9 +7606,72 @@ export class AgentService {
               { wantsSeparateAxis },
             )
           : await this.chartEngine.answer(scope, queryText);
-        // An edit its cube can't satisfy shouldn't dead-end — build a fresh chart.
-        if (wantsEdit && !built.ok)
+        // A genuinely fresh request may be retried as a new chart when the
+        // active chart cannot satisfy it. Never do that for an explicit
+        // same/existing-chart edit: it would discard the authoritative chart
+        // state and invite a redundant "which chart?" clarification loop.
+        if (
+          wantsEdit &&
+          !built.ok &&
+          !built.clarification &&
+          !this.referencesExistingChart(queryText)
+        )
           built = await this.chartEngine.answer(scope, queryText);
+
+        if (!built.ok && built.clarification) {
+          const clarification = built.clarification;
+          const questionText = [
+            clarification.question,
+            '',
+            ...clarification.options.map(
+              (option, index) =>
+                `${index + 1}) ${option.label}${
+                  option.value !== option.label ? ` — ${option.value}` : ''
+                }`,
+            ),
+          ].join('\n');
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'user',
+              content: userQuery,
+            },
+          });
+          await this.prisma.agentChatMessage.create({
+            data: {
+              sessionId: currentSession.id,
+              organizationId,
+              role: 'assistant',
+              content: questionText,
+              metadata: {
+                kind: 'engine_clarification',
+                originalQuestion: clarification.originalQuestion,
+                reason: clarification.reason,
+              } as Prisma.InputJsonValue,
+            },
+          });
+          yield this.chunk('intent', {
+            intent: wantsEdit ? 'EDIT_DASHBOARD' : 'CREATE_DASHBOARD',
+            activeDashboardId: wantsEdit ? active?.id ?? null : null,
+            activeDashboardTitle: wantsEdit ? active?.title ?? null : null,
+            engine: 'chart-engine',
+          });
+          yield this.chunk('clarify', {
+            reason: 'MODEL_CLARIFICATION',
+            question: clarification.question,
+            options: clarification.options,
+          });
+          yield this.chunk('done', {
+            metrics: {
+              sessionId: currentSession.id,
+              engine: 'chart-engine',
+              needsInput: true,
+              reason: 'MODEL_CLARIFICATION',
+            },
+          });
+          return;
+        }
 
         if (built.ok) {
           const isEdit = built.mode === 'edit' && canEdit;
@@ -7768,8 +7857,10 @@ export class AgentService {
         );
         engineUnanswered = true;
       } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
         this.logger.error(
-          `[chart-engine] error, falling back to legacy: ${(e as Error).message}`,
+          `[chart-engine] error, falling back to legacy: ${error.message}`,
+          error.stack,
         );
         engineUnanswered = true;
       }
@@ -10552,7 +10643,12 @@ export class AgentService {
     const title = built.title;
     const valueKey = built.spec.measureKeys[0];
     const nameKey =
-      built.spec.dimensionKey ?? (built.spec.timeGrain ? 'period' : null);
+      built.spec.dimensionKey ??
+      (built.spec.hierarchyKeys?.length
+        ? 'name'
+        : built.spec.timeGrain
+          ? 'period'
+          : null);
     const lines = [
       `Action: ${built.mode === 'edit' ? 'updated the existing chart per the request' : 'created a new chart'}`,
       `Chart title: ${title}`,
@@ -10627,7 +10723,11 @@ export class AgentService {
     }
 
     // Single headline number (KPI).
-    if (!built.spec.dimensionKey && !built.spec.timeGrain) {
+    if (
+      !built.spec.dimensionKey &&
+      !built.spec.hierarchyKeys?.length &&
+      !built.spec.timeGrain
+    ) {
       const v = fmt(points[0]!.value);
       return {
         sheet: [...lines, 'Kind: single headline value', `Value: ${v}`].join(

@@ -91,6 +91,20 @@ describe('request constraints', () => {
     });
   });
 
+  it('retains the structural grain required by a prior-year comparison', () => {
+    const constrained = applyRequestConstraints(
+      "Show last year's revenue to this year's revenue by account class.",
+      {
+        ...baseSpec,
+        timeGrain: 'year',
+        comparison: 'previous_year',
+      },
+      model,
+    );
+    expect(constrained.timeGrain).toBe('year');
+    expect(constrained.comparison).toBe('previous_year');
+  });
+
   it('refuses arithmetic that is not represented as a governed calculation', () => {
     expect(
       validateRequestFidelity(
@@ -158,13 +172,104 @@ describe('request constraints', () => {
     ).toContain('at least two period points');
   });
 
-  it('refuses a qualified category when the plan has no catalog filter', () => {
+  it('does not reinterpret presentation grammar as a business filter', () => {
     expect(
       validateRequestFidelity(
-        'Show the largest expense accounts.',
+        'Create a stacked column chart showing revenue by account.',
         baseSpec,
         model,
       ),
-    ).toContain('category qualifier is not represented');
+    ).toBeNull();
+  });
+
+  it('does not turn a measure mention into a same-named sample-value filter', () => {
+    expect(
+      extractRequestConstraints(
+        'Create an executive KPI dashboard showing revenue and direct cost.',
+        model,
+      ).filters,
+    ).toEqual([]);
+  });
+
+  it('does not create a partial filter from sampled members in a component list', () => {
+    const componentModel: SemanticModel = {
+      ...model,
+      dimensions: [
+        {
+          key: 'cost_family',
+          label: 'Cost Family',
+          table: 'semantic_view',
+          column: 'cost_family',
+          sampleValues: ['Labor', 'SG&A'],
+        },
+      ],
+    };
+    expect(
+      extractRequestConstraints(
+        'Show labor, people, technology, facility, third-party, and SG&A costs as a percentage of revenue.',
+        componentModel,
+      ).filters,
+    ).toEqual([]);
+  });
+
+  it('preserves the planner interpretation of a component enumeration', () => {
+    const componentModel: SemanticModel = {
+      ...model,
+      dimensions: [
+        {
+          key: 'cost_family',
+          label: 'Cost Family',
+          table: 'semantic_view',
+          column: 'cost_family',
+          sampleValues: ['Labor', 'SG&A'],
+        },
+      ],
+    };
+    const constrained = applyRequestConstraints(
+      'Show labor, people, technology, facility, third-party, and SG&A costs.',
+      {
+        ...baseSpec,
+        dimensionKey: 'cost_family',
+        filters: [
+          {
+            dimensionKey: 'cost_family',
+            operator: 'in',
+            values: ['Labor', 'SG&A'],
+          },
+        ],
+      },
+      componentModel,
+    );
+    expect(constrained.filters).toEqual([
+      {
+        dimensionKey: 'cost_family',
+        operator: 'in',
+        values: ['Labor', 'SG&A'],
+      },
+    ]);
+  });
+
+  it('does not normalize a ratio-to-revenue request as share of total', () => {
+    const constrained = applyRequestConstraints(
+      'Show each cost family as a percentage of revenue.',
+      {
+        ...baseSpec,
+        normalize: true,
+      },
+      model,
+    );
+    expect(constrained.normalize).toBeUndefined();
+  });
+
+  it('retains normalization when the user explicitly asks for share of total', () => {
+    const constrained = applyRequestConstraints(
+      "Show each account's percentage of the total.",
+      {
+        ...baseSpec,
+        normalize: true,
+      },
+      model,
+    );
+    expect(constrained.normalize).toBe(true);
   });
 });

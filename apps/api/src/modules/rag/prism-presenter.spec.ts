@@ -23,6 +23,7 @@ function answer(
     sql: 'SELECT governed_metrics',
     nameValueSql: 'SELECT name, value',
     dynamicSql: 'SELECT period, value',
+    dynamicParams: {},
     title: 'Finance performance',
     chartType: 'line',
     widgetChartType: 'line',

@@ -62,8 +62,57 @@
 <link rel="stylesheet" href="/new-dashboard/numeriq-theme.css">
 </head>
 <body>
-<header class="topbar"><div class="brand"><div class="brand-mark">Q</div><div><div class="brand-name">NUMERIQU</div><div class="brand-sub">CFO Insights Command Center</div></div></div><div class="period-summary"><strong id="headerPeriod">Overall · FY2022–FY2025</strong><span>Embedded EBPO financial model · works offline</span></div></header>
-<div class="controlbar"><nav class="page-nav" id="pageNav"><button class="nav-item active" data-page="overview">Overview</button><button class="nav-item" data-page="pnl">P&amp;L Insights</button><button class="nav-item" data-page="cash">Cash Flow &amp; Liquidity</button><button class="nav-item" data-page="balance">Balance Sheet &amp; Returns</button><button class="nav-item" data-page="arap">AR / AP &amp; Payroll</button><button class="nav-item" data-page="workforce">Workforce &amp; Quality</button></nav><div class="date-controls"><span class="date-label">Date slicer</span><button class="preset active" data-preset="all">All</button><button class="preset" data-preset="2022">FY22</button><button class="preset" data-preset="2023">FY23</button><button class="preset" data-preset="2024">FY24</button><button class="preset" data-preset="2025">FY25</button><input type="date" id="startDate" min="2022-01-01" max="2025-12-31" value="2022-01-01"><span class="date-label">to</span><input type="date" id="endDate" min="2022-01-01" max="2025-12-31" value="2025-12-31"><button class="apply-btn" id="applyDates">Apply</button></div></div>
+<div class="controlbar">
+  <nav class="page-nav" id="pageNav" aria-label="Dashboard sections">
+    <button type="button" class="nav-item active" data-page="overview">Overview</button>
+    <button type="button" class="nav-item" data-page="pnl">P&amp;L Insights</button>
+    <button type="button" class="nav-item" data-page="cash">Cash Flow &amp; Liquidity</button>
+    <button type="button" class="nav-item" data-page="balance">Balance Sheet &amp; Returns</button>
+    <button type="button" class="nav-item" data-page="arap">AR / AP &amp; Payroll</button>
+    <button type="button" class="nav-item" data-page="workforce">Workforce &amp; Quality</button>
+  </nav>
+  <div class="date-controls" aria-label="Dashboard period">
+    <div class="date-control-title">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"></path>
+      </svg>
+      <span>Period</span>
+    </div>
+    <div class="date-presets" role="group" aria-label="Fiscal year shortcuts">
+      <button type="button" class="preset active" data-preset="all">All time</button>
+      <button type="button" class="preset" data-preset="2022">FY22</button>
+      <button type="button" class="preset" data-preset="2023">FY23</button>
+      <button type="button" class="preset" data-preset="2024">FY24</button>
+      <button type="button" class="preset" data-preset="2025">FY25</button>
+    </div>
+    <details class="custom-range" id="customRangeMenu">
+      <summary class="range-summary">
+        <span id="dateRangeSummary" aria-live="polite">Jan 2022 – Dec 2025</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"></path></svg>
+      </summary>
+      <div class="range-popover">
+        <div class="range-popover-head">
+          <strong>Custom range</strong>
+          <span>Jan 2022 to Dec 2025</span>
+        </div>
+        <div class="range-fields">
+          <label class="date-field" for="startDate">
+            <span>Start date</span>
+            <input type="date" id="startDate" min="2022-01-01" max="2025-12-31" value="2022-01-01">
+          </label>
+          <label class="date-field" for="endDate">
+            <span>End date</span>
+            <input type="date" id="endDate" min="2022-01-01" max="2025-12-31" value="2025-12-31">
+          </label>
+        </div>
+        <div class="range-actions">
+          <button type="button" class="range-reset" id="resetDates">Reset</button>
+          <button type="button" class="apply-btn" id="applyDates">Apply range</button>
+        </div>
+      </div>
+    </details>
+  </div>
+</div>
 <main class="main" id="mainArea"></main>
 <script>
 /*!
@@ -461,7 +510,7 @@ function arapChartsInteractiveEnhanced(){arapChartsFinalEnhanced();wirePageDrill
 function workforceChartsInteractiveEnhanced(){workforceChartsCompleteEnhanced();wirePageDrillsEnhanced(['hcEfficiency','qualityTrend','payrollDonut','workforceTimeAllocation'])}
 
 const PAGES={overview:[overviewPageInteractiveEnhanced,overviewChartsInteractiveEnhanced],pnl:[pnlPageInteractiveEnhanced,pnlChartsInteractiveEnhanced],cash:[cashPageInteractiveEnhanced,cashChartsInteractiveEnhanced],balance:[balancePageInteractiveEnhanced,balanceChartsInteractiveEnhanced],arap:[arapPageInteractiveEnhanced,arapChartsInteractiveEnhanced],workforce:[workforcePageInteractiveEnhanced,workforceChartsInteractiveEnhanced]};
-function render(){destroyCharts();document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===state.page));document.getElementById('headerPeriod').textContent=periodLabel();const main=document.getElementById('mainArea');main.innerHTML=PAGES[state.page][0]();afterDashboardRenderEnhanced();requestAnimationFrame(()=>{PAGES[state.page][1]();setupChartZoomEnhanced()})}
+function render(){destroyCharts();document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===state.page));const headerPeriod=document.getElementById('headerPeriod');if(headerPeriod)headerPeriod.textContent=periodLabel();updateDateRangeSummary();const main=document.getElementById('mainArea');main.innerHTML=PAGES[state.page][0]();afterDashboardRenderEnhanced();requestAnimationFrame(()=>{PAGES[state.page][1]();setupChartZoomEnhanced()})}
 function applyPlatformDashboardData(payload){
   const trend=payload?.charts?.monthlyTrend;
   if(!Array.isArray(trend)||!trend.length)return;
@@ -494,9 +543,12 @@ window.addEventListener('message',event=>{
   if(event.data?.type==='numeriq:dashboard-data')applyPlatformDashboardData(event.data.payload);
 });
 if(window.parent!==window)window.parent.postMessage({type:'numeriq:dashboard-ready'},window.location.origin);
+function formatRangeMonth(month){return new Date(month+'-01T00:00:00').toLocaleDateString('en-US',{month:'short',year:'numeric'})}
+function updateDateRangeSummary(){const summary=document.getElementById('dateRangeSummary');if(summary)summary.textContent=formatRangeMonth(state.start)+' – '+formatRangeMonth(state.end)}
+function closeCustomRange(){const menu=document.getElementById('customRangeMenu');if(menu)menu.removeAttribute('open')}
 function setPreset(value){document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.preset===String(value)));if(value==='all'){document.getElementById('startDate').value=DATA.metadata.minMonth+'-01';document.getElementById('endDate').value=DATA.metadata.maxMonth+'-31'}else{document.getElementById('startDate').value=value+'-01-01';document.getElementById('endDate').value=value+'-12-31'}applyDates()}
-function applyDates(){const s=document.getElementById('startDate').value.slice(0,7),e=document.getElementById('endDate').value.slice(0,7);if(!s||!e||s>e){alert('Please choose a valid start date before the end date.');return}state.start=s<DATA.metadata.minMonth?DATA.metadata.minMonth:s;state.end=e>DATA.metadata.maxMonth?DATA.metadata.maxMonth:e;document.querySelectorAll('.preset').forEach(b=>{const exact=b.dataset.preset==='all'?state.start===DATA.metadata.minMonth&&state.end===DATA.metadata.maxMonth:state.start===b.dataset.preset+'-01'&&state.end===b.dataset.preset+'-12';b.classList.toggle('active',exact)});render()}
-document.addEventListener('DOMContentLoaded',()=>{document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>{state.page=b.dataset.page;render();window.scrollTo({top:0,behavior:'smooth'})}));document.querySelectorAll('.preset').forEach(b=>b.addEventListener('click',()=>setPreset(b.dataset.preset)));document.getElementById('applyDates').addEventListener('click',applyDates);render()});
+function applyDates(){const s=document.getElementById('startDate').value.slice(0,7),e=document.getElementById('endDate').value.slice(0,7);if(!s||!e||s>e){alert('Please choose a valid start date before the end date.');return}state.start=s<DATA.metadata.minMonth?DATA.metadata.minMonth:s;state.end=e>DATA.metadata.maxMonth?DATA.metadata.maxMonth:e;document.querySelectorAll('.preset').forEach(b=>{const exact=b.dataset.preset==='all'?state.start===DATA.metadata.minMonth&&state.end===DATA.metadata.maxMonth:state.start===b.dataset.preset+'-01'&&state.end===b.dataset.preset+'-12';b.classList.toggle('active',exact)});render();closeCustomRange()}
+document.addEventListener('DOMContentLoaded',()=>{const rangeMenu=document.getElementById('customRangeMenu');document.querySelectorAll('.nav-item').forEach(b=>b.addEventListener('click',()=>{state.page=b.dataset.page;render();window.scrollTo({top:0,behavior:'smooth'})}));document.querySelectorAll('.preset').forEach(b=>b.addEventListener('click',()=>setPreset(b.dataset.preset)));document.getElementById('applyDates').addEventListener('click',applyDates);document.getElementById('resetDates').addEventListener('click',()=>setPreset('all'));document.addEventListener('click',event=>{if(rangeMenu?.open&&!rangeMenu.contains(event.target))closeCustomRange()});rangeMenu?.addEventListener('keydown',event=>{if(event.key==='Escape'){closeCustomRange();rangeMenu.querySelector('summary')?.focus()}});render()});
 </script>
 </body>
 </html>

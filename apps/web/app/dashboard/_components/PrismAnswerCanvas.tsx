@@ -401,23 +401,41 @@ export function PrismAnswerCanvas({
     }
   }
 
+  const [headlineMetric, ...supportingMetrics] = answer.metrics;
+
   const content = (
     <section aria-label={answer.title} className="space-y-4">
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {answer.metrics.map((metric) => (
-          <div
-            key={metric.key}
-            className="rounded-xl border border-default bg-bg-surface/60 p-3"
-          >
+      {headlineMetric ? (
+        <div className="space-y-2">
+          {/* Headline figure: one number leads, the rest support it. */}
+          <div className="rounded-2xl border border-default bg-bg-surface/70 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-              {metric.label}
+              {headlineMetric.label}
             </p>
-            <p className="mt-1 text-xl font-bold tabular-nums text-text-primary">
-              {metric.formattedValue}
+            <p className="mt-1 text-4xl font-bold tabular-nums leading-tight text-text-primary">
+              {headlineMetric.formattedValue}
             </p>
+            <p className="mt-1 text-xs text-text-muted">{answer.period}</p>
           </div>
-        ))}
-      </div>
+          {supportingMetrics.length > 0 ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {supportingMetrics.map((metric) => (
+                <div
+                  key={metric.key}
+                  className="rounded-xl border border-default bg-bg-surface/60 p-3"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+                    {metric.label}
+                  </p>
+                  <p className="mt-1 text-xl font-bold tabular-nums text-text-primary">
+                    {metric.formattedValue}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {answer.visualization ? (
         <div className="rounded-2xl border border-default bg-bg-surface/40 p-3 sm:p-4">
           <div className="mb-2 flex items-center justify-between gap-3">

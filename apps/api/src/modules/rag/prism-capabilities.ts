@@ -1,5 +1,3 @@
-import { FINANCE_DOMAIN_IDS } from './prism-policy';
-
 /**
  * The single declarative source of truth for Prism's finance capabilities.
  *
@@ -181,15 +179,3 @@ export const capabilityPlannerGuidance = (): string => {
   ).join('\n');
   return `Choose exactly one intent from the governed capability catalog:\n${lines}`;
 };
-
-/**
- * Registry self-consistency: every declared domain must be a real finance
- * domain the scope classifier recognises. Consumed by the registry test so a
- * typo in a new capability entry fails CI instead of silently mis-routing.
- */
-export const capabilityDomainsAreKnown = (): boolean =>
-  PRISM_CAPABILITIES.every((capability) =>
-    capability.domains.every((domain) =>
-      (FINANCE_DOMAIN_IDS as readonly string[]).includes(domain),
-    ),
-  );

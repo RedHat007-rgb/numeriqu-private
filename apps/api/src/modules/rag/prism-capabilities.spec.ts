@@ -2,7 +2,6 @@ import {
   PRISM_CAPABILITIES,
   PRISM_INTENTS,
   capabilityById,
-  capabilityDomainsAreKnown,
   capabilityPlannerGuidance,
   followUpActionsFor,
 } from './prism-capabilities';
@@ -32,10 +31,6 @@ describe('prism capability registry', () => {
 
   it('has unique intents', () => {
     expect(new Set(PRISM_INTENTS).size).toBe(PRISM_INTENTS.length);
-  });
-
-  it('only references finance domains the scope classifier knows', () => {
-    expect(capabilityDomainsAreKnown()).toBe(true);
   });
 
   it('resolves capabilities by intent and returns undefined for unknown', () => {

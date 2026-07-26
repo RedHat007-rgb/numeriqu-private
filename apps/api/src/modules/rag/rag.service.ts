@@ -8,12 +8,14 @@ import {
 } from '../../database/database.module';
 import type { ClickHouseClient } from '@clickhouse/client';
 import {
-  classifyPrismScope,
   prismGreeting,
   prismScopeRefusal,
   type PrismTone,
 } from './prism-policy';
-import { generatePrismGreeting } from './prism-conversation';
+import {
+  generatePrismGreeting,
+  classifyPrismScopeWithModel,
+} from './prism-conversation';
 import { composePrismAnswer } from './prism-answer-composer';
 import {
   formatPrismMoney,
@@ -824,8 +826,15 @@ export class RagService {
         },
       });
 
-      // ── Finance boundary ────────────────────────────────────────────────
-      const scopeDecision = classifyPrismScope(userQuery);
+      // ── Finance boundary (fully model-classified; no keyword lists) ─────
+      const scopeSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+        : AbortSignal.timeout(10_000);
+      const scopeDecision = await classifyPrismScopeWithModel(
+        this.prismModel,
+        userQuery,
+        scopeSignal,
+      );
 
       if (scopeDecision.kind === 'greeting') {
         // Prism writes the greeting with the model (tone-aware); it falls back

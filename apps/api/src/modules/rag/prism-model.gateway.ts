@@ -36,40 +36,46 @@ export class PrismModelGateway implements PrismModelPort {
       const isReasoningModel = /^(gpt-5|o[134])/i.test(runtime.model);
       const reasoningEffort =
         this.config.get<string>('PRISM_REASONING_EFFORT')?.trim() || 'low';
-      const response = await this.fetchWithRetry(
-        `${runtime.url.replace(/\/$/, '')}/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          signal,
-          body: JSON.stringify({
-            model: runtime.model,
-            temperature: 0,
-            ...(isReasoningModel
-              ? { reasoning_effort: reasoningEffort }
-              : {}),
-            max_completion_tokens: this.positiveInt(
-              'PRISM_MODEL_MAX_OUTPUT_TOKENS',
-              800,
-            ),
-            response_format: {
-              type: 'json_schema',
-              json_schema: {
-                name: 'prism_finance_plan',
-                strict: true,
-                schema: request.schema,
-              },
-            },
-            messages: [
-              { role: 'system', content: request.system },
-              { role: 'user', content: request.user },
-            ],
-          }),
+      const url = `${runtime.url.replace(/\/$/, '')}/chat/completions`;
+      const buildInit = (includeEffort: boolean): RequestInit => ({
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
         },
-      );
+        signal,
+        body: JSON.stringify({
+          model: runtime.model,
+          temperature: 0,
+          ...(includeEffort && isReasoningModel
+            ? { reasoning_effort: reasoningEffort }
+            : {}),
+          max_completion_tokens: this.positiveInt(
+            'PRISM_MODEL_MAX_OUTPUT_TOKENS',
+            800,
+          ),
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'prism_finance_plan',
+              strict: true,
+              schema: request.schema,
+            },
+          },
+          messages: [
+            { role: 'system', content: request.system },
+            { role: 'user', content: request.user },
+          ],
+        }),
+      });
+      let response = await this.fetchWithRetry(url, buildInit(true));
+      // reasoning_effort isn't accepted by every model/endpoint. If it 400s,
+      // retry once WITHOUT it so this optimization can never turn a working
+      // call into a failure.
+      if (response.status === 400 && isReasoningModel) {
+        await response.body?.cancel().catch(() => undefined);
+        response = await this.fetchWithRetry(url, buildInit(false));
+      }
       if (!response.ok)
         throw new Error(`Model gateway returned ${response.status}.`);
       const payload = (await response.json()) as {

@@ -29,6 +29,13 @@ export class PrismModelGateway implements PrismModelPort {
     if (runtime.provider === 'openai') {
       const apiKey = this.config.get<string>('OPENAI_API_KEY')?.trim();
       if (!apiKey) throw new Error('OpenAI is not configured.');
+      // Prism's model tasks (scope, intent, prose) are shallow — force a low
+      // reasoning budget on reasoning-class models so they answer in ~1-2s
+      // instead of "thinking" for tens of seconds. The field is only sent for
+      // reasoning-class models (gpt-5*/o-series); others ignore it.
+      const isReasoningModel = /^(gpt-5|o[134])/i.test(runtime.model);
+      const reasoningEffort =
+        this.config.get<string>('PRISM_REASONING_EFFORT')?.trim() || 'low';
       const response = await this.fetchWithRetry(
         `${runtime.url.replace(/\/$/, '')}/chat/completions`,
         {
@@ -41,6 +48,9 @@ export class PrismModelGateway implements PrismModelPort {
           body: JSON.stringify({
             model: runtime.model,
             temperature: 0,
+            ...(isReasoningModel
+              ? { reasoning_effort: reasoningEffort }
+              : {}),
             max_completion_tokens: this.positiveInt(
               'PRISM_MODEL_MAX_OUTPUT_TOKENS',
               800,

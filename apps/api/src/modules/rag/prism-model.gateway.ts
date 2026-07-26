@@ -29,15 +29,23 @@ export class PrismModelGateway implements PrismModelPort {
     if (runtime.provider === 'openai') {
       const apiKey = this.config.get<string>('OPENAI_API_KEY')?.trim();
       if (!apiKey) throw new Error('OpenAI is not configured.');
-      // Prism's model tasks (scope, intent, prose) are shallow — force a low
-      // reasoning budget on reasoning-class models so they answer in ~1-2s
-      // instead of "thinking" for tens of seconds. The field is only sent for
-      // reasoning-class models (gpt-5*/o-series); others ignore it.
-      const isReasoningModel = /^(gpt-5|o[134])/i.test(runtime.model);
+      // Prism's tasks (scope, intent, prose) are shallow — prefer a fast model
+      // (PRISM_FAST_MODEL) and a low reasoning budget on reasoning-class models.
+      // If the fast model or the reasoning hint is rejected (400/404), fall back
+      // to the configured main model without the hint. Speed is therefore a
+      // best-effort optimization that can never turn a working call into a
+      // failure.
+      const fastModel =
+        this.config.get<string>('PRISM_FAST_MODEL')?.trim() || runtime.model;
       const reasoningEffort =
         this.config.get<string>('PRISM_REASONING_EFFORT')?.trim() || 'low';
+      const isReasoningModel = (model: string): boolean =>
+        /^(gpt-5|o[134])/i.test(model);
       const url = `${runtime.url.replace(/\/$/, '')}/chat/completions`;
-      const buildInit = (includeEffort: boolean): RequestInit => ({
+      const buildInit = (
+        model: string,
+        includeEffort: boolean,
+      ): RequestInit => ({
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -45,9 +53,9 @@ export class PrismModelGateway implements PrismModelPort {
         },
         signal,
         body: JSON.stringify({
-          model: runtime.model,
+          model,
           temperature: 0,
-          ...(includeEffort && isReasoningModel
+          ...(includeEffort && isReasoningModel(model)
             ? { reasoning_effort: reasoningEffort }
             : {}),
           max_completion_tokens: this.positiveInt(
@@ -68,13 +76,16 @@ export class PrismModelGateway implements PrismModelPort {
           ],
         }),
       });
-      let response = await this.fetchWithRetry(url, buildInit(true));
-      // reasoning_effort isn't accepted by every model/endpoint. If it 400s,
-      // retry once WITHOUT it so this optimization can never turn a working
-      // call into a failure.
-      if (response.status === 400 && isReasoningModel) {
+      let response = await this.fetchWithRetry(url, buildInit(fastModel, true));
+      if (
+        !response.ok &&
+        (response.status === 400 || response.status === 404)
+      ) {
         await response.body?.cancel().catch(() => undefined);
-        response = await this.fetchWithRetry(url, buildInit(false));
+        response = await this.fetchWithRetry(
+          url,
+          buildInit(runtime.model, false),
+        );
       }
       if (!response.ok)
         throw new Error(`Model gateway returned ${response.status}.`);

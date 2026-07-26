@@ -92,8 +92,10 @@ export class RagApi {
       onDelta: params.onDelta,
       onMessage: params.onMessage,
       signal: params.signal,
+      // Wait past a single slow model/engine step (server deadline is 90s) so
+      // the browser doesn't abort a request the server would still answer.
       inactivityTimeoutMs: Number(
-        process.env.NEXT_PUBLIC_PRISM_STREAM_TIMEOUT_MS ?? 30_000,
+        process.env.NEXT_PUBLIC_PRISM_STREAM_TIMEOUT_MS ?? 120_000,
       ),
     });
   }

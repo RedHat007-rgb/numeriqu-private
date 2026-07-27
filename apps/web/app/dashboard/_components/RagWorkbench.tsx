@@ -604,7 +604,8 @@ export function RagWorkbench() {
   const { rag, loading } = useNumeriquApi();
   const searchParams = useSearchParams();
   const autoAskRef = useRef(false);
-  const showComingSoon = process.env.NEXT_PUBLIC_PRISM_LOCKED === "true";
+  // Prism stays launch-locked unless a deployment explicitly opts in.
+  const showComingSoon = process.env.NEXT_PUBLIC_PRISM_LOCKED !== "false";
 
   // Sidebar
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
@@ -648,7 +649,7 @@ export function RagWorkbench() {
   // ── Load sessions ────────────────────────────────────────────────────────────
 
   const loadSessions = useCallback(async () => {
-    if (loading) return;
+    if (showComingSoon || loading) return;
     setSessionsLoading(true);
     try {
       const list = await rag.sessions();
@@ -658,24 +659,24 @@ export function RagWorkbench() {
     } finally {
       setSessionsLoading(false);
     }
-  }, [rag, loading]);
+  }, [rag, loading, showComingSoon]);
 
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
 
   useEffect(() => {
-    if (loading) return;
+    if (showComingSoon || loading) return;
     rag
       .opportunities()
       .then(setOpportunities)
       .catch(() => setOpportunities([]));
-  }, [loading, rag]);
+  }, [loading, rag, showComingSoon]);
 
   // ── Auto-ask from ?q=... (Command Palette) ──────────────────────────────────
 
   useEffect(() => {
-    if (loading) return;
+    if (showComingSoon || loading) return;
     if (autoAskRef.current) return;
     const q = searchParams.get("q");
     if (!q) return;
@@ -683,7 +684,7 @@ export function RagWorkbench() {
     handleNewSession();
     setTimeout(() => void ask(q), 50);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+  }, [loading, showComingSoon]);
 
   // ── Auto-scroll ──────────────────────────────────────────────────────────────
 
@@ -723,7 +724,7 @@ export function RagWorkbench() {
 
   async function ask(query: string) {
     const trimmed = query.trim();
-    if (!trimmed || isStreaming) return;
+    if (showComingSoon || !trimmed || isStreaming) return;
 
     setError(null);
     setWarning(null);

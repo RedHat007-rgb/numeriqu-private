@@ -263,6 +263,8 @@ function compileMeasureExpr(expr: MeasureExpr): string {
     case 'ratio_of_sums':
       // The ONLY way a percentage/rate is ever produced.
       return `sum(${ident(expr.numerator)}) / nullIf(sum(${ident(expr.denominator)}), 0)`;
+    case 'ratio_of_sum_to_total':
+      return `sum(${ident(expr.numerator)}) / nullIf(sum(sum(${ident(expr.denominator)})) OVER (), 0)`;
     case 'mean':
       // Row-level average/duration. Weighted (sum/sum) when the cube carries a
       // pre-summed value + weight; else a plain avg over the grouped rows. The
@@ -328,12 +330,23 @@ function stringLiteral(value: string): string {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
 }
 
-/** The value expression for a measure, ratio-scaled to percent-points (×100) so
- * the UI's percent formatter renders 33.7 → "33.7%". The single source of truth
- * for how a measure becomes a numeric column. */
+/** A ratio measure whose declared unit is a percentage/rate is emitted in
+ * percent-points (×100) so the UI's percent formatter renders 33.7 → "33.7%".
+ * A ratio whose unit is a dimensionless multiple (unit 'x' — debt-to-equity,
+ * asset turnover, current ratio) is emitted raw (0.47), formatted as a number.
+ * Driven entirely by the measure's unit metadata — no per-measure special-casing. */
+function ratioIsPercent(m: SemanticMeasure): boolean {
+  return m.unit === '%' || /%|percent/i.test(m.unit);
+}
+
+/** The value expression for a measure. The single source of truth for how a
+ * measure becomes a numeric column. */
 function measureValueExpr(m: SemanticMeasure): string {
-  return m.expr.kind === 'ratio_of_sums'
-    ? `round(100 * (${compileMeasureExpr(m.expr)}), 4)`
+  return m.expr.kind === 'ratio_of_sums' ||
+    m.expr.kind === 'ratio_of_sum_to_total'
+    ? ratioIsPercent(m)
+      ? `round(100 * (${compileMeasureExpr(m.expr)}), 4)`
+      : `round(${compileMeasureExpr(m.expr)}, 6)`
     : compileMeasureExpr(m.expr);
 }
 
@@ -361,8 +374,18 @@ function measureValueExprIf(m: SemanticMeasure, condition: string): string {
       return `maxIf(${ident(m.expr.column)}, ${condition})`;
     case 'last_value':
       return `argMaxIf(${ident(m.expr.column)}, ${ident(m.expr.orderBy)}, ${condition})`;
-    case 'ratio_of_sums':
-      return `round(100 * sumIf(${ident(m.expr.numerator)}, ${condition}) / nullIf(sumIf(${ident(m.expr.denominator)}, ${condition}), 0), 4)`;
+    case 'ratio_of_sums': {
+      const ratio = `sumIf(${ident(m.expr.numerator)}, ${condition}) / nullIf(sumIf(${ident(m.expr.denominator)}, ${condition}), 0)`;
+      return ratioIsPercent(m)
+        ? `round(100 * ${ratio}, 4)`
+        : `round(${ratio}, 6)`;
+    }
+    case 'ratio_of_sum_to_total': {
+      const ratio = `sumIf(${ident(m.expr.numerator)}, ${condition}) / nullIf(sum(sumIf(${ident(m.expr.denominator)}, ${condition})) OVER (), 0)`;
+      return ratioIsPercent(m)
+        ? `round(100 * ${ratio}, 4)`
+        : `round(${ratio}, 6)`;
+    }
     case 'mean':
       return m.expr.weight
         ? `sumIf(${ident(m.expr.column)}, ${condition}) / nullIf(sumIf(${ident(m.expr.weight)}, ${condition}), 0)`
@@ -536,7 +559,17 @@ export function buildEngineDisplay(
   }
 
   if (spec.chartType === 'treemap' && measures.length >= 1) {
-    const colorMeasure = measures[1];
+    // Follow-ups commonly append a variance/change measure and ask that it
+    // drive color. Prefer that semantic color channel; otherwise preserve the
+    // conventional second-measure behavior.
+    const colorMeasure =
+      [...measures]
+        .reverse()
+        .find((measure) =>
+          /\b(?:change|variance|growth|margin|difference)\b/i.test(
+            `${measure.key} ${measure.label}`.replace(/_/g, ' '),
+          ),
+        ) ?? measures[1];
     return decorate({
       chartType: 'treemap',
       valueFormat: unitFormat(measures[0]!.unit),
@@ -567,6 +600,31 @@ export function buildEngineDisplay(
     spec.chartType === 'funnel' ||
     spec.chartType === 'sankey'
   ) {
+    if (spec.chartType === 'kpi' && spec.timeGrain) {
+      const timeSeries = measures.map((measure) => {
+        const format = unitFormat(measure.unit);
+        return {
+          key: measure.label,
+          role: 'line' as const,
+          axis: format === primaryFmt ? ('left' as const) : ('right' as const),
+          format,
+        };
+      });
+      const right = timeSeries.find((series) => series.axis === 'right');
+      return decorate({
+        chartType: right ? 'combo' : 'line',
+        valueFormat: primaryFmt,
+        series: timeSeries,
+        ...(xAxisLabel ? { xAxisLabel } : {}),
+        yAxisLabel: measures.length > 1 ? 'Value' : yAxisTitleFor(measures[0]!),
+        ...(right
+          ? {
+              secondaryAxisFormat: right.format,
+              secondaryLabel: right.key,
+            }
+          : {}),
+      });
+    }
     return decorate({
       chartType: spec.chartType,
       valueFormat: primaryFmt,
@@ -639,26 +697,40 @@ export function buildEngineDisplay(
         m.label,
       );
     const isComponentOverlay =
+      spec.componentMode === true && spec.chartType === 'stacked_area' && i > 0;
+    const isStackedComponent =
       spec.componentMode === true &&
-      spec.chartType === 'stacked_area' &&
-      i > 0;
+      (spec.chartType === 'stacked_bar' || spec.chartType === 'combo') &&
+      fmt === primaryFmt;
+    const isDifferenceOverlay =
+      i > 0 &&
+      /\b(?:difference|reconciliation)\b/i.test(
+        `${m.key} ${m.label}`.replace(/_/g, ' '),
+      );
     return {
       key: m.label,
-      role:
-        isComponentOverlay
-          ? 'line'
-          : spec.chartType === 'combo'
-          ? i === 0
-            ? 'bar'
-            : 'line'
-          : spec.clustered
-            ? 'bar'
-            : isStackReference
-              ? 'line'
-              : i === 0 || sameScale
-                ? baseRole
-                : 'line',
-      axis: i === 0 || sameScale || isComponentOverlay ? 'left' : 'right',
+      role: isDifferenceOverlay
+        ? 'line'
+        : isStackedComponent
+          ? 'bar'
+          : isComponentOverlay
+            ? 'line'
+            : spec.chartType === 'combo'
+              ? i === 0
+                ? 'bar'
+                : 'line'
+              : spec.clustered
+                ? 'bar'
+                : isStackReference
+                  ? 'line'
+                  : i === 0 || sameScale
+                    ? baseRole
+                    : 'line',
+      axis:
+        !isDifferenceOverlay &&
+        (i === 0 || sameScale || isComponentOverlay || isStackedComponent)
+          ? 'left'
+          : 'right',
       format: fmt,
     };
   });
@@ -676,9 +748,7 @@ export function buildEngineDisplay(
     measures.length > 1;
   return decorate({
     chartType:
-      right || hasBarOverlay || hasComponentOverlay
-        ? 'combo'
-        : spec.chartType,
+      right || hasBarOverlay || hasComponentOverlay ? 'combo' : spec.chartType,
     valueFormat: primaryFmt,
     series,
     ...(xAxisLabel ? { xAxisLabel } : {}),
@@ -1187,9 +1257,10 @@ export function compileSeriesSql(
       // chart produces one salary/margin line per grade/category and becomes a
       // misleading tangle. Same-scale component measures remain fully stacked.
       const isOverlay =
-        (spec.chartType === 'stacked_bar' ||
+        (((spec.chartType === 'stacked_bar' ||
           spec.chartType === 'stacked_area') &&
-        !spec.clustered &&
+          !spec.clustered) ||
+          (spec.chartType === 'combo' && spec.componentMode === true)) &&
         index > 0 &&
         (spec.componentMode === true ||
           unitFormat(m.unit) !== primaryFormat ||
@@ -1198,9 +1269,9 @@ export function compileSeriesSql(
         ? stringLiteral(m.label)
         : spec.componentMode === true && index === 0
           ? `toString(${ident(seriesDim.column)})`
-        : resolved.length === 1
-          ? `toString(${ident(seriesDim.column)})`
-          : `concat(toString(${ident(seriesDim.column)}), ' — ', ${stringLiteral(m.label)})`;
+          : resolved.length === 1
+            ? `toString(${ident(seriesDim.column)})`
+            : `concat(toString(${ident(seriesDim.column)}), ' — ', ${stringLiteral(m.label)})`;
       const measureGroupExprs = isOverlay
         ? spec.timeGrain
           ? [timeGrainExpr(spec.timeGrain, model.time!.column)]
@@ -1254,8 +1325,12 @@ export function compileSeriesSql(
   const valueCols = resolved
     .map((m) => `${measureValueExpr(m)} AS ${quoteAlias(m.label)}`)
     .join(', ');
-  const having = groupBy
-    ? `\nHAVING ${resolved.map((m) => `abs(ifNull(${quoteAlias(m.label)}, 0)) > 0.000000000001`).join(' OR ')}`
+  const aggregateFilter = groupBy
+    ? resolved.some(
+        (measure) => measure.expr.kind === 'ratio_of_sum_to_total',
+      )
+      ? `\nQUALIFY ${resolved.map((m) => `abs(ifNull(${quoteAlias(m.label)}, 0)) > 0.000000000001`).join(' OR ')}`
+      : `\nHAVING ${resolved.map((m) => `abs(ifNull(${quoteAlias(m.label)}, 0)) > 0.000000000001`).join(' OR ')}`
     : '';
   const maxRows = ctx.maxRows ?? 5000;
   const limit =
@@ -1269,7 +1344,7 @@ export function compileSeriesSql(
     `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
     `WHERE ${SCOPE_WHERE}` +
     groupBy +
-    having +
+    aggregateFilter +
     orderBy +
     `\nLIMIT ${limit}`;
   return {
@@ -1317,8 +1392,10 @@ export function compileNameValueSql(
   // Ratios are stored/derived as a 0..1 fraction; the UI's percent formatter
   // expects percent-points (33.7 → "33.7%"), so scale ratio measures ×100.
   const valueExpr = measureValueExpr(measure);
-  const having = groupBy
-    ? `\nHAVING abs(ifNull(value, 0)) > 0.000000000001`
+  const aggregateFilter = groupBy
+    ? measure.expr.kind === 'ratio_of_sum_to_total'
+      ? `\nQUALIFY abs(ifNull(value, 0)) > 0.000000000001`
+      : `\nHAVING abs(ifNull(value, 0)) > 0.000000000001`
     : '';
   const maxRows = ctx.maxRows ?? 5000;
   const limit =
@@ -1334,7 +1411,7 @@ export function compileNameValueSql(
     `FROM ${ident(ctx.analyticsDb)}.${ident(measure.sourceTable)}\n` +
     `WHERE ${SCOPE_WHERE}` +
     groupBy +
-    having +
+    aggregateFilter +
     orderBy +
     `\nLIMIT ${limit}`;
   return {
@@ -1487,8 +1564,12 @@ export function compileSpec(
   const groupBy = groupParts.length
     ? `\nGROUP BY ${groupParts.join(', ')}`
     : '';
-  const having = groupParts.length
-    ? `\nHAVING ${resolved.map((_, index) => `abs(ifNull(\`${compiledMeasureColumn(index)}\`, 0)) > 0.000000000001`).join(' OR ')}`
+  const aggregateFilter = groupParts.length
+    ? resolved.some(
+        (measure) => measure.expr.kind === 'ratio_of_sum_to_total',
+      )
+      ? `\nQUALIFY ${resolved.map((_, index) => `abs(ifNull(\`${compiledMeasureColumn(index)}\`, 0)) > 0.000000000001`).join(' OR ')}`
+      : `\nHAVING ${resolved.map((_, index) => `abs(ifNull(\`${compiledMeasureColumn(index)}\`, 0)) > 0.000000000001`).join(' OR ')}`
     : '';
 
   const sql =
@@ -1496,7 +1577,7 @@ export function compileSpec(
     `FROM ${ident(ctx.analyticsDb)}.${ident(table)}\n` +
     `WHERE ${SCOPE_WHERE}${periodConstraint.sql}` +
     groupBy +
-    having +
+    aggregateFilter +
     orderBy +
     `\nLIMIT ${limit}`;
 
@@ -1524,7 +1605,10 @@ export function compileRatioComponentsTotal(
   ctx: CompileContext,
   time?: SemanticModel['time'],
 ): CompileResult {
-  if (measure.expr.kind !== 'ratio_of_sums') {
+  if (
+    measure.expr.kind !== 'ratio_of_sums' &&
+    measure.expr.kind !== 'ratio_of_sum_to_total'
+  ) {
     return { ok: false, reason: `not a ratio measure: ${measure.key}` };
   }
   const { numerator, denominator } = measure.expr;

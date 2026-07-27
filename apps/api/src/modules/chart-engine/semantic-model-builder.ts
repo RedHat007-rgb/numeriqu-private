@@ -62,17 +62,40 @@ export function prettifyLabel(column: string): string {
 }
 
 function unitFor(profile: ColumnProfile): string {
-  if (profile.agg === 'ratio') return '%';
+  if (profile.agg === 'ratio') {
+    // Percent-vs-plain-ratio is a business convention with no data-only tell
+    // (ROA = profit/assets renders %, Asset Turnover = revenue/assets renders 0.28x).
+    // Read the schema's own declared unit from the column label: a `_ratio`/turnover/
+    // coverage/`_to_<stock>` name is a dimensionless multiple (×1); everything else is
+    // a share/rate/margin (percent, ×100). Same label-driven inference already used
+    // for `days`/`min`/`%` on means below — generic across datasets, no per-question rule.
+    const n = profile.column.toLowerCase();
+    const plainRatio =
+      /(?:_ratio$|_times$|turnover|coverage|_to_(?:equity|assets|income|ebitda|sales|networth))/.test(
+        n,
+      ) && !/_pct$|percent|margin|_rate$|_share$/.test(n);
+    return plainRatio ? 'x' : '%';
+  }
   if (profile.agg === 'mean') {
     const n = profile.column.toLowerCase();
-    if (/salary|billing_rate|payroll_cost|employee_cost|_usd$/.test(n)) return 'USD';
-    if (/_pct|percent|utili[sz]ation|occupancy|sla|csat|\bqa\b|productive/.test(n)) return '%';
-    if (/_days\b|\bdso\b|\bdpo\b|days_(sales|payable|past)/.test(n)) return 'days';
+    if (
+      /salary|billing_rate|payroll_cost|employee_cost|(?:revenue|cost)_per_.*hour|_usd$/.test(
+        n,
+      )
+    )
+      return 'USD';
+    if (
+      /_pct|percent|utili[sz]ation|occupancy|sla|csat|\bqa\b|productive/.test(n)
+    )
+      return '%';
+    if (/_days\b|\bdso\b|\bdpo\b|days_(sales|payable|past)/.test(n))
+      return 'days';
     if (/\baht\b|minutes|handle_time|response_time/.test(n)) return 'min';
     return '';
   }
   if (profile.agg === 'count_distinct') return 'count';
-  if (/_usd$|amount|revenue|cost|cash|payroll|price/i.test(profile.column)) return 'USD';
+  if (/_usd$|amount|revenue|cost|cash|payroll|price/i.test(profile.column))
+    return 'USD';
   return '';
 }
 
@@ -119,7 +142,13 @@ export function measureExprFor(
       return { expr: { kind: 'count_distinct', column: profile.column } };
     case 'semi_additive':
       return timeColumn
-        ? { expr: { kind: 'last_value', column: profile.column, orderBy: timeColumn } }
+        ? {
+            expr: {
+              kind: 'last_value',
+              column: profile.column,
+              orderBy: timeColumn,
+            },
+          }
         : { expr: { kind: 'max', column: profile.column } };
     case 'mean':
       // Weighted mean when the cube carries a paired weight/count column
@@ -131,7 +160,9 @@ export function measureExprFor(
       };
     case 'ratio':
       if (!profile.ratioComponents) {
-        return { skip: 'ratio measure without resolvable numerator/denominator (refusing to average a ratio)' };
+        return {
+          skip: 'ratio measure without resolvable numerator/denominator (refusing to average a ratio)',
+        };
       }
       return {
         expr: {
@@ -141,7 +172,9 @@ export function measureExprFor(
         },
       };
     case 'attribute':
-      return { skip: 'attribute column is a dimension/entity/time, not a measure' };
+      return {
+        skip: 'attribute column is a dimension/entity/time, not a measure',
+      };
   }
 }
 
@@ -153,16 +186,22 @@ export interface BuildInput {
   primaryTable?: string;
 }
 
-function pickTimeColumn(profiles: ColumnProfile[]): SemanticTimeGrain | undefined {
+function pickTimeColumn(
+  profiles: ColumnProfile[],
+): SemanticTimeGrain | undefined {
   const dateCols = profiles.filter((p) => /\b(Date|DateTime)/i.test(p.type));
   if (!dateCols.length) return undefined;
   // Prefer the most-populated date column.
-  const best = [...dateCols].sort((a, b) => a.nullFraction - b.nullFraction)[0]!;
+  const best = [...dateCols].sort(
+    (a, b) => a.nullFraction - b.nullFraction,
+  )[0]!;
   const isDateTime = /DateTime/i.test(best.type);
   return {
     table: best.table,
     column: best.column,
-    grains: isDateTime ? ['day', 'month', 'quarter', 'year'] : ['month', 'quarter', 'year'],
+    grains: isDateTime
+      ? ['day', 'month', 'quarter', 'year']
+      : ['month', 'quarter', 'year'],
   };
 }
 
@@ -172,12 +211,19 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
 
   // Primary fact table = the one with the most additive/ratio measures.
   const measureCount = (t: string) =>
-    (profilesByTable[t] ?? []).filter((p) => p.agg === 'additive' || p.agg === 'ratio' || p.agg === 'semi_additive').length;
+    (profilesByTable[t] ?? []).filter(
+      (p) =>
+        p.agg === 'additive' || p.agg === 'ratio' || p.agg === 'semi_additive',
+    ).length;
   const primaryTable =
     input.primaryTable ??
-    [...new Set(allProfiles.map((p) => p.table))].sort((a, b) => measureCount(b) - measureCount(a))[0];
+    [...new Set(allProfiles.map((p) => p.table))].sort(
+      (a, b) => measureCount(b) - measureCount(a),
+    )[0];
 
-  const time = primaryTable ? pickTimeColumn(profilesByTable[primaryTable] ?? []) : undefined;
+  const time = primaryTable
+    ? pickTimeColumn(profilesByTable[primaryTable] ?? [])
+    : undefined;
 
   const measures: SemanticMeasure[] = [];
   const dimensions: SemanticDimension[] = [];
@@ -189,17 +235,29 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
       if (p.agg === 'attribute') {
         // Date columns are handled by the time grain; skip as dimensions.
         if (/\b(Date|DateTime)/i.test(p.type)) {
-          skipped.push({ table, column: p.column, reason: 'time column (used as grain)' });
+          skipped.push({
+            table,
+            column: p.column,
+            reason: 'time column (used as grain)',
+          });
           continue;
         }
         // Internal tenant-scope columns are not dimensions.
         if (SCOPE_COL_RE.test(p.column)) {
-          skipped.push({ table, column: p.column, reason: 'internal tenant-scope column' });
+          skipped.push({
+            table,
+            column: p.column,
+            reason: 'internal tenant-scope column',
+          });
           continue;
         }
         // Calendar-part columns are covered by the time grain, not dimensions.
         if (CALENDAR_PART_RE.test(p.column)) {
-          skipped.push({ table, column: p.column, reason: 'calendar-part column (use time grain)' });
+          skipped.push({
+            table,
+            column: p.column,
+            reason: 'calendar-part column (use time grain)',
+          });
           continue;
         }
         const dim: SemanticDimension = {
@@ -211,13 +269,22 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
         };
         dimensions.push(dim);
         if (NAME_COL_RE.test(p.column)) {
-          entities.push({ key: p.column.replace(/_name$/i, '') || p.column, label: prettifyLabel(p.column), table, nameColumn: p.column });
+          entities.push({
+            key: p.column.replace(/_name$/i, '') || p.column,
+            label: prettifyLabel(p.column),
+            table,
+            nameColumn: p.column,
+          });
         }
         continue;
       }
       // Internal weight/count helpers back `mean` measures; never expose them.
       if (HELPER_COL_RE.test(p.column)) {
-        skipped.push({ table, column: p.column, reason: 'internal cube weight/count helper' });
+        skipped.push({
+          table,
+          column: p.column,
+          reason: 'internal cube weight/count helper',
+        });
         continue;
       }
       const derived = measureExprFor(p, time?.column);
@@ -309,7 +376,7 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
         unit: '%',
         sourceTable: table,
         expr: {
-          kind: 'ratio_of_sums',
+          kind: 'ratio_of_sum_to_total',
           numerator: 'pl_amount_usd',
           denominator: 'total_revenue_usd',
         },

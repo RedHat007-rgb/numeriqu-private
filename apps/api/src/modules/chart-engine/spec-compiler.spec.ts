@@ -83,6 +83,30 @@ const model: SemanticModel = {
       sourceTable: 'v_fact',
       expr: { kind: 'mean', column: 'sla_pct_sum', weight: 'sla_pct_wt' },
     },
+    {
+      // Composed ratio, plain multiple (as-of / as-of) — e.g. Debt-to-Equity.
+      key: 'debt_to_equity_ratio',
+      label: 'Debt To Equity Ratio',
+      unit: 'x',
+      sourceTable: 'v_fact',
+      expr: {
+        kind: 'ratio_of_aggs',
+        numerator: { agg: 'as_of', column: 'liabilities_usd', orderBy: 'period_date' },
+        denominator: { agg: 'as_of', column: 'equity_usd', orderBy: 'period_date' },
+      },
+    },
+    {
+      // Composed ratio, percent (flow / average-of-level) — e.g. ROA.
+      key: 'roa_pct',
+      label: 'Return On Assets %',
+      unit: '%',
+      sourceTable: 'v_fact',
+      expr: {
+        kind: 'ratio_of_aggs',
+        numerator: { agg: 'sum', column: 'net_profit_usd' },
+        denominator: { agg: 'mean', column: 'assets_usd' },
+      },
+    },
   ],
 };
 
@@ -312,6 +336,87 @@ describe('SpecCompiler correctness contract', () => {
       'sum(gross_profit_usd) / nullIf(sum(revenue_usd), 0)',
     );
     expect(r.sql).not.toMatch(/avg\s*\(/i);
+  });
+
+  it('composes a DAX-faithful ratio with per-side aggregation (ROA = SUM flow / AVG level)', () => {
+    // The analytic query emits the raw composed ratio: numerator summed (flow),
+    // denominator averaged (mean of per-period levels).
+    const roa = compileSpec(
+      { chartType: 'kpi', measureKeys: ['roa_pct'], title: 'ROA' },
+      model,
+      ctx,
+    );
+    expect(roa.ok).toBe(true);
+    if (!roa.ok) return;
+    expect(roa.sql).toContain('sum(net_profit_usd) / nullIf(avg(assets_usd), 0)');
+
+    // Debt-to-Equity = as-of / as-of (argMax point-in-time, both sides).
+    const de = compileSpec(
+      { chartType: 'kpi', measureKeys: ['debt_to_equity_ratio'], title: 'DE' },
+      model,
+      ctx,
+    );
+    expect(de.ok).toBe(true);
+    if (!de.ok) return;
+    expect(de.sql).toContain(
+      'argMax(liabilities_usd, period_date) / nullIf(argMax(equity_usd, period_date), 0)',
+    );
+  });
+
+  it('scales a percent ratio ×100 but a plain-multiple ratio (unit x) raw in the value column', () => {
+    const pct = compileNameValueSql(
+      { chartType: 'bar', measureKeys: ['gross_margin_pct'], dimensionKey: 'business_unit', title: 't' },
+      model,
+      ctx,
+    );
+    const plain = compileNameValueSql(
+      { chartType: 'bar', measureKeys: ['debt_to_equity_ratio'], dimensionKey: 'business_unit', title: 't' },
+      model,
+      ctx,
+    );
+    // percent → ×100 percent-points for the UI's percent formatter
+    expect(pct.sql).toContain('round(100 * (sum(gross_profit_usd)');
+    // plain multiple → NOT scaled (debt-to-equity renders 0.47, not 47)
+    expect(plain.sql).not.toContain('100 *');
+    expect(plain.sql).toContain(
+      'round(argMax(liabilities_usd, period_date) / nullIf(argMax(equity_usd, period_date), 0), 6)',
+    );
+  });
+
+  it('does not put a share-of-total window expression in HAVING', () => {
+    const shareModel: SemanticModel = {
+      ...model,
+      measures: [
+        ...model.measures,
+        {
+          key: 'revenue_share',
+          label: 'Revenue Share',
+          unit: '%',
+          sourceTable: 'v_fact',
+          expr: {
+            kind: 'ratio_of_sum_to_total',
+            numerator: 'revenue_usd',
+            denominator: 'total_revenue_usd',
+          },
+        },
+      ],
+    };
+    const spec: EngineChartSpec = {
+      chartType: 'bar',
+      measureKeys: ['revenue_share'],
+      dimensionKey: 'business_unit',
+      title: 'Revenue Share by BU',
+    };
+    const result = compileNameValueSql(spec, shareModel, ctx);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sql).toContain(
+      'sum(revenue_usd) / nullIf(sum(sum(total_revenue_usd)) OVER (), 0)',
+    );
+    expect(result.sql).not.toContain('HAVING');
+    expect(result.sql).toContain(
+      'QUALIFY abs(ifNull(value, 0)) > 0.000000000001',
+    );
   });
 
   it('compiles a stock (cash balance) as argMax over time — never summed', () => {
@@ -1028,6 +1133,43 @@ describe('buildEngineDisplay axis assignment', () => {
       key: 'Benchmark',
       role: 'line',
     });
+  });
+
+  it('keeps an added measure to one series when a component chart becomes a combo', () => {
+    const comboModel: SemanticModel = {
+      ...model,
+      measures: [
+        ...model.measures,
+        {
+          key: 'benchmark',
+          label: 'Benchmark',
+          unit: 'USD',
+          sourceTable: 'v_fact',
+          expr: { kind: 'sum', column: 'benchmark_usd' },
+        },
+      ],
+    };
+    const compiled = compileSeriesSql(
+      {
+        chartType: 'combo',
+        measureKeys: ['revenue', 'benchmark'],
+        dimensionKey: 'business_unit',
+        timeGrain: 'month',
+        componentMode: true,
+        title: 'Components and benchmark',
+      },
+      comboModel,
+      ctx,
+    );
+    expect(compiled.ok).toBe(true);
+    if (!compiled.ok) return;
+    expect(compiled.sql).toContain(
+      'toString(business_unit) AS series',
+    );
+    expect(compiled.sql).toContain("'Benchmark' AS series");
+    expect(compiled.sql).not.toContain(
+      "concat(toString(business_unit), ' — ', 'Benchmark') AS series",
+    );
   });
 
   it('a $ measure + a % measure → dual-axis COMBO (%, line, right)', () => {

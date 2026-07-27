@@ -19,6 +19,10 @@ function aggWord(expr: MeasureExpr): string {
       return 'additive conditional total (SUMIF)';
     case 'ratio_of_sums':
       return 'ratio — computed as SUM/SUM, never averaged';
+    case 'ratio_of_sum_to_total':
+      return 'contribution ratio — computed against the scoped total denominator';
+    case 'ratio_of_aggs':
+      return 'composed ratio — numerator and denominator each aggregated independently (e.g. flow ÷ average level)';
     case 'last_value':
       return 'point-in-time level (latest within the period)';
     case 'max':

@@ -235,6 +235,26 @@ function ident(name: string): string {
   return name;
 }
 
+/** One side of a composed `ratio_of_aggs`: aggregate a column in-group.
+ *  sum → flow · as_of → argMax(col, timeCol) point-in-time level · mean → avg of
+ *  per-period levels. Mirrors the sum/last_value/mean primitives above. */
+function ratioTermExpr(term: {
+  agg: 'sum' | 'mean' | 'as_of';
+  column: string;
+  orderBy?: string;
+}): string {
+  switch (term.agg) {
+    case 'sum':
+      return `sum(${ident(term.column)})`;
+    case 'mean':
+      return `avg(${ident(term.column)})`;
+    case 'as_of':
+      if (!term.orderBy)
+        throw new Error('ratio_of_aggs as_of term requires orderBy');
+      return `argMax(${ident(term.column)}, ${ident(term.orderBy)})`;
+  }
+}
+
 /** Compile a MeasureExpr to a SQL aggregate expression. The correctness core. */
 function compileMeasureExpr(expr: MeasureExpr): string {
   switch (expr.kind) {
@@ -265,6 +285,11 @@ function compileMeasureExpr(expr: MeasureExpr): string {
       return `sum(${ident(expr.numerator)}) / nullIf(sum(${ident(expr.denominator)}), 0)`;
     case 'ratio_of_sum_to_total':
       return `sum(${ident(expr.numerator)}) / nullIf(sum(sum(${ident(expr.denominator)})) OVER (), 0)`;
+    case 'ratio_of_aggs':
+      // Composed ratio: each side aggregated independently (sum flow / as-of
+      // stock / mean of per-period stock). Reproduces DAX ratios whose numerator
+      // and denominator use different aggregations (ROA, D/E, Asset Turnover).
+      return `${ratioTermExpr(expr.numerator)} / nullIf(${ratioTermExpr(expr.denominator)}, 0)`;
     case 'mean':
       // Row-level average/duration. Weighted (sum/sum) when the cube carries a
       // pre-summed value + weight; else a plain avg over the grouped rows. The
@@ -343,7 +368,8 @@ function ratioIsPercent(m: SemanticMeasure): boolean {
  * measure becomes a numeric column. */
 function measureValueExpr(m: SemanticMeasure): string {
   return m.expr.kind === 'ratio_of_sums' ||
-    m.expr.kind === 'ratio_of_sum_to_total'
+    m.expr.kind === 'ratio_of_sum_to_total' ||
+    m.expr.kind === 'ratio_of_aggs'
     ? ratioIsPercent(m)
       ? `round(100 * (${compileMeasureExpr(m.expr)}), 4)`
       : `round(${compileMeasureExpr(m.expr)}, 6)`
@@ -390,6 +416,29 @@ function measureValueExprIf(m: SemanticMeasure, condition: string): string {
       return m.expr.weight
         ? `sumIf(${ident(m.expr.column)}, ${condition}) / nullIf(sumIf(${ident(m.expr.weight)}, ${condition}), 0)`
         : `avgIf(${ident(m.expr.column)}, ${condition})`;
+    case 'ratio_of_aggs': {
+      const ratio = `${ratioTermExprIf(m.expr.numerator, condition)} / nullIf(${ratioTermExprIf(m.expr.denominator, condition)}, 0)`;
+      return ratioIsPercent(m)
+        ? `round(100 * ${ratio}, 4)`
+        : `round(${ratio}, 6)`;
+    }
+  }
+}
+
+/** Condition-scoped counterpart of ratioTermExpr for aligned period comparisons. */
+function ratioTermExprIf(
+  term: { agg: 'sum' | 'mean' | 'as_of'; column: string; orderBy?: string },
+  condition: string,
+): string {
+  switch (term.agg) {
+    case 'sum':
+      return `sumIf(${ident(term.column)}, ${condition})`;
+    case 'mean':
+      return `avgIf(${ident(term.column)}, ${condition})`;
+    case 'as_of':
+      if (!term.orderBy)
+        throw new Error('ratio_of_aggs as_of term requires orderBy');
+      return `argMaxIf(${ident(term.column)}, ${ident(term.orderBy)}, ${condition})`;
   }
 }
 

@@ -109,11 +109,43 @@ export type MeasureExpr =
   /** Ratio of sums — the ONLY way a percentage/rate is ever produced. */
   | { kind: 'ratio_of_sums'; numerator: string; denominator: string }
   /**
+   * Ratio whose denominator is the scoped total across all result groups.
+   * This is required for contribution-style measures such as an account
+   * group's P&L amount as a percentage of total revenue: the revenue row is a
+   * different group, so a same-group denominator would be null everywhere
+   * except Revenue.
+   */
+  | {
+      kind: 'ratio_of_sum_to_total';
+      numerator: string;
+      denominator: string;
+    }
+  /**
    * Mean of a row-level average/duration. Unweighted → avg(column); weighted →
    * sum(column)/sum(weight) (use when the cube pre-sums the metric and carries a
    * row-count/weight column, giving a DAX-faithful weighted average). Not scaled.
    */
-  | { kind: 'mean'; column: string; weight?: string };
+  | { kind: 'mean'; column: string; weight?: string }
+  /**
+   * Ratio of two composed terms, each aggregated independently. This is the
+   * general form required to reproduce PowerBI DAX ratios whose numerator and
+   * denominator aggregate differently — e.g. ROA = SUM(net_profit) / AVG(as-of
+   * total assets), Debt-to-Equity = AS-OF(liabilities) / AS-OF(equity),
+   * Asset Turnover = SUM(revenue) / AVG(as-of assets). Percent-vs-plain display
+   * scale is driven by the measure's unit (see measureValueExpr), not baked here.
+   */
+  | { kind: 'ratio_of_aggs'; numerator: RatioTerm; denominator: RatioTerm };
+
+/** One side of a composed ratio: a column plus how to aggregate it in-group.
+ * `as_of` requires `orderBy` (the time column) and emits argMax(column, orderBy)
+ * — the point-in-time level; `mean` emits avg(column) (mean of per-period levels);
+ * `sum` emits sum(column) (a flow). */
+export interface RatioTerm {
+  agg: 'sum' | 'mean' | 'as_of';
+  column: string;
+  /** Required when agg === 'as_of' — the ORDER BY column for argMax. */
+  orderBy?: string;
+}
 
 export interface SemanticMeasure {
   key: string;
@@ -245,7 +277,7 @@ export interface EngineChartSpec {
    * Highlight categories by the largest change between two already-plotted
    * measures. This keeps the chart values unchanged; the executor derives the
    * category names from result rows and passes them as display.highlightNames.
-  */
+   */
   highlightChangeFromMeasureKey?: string;
   highlightChangeToMeasureKey?: string;
   /**

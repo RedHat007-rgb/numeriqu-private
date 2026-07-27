@@ -1,0 +1,238 @@
+# Canonical DAX measures (EBPO New Dashboard - QBDB.pbix)
+
+Authoritative source of truth for numeriqu-demo Astra measure semantics. Do NOT hardcode these formulas in code; load/reference as data and conform the semantic layer + planner to them.
+
+- **Accounts Payable Balance** = `CALCULATE( SUM('sfin_fact_trial_balance'[closing_balance_usd]), 'sfin_fact_trial_balance'[account_name] = "Accounts Payable")`
+- **Accounts Receivable Balance** = `CALCULATE( SUM('sfin_fact_trial_balance'[closing_balance_usd]), 'sfin_fact_trial_balance'[account_name] = "Accounts Receivable")`
+- **Accumulated Depreciation** = `CALCULATE( [BS Credit Balance As Of], sfin_dim_account[account_type] = "Asset Contra")`
+- **Active Employees** = `CALCULATE( COUNTROWS(sfin_dim_employee), REMOVEFILTERS(sfin_dim_employee[end_date]), sfin_dim_employee[end_date] = DATE(1970, 1, 1))`
+- **Aging 1-30 Days** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[aging_bucket] = "1-30 Days")`
+- **Aging 31-60 Days** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[aging_bucket] = "31-60 Days")`
+- **Aging 61-90 Days** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[aging_bucket] = "61-90 Days")`
+- **Aging 90+ Days** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[aging_bucket] = "90+ Days")`
+- **Aging Current** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[aging_bucket] = "Current")`
+- **AP >30 Days** = `CALCULATE( SUM('sfin_fact_accounts_payable'[invoice_amount_usd]), 'sfin_fact_accounts_payable'[days_payable_outstanding] = 30)`
+- **AP >60 Days** = `CALCULATE( SUM('sfin_fact_accounts_payable'[invoice_amount_usd]), 'sfin_fact_accounts_payable'[days_payable_outstanding] = 60)`
+- **AP >90 Days** = `CALCULATE(SUM('sfin_fact_accounts_payable'[outstanding_balance_usd]),'sfin_fact_accounts_payable'[days_payable_outstanding]>90)`
+- **AP Amount Paid** = `SUM(sfin_fact_accounts_payable[paid_amount_usd])`
+- **AP Invoice Amount** = `SUM('sfin_fact_accounts_payable'[invoice_amount_usd])`
+- **AP Outstanding** = `SUM('sfin_fact_accounts_payable'[outstanding_balance_usd])`
+- **AR >30 Days** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[days_sales_outstanding] = 30)`
+- **AR >60 Days** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[days_sales_outstanding] = 60)`
+- **AR >90 Days** = `CALCULATE(SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]),'sfin_fact_accounts_receivable'[days_sales_outstanding]>90)`
+- **AR Amount Collected** = `SUM('sfin_fact_accounts_receivable'[collected_amount_usd])`
+- **AR Invoice Amount** = `SUM('sfin_fact_accounts_receivable'[invoice_amount_usd])`
+- **AR Outstanding** = `SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd])`
+- **AR Write-Off Amount** = `SUM(sfin_fact_accounts_receivable[write_off_amount_usd])`
+- **Asset Balance As Of** = `CALCULATE( [BS Debit Balance As Of], sfin_dim_account[account_type] = "Asset")-CALCULATE( [BS Credit Balance As Of], sfin_dim_account[account_type] = "Asset Contra")`
+- **Asset Turnover** = `DIVIDE( [Total Revenue], [Average Total Assets], BLANK())`
+- **Attrition %** = ``
+- **VAR AverageHeadcount** = `DIVIDE( [Opening Headcount] + [Closing Headcount], 2 )RETURNDIVIDE( [Employee Exits], AverageHeadcount, 0)`
+- **Average AHT** = `AVERAGE('sfin_fact_operations'[aht_minutes])`
+- **Average Cost Rate** = `DIVIDE([Total Payroll], SUM('sfin_fact_operations'[paid_hours]))`
+- **Average DPO** = `AVERAGE('sfin_fact_accounts_payable'[days_payable_outstanding])`
+- **Average DSO** = `AVERAGE('sfin_fact_accounts_receivable'[days_sales_outstanding])`
+- **Average Net Assets** = `AVERAGEX( VALUES(sfin_dim_date[date_key]), [Net Assets])`
+- **Average NPS** = `AVERAGE('sfin_fact_operations'[nps])`
+- **Average QA Score** = `AVERAGE( 'sfin_fact_operations'[qa_score_pct] )`
+- **Average SLA %** = `AVERAGE( 'sfin_fact_operations'[sla_compliance_pct] ) * 0.01`
+- **Average Total Assets** = `AVERAGEX( VALUES(sfin_dim_date[date_key]), [Total Assets])`
+- **Average Total Equity** = `AVERAGEX( VALUES(sfin_dim_date[date_key]), [Total Equity])`
+- **Avg CSAT %** = `AVERAGE('sfin_fact_operations'[csat_pct]) * 0.01`
+- **Avg Monthly Salary** = `AVERAGE('sfin_dim_employee'[monthly_salary_usd])`
+- **Avg Occupancy %** = `AVERAGE('sfin_fact_operations'[occupancy_pct])`
+- **Avg Utilization %** = `AVERAGE('sfin_fact_operations'[utilization_pct]) * 0.01`
+- **Back Office Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "Back Office Revenue")`
+- **Bad Debt %** = `DIVIDE( [AR Write-Off Amount], [AR Invoice Amount], 0)`
+- **Balance Movement** = `[Closing Balance waterfall] - [Opening Balance waterfall]`
+- **Balance Sheet Check** = `[Total Assets] - [Total Liabilities] - [Total Equity]`
+- **Balance Sheet Value** = `CALCULATE( SUM('sfin_fact_general_ledger'[debit_usd]) - SUM('sfin_fact_general_ledger'[credit_usd]), 'sfin_dim_account'[financial_statement] = "Balance Sheet")`
+- **Banking BPO Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_business_unit'[business_unit_name] = "Banking BPO")`
+- **Base Salary % of PayrollBase Salary % of Payroll** = `DIVIDE([Total Base Salary], [Total Payroll])`
+- **Benefits % of Payroll** = `DIVIDE([Total Benefits], [Total Payroll])`
+- **Billable Utilization %** = `DIVIDE( [Total Billable Hours], [Operations Paid Hours], 0)`
+- **Bonus % of Payroll** = `DIVIDE([Total Bonus], [Total Payroll])`
+- **BS Credit Balance As Of** = ``
+- **VAR AsOfDateKey** = `MAX(sfin_dim_date[date_key])RETURNCALCULATE( SUM(sfin_fact_trial_balance[credit_balance_usd]), REMOVEFILTERS(sfin_dim_date), REMOVEFILTERS(sfin_fact_trial_balance[date_key]), sfin_fact_trial_balance[date_key] = AsOfDateKey)`
+- **BS Debit Balance As Of** = ``
+- **Cash Balance** = `SUM('sfin_fact_cash_flow'[closing_cash_balance_usd])`
+- **Cash Conversion Ratio** = `DIVIDE( [Operating Cash Flow], [Net Profit], BLANK())`
+- **Cash Inflow** = `SUM('sfin_fact_cash_flow'[cash_inflow_usd])`
+- **Cash Movement VarianceCash Movement Variance** = `[Net Cash Flow] - [GL Cash Movement]`
+- **Cash Outflow** = `SUM('sfin_fact_cash_flow'[cash_outflow_usd])`
+- **Chat Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "Chat Revenue")`
+- **Client Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_group] = "Client Cost")`
+- **Closing Balance waterfall** = `CALCULATE( SUM('sfin_fact_trial_balance'[closing_balance_usd]), 'sfin_fact_trial_balance'[account_type] IN { "Asset", "Liability", "Equity" }, LASTNONBLANK( 'sfin_fact_trial_balance'[fiscal_period], 1 ))`
+- **Closing Cash Balance** = `SUM('sfin_fact_cash_flow'[closing_cash_balance_usd])`
+- **Closing Headcount** = ``
+- **VAR PeriodEnd** = `MAX(sfin_dim_date[date])RETURNCALCULATE( DISTINCTCOUNT(sfin_dim_employee[employee_key]), REMOVEFILTERS(sfin_dim_date), FILTER( ALL( sfin_dim_employee[start_date], sfin_dim_employee[end_date] ), sfin_dim_employee[start_date] <= PeriodEnd && ( sfin_dim_employee[end_date] = DATE(1970, 1, 1) || ISBLANK(sfin_dim_employee[end_date]) || sfin_dim_employee[end_date] > PeriodEnd ) ))`
+- **Collection Efficiency %** = `DIVIDE(SUM('sfin_fact_accounts_receivable'[collected_amount_usd]),SUM('sfin_fact_accounts_receivable'[invoice_amount_usd]))`
+- **Collection Gap** = `[AR Invoice Amount] - [AR Amount Collected]`
+- **Collection Rate %** = `DIVIDE( SUM('sfin_fact_accounts_receivable'[collected_amount_usd]), SUM('sfin_fact_accounts_receivable'[invoice_amount_usd]))`
+- **COS %** = `DIVIDE([Total COS], [Total Revenue])`
+- **COS per FTE** = `DIVIDE([Total COS], DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **Cost per Billable Hour** = `DIVIDE( [Total Cost], [Total Billable Hours], 0)`
+- **Cost Per Employee** = `DIVIDE([Total COS], DISTINCTCOUNT('sfin_dim_employee'[employee_id]))`
+- **Cost per FTE** = `DIVIDE([Total COS] + [Total SG&A], DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **Cost per Productive HourCost per Productive Hour** = `DIVIDE( [Total Operating Cost], SUM('sfin_fact_operations'[productive_hours]) )`
+- **Cost-to-Revenue Ratio** = `DIVIDE([Total COS] + [Total SG&A],[Total Revenue])`
+- **Countries** = `DISTINCTCOUNT('sfin_dim_employee'[country])`
+- **Credit Movement** = `CALCULATE( SUM('sfin_fact_trial_balance'[credit_movement_usd]), 'sfin_fact_trial_balance'[account_type] IN { "Asset", "Liability", "Equity" })`
+- **Current Assets** = `CALCULATE( [BS Debit Balance As Of], KEEPFILTERS( sfin_dim_account[account_group] = "Current Assets" ))`
+- **Current Liabilities** = `CALCULATE( [BS Credit Balance As Of], KEEPFILTERS( sfin_dim_account[account_group] = "Current Liabilities" ))`
+- **Current Ratio** = `DIVIDE( [Current Assets], [Current Liabilities], BLANK())`
+- **Current Receivables** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[aging_bucket] = "Current")`
+- **Customer Care RevenueCustomer Care Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_business_unit'[business_unit_name] = "Customer Care")`
+- **D&A** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_group] = "D&A")`
+- **Debit Movement** = `CALCULATE( SUM('sfin_fact_trial_balance'[debit_movement_usd]), 'sfin_fact_trial_balance'[account_type] IN { "Asset", "Liability", "Equity" })`
+- **Debt Ratio** = `DIVIDE( [Total Liabilities], [Total Assets], BLANK())`
+- **Debt to Equity Ratio** = `DIVIDE([Total Liabilities],[Total Equity])`
+- **Departments** = `DISTINCTCOUNT('sfin_dim_employee'[department])`
+- **Depreciation & AmortizationDepreciation & Amortization** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[cost_category] = "DepreciationAndAmortization")`
+- **DPO** = `DIVIDE([AP Outstanding],[Total COS]/365)`
+- **DSO** = `DIVIDE([AR Outstanding],[Total Revenue]/365)`
+- **EBITDA** = `[Gross Profit] - [Total SG&A] + [Depreciation & Amortization]`
+- **EBITDA Growth % YoY** = `DIVIDE( [EBITDA]-[EBITDA LY], [EBITDA LY] )`
+- **EBITDA LY** = `CALCULATE( [EBITDA], DATEADD('sfin_dim_date'[date],-1,YEAR) )`
+- **EBITDA Margin %** = `DIVIDE( [EBITDA], [Total Revenue])`
+- **Email Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "Email Revenue")`
+- **Employee Count** = `DISTINCTCOUNT('sfin_dim_employee'[employee_id])`
+- **Employee Exits** = ``
+- **VAR PeriodStart** = `MIN(sfin_dim_date[date])`
+- **Equity Ratio** = `DIVIDE( [Total Equity], [Total Assets], BLANK())`
+- **Facility Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_group] = "Facility Cost")`
+- **Facility Cost % of RevenueFacility Cost % of Revenue** = `DIVIDE([Facility Cost],[Total Revenue])`
+- **FCF Margin %** = `DIVIDE( [Free Cash Flow], [Total Revenue], BLANK())`
+- **FCF to Revenue %** = `DIVIDE([Free Cash Flow],[Total Revenue])`
+- **Finance Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_type] = "Finance Cost")`
+- **Financing Cash Flow** = `CALCULATE( SUM('sfin_fact_cash_flow'[net_cash_flow_usd]), 'sfin_fact_cash_flow'[cash_flow_activity]="Financing Activities" )`
+- **Financing CF Margin %** = `DIVIDE( [Financing Cash Flow], [Total Revenue])`
+- **Free Cash Flow** = `[Operating Cash Flow] + [Investing Cash Flow]`
+- **General Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "General Revenue")`
+- **GL Cash Movement** = `CALCULATE( SUM('sfin_fact_general_ledger'[signed_amount_usd]), 'sfin_fact_general_ledger'[account_name] = "Cash")`
+- **GL Payroll Cost** = `CALCULATE( SUM('sfin_fact_general_ledger'[debit_usd]), 'sfin_fact_general_ledger'[account_name] = "Payroll Expense")`
+- **Gross Assets** = `CALCULATE( [BS Debit Balance As Of], sfin_dim_account[account_type] = "Asset")`
+- **Gross Margin %** = `DIVIDE([Gross Profit], [Total Revenue])`
+- **Gross Margin % serviceline** = `DIVIDE( SUM('sfin_fact_operations'[revenue_usd]) - CALCULATE( SUM('sfin_fact_payroll'[total_payroll_usd]) ), SUM('sfin_fact_operations'[revenue_usd]), 0)`
+- **Gross Profit** = `[Total Revenue] - [Total COS]`
+- **Gross Profit per FTE** = `DIVIDE([Gross Profit], DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **Healthcare BPO RevenueHealthcare BPO Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_business_unit'[business_unit_name] = "Healthcare BPO")`
+- **Hours Reconciliation** = `[Operations Paid Hours] - [Total Billable Hours] - [Non-Billable Paid Hours]`
+- **Idle Hours %** = `DIVIDE( SUM(sfin_fact_operations[idle_hours]), [Operations Paid Hours], 0)`
+- **Investing Cash Flow** = `CALCULATE( SUM('sfin_fact_cash_flow'[net_cash_flow_usd]), 'sfin_fact_cash_flow'[cash_flow_activity]="Investing Activities" )`
+- **Investing CF Margin %** = `DIVIDE( [Investing Cash Flow], [Total Revenue])`
+- **IT Helpdesk Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_business_unit'[business_unit_name] = "IT Helpdesk")`
+- **Labor % of Revenue** = `DIVIDE([Labor Cost],[Total Revenue])`
+- **Labor Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_group] = "Labor")`
+- **Net Asset Change vs PYNet Asset Change vs PY** = `[Net Assets] - [Net Assets Previous Year]`
+- **Net Assets** = `[Total Assets] - [Total Liabilities]`
+- **Net Assets Previous Year** = `CALCULATE( [Net Assets], DATEADD( sfin_dim_date[date], -1, YEAR ))`
+- **Net Assets Ratio** = `DIVIDE( [Net Assets], [Total Assets], BLANK())`
+- **Net Cash Flow** = `[Operating Cash Flow] + [Investing Cash Flow] + [Financing Cash Flow]`
+- **Net Margin %** = `DIVIDE([Net Profit], [Total Revenue])`
+- **Net Profit** = `[Profit Before Tax] - [Tax]`
+- **Net Working Capital** = `[AR Outstanding] - [AP Outstanding]`
+- **Non-Billable Capacity CostNon-Billable Capacity Cost** = `[Non-Billable Paid Hours] * [Payroll Cost per Paid Hour]`
+- **Non-Billable Paid Hours** = `[Operations Paid Hours] - [Total Billable Hours]`
+- **Non-Productive Hours per FTE** = `DIVIDE(SUM('sfin_fact_operations'[non_productive_hours]), DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **OCF Margin %** = `DIVIDE( [Operating Cash Flow], [Total Revenue] )`
+- **OCF to EBITDA Ratio** = `DIVIDE( [Operating Cash Flow], [EBITDA], BLANK())`
+- **Opening Balance waterfall** = `CALCULATE( SUM('sfin_fact_trial_balance'[opening_balance_usd]), 'sfin_fact_trial_balance'[account_type] IN { "Asset", "Liability", "Equity" }, FIRSTNONBLANK( 'sfin_fact_trial_balance'[fiscal_period], 1 ))`
+- **Opening Headcount** = ``
+- **VAR AsOfDate** = `PeriodStart - 1RETURNCALCULATE( DISTINCTCOUNT(sfin_dim_employee[employee_key]), REMOVEFILTERS(sfin_dim_date), FILTER( ALL( sfin_dim_employee[start_date], sfin_dim_employee[end_date] ), sfin_dim_employee[start_date] <= AsOfDate && ( sfin_dim_employee[end_date] = DATE(1970, 1, 1) || ISBLANK(sfin_dim_employee[end_date]) || sfin_dim_employee[end_date] > AsOfDate ) ))`
+- **Operating Cash Flow** = `[Operating Cash Inflow] - [Operating Cash Outflow]`
+- **Operating Cash Inflow** = `CALCULATE(SUM('sfin_fact_cash_flow'[cash_inflow_usd]),'sfin_fact_cash_flow'[cash_flow_activity] = "Operating Activities")`
+- **Operating Cash Outflow** = `CALCULATE(SUM('sfin_fact_cash_flow'[cash_outflow_usd]),'sfin_fact_cash_flow'[cash_flow_activity] = "Operating Activities")`
+- **Operating CF Margin %** = `DIVIDE( [Operating Cash Flow], [Total Revenue])`
+- **Operating Cost % of Revenue** = `DIVIDE( [Total Operating Cost], [Revenue for Cost Ratios], 0)`
+- **Operating Cost per Billable Hour** = `DIVIDE( [Total Operating Cost], [Total Billable Hours], 0)`
+- **Operating Margin %** = `DIVIDE([Operating Profit], [Total Revenue])`
+- **Operating Profit** = `[Total Revenue] - [Total Operating Cost]`
+- **Operating Profit per Billable Hour** = `DIVIDE( [Operating Profit], [Total Billable Hours], 0)`
+- **Operations Paid Hours** = `SUM(sfin_fact_operations[paid_hours])`
+- **OpEx per FTE** = `DIVIDE([Total SG&A], DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **OT Eligible Employees** = `CALCULATE( DISTINCTCOUNT('sfin_fact_attendance'[employee_key]), 'sfin_fact_attendance'[overtime_eligible_flag] = 1)`
+- **Other Operating Cost** = `[Total Operating Cost] - [Labor Cost] - [People Cost] - [Technology Cost] - [Facility Cost] - [Third Party Cost] - [Client Cost] - [Depreciation & Amortization]`
+- **Outstanding AP %** = `DIVIDE( [AP Outstanding], [Ap Invoice Amount], 0)`
+- **Outstanding AR %** = `DIVIDE( [AR Outstanding], [AR Invoice Amount], 0)`
+- **Overdue Receivables** = `CALCULATE( SUM('sfin_fact_accounts_receivable'[outstanding_balance_usd]), 'sfin_fact_accounts_receivable'[invoice_status] = "Open", 'sfin_fact_accounts_receivable'[days_past_due] > 0)`
+- **Overtime %** = `DIVIDE( SUM(sfin_fact_operations[overtime_hours]), [Operations Paid Hours], 0)`
+- **Overtime % of Payroll** = `DIVIDE([Total Overtime], [Total Payroll])`
+- **P&L Amount** = `CALCULATE( SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_fact_general_ledger'[account_type] IN { "Revenue", "Direct Cost (COS)", "SG&A", "Finance Cost", "Tax" })`
+- **P&L Amount % of Revenue** = `DIVIDE( [P&L Amount], CALCULATE( [Total Revenue], REMOVEFILTERS('sfin_fact_general_ledger'[account_group]) ), 0)`
+- **Pass Through Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "Pass Through Revenue")`
+- **Payroll / Revenue %** = `DIVIDE([Total Payroll],[Total Revenue])`
+- **Payroll Cash Outflow** = `SUM('sfin_fact_payroll'[total_payroll_usd])`
+- **Payroll Components Total** = `[Total Base Salary] + [Total Bonus] + [Total Benefits] + [Total Overtime] + [Total Allowances & Leave]`
+- **Payroll Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[cost_category] = "Payroll")`
+- **Payroll Cost per Paid Hour** = `DIVIDE( [Total Payroll], [Payroll Paid Hours], 0)`
+- **Payroll Paid Hours** = `SUM(sfin_fact_payroll[paid_hours])`
+- **Payroll Payable Balance** = `CALCULATE( SUM('sfin_fact_trial_balance'[closing_balance_usd]), 'sfin_fact_trial_balance'[account_name] = "Payroll Payable")`
+- **Payroll Per Employee** = `DIVIDE([Total Payroll], DISTINCTCOUNT('sfin_dim_employee'[employee_id]))`
+- **Payroll Reconciliation VariancePayroll Reconciliation Variance** = `[Total Payroll] - [Payroll Components Total]`
+- **People Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_group] = "People Cost")`
+- **People Cost % of RevenuePeople Cost % of Revenue** = `DIVIDE([People Cost],[Total Revenue])`
+- **Prepaid Expenses Balance** = `CALCULATE( SUM('sfin_fact_trial_balance'[closing_balance_usd]), 'sfin_fact_trial_balance'[account_name] = "Prepaid Expenses")`
+- **Productive Hours %** = `DIVIDE( [Total Productive Hours], [Operations Paid Hours], 0)`
+- **Professional Fees** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[cost_category] = "ProfessionalFees")`
+- **Profit Before Tax** = `[Operating Profit] - [Finance Cost]`
+- **Profit per FTE** = `DIVIDE([Net Profit], DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **Rent & Lease** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[cost_category] = "RentLease")`
+- **Resolved Tickets** = `SUM('sfin_fact_operations'[tickets_resolved])`
+- **Return on Net Assets** = `DIVIDE( [Net Profit], [Average Net Assets], BLANK())`
+- **Revenue Change** = `[Total Revenue] - [Revenue LY]`
+- **Revenue for Cost Ratios** = `CALCULATE( [Total Revenue], REMOVEFILTERS(sfin_dim_account))`
+- **Revenue Growth % YoYRevenue Growth % YoY** = `DIVIDE( [Total Revenue]-[Revenue LY], [Revenue LY] )`
+- **Revenue LY** = `CALCULATE( [Total Revenue], DATEADD('sfin_dim_date'[date],-1,YEAR) )`
+- **Revenue per Billable Hour** = `DIVIDE( [Total Revenue], [Total Billable Hours], 0)`
+- **Revenue per FTE** = `DIVIDE([Total Revenue], DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **Revenue per Paid Hour** = `DIVIDE( [Total Revenue], SUM('sfin_fact_operations'[paid_hours]) )`
+- **ROA** = `DIVIDE( [Net Profit], [Average Total Assets], BLANK())`
+- **ROE** = `DIVIDE( [Net Profit], [Average Total Equity], BLANK())`
+- **Seat Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[cost_category] = "SeatCost")`
+- **SG&A % of Revenue** = `DIVIDE( [Total SG&A], [Total Revenue], 0)`
+- **SLA Compliance %** = `AVERAGE('sfin_fact_operations'[sla_compliance_pct]) * 0.01`
+- **Tax** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_type] = "Tax")`
+- **Taxes Payable Balance** = `CALCULATE( SUM('sfin_fact_trial_balance'[closing_balance_usd]), 'sfin_fact_trial_balance'[account_name] = "Taxes Payable")`
+- **Technical Support RevenueTechnical Support Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "Technical Support Revenue")`
+- **Technology Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[cost_category] = "TechnologyCost")`
+- **Technology Cost % of RevenueTechnology Cost % of Revenue** = `DIVIDE( [Technology Cost], [Total Revenue] )`
+- **Technology Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "Technology Revenue")`
+- **Telecom Support RevenueTelecom Support Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_business_unit'[business_unit_name] = "Telecom Support")`
+- **Third Party Cost** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_group] = "Third Party Cost")`
+- **Third Party Cost % of RevenueThird Party Cost % of Revenue** = `DIVIDE([Third Party Cost],[Total Revenue])`
+- **Top N Benefits** = `IF( RANKX( ALL('sfin_dim_department'[department_name]), CALCULATE([Total Benefits]), , DESC ) <= SELECTEDVALUE('TopN'[TopN], 10), [Total Benefits])`
+- **Top N Bonus** = `IF( RANKX( ALL('sfin_dim_department'[department_name]), CALCULATE([Total Bonus]), , DESC ) <= SELECTEDVALUE('TopN'[TopN], 10), [Total Bonus])`
+- **Top N COS** = `IF( RANKX( ALL('sfin_dim_department'[department_name]), CALCULATE([Total COS]), , DESC ) <= SELECTEDVALUE('TopN'[TopN], 10), [Total COS])`
+- **Top N COS by Account Type** = `IF( RANKX( ALL(sfin_dim_account[account_type]), CALCULATE([Total COS]), , DESC ) <= SELECTEDVALUE('TopN'[TopN], 10), [Total COS])`
+- **Top N Overtime** = `IF( RANKX( ALL('sfin_dim_department'[department_name]), CALCULATE([Total Overtime]), , DESC ) <= SELECTEDVALUE('TopN'[TopN], 10), [Total Overtime])`
+- **Total Allowances & Leave** = `SUM ( sfin_fact_payroll[shift_allowance_usd] ) + SUM (sfin_fact_payroll[transport_allowance_usd] ) + SUM ( sfin_fact_payroll[meal_allowance_usd] ) + SUM ( sfin_fact_payroll[leave_encashment_usd])`
+- **Total Assets** = `[Gross Assets] - [Accumulated Depreciation]`
+- **Total Base Salary** = `SUM('sfin_fact_payroll'[basic_salary_usd])`
+- **Total Benefits** = `SUM ( sfin_fact_payroll[employer_contributions_usd] ) + SUM ( sfin_fact_payroll[medical_benefits_usd] ) + SUM ( sfin_fact_payroll[insurance_usd] )`
+- **Total Billable Hours** = `SUM(sfin_fact_operations[billable_hours])`
+- **Total Bonus** = `SUM ( sfin_fact_payroll[incentives_usd] ) + SUM ( sfin_fact_payroll[performance_bonus_usd] ) + SUM ( sfin_fact_payroll[joining_bonus_usd] ) + SUM ( sfin_fact_payroll[retention_bonus_usd] ) + SUM (sfin_fact_payroll[variable_pay_usd] )`
+- **Total Calls Handled** = `SUM('sfin_fact_operations'[calls_handled])`
+- **Total COS** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_type] = "Direct Cost (COS)")`
+- **Total Cost** = `CALCULATE( SUM(sfin_fact_general_ledger[pl_amount_usd]), KEEPFILTERS( sfin_dim_account[account_type] IN { "Direct Cost (COS)", "SG&A", "Finance Cost", "Tax" } ))`
+- **Total Cost % of Revenue** = `DIVIDE( [Total Cost], [Revenue for Cost Ratios], 0)`
+- **Total Cost % of Revenue PY** = `CALCULATE( [Total Cost % of Revenue], DATEADD( sfin_dim_date[date], -1, YEAR ))`
+- **Total Cost % Revenue Variance BPS** = `( [Total Cost % of Revenue] - [Total Cost % of Revenue PY]) * 10000`
+- **Total Equity** = `[Total Assets] - [Total Liabilities]`
+- **Total Liabilities** = `CALCULATE( [BS Credit Balance As Of], sfin_dim_account[account_type] = "Liability")`
+- **Total Non-Productive HoursTotal Non-Productive Hours** = `SUM(sfin_fact_operations[non_productive_hours])`
+- **Total Operating Cost** = `[Total COS] + [Total SG&A]`
+- **Total Overtime** = `SUM('sfin_fact_payroll'[overtime_usd])`
+- **Total Paid Hours** = `SUM('sfin_fact_operations'[paid_hours])`
+- **Total Payroll** = `SUM('sfin_fact_payroll'[total_payroll_usd])`
+- **Total Productive Hours** = `SUM('sfin_fact_operations'[productive_hours])`
+- **Total Revenue** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_type] = "Revenue")`
+- **Total SG&A** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[account_type] = "SG&A")`
+- **Total Tickets Resolved** = `SUM('sfin_fact_operations'[tickets_resolved])`
+- **Training Hours %** = `DIVIDE( SUM(sfin_fact_operations[training_hours]), [Operations Paid Hours], 0)`
+- **Training Hours per FTE** = `DIVIDE(SUM('sfin_fact_operations'[training_hours]), DISTINCTCOUNT('sfin_fact_payroll'[employee_key]))`
+- **Utilities** = `CALCULATE(SUM('sfin_fact_general_ledger'[pl_amount_usd]), 'sfin_dim_account'[cost_category] = "Utilities")`
+- **Vendor Cash Outflow** = `CALCULATE( SUM('sfin_fact_general_ledger'[credit_usd]), 'sfin_fact_general_ledger'[account_type] = "Liability", 'sfin_fact_general_ledger'[account_group] = "Current Liabilities")`
+- **Vendor Payments** = `SUM('sfin_fact_accounts_payable'[paid_amount_usd])`
+- **Voice Revenue** = `CALCULATE([Total Revenue], 'sfin_dim_account'[revenue_category] = "Voice Revenue")`
+- **Working Capital** = `[Current Assets] - [Current Liabilities]`

@@ -8,7 +8,9 @@ import { buildSemanticModel, prettifyLabel } from './semantic-model-builder';
 import { compileSpec } from './spec-compiler';
 import type { EngineChartSpec, PhysicalSchema } from './semantic-model.types';
 
-const col = (over: Partial<ColumnStats> & Pick<ColumnStats, 'column' | 'type'>): ColumnStats => ({
+const col = (
+  over: Partial<ColumnStats> & Pick<ColumnStats, 'column' | 'type'>,
+): ColumnStats => ({
   table: 'v_fact',
   distinctCount: 50,
   nullFraction: 0,
@@ -35,7 +37,17 @@ const schema: PhysicalSchema = {
   datasetId: 'unseen-client',
   introspectedAt: '2026-07-13T00:00:00Z',
   relationships: [],
-  tables: [{ name: 'v_fact', rowCountEstimate: 5000, columns: rawStats.map((s) => ({ name: s.column, type: s.type, nullable: false })) }],
+  tables: [
+    {
+      name: 'v_fact',
+      rowCountEstimate: 5000,
+      columns: rawStats.map((s) => ({
+        name: s.column,
+        type: s.type,
+        nullable: false,
+      })),
+    },
+  ],
 };
 
 describe('semantic labels', () => {
@@ -47,24 +59,53 @@ describe('semantic labels', () => {
   });
 });
 
-const ctx = { analyticsDb: 'analytics', tenantId: 'org-uuid', externalOrgIds: ['ext-1'] };
+const ctx = {
+  analyticsDb: 'analytics',
+  tenantId: 'org-uuid',
+  externalOrgIds: ['ext-1'],
+};
 
 describe('auto-derived pipeline (no hardcoded catalog, no DAX)', () => {
   const profiles = profileTable(rawStats);
-  const { model, skipped } = buildSemanticModel({ schema, profilesByTable: { v_fact: profiles } });
+  const { model, skipped } = buildSemanticModel({
+    schema,
+    profilesByTable: { v_fact: profiles },
+  });
 
   it('derives measures with correct aggregation semantics from data alone', () => {
     const byKey = Object.fromEntries(model.measures.map((m) => [m.key, m]));
-    expect(byKey['revenue_usd']?.expr).toEqual({ kind: 'sum', column: 'revenue_usd' });
-    expect(byKey['gross_margin_pct']?.expr).toEqual({ kind: 'ratio_of_sums', numerator: 'gross_profit_usd', denominator: 'revenue_usd' });
-    expect(byKey['pl_amount_pct_of_revenue']?.expr).toEqual({ kind: 'ratio_of_sums', numerator: 'pl_amount_usd', denominator: 'total_revenue_usd' });
-    expect(byKey['cash_balance']?.expr).toEqual({ kind: 'last_value', column: 'cash_balance', orderBy: 'period_date' });
-    expect(byKey['client_id']?.expr).toEqual({ kind: 'count_distinct', column: 'client_id' });
+    expect(byKey['revenue_usd']?.expr).toEqual({
+      kind: 'sum',
+      column: 'revenue_usd',
+    });
+    expect(byKey['gross_margin_pct']?.expr).toEqual({
+      kind: 'ratio_of_sums',
+      numerator: 'gross_profit_usd',
+      denominator: 'revenue_usd',
+    });
+    expect(byKey['pl_amount_pct_of_revenue']?.expr).toEqual({
+      kind: 'ratio_of_sum_to_total',
+      numerator: 'pl_amount_usd',
+      denominator: 'total_revenue_usd',
+    });
+    expect(byKey['cash_balance']?.expr).toEqual({
+      kind: 'last_value',
+      column: 'cash_balance',
+      orderBy: 'period_date',
+    });
+    expect(byKey['client_id']?.expr).toEqual({
+      kind: 'count_distinct',
+      column: 'client_id',
+    });
   });
 
   it('derives dimensions + a client entity + a time grain', () => {
-    expect(model.dimensions.map((d) => d.key)).toEqual(expect.arrayContaining(['client_name', 'business_unit']));
-    expect(model.entities.some((e) => e.nameColumn === 'client_name')).toBe(true);
+    expect(model.dimensions.map((d) => d.key)).toEqual(
+      expect.arrayContaining(['client_name', 'business_unit']),
+    );
+    expect(model.entities.some((e) => e.nameColumn === 'client_name')).toBe(
+      true,
+    );
     expect(model.time?.column).toBe('period_date');
   });
 
@@ -79,7 +120,20 @@ describe('auto-derived pipeline (no hardcoded catalog, no DAX)', () => {
       col({ column: 'revenue_usd', type: 'Decimal(18, 2)' }),
     ];
     const m = buildSemanticModel({
-      schema: { ...schema, tables: [{ name: 'v_fact', rowCountEstimate: 0, columns: stats2.map((s) => ({ name: s.column, type: s.type, nullable: false })) }] },
+      schema: {
+        ...schema,
+        tables: [
+          {
+            name: 'v_fact',
+            rowCountEstimate: 0,
+            columns: stats2.map((s) => ({
+              name: s.column,
+              type: s.type,
+              nullable: false,
+            })),
+          },
+        ],
+      },
       profilesByTable: { v_fact: profileTable(stats2) },
     }).model;
     const dimKeys = m.dimensions.map((d) => d.key);
@@ -92,7 +146,13 @@ describe('auto-derived pipeline (no hardcoded catalog, no DAX)', () => {
   });
 
   it('compiles "top 5 clients by revenue" into correct scoped SQL', () => {
-    const spec: EngineChartSpec = { chartType: 'bar', measureKeys: ['revenue_usd'], dimensionKey: 'client_name', topN: 5, title: 'Top clients' };
+    const spec: EngineChartSpec = {
+      chartType: 'bar',
+      measureKeys: ['revenue_usd'],
+      dimensionKey: 'client_name',
+      topN: 5,
+      title: 'Top clients',
+    };
     const r = compileSpec(spec, model, ctx);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -104,11 +164,18 @@ describe('auto-derived pipeline (no hardcoded catalog, no DAX)', () => {
   });
 
   it('compiles gross margin trend as SUM/SUM per month — the accuracy win', () => {
-    const spec: EngineChartSpec = { chartType: 'line', measureKeys: ['gross_margin_pct'], timeGrain: 'month', title: 'Margin trend' };
+    const spec: EngineChartSpec = {
+      chartType: 'line',
+      measureKeys: ['gross_margin_pct'],
+      timeGrain: 'month',
+      title: 'Margin trend',
+    };
     const r = compileSpec(spec, model, ctx);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.sql).toContain('sum(gross_profit_usd) / nullIf(sum(revenue_usd), 0)');
+    expect(r.sql).toContain(
+      'sum(gross_profit_usd) / nullIf(sum(revenue_usd), 0)',
+    );
     expect(r.sql).not.toMatch(/avg\s*\(/i);
     expect(r.sql).toContain('toStartOfMonth(period_date)');
   });

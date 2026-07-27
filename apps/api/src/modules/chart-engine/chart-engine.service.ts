@@ -20,6 +20,7 @@ import {
 import { OrganizationContextService } from '../org-context/org-context.service';
 import { profileTable, type ColumnStats } from './data-profiler';
 import { buildSemanticModel } from './semantic-model-builder';
+import { sfinDeclaredMeasuresForTables } from './sfin-measure-registry';
 import {
   buildColumnStatsQuery,
   buildColumnsQuery,
@@ -255,8 +256,8 @@ export class ChartEngineService {
 
     const priorMeasureLabels = priorSpec.measureKeys.map(
       (key) =>
-        priorCube.model.measures.find((measure) => measure.key === key)?.label ??
-        key.replace(/_/g, ' '),
+        priorCube.model.measures.find((measure) => measure.key === key)
+          ?.label ?? key.replace(/_/g, ' '),
     );
     const priorDimensionLabel = priorSpec.dimensionKey
       ? (priorCube.model.dimensions.find(
@@ -302,10 +303,15 @@ export class ChartEngineService {
           : {}),
       };
     }
-    const spec = applyRequestConstraints(instruction, planned.spec, planned.cube.model, {
-      preserveTimeAxis: true,
-      preserveNormalization: true,
-    });
+    const spec = applyRequestConstraints(
+      instruction,
+      planned.spec,
+      planned.cube.model,
+      {
+        preserveTimeAxis: true,
+        preserveNormalization: true,
+      },
+    );
     const fidelityFailure = validateRequestFidelity(
       instruction,
       spec,
@@ -456,11 +462,14 @@ export class ChartEngineService {
     if (spec.hierarchyKeys?.length) {
       answerRows = renderedRows.map((row) => {
         const normalized: Record<string, unknown> = { name: row.name };
-        for (const key of spec.measureKeys) {
+        for (const [index, key] of spec.measureKeys.entries()) {
           const measure = cube.model.measures.find((item) => item.key === key);
           normalized[key] =
             row[key] ??
             (measure ? row[measure.label] : undefined) ??
+            (spec.chartType === 'scatter' || spec.chartType === 'bubble'
+              ? row[['x', 'y', 'z'][index] ?? '']
+              : undefined) ??
             (spec.measureKeys.length === 1 ? row.value : undefined);
         }
         return normalized;
@@ -566,7 +575,7 @@ export class ChartEngineService {
     const metricKeys = spec.measureKeys.filter(
       (key) =>
         key !== revenueKey &&
-        /growth|margin|sla|csat|collection|efficiency|dso|days_sales_outstanding/i.test(
+        /growth|margin|sla|csat|collection|efficiency|bad_debt|bad debt|dso|days_sales_outstanding/i.test(
           key,
         ),
     );
@@ -614,9 +623,17 @@ export class ChartEngineService {
             const lowerIsWeak =
               /growth|margin|sla|csat|collection|efficiency/i.test(key) &&
               !/dso|days_sales_outstanding/i.test(key);
-            const higherIsWeak = /dso|days_sales_outstanding/i.test(key);
-            if (lowerIsWeak && value < med) return score + 1;
-            if (higherIsWeak && value > med) return score + 1;
+            const higherIsWeak =
+              /bad_debt|bad debt|dso|days_sales_outstanding/i.test(key);
+            // A negative growth rate is materially weak even when the peer
+            // median is also negative. For bounded quality/margin metrics,
+            // ignore tiny median noise and score only a meaningful 5% gap.
+            if (/growth/i.test(key) && value < 0)
+              return score + 1 + Math.abs(value) / Math.max(1, Math.abs(med));
+            if (lowerIsWeak && value < med * 0.95)
+              return score + (med - value) / Math.max(1, Math.abs(med));
+            if (higherIsWeak && value > med * 1.05)
+              return score + (value - med) / Math.max(1, Math.abs(med));
             return score;
           },
           0,
@@ -1192,7 +1209,13 @@ export class ChartEngineService {
       ).filter((s): s is ColumnStats => s !== null);
       profilesByTable[t.name] = profileTable(statsList, { allowMean });
     }
-    return buildSemanticModel({ schema, profilesByTable }).model;
+    return buildSemanticModel({
+      schema,
+      profilesByTable,
+      declaredMeasures: sfinDeclaredMeasuresForTables(
+        Object.keys(profilesByTable),
+      ),
+    }).model;
   }
 
   /**
@@ -1344,7 +1367,13 @@ export class ChartEngineService {
       profilesByTable[table.name] = profileTable(statsList, { allowMean });
     }
 
-    const { model, skipped } = buildSemanticModel({ schema, profilesByTable });
+    const { model, skipped } = buildSemanticModel({
+      schema,
+      profilesByTable,
+      declaredMeasures: sfinDeclaredMeasuresForTables(
+        Object.keys(profilesByTable),
+      ),
+    });
     await this.persistModel(
       organizationId,
       opts.kind,

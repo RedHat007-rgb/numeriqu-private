@@ -798,22 +798,19 @@ export function buildSfinSemanticCubeDdls(
         t.org_id AS org_id,
         t.org_name AS org_name,
         t.period_date AS period_date,
-        t.total_assets_usd AS total_assets_usd,
-        t.total_liabilities_usd AS total_liabilities_usd,
-        t.total_equity_usd AS total_equity_usd,
+        t.closing_total_assets_usd AS closing_total_assets_usd,
+        t.closing_total_liabilities_usd AS closing_total_liabilities_usd,
+        t.closing_total_assets_usd - t.closing_total_liabilities_usd AS closing_total_equity_usd,
+        t.closing_current_assets_usd AS closing_current_assets_usd,
+        t.closing_current_liabilities_usd AS closing_current_liabilities_usd,
         ifNull(g.total_revenue_usd, 0) AS total_revenue_usd,
-        ifNull(g.net_profit_usd, 0) AS net_profit_usd,
-        if(total_equity_usd = 0, 0, total_liabilities_usd / total_equity_usd) AS average_debt_to_equity_ratio,
-        if(total_assets_usd = 0, 0, 100 * net_profit_usd / total_assets_usd) AS average_return_on_assets_pct,
-        if(total_equity_usd = 0, 0, 100 * net_profit_usd / total_equity_usd) AS average_return_on_equity_pct,
-        if(total_assets_usd = 0, 0, total_revenue_usd / total_assets_usd) AS average_asset_turnover_ratio,
-        if(total_assets_usd = 0, 0, 100 * total_liabilities_usd / total_assets_usd) AS average_debt_ratio_pct,
-        if(total_assets_usd = 0, 0, 100 * total_equity_usd / total_assets_usd) AS average_equity_ratio_pct
+        ifNull(g.net_profit_usd, 0) AS net_profit_usd
       FROM (
         SELECT tenant_id, org_id, any(org_name) AS org_name, toStartOfMonth(period_date) AS period_date,
-          sumIf(closing_balance_usd, account_type IN ('Asset', 'Asset Contra')) AS total_assets_usd,
-          abs(sumIf(closing_balance_usd, account_type = 'Liability')) AS total_liabilities_usd,
-          abs(sumIf(closing_balance_usd, account_type = 'Equity')) AS total_equity_usd
+          sumIf(closing_balance_usd, account_type IN ('Asset', 'Asset Contra')) AS closing_total_assets_usd,
+          abs(sumIf(closing_balance_usd, account_type = 'Liability')) AS closing_total_liabilities_usd,
+          sumIf(debit_balance_usd, account_group = 'Current Assets') AS closing_current_assets_usd,
+          sumIf(credit_balance_usd, account_group = 'Current Liabilities') AS closing_current_liabilities_usd
         FROM ${db}.v_sfin_trial_balance_semantic
         GROUP BY tenant_id, org_id, period_date
       ) t

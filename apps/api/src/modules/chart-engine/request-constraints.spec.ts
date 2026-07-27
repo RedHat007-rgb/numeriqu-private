@@ -191,6 +191,55 @@ describe('request constraints', () => {
     ).toEqual([]);
   });
 
+  it('does not conjoin an ambiguous sampled member across several dimensions', () => {
+    const repeatedMemberModel: SemanticModel = {
+      ...model,
+      measures: [
+        {
+          key: 'balance_change',
+          label: 'Balance Change',
+          unit: 'USD',
+          sourceTable: 'semantic_view',
+          expr: { kind: 'sum', column: 'balance_change' },
+        },
+      ],
+      dimensions: [
+        {
+          key: 'account_name',
+          label: 'Account Name',
+          table: 'semantic_view',
+          column: 'account_name',
+          sampleValues: ['Revenue'],
+        },
+        {
+          key: 'account_type',
+          label: 'Account Type',
+          table: 'semantic_view',
+          column: 'account_type',
+          sampleValues: ['Revenue'],
+        },
+      ],
+    };
+    expect(
+      extractRequestConstraints(
+        'Show trial balance revenue by revenue category.',
+        repeatedMemberModel,
+      ).filters,
+    ).toEqual([]);
+    expect(
+      extractRequestConstraints(
+        'Show balance change for account type Revenue.',
+        repeatedMemberModel,
+      ).filters,
+    ).toEqual([
+      {
+        dimensionKey: 'account_type',
+        operator: 'in',
+        values: ['Revenue'],
+      },
+    ]);
+  });
+
   it('does not create a partial filter from sampled members in a component list', () => {
     const componentModel: SemanticModel = {
       ...model,
@@ -271,5 +320,14 @@ describe('request constraints', () => {
       model,
     );
     expect(constrained.normalize).toBe(true);
+  });
+
+  it('treats fiscal year as an explicit annual time grain', () => {
+    const constrained = applyRequestConstraints(
+      'Show opening and closing balance by account type and fiscal year.',
+      baseSpec,
+      model,
+    );
+    expect(constrained.timeGrain).toBe('year');
   });
 });

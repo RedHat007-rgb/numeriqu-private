@@ -195,7 +195,9 @@ export function measureExprFor(
           expr: { kind: 'ratio_of_sums', numerator, denominator },
         };
       }
-      return { expr: { kind: 'ratio_of_aggs', numerator: numT, denominator: denT } };
+      return {
+        expr: { kind: 'ratio_of_aggs', numerator: numT, denominator: denT },
+      };
     }
     case 'attribute':
       return {
@@ -210,6 +212,39 @@ export interface BuildInput {
   profilesByTable: Record<string, ColumnProfile[]>;
   /** Which table is the primary fact table (most measures). Optional override. */
   primaryTable?: string;
+  /**
+   * Optional client-owned measure definitions (for example, translated from a
+   * supplied DAX catalog). The builder validates every referenced column
+   * against the introspected table before admitting a declaration.
+   */
+  declaredMeasures?: SemanticMeasure[];
+}
+
+function measureExprColumns(expr: MeasureExpr): string[] {
+  switch (expr.kind) {
+    case 'sum':
+    case 'count_distinct':
+    case 'last_value':
+    case 'max':
+    case 'mean':
+      return [
+        expr.column,
+        ...('orderBy' in expr ? [expr.orderBy] : []),
+        ...(expr.kind === 'mean' && expr.weight ? [expr.weight] : []),
+      ];
+    case 'sum_if':
+      return [expr.column, expr.conditionColumn];
+    case 'ratio_of_sums':
+    case 'ratio_of_sum_to_total':
+      return [expr.numerator, expr.denominator];
+    case 'ratio_of_aggs':
+      return [
+        expr.numerator.column,
+        ...(expr.numerator.orderBy ? [expr.numerator.orderBy] : []),
+        expr.denominator.column,
+        ...(expr.denominator.orderBy ? [expr.denominator.orderBy] : []),
+      ];
+  }
 }
 
 function pickTimeColumn(
@@ -410,6 +445,42 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
       if (!measures.some((existing) => existing.key === measure.key))
         measures.push(measure);
     }
+  }
+
+  // Merge client declarations only after the profile-derived model exists.
+  // Stale catalog entries are refused instead of producing invalid runtime SQL.
+  for (const declared of input.declaredMeasures ?? []) {
+    const tableColumns = new Set(
+      (profilesByTable[declared.sourceTable] ?? []).map(
+        (profile) => profile.column,
+      ),
+    );
+    if (!tableColumns.size) {
+      skipped.push({
+        table: declared.sourceTable,
+        column: declared.key,
+        reason: 'declared measure source table is not present',
+      });
+      continue;
+    }
+    const missing = measureExprColumns(declared.expr).filter(
+      (column) => !tableColumns.has(column),
+    );
+    if (missing.length) {
+      skipped.push({
+        table: declared.sourceTable,
+        column: declared.key,
+        reason: `declared measure references missing column(s): ${missing.join(', ')}`,
+      });
+      continue;
+    }
+    const duplicate = measures.findIndex(
+      (measure) =>
+        measure.sourceTable === declared.sourceTable &&
+        measure.key === declared.key,
+    );
+    if (duplicate >= 0) measures.splice(duplicate, 1);
+    measures.push(declared);
   }
 
   const model: SemanticModel = {

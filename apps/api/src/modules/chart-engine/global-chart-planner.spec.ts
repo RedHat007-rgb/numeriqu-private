@@ -449,6 +449,63 @@ describe('global chart planner', () => {
     if (result.ok) expect(result.spec.breakdownKey).toBe('business_unit');
   });
 
+  it('repairs a clarification that substitutes an available explicitly requested dimension', async () => {
+    const revenueCube: Cube = {
+      view: 'revenue_metrics',
+      model: {
+        ...model(
+          'revenue_metrics',
+          { key: 'revenue', label: 'Revenue', unit: 'USD' },
+          { key: 'revenue_category', label: 'Revenue Category' },
+        ),
+        time: {
+          table: 'revenue_metrics',
+          column: 'period_date',
+          grains: ['year'],
+        },
+      },
+    };
+    const responses = [
+      {
+        verdict: 'clarify',
+        question:
+          'Which revenue grouping would you like to use instead of revenue category?',
+        options: [
+          { label: 'Client', value: 'Use client' },
+          { label: 'Business unit', value: 'Use business unit' },
+        ],
+      },
+      {
+        verdict: 'chart',
+        cubeView: 'revenue_metrics',
+        spec: {
+          chartType: 'waterfall',
+          measureKeys: ['revenue'],
+          dimensionKey: 'revenue_category',
+          timeGrain: 'year',
+          comparison: 'previous_year',
+          title: 'Revenue Change by Revenue Category',
+        },
+      },
+    ];
+    const calls: string[] = [];
+    const result = await planAcrossCubes(
+      "Show the change from last year's revenue to this year's revenue by revenue category",
+      [revenueCube],
+      async (_system, user) => {
+        calls.push(user);
+        return JSON.stringify(responses[calls.length - 1]);
+      },
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain('redundantly asks');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.spec.dimensionKey).toBe('revenue_category');
+      expect(result.spec.chartType).toBe('waterfall');
+    }
+  });
+
   it('repairs an edit clarification that asks which chart to change', async () => {
     const responses = [
       {
@@ -847,5 +904,174 @@ describe('global chart planner', () => {
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(result.spec.measureKeys).toEqual(['cost_pct_of_revenue']);
+  });
+
+  it('repairs an omitted requested series using generic catalog coverage', async () => {
+    const payableCube: Cube = {
+      view: 'monthly_payables',
+      model: {
+        ...model(
+          'monthly_payables',
+          { key: 'paid_amount_usd', label: 'Paid Amount', unit: 'USD' },
+          { key: 'vendor_name', label: 'Vendor Name' },
+        ),
+        time: {
+          table: 'monthly_payables',
+          column: 'period_date',
+          grains: ['month', 'quarter', 'year'],
+        },
+        measures: [
+          {
+            key: 'paid_amount_usd',
+            label: 'Paid Amount',
+            unit: 'USD',
+            sourceTable: 'monthly_payables',
+            expr: { kind: 'sum', column: 'paid_amount_usd' },
+          },
+          {
+            key: 'cash_outflow_vendor_payments_usd',
+            label: 'Cash Outflow Vendor Payments',
+            unit: 'USD',
+            sourceTable: 'monthly_payables',
+            expr: {
+              kind: 'sum',
+              column: 'cash_outflow_vendor_payments_usd',
+            },
+          },
+        ],
+      },
+    };
+    const responses = [
+      {
+        verdict: 'chart',
+        cubeView: 'monthly_payables',
+        spec: {
+          chartType: 'line',
+          measureKeys: ['paid_amount_usd'],
+          timeGrain: 'month',
+          title: 'Vendor Payments',
+        },
+      },
+      {
+        verdict: 'chart',
+        cubeView: 'monthly_payables',
+        spec: {
+          chartType: 'line',
+          measureKeys: ['paid_amount_usd', 'cash_outflow_vendor_payments_usd'],
+          timeGrain: 'month',
+          title: 'Vendor Payments and Cash Outflow',
+        },
+      },
+    ];
+    const calls: string[] = [];
+    const result = await planAcrossCubes(
+      'Generate a line chart showing vendor payments and vendor cash outflow by month.',
+      [payableCube],
+      async (_system, user) => {
+        calls.push(user);
+        return JSON.stringify(responses[calls.length - 1]);
+      },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain('omitted explicitly requested catalog measure');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.spec.measureKeys).toEqual([
+        'paid_amount_usd',
+        'cash_outflow_vendor_payments_usd',
+      ]);
+    }
+  });
+
+  it('rejects unsupported when one runtime cube has every requested field', async () => {
+    const growthCube: Cube = {
+      view: 'executive_growth',
+      model: {
+        ...model(
+          'executive_growth',
+          { key: 'revenue_growth_pct', label: 'Revenue Growth', unit: '%' },
+          { key: 'business_unit', label: 'Business Unit' },
+        ),
+        dimensions: [
+          {
+            key: 'business_unit',
+            label: 'Business Unit',
+            table: 'executive_growth',
+            column: 'business_unit',
+          },
+          {
+            key: 'client_name',
+            label: 'Client Name',
+            table: 'executive_growth',
+            column: 'client_name',
+          },
+          {
+            key: 'delivery_center',
+            label: 'Delivery Center',
+            table: 'executive_growth',
+            column: 'delivery_center',
+          },
+        ],
+        measures: [
+          {
+            key: 'revenue_growth_pct',
+            label: 'Revenue Growth',
+            unit: '%',
+            sourceTable: 'executive_growth',
+            expr: { kind: 'mean', column: 'revenue_growth_pct' },
+          },
+          {
+            key: 'ebitda_growth_pct',
+            label: 'EBITDA Growth',
+            unit: '%',
+            sourceTable: 'executive_growth',
+            expr: { kind: 'mean', column: 'ebitda_growth_pct' },
+          },
+        ],
+      },
+    };
+    const responses = [
+      {
+        verdict: 'unsupported',
+        reason: 'The requested combination is unavailable.',
+      },
+      {
+        verdict: 'chart',
+        cubeView: 'executive_growth',
+        spec: {
+          chartType: 'scatter',
+          measureKeys: ['revenue_growth_pct', 'ebitda_growth_pct'],
+          hierarchyKeys: ['business_unit', 'client_name', 'delivery_center'],
+          title: 'Growth by Business Unit, Client, and Delivery Center',
+        },
+      },
+    ];
+    const calls: string[] = [];
+    const result = await planAcrossCubes(
+      'Create a scatter chart showing revenue growth versus EBITDA growth by business unit, client, and delivery center.',
+      [growthCube],
+      async (_system, user) => {
+        calls.push(user);
+        return JSON.stringify(responses[calls.length - 1]);
+      },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain(
+      'unsupported verdict contradicts complete runtime catalog candidate',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.spec.measureKeys).toEqual([
+        'revenue_growth_pct',
+        'ebitda_growth_pct',
+      ]);
+      expect(result.spec.hierarchyKeys).toEqual([
+        'business_unit',
+        'client_name',
+        'delivery_center',
+      ]);
+    }
   });
 });

@@ -1,6 +1,6 @@
 # ADR-001: DAX-faithful, dataset-agnostic measure engine
 
-Status: Proposed (foundation committed) · Scope: apps/api chart-engine · Date: 2026-07-27
+Status: Accepted (Stages 1–4 implemented and verified) · Scope: apps/api chart-engine · Date: 2026-07-27
 
 ## Context
 
@@ -67,15 +67,61 @@ per-question hack.
   `average_*` columns (avg-of-ratios) in `v_sfin_balance_ratio_semantic`.
 - **Gate:** DAX oracle — D/E, ROA, ROE, current ratio, asset turnover reconcile.
 
+Implemented:
+- `ratio_of_aggs` compiles independently aggregated numerator/denominator terms
+  (`sum`, `as_of`, `mean`) and uses the measure unit as the single display-scale
+  authority.
+- `buildSemanticModel` accepts client-owned declared measures and refuses stale
+  declarations whose tables/columns are absent from live introspection.
+- `sfin-measure-registry.ts` is the replaceable SFIN/DAX translation layer; no
+  financial formula is embedded in the generic builder or compiler.
+- `v_sfin_balance_ratio_semantic` exposes raw monthly stock/flow components.
+  Total equity follows the supplied DAX plug (`Total Assets - Total Liabilities`);
+  current assets/liabilities use their account groups.
+- **Verified 2026-07-27:** 289 chart-engine tests and API production build pass.
+  Live ClickHouse oracle: D/E `0.1335`, ROA `105.03%`, ROE `133.96%`, asset
+  turnover `12.4762×`, debt ratio `11.77%`, equity ratio `88.23%`, current ratio
+  `27.8233×`.
+
 ### Stage 3 — planner fidelity + optional DAX hint
 - Feed the client schema catalog (and DAX hint when present) to the planner so it never
   drops a named measure and never invents a breakdown from a measure-name keyword
   (Q40 "vendor cash outflow", Q44 "by … and fiscal year", Q72 scatter→KPI).
 - **Gate:** regenerate Q40/Q44/Q72; browser + DAX oracle.
 
+Implemented:
+- Planner fidelity checks derive requested series, dimensions, and time grain from the
+  active runtime catalog and evaluate completeness inside each cube. They contain no
+  SFIN field list or question-number exception.
+- A complete runtime candidate contradicts an `unsupported` model decision; omitted
+  named series/dimensions trigger bounded model repair.
+- Fiscal-year grammar and clustered/grouped column presentation are normalized without
+  selecting a business field in application code.
+- Clarifications that replace an explicitly requested, available grouping are repaired;
+  genuine cross-cube business ambiguity is preserved.
+- **Verified 2026-07-27:** focused Q40, Q44, and Q72 main/follow-up runs pass.
+  Evidence: `codex-work/2026-07-27-adr-stage3-q40-v3.jsonl` and
+  `codex-work/2026-07-27-adr-stage3-focused-v2.jsonl`.
+
 ### Stage 4 — full Asyraf sweep
 - Regenerate all 36 mains + 36 follow-ups; verify labels/axis/values in-browser against
   the DAX oracle; log deviations.
+
+Implemented and verified:
+- Clean sweep evidence is in
+  `codex-work/2026-07-27-adr-stage4-asyraf-v2.jsonl`: 35 unambiguous mains and all
+  corresponding follow-ups produced charts; Q57 produced all six balance ratios and
+  its quarterly follow-up.
+- Q54 correctly surfaces the one irreducible runtime ambiguity: both invoice and
+  trial-balance cubes can supply revenue by revenue category. Selecting trial-balance
+  revenue preserves the original request and produces a populated annual waterfall:
+  previous year `-4,487,962.55`, current year `-5,441,709.42`, with six named revenue
+  category steps plus the unallocated residual. Its follow-up sets `showCumulative`.
+- Duplicate sampled member labels across related dimensions no longer create an
+  impossible conjunction (for example, the same member inferred simultaneously as
+  account name, group, and type). An explicitly named dimension still retains its
+  filter. This rule is catalog-driven and dataset-agnostic.
+- Final gate: **294 chart-engine tests pass** and the API production build succeeds.
 
 ## Already delivered
 - `f93de930` executive_performance reconciles to DAX (EBITDA 430M→69.4M, payroll →291.9M).

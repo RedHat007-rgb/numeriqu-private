@@ -276,10 +276,7 @@ export function parsePlannerResponse(
     obj.highlightExtremes === 'min' ||
     obj.highlightExtremes === 'both'
       ? {
-          highlightExtremes: obj.highlightExtremes as
-            | 'max'
-            | 'min'
-            | 'both',
+          highlightExtremes: obj.highlightExtremes as 'max' | 'min' | 'both',
         }
       : {}),
     ...(Number.isInteger(Number(obj.highlightTopN)) &&
@@ -1725,7 +1722,8 @@ function applyCatalogIntent(
       const priorColumn = prior.expr.column;
       const ratio = model.measures.find(
         (measure) =>
-          measure.expr.kind === 'ratio_of_sums' &&
+          (measure.expr.kind === 'ratio_of_sums' ||
+            measure.expr.kind === 'ratio_of_sum_to_total') &&
           measure.expr.numerator === priorColumn &&
           /revenue/i.test(measure.expr.denominator),
       );
@@ -1753,7 +1751,9 @@ function applyCatalogIntent(
     const revenueRatioKeys = spec.measureKeys.filter((key) => {
       const expr = byKey.get(key)?.expr;
       return (
-        expr?.kind === 'ratio_of_sums' && /revenue/i.test(expr.denominator)
+        (expr?.kind === 'ratio_of_sums' ||
+          expr?.kind === 'ratio_of_sum_to_total') &&
+        /revenue/i.test(expr.denominator)
       );
     });
     if (revenueRatioKeys.length) {
@@ -2099,7 +2099,8 @@ function applyCatalogIntent(
         const expression = model.measures.find(
           (measure) => measure.key === key,
         )?.expr;
-        return expression?.kind === 'ratio_of_sums'
+        return expression?.kind === 'ratio_of_sums' ||
+          expression?.kind === 'ratio_of_sum_to_total'
           ? [expression.denominator]
           : [];
       }),

@@ -461,6 +461,7 @@ export type ChartConfig = {
   grouping: string;
   spec?: {
     chartType?: string | null;
+    componentMode?: boolean | null;
   } | null;
   timeRange?: TimeRange | null;
   providerHint?: string | null;

@@ -207,50 +207,48 @@ function extractFilters(
     const values = (dimension.sampleValues ?? [])
       .map(String)
       .map((value) => value.trim())
-      .filter(
-        (value) => {
-          if (value.length < 3) return false;
-          const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const match = new RegExp(
-            `(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`,
-            'i',
-          ).exec(q);
-          if (!match) return false;
+      .filter((value) => {
+        if (value.length < 3) return false;
+        const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const match = new RegExp(
+          `(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`,
+          'i',
+        ).exec(q);
+        if (!match) return false;
 
-          // A sample member can share its text with a measure (for example the
-          // account-type member "Revenue" and the measure "Total Revenue").
-          // In that case the metric mention is not evidence of a categorical
-          // filter. The model may still choose a filter when the surrounding
-          // language explicitly asks to narrow the result.
-          const normalizedValue = value
-            .toLocaleLowerCase()
-            .replace(/[^a-z0-9]+/g, ' ')
-            .trim();
-          const overlapsMentionedMeasure = measurePhrases.some(
-            (phrase) =>
-              (` ${phrase} `.includes(` ${normalizedValue} `) ||
-                ` ${normalizedValue} `.includes(` ${phrase} `)) &&
-              ` ${q.replace(/[^a-z0-9]+/g, ' ')} `.includes(
-                ` ${normalizedValue} `,
-              ),
+        // A sample member can share its text with a measure (for example the
+        // account-type member "Revenue" and the measure "Total Revenue").
+        // In that case the metric mention is not evidence of a categorical
+        // filter. The model may still choose a filter when the surrounding
+        // language explicitly asks to narrow the result.
+        const normalizedValue = value
+          .toLocaleLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+        const overlapsMentionedMeasure = measurePhrases.some(
+          (phrase) =>
+            (` ${phrase} `.includes(` ${normalizedValue} `) ||
+              ` ${normalizedValue} `.includes(` ${phrase} `)) &&
+            ` ${q.replace(/[^a-z0-9]+/g, ' ')} `.includes(
+              ` ${normalizedValue} `,
+            ),
+        );
+        const preceding = q.slice(Math.max(0, match.index - 48), match.index);
+        const explicitSelection =
+          /\b(?:for|where|only|among|excluding|except|include|including)\s+(?:the\s+)?$/i.test(
+            preceding,
           );
-          const preceding = q.slice(Math.max(0, match.index - 48), match.index);
-          const explicitSelection =
-            /\b(?:for|where|only|among|excluding|except|include|including)\s+(?:the\s+)?$/i.test(
-              preceding,
-            );
-          if (overlapsMentionedMeasure && !explicitSelection) return false;
+        if (overlapsMentionedMeasure && !explicitSelection) return false;
 
-          // Lists in visualization requests often describe the components to
-          // plot, not a partial member filter. Sample values are intentionally
-          // incomplete, so deriving a filter from only the sampled members
-          // would silently drop unsampled categories. In an enumerated clause,
-          // only apply deterministic filtering when selection language is
-          // explicit; otherwise leave semantic interpretation to OpenAI.
-          if (commaCount >= 2 && !explicitSelection) return false;
-          return true;
-        },
-      );
+        // Lists in visualization requests often describe the components to
+        // plot, not a partial member filter. Sample values are intentionally
+        // incomplete, so deriving a filter from only the sampled members
+        // would silently drop unsampled categories. In an enumerated clause,
+        // only apply deterministic filtering when selection language is
+        // explicit; otherwise leave semantic interpretation to OpenAI.
+        if (commaCount >= 2 && !explicitSelection) return false;
+        return true;
+      });
     if (values.length) {
       filters.push({
         dimensionKey: dimension.key,
@@ -259,7 +257,60 @@ function extractFilters(
       });
     }
   }
-  return filters;
+  const dimensionsByKey = new Map(
+    model.dimensions.map((dimension) => [dimension.key, dimension]),
+  );
+  const normalizedQuestion = q.replace(/[^a-z0-9]+/g, ' ').trim();
+  const filterLocations = new Map<string, string[]>();
+  for (const filter of filters) {
+    for (const value of filter.values) {
+      const normalizedValue = String(value)
+        .toLocaleLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+      if (!normalizedValue) continue;
+      const locations = filterLocations.get(normalizedValue) ?? [];
+      locations.push(filter.dimensionKey);
+      filterLocations.set(normalizedValue, locations);
+    }
+  }
+
+  // A member label can legitimately appear in several related dimensions
+  // (for example an account name, group, and type can all be "Revenue").
+  // Conjoining every sampled match produces an invented, often impossible
+  // filter. Keep the match only when the request explicitly names exactly one
+  // of those dimensions; otherwise leave the ambiguous member unfiltered.
+  for (const [normalizedValue, locations] of filterLocations) {
+    const uniqueLocations = Array.from(new Set(locations));
+    if (uniqueLocations.length < 2) continue;
+    const explicitlyNamed = uniqueLocations.filter((key) => {
+      const dimension = dimensionsByKey.get(key);
+      if (!dimension) return false;
+      return [dimension.key, dimension.label].some((candidate) => {
+        const phrase = candidate
+          .toLocaleLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+        return phrase.length > 1 && ` ${normalizedQuestion} `.includes(` ${phrase} `);
+      });
+    });
+    for (const filter of filters) {
+      if (!uniqueLocations.includes(filter.dimensionKey)) continue;
+      if (
+        explicitlyNamed.length === 1 &&
+        explicitlyNamed[0] === filter.dimensionKey
+      )
+        continue;
+      filter.values = filter.values.filter(
+        (value) =>
+          String(value)
+            .toLocaleLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim() !== normalizedValue,
+      );
+    }
+  }
+  return filters.filter((filter) => filter.values.length > 0);
 }
 
 export function extractRequestConstraints(
@@ -279,6 +330,7 @@ export function extractRequestConstraints(
         ? 'desc'
         : undefined;
   const timeGrain = (() => {
+    if (/\bfiscal\s+years?\b/.test(q)) return 'year' as const;
     const explicit = q.match(
       /\b(?:by|per|each)\s+(?:slice\s+(?:is|represents?)\s+(?:one\s+)?)?(day|week|month|quarter|year)\b|\b(daily|weekly|monthly|quarterly|annually|yearly)\b|\b(day|week|month|quarter|year)[\s-]*by[\s-]*\3\b/,
     );

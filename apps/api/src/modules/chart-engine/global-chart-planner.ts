@@ -9,7 +9,11 @@
  * code validates the selected cube/spec; it never chooses business metrics.
  */
 
-import { parsePlannerResponse, type LlmCaller } from './chart-planner';
+import {
+  fieldMatchScore,
+  parsePlannerResponse,
+  type LlmCaller,
+} from './chart-planner';
 import type { Cube, CubePlan } from './cube-router';
 import type { SemanticModel } from './semantic-model.types';
 
@@ -73,12 +77,18 @@ function modelCatalog(model: SemanticModel): object {
       label: measure.label,
       unit: measure.unit,
       aggregation: measure.expr.kind,
-      ...(measure.expr.kind === 'ratio_of_sums'
+      ...(measure.expr.kind === 'ratio_of_sums' ||
+      measure.expr.kind === 'ratio_of_sum_to_total'
         ? {
             numerator: measure.expr.numerator,
             denominator: measure.expr.denominator,
           }
-        : {}),
+        : measure.expr.kind === 'ratio_of_aggs'
+          ? {
+              numerator: measure.expr.numerator,
+              denominator: measure.expr.denominator,
+            }
+          : {}),
     })),
     dimensions: model.dimensions.map((dimension) => ({
       key: dimension.key,
@@ -108,7 +118,10 @@ function phraseAppears(text: string, phrase: string): boolean {
  * chooses the cube, but it may not silently omit a dimension the user named
  * verbatim. Keys/labels come entirely from runtime metadata.
  */
-function explicitlyNamedDimensions(question: string, cubes: Cube[]): Set<string> {
+function explicitlyNamedDimensions(
+  question: string,
+  cubes: Cube[],
+): Set<string> {
   const named = new Set<string>();
   for (const cube of cubes) {
     const matches = cube.model.dimensions.flatMap((dimension) => {
@@ -180,7 +193,12 @@ function explicitlyNamedMeasures(question: string, cubes: Cube[]): Set<string> {
         normalizedPhrase(measure.label),
       ].filter((phrase) => phraseAppears(question, phrase));
       return phrases.length
-        ? [{ key: measure.key, phrase: phrases.sort((a, b) => b.length - a.length)[0]! }]
+        ? [
+            {
+              key: measure.key,
+              phrase: phrases.sort((a, b) => b.length - a.length)[0]!,
+            },
+          ]
         : [];
     });
     for (const match of matches) {
@@ -194,6 +212,130 @@ function explicitlyNamedMeasures(question: string, cubes: Cube[]): Set<string> {
     }
   }
   return named;
+}
+
+/**
+ * Extract the quantities in ordinary chart grammar ("showing A, B and C by X")
+ * and ground each phrase to its single best runtime-catalog measure. This is a
+ * generic coverage guard: it neither knows dataset vocabulary nor contains
+ * question-specific synonyms. Exact-name fidelity remains handled separately.
+ */
+function requestedSeriesPhrases(question: string): string[] {
+  const seriesText = question.match(
+    /\b(?:showing|show|compare|comparing)\s+(.+?)(?=\s+\b(?:by|per|across|over\s+time)\b|[.?!]|$)/i,
+  )?.[1];
+  if (!seriesText) return [];
+  return seriesText
+    .split(/\s*,\s*|\s+\band\b\s+|\s+\bversus\b\s+|\s+\bvs\.?\b\s+/i)
+    .map((phrase) =>
+      phrase
+        .replace(
+          /^(?:a|an|the|monthly|quarterly|annual|yearly|total|average)\s+/i,
+          '',
+        )
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+function catalogMeasureForPhrase(
+  phrase: string,
+  cube: Cube,
+): string | undefined {
+  const normalized = normalizedPhrase(phrase);
+  const phraseTokens = normalized
+    .split(' ')
+    .filter(
+      (token) =>
+        token &&
+        !/^(?:a|an|the|total|average|monthly|quarterly|annual|yearly)$/.test(
+          token,
+        ),
+    );
+  const exactKeys = new Set(
+    cube.model.measures
+      .filter(
+        (measure) =>
+          normalizedPhrase(measure.key) === normalized ||
+          normalizedPhrase(measure.label) === normalized,
+      )
+      .map((measure) => measure.key),
+  );
+  if (exactKeys.size === 1) return [...exactKeys][0]!;
+  const ranked = cube.model.measures
+    .map((measure) => {
+      const score = fieldMatchScore(phrase, measure.key, measure.label);
+      const fullyQualified =
+        phraseTokens.length > 0 &&
+        phraseTokens.every((token) =>
+          normalizedPhrase(`${measure.key} ${measure.label}`)
+            .split(' ')
+            .includes(token),
+        );
+      return {
+        measure,
+        score,
+        rank: score + (fullyQualified ? 12 : 0),
+      };
+    })
+    .filter((entry) => entry.score >= 8)
+    .sort((a, b) => b.rank - a.rank);
+  if (!ranked.length) return undefined;
+  const topRank = ranked[0]!.rank;
+  const topKeys = new Set(
+    ranked
+      .filter((entry) => entry.rank === topRank)
+      .map(({ measure }) => measure.key),
+  );
+  return topKeys.size === 1 ? ranked[0]!.measure.key : undefined;
+}
+
+function catalogMatchedRequestedMeasures(
+  question: string,
+  cube: Cube,
+): Set<string> {
+  const matched = new Set<string>();
+  for (const phrase of requestedSeriesPhrases(question)) {
+    const key = catalogMeasureForPhrase(phrase, cube);
+    if (key) matched.add(key);
+  }
+  return matched;
+}
+
+function requestedTimeGrain(
+  question: string,
+): 'day' | 'month' | 'quarter' | 'year' | undefined {
+  const q = question.toLowerCase();
+  if (/\bfiscal\s+years?\b|\bannually\b|\byearly\b/.test(q)) return 'year';
+  const match = q.match(
+    /\b(?:by|per|each)\s+(?:fiscal\s+)?(day|month|quarter|year)\b|\b(daily|monthly|quarterly)\b/,
+  );
+  const raw = match?.[1] ?? match?.[2];
+  if (!raw) return undefined;
+  if (raw.startsWith('day')) return 'day';
+  if (raw.startsWith('month')) return 'month';
+  if (raw.startsWith('quarter')) return 'quarter';
+  return 'year';
+}
+
+function completeCatalogCandidateViews(
+  question: string,
+  cubes: Cube[],
+): string[] {
+  const phrases = requestedSeriesPhrases(question);
+  const dimensions = explicitlyNamedDimensions(question, cubes);
+  const grain = requestedTimeGrain(question);
+  if (!phrases.length && !dimensions.size) return [];
+  return cubes
+    .filter(
+      (cube) =>
+        phrases.every((phrase) => !!catalogMeasureForPhrase(phrase, cube)) &&
+        [...dimensions].every((key) =>
+          cube.model.dimensions.some((dimension) => dimension.key === key),
+        ) &&
+        (!grain || cube.model.time?.grains.includes(grain)),
+    )
+    .map((cube) => cube.view);
 }
 
 function requiresCatalogRatio(question: string): boolean {
@@ -210,10 +352,22 @@ function clarificationRepeatsNamedDimensionChoice(
   cubes: Cube[],
 ): boolean {
   const named = explicitlyNamedDimensions(question, cubes);
-  if (named.size < 2) return false;
   const optionText = (decision.options ?? [])
     .map((option) => `${option?.label ?? ''} ${option?.value ?? ''}`)
     .join(' ');
+  if (named.size === 1) {
+    const clarificationText = normalizedPhrase(
+      `${decision.question ?? ''} ${decision.reason ?? ''} ${optionText}`,
+    );
+    return (
+      /\binstead of\b/.test(clarificationText) ||
+      /\bwhich\b[^?]*\b(?:grouping|breakdown|dimension)\b/.test(
+        clarificationText,
+      ) ||
+      /\bhow\b[^?]*\bgroup(?:ed|ing)?\b/.test(clarificationText)
+    );
+  }
+  if (named.size < 2) return false;
   let matched = 0;
   for (const key of named) {
     const dimension = cubes
@@ -239,8 +393,8 @@ function clarificationRepeatsNamedMemberSelection(
   decision: Extract<ModelDecision, { verdict: 'clarify' }>,
   cubes: Cube[],
 ): boolean {
-  const optionTexts = (decision.options ?? []).map((option) =>
-    `${option?.label ?? ''} ${option?.value ?? ''}`,
+  const optionTexts = (decision.options ?? []).map(
+    (option) => `${option?.label ?? ''} ${option?.value ?? ''}`,
   );
   for (const cube of cubes) {
     for (const dimension of cube.model.dimensions) {
@@ -273,9 +427,7 @@ function clarificationRedundantlyChoosesCurrentChart(
   ].join(' ');
   return (
     /\bwhich\b[^?]{0,50}\bchart\b/i.test(clarificationText) ||
-    /\bapply\b[^?]{0,50}\bchange\b[^?]{0,25}\bto\b/i.test(
-      clarificationText,
-    ) ||
+    /\bapply\b[^?]{0,50}\bchange\b[^?]{0,25}\bto\b/i.test(clarificationText) ||
     /\bstart (?:a )?new chart\b/i.test(clarificationText)
   );
 }
@@ -317,7 +469,7 @@ export function buildGlobalPlannerPrompt(cubes: Cube[]): string {
     '- Use highlightTopN, highlightNegative, highlightExtremes, highlightWeakPerformance, highlightCostWithoutRevenue, highlightLowPerformance, or showCumulative only when the user asks for that presentation behavior.',
     '',
     'Return ONLY one JSON object in exactly one of these shapes:',
-    '{"verdict":"chart","cubeView":"<exact cubeView>","confidence":0.0,"interpretation":"<short paraphrase>","spec":{"chartType":"bar|horizontal_bar|stacked_bar|line|area|stacked_area|combo|pie|donut|treemap|scatter|bubble|waterfall|histogram|box_plot|radar|funnel|sankey|heatmap|matrix|table|kpi","measureKeys":["<exact keys from selected cube>"],"dimensionKey":"<optional exact key>","breakdownKey":"<optional exact key>","hierarchyKeys":["<optional exact keys>"],"timeGrain":"day|month|quarter|year","filters":[{"dimensionKey":"<exact key>","operator":"in|not_in","values":["<exact observed values>"]}],"comparison":"previous_year|yoy_growth_pct","showVariancePct":true,"normalize":true,"topN":3,"sort":"asc|desc","highlightTopN":3,"highlightNegative":true,"highlightExtremes":"max|min|both","highlightWeakPerformance":true,"highlightCostWithoutRevenue":true,"highlightLowPerformance":true,"showCumulative":true,"componentMode":true,"labelMeasureKey":"<optional exact measure key>","title":"<concise title>"}}',
+    '{"verdict":"chart","cubeView":"<exact cubeView>","confidence":0.0,"interpretation":"<short paraphrase>","spec":{"chartType":"bar|horizontal_bar|stacked_bar|line|area|stacked_area|combo|pie|donut|treemap|scatter|bubble|waterfall|histogram|box_plot|radar|funnel|sankey|heatmap|matrix|table|kpi","clustered":true,"measureKeys":["<exact keys from selected cube>"],"dimensionKey":"<optional exact key>","breakdownKey":"<optional exact key>","hierarchyKeys":["<optional exact keys>"],"timeGrain":"day|month|quarter|year","filters":[{"dimensionKey":"<exact key>","operator":"in|not_in","values":["<exact observed values>"]}],"comparison":"previous_year|yoy_growth_pct","showVariancePct":true,"normalize":true,"topN":3,"sort":"asc|desc","highlightTopN":3,"highlightNegative":true,"highlightExtremes":"max|min|both","highlightWeakPerformance":true,"highlightCostWithoutRevenue":true,"highlightLowPerformance":true,"showCumulative":true,"componentMode":true,"labelMeasureKey":"<optional exact measure key>","title":"<concise title>"}}',
     '{"verdict":"clarify","question":"<one concise question>","reason":"<why the answer changes the plan>","options":[{"label":"<business label>","value":"<self-contained answer>"}]}',
     '{"verdict":"unsupported","reason":"<specific missing data>"}',
     '',
@@ -343,7 +495,9 @@ function clarificationFrom(
   return {
     question: prompt,
     options,
-    reason: String(decision.reason ?? 'The request has multiple supported meanings.').trim(),
+    reason: String(
+      decision.reason ?? 'The request has multiple supported meanings.',
+    ).trim(),
     originalQuestion: question,
   };
 }
@@ -402,13 +556,17 @@ function validateDecision(
       }
       return {
         ok: false,
-        reasons: ['planner omitted cubeView and the spec matches multiple cubes'],
+        reasons: [
+          'planner omitted cubeView and the spec matches multiple cubes',
+        ],
       };
     }
     return {
       ok: false,
       reasons: evaluated.map(({ cube, parsed }) =>
-        parsed.ok ? `${cube.view}: ambiguous` : `${cube.view}: ${parsed.reason}`,
+        parsed.ok
+          ? `${cube.view}: ambiguous`
+          : `${cube.view}: ${parsed.reason}`,
       ),
     };
   }
@@ -454,9 +612,23 @@ function validateDecision(
       : { ok: false, reasons: ['planner returned an empty clarification'] };
   }
   if (decision.verdict === 'unsupported') {
+    const completeCandidates = completeCatalogCandidateViews(
+      fidelityQuestion,
+      cubes,
+    );
+    if (completeCandidates.length) {
+      return {
+        ok: false,
+        reasons: [
+          `unsupported verdict contradicts complete runtime catalog candidate(s): ${completeCandidates.join(', ')}`,
+        ],
+      };
+    }
     return {
       ok: false,
-      reasons: [String(decision.reason ?? 'The requested data is unavailable.')],
+      reasons: [
+        String(decision.reason ?? 'The requested data is unavailable.'),
+      ],
     };
   }
   if (decision.verdict !== 'chart') {
@@ -467,12 +639,17 @@ function validateDecision(
   if (!cube) {
     return {
       ok: false,
-      reasons: [`planner selected an unknown cube: ${String(decision.cubeView)}`],
+      reasons: [
+        `planner selected an unknown cube: ${String(decision.cubeView)}`,
+      ],
     };
   }
-  const parsed = parsePlannerResponse(JSON.stringify(decision.spec), cube.model);
+  const parsed = parsePlannerResponse(
+    JSON.stringify(decision.spec),
+    cube.model,
+  );
   if (!parsed.ok) return { ok: false, reasons: [parsed.reason] };
-  const plannedSpec =
+  let plannedSpec =
     parsed.spec.breakdownKey && !parsed.spec.dimensionKey
       ? {
           ...parsed.spec,
@@ -480,16 +657,75 @@ function validateDecision(
           breakdownKey: undefined,
         }
       : parsed.spec;
+  const explicitTimeGrain = requestedTimeGrain(fidelityQuestion);
+  if (
+    explicitTimeGrain &&
+    cube.model.time?.grains.includes(explicitTimeGrain)
+  ) {
+    plannedSpec = { ...plannedSpec, timeGrain: explicitTimeGrain };
+  }
+  if (/\b(?:clustered|grouped)\s+(?:column|bar)s?\b/i.test(fidelityQuestion)) {
+    plannedSpec = { ...plannedSpec, chartType: 'bar', clustered: true };
+  }
+  const requestedPhrases = requestedSeriesPhrases(fidelityQuestion);
+  const unmatchedCatalogPhrases = requestedPhrases.filter(
+    (phrase) => !catalogMeasureForPhrase(phrase, cube),
+  );
+  const catalogMatchedMeasures = catalogMatchedRequestedMeasures(
+    fidelityQuestion,
+    cube,
+  );
+  if (unmatchedCatalogPhrases.length) {
+    const completeCandidates = completeCatalogCandidateViews(
+      fidelityQuestion,
+      cubes,
+    );
+    if (completeCandidates.length) {
+      return {
+        ok: false,
+        reasons: [
+          `selected cube cannot satisfy requested series phrase(s): ${unmatchedCatalogPhrases.join(', ')}; complete runtime candidate(s): ${completeCandidates.join(', ')}`,
+        ],
+      };
+    }
+  }
+  if (plannedSpec.timeGrain && plannedSpec.dimensionKey) {
+    const groupingTail = fidelityQuestion.match(
+      /\b(?:by|per|across|for\s+each)\s+([^.!?]+)/i,
+    )?.[1];
+    const dimension = cube.model.dimensions.find(
+      (candidate) => candidate.key === plannedSpec.dimensionKey,
+    );
+    const explicitlyGrouped =
+      !!groupingTail &&
+      !!dimension &&
+      fieldMatchScore(
+        groupingTail,
+        dimension.key,
+        dimension.label,
+        dimension.sampleValues,
+      ) >= 4;
+    if (groupingTail && !explicitlyGrouped) {
+      const {
+        dimensionKey: _dimension,
+        breakdownKey: _breakdown,
+        ...rest
+      } = plannedSpec;
+      plannedSpec = rest;
+    }
+  }
   if (
     requiresCatalogRatio(fidelityQuestion) &&
     cube.model.measures.some(
-      (measure) => measure.expr.kind === 'ratio_of_sums',
+      (measure) =>
+        measure.expr.kind === 'ratio_of_sums' ||
+        measure.expr.kind === 'ratio_of_sum_to_total',
     ) &&
-    !plannedSpec.measureKeys.some(
-      (key) =>
-        cube.model.measures.find((measure) => measure.key === key)?.expr.kind ===
-        'ratio_of_sums',
-    )
+    !plannedSpec.measureKeys.some((key) => {
+      const kind = cube.model.measures.find((measure) => measure.key === key)
+        ?.expr.kind;
+      return kind === 'ratio_of_sums' || kind === 'ratio_of_sum_to_total';
+    })
   ) {
     return {
       ok: false,
@@ -500,9 +736,10 @@ function validateDecision(
   }
   const omittedMeasures = [
     ...explicitlyNamedMeasures(fidelityQuestion, [cube]),
-  ].filter(
-    (key) => !plannedSpec.measureKeys.includes(key),
-  );
+    ...[...catalogMatchedMeasures].filter((key) =>
+      cube.model.measures.some((measure) => measure.key === key),
+    ),
+  ].filter((key) => !plannedSpec.measureKeys.includes(key));
   if (omittedMeasures.length) {
     return {
       ok: false,
@@ -511,7 +748,10 @@ function validateDecision(
       ],
     };
   }
-  if (plannedSpec.chartType === 'bubble' && plannedSpec.measureKeys.length < 3) {
+  if (
+    plannedSpec.chartType === 'bubble' &&
+    plannedSpec.measureKeys.length < 3
+  ) {
     return {
       ok: false,
       reasons: [
@@ -526,12 +766,30 @@ function validateDecision(
       ...(plannedSpec.hierarchyKeys ?? []),
     ].filter((key): key is string => !!key),
   );
+  const groupingTailForDimensions = plannedSpec.timeGrain
+    ? fidelityQuestion.match(/\b(?:by|per|across|for\s+each)\s+([^.!?]+)/i)?.[1]
+    : undefined;
   const omittedDimensions = [
     ...new Set([
       ...explicitlyNamedDimensions(fidelityQuestion, cubes),
       ...dimensionsNamedThroughMembers(fidelityQuestion, [cube]),
     ]),
-  ].filter((key) => !representedDimensions.has(key));
+  ].filter((key) => {
+    if (representedDimensions.has(key)) return false;
+    if (!groupingTailForDimensions) return true;
+    const dimension = cube.model.dimensions.find(
+      (candidate) => candidate.key === key,
+    );
+    return (
+      !!dimension &&
+      fieldMatchScore(
+        groupingTailForDimensions,
+        dimension.key,
+        dimension.label,
+        dimension.sampleValues,
+      ) >= 4
+    );
+  });
   if (omittedDimensions.length) {
     return {
       ok: false,

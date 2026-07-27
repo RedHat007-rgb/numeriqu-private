@@ -75,6 +75,7 @@ interface ChartConfig {
   // chart is promoted to a combo for a secondary-axis overlay.
   spec?: {
     chartType?: string | null;
+    componentMode?: boolean | null;
     highlightCostWithoutRevenue?: boolean | null;
     highlightLowPerformance?: boolean | null;
   } | null;
@@ -2557,7 +2558,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <AreaChart
             data={areaData}
@@ -3031,7 +3033,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={wf}
@@ -3196,9 +3199,7 @@ export function renderChart(
     const inferredKeys = [
       ...configuredMeta
         .map((s) => s.key)
-        .filter(
-          (key) => !ignoredKeys.has(key) && hasFiniteValueKey(data, key),
-        ),
+        .filter((key) => !ignoredKeys.has(key) && hasFiniteValueKey(data, key)),
       ...nonZeroInferredKeys.filter(
         (key) => !configuredMeta.some((s) => s.key === key),
       ),
@@ -3402,8 +3403,7 @@ export function renderChart(
       ).length >=
         comboData.length / 2;
     const comboNeedsRotatedLabels =
-      !comboLooksTimeSeries &&
-      (comboData.length > 5 || comboNameMaxLen > 14);
+      !comboLooksTimeSeries && (comboData.length > 5 || comboNameMaxLen > 14);
     const comboDenseTimeAxis =
       comboLooksTimeSeries && comboData.length > (isExpanded ? 16 : 12);
     const comboTimeTickStep = comboDenseTimeAxis
@@ -3434,10 +3434,11 @@ export function renderChart(
     ];
     const barSize = barSeries.length > 1 ? 28 : 56;
     const shouldStackBars =
-      chart.config.spec?.chartType === "stacked_bar" && barSeries.length > 1;
-    const shouldStackAreas =
-      chart.config.spec?.chartType === "stacked_area" &&
+      (chart.config.spec?.chartType === "stacked_bar" ||
+        chart.config.spec?.componentMode === true) &&
       barSeries.length > 1;
+    const shouldStackAreas =
+      chart.config.spec?.chartType === "stacked_area" && barSeries.length > 1;
     const comboBarLabelMode = pointLabelMode(
       comboData.length,
       Math.max(1, barSeries.length),
@@ -3450,8 +3451,32 @@ export function renderChart(
       _forceLabels,
       isExpanded,
     );
-    const comboHeight =
-      comboNeedsRotatedLabels && !isExpanded ? h + 80 : wrapH;
+    const emphasizeComboNegatives =
+      chart.config.display?.highlightNegative || shouldForceNegativeEmphasis;
+    const negativeSeriesPoints = emphasizeComboNegatives
+      ? series.flatMap((item) =>
+          comboData
+            .filter((row) => Number(row[item.key]) < 0)
+            .map((row) => ({
+              key: item.key,
+              axis: item.axis,
+              name: String(row.name),
+              value: Number(row[item.key]),
+            })),
+        )
+      : [];
+    const negativeMinimumByAxis = new Map<
+      "left" | "right" | "farRight",
+      number
+    >();
+    for (const point of negativeSeriesPoints) {
+      const previous = negativeMinimumByAxis.get(point.axis);
+      negativeMinimumByAxis.set(
+        point.axis,
+        previous == null ? point.value : Math.min(previous, point.value),
+      );
+    }
+    const comboHeight = comboNeedsRotatedLabels && !isExpanded ? h + 80 : wrapH;
 
     return (
       <div style={{ height: comboHeight, width: "100%" }}>
@@ -3459,7 +3484,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <ComposedChart
             data={comboData}
@@ -3663,6 +3689,24 @@ export function renderChart(
                 }}
               />
             )}
+            {[...negativeMinimumByAxis.entries()].flatMap(([axis, minimum]) => [
+              <ReferenceLine
+                key={`negative-zero-${axis}`}
+                yAxisId={axis}
+                y={0}
+                stroke="rgb(var(--color-danger))"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+              />,
+              <ReferenceArea
+                key={`negative-area-${axis}`}
+                yAxisId={axis}
+                y1={0}
+                y2={minimum}
+                fill="rgb(var(--color-danger))"
+                fillOpacity={0.08}
+              />,
+            ])}
             {barSeries.map((s, i) =>
               shouldStackAreas ? (
                 <Area
@@ -3774,6 +3818,18 @@ export function renderChart(
                 </Line>
               );
             })}
+            {negativeSeriesPoints.map((point) => (
+              <ReferenceDot
+                key={`negative-${point.key}-${point.name}`}
+                yAxisId={point.axis}
+                x={point.name}
+                y={point.value}
+                r={5}
+                fill="rgb(var(--color-danger))"
+                stroke="rgb(var(--color-bg-card))"
+                strokeWidth={2}
+              />
+            ))}
             <Legend
               verticalAlign="bottom"
               height={expandedLegendHeight}
@@ -3878,11 +3934,12 @@ export function renderChart(
       [...trimmed]
         .sort(
           (a, b) =>
-            (Number((b as any).value) || 0) -
-            (Number((a as any).value) || 0),
+            (Number((b as any).value) || 0) - (Number((a as any).value) || 0),
         )
         .slice(0, highlightTopN)
-        .forEach((row) => barHighlightNames.add(String((row as any).name ?? "")));
+        .forEach((row) =>
+          barHighlightNames.add(String((row as any).name ?? "")),
+        );
     }
     const hasBarHighlight = barHighlightNames.size > 0;
     // "highlight the largest / smallest" maps to highlightExtremes (max|min|both);
@@ -4056,7 +4113,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={chartData}
@@ -4733,7 +4791,8 @@ export function renderChart(
           width="100%"
           height={hasColorMetric ? Math.max(80, h - 24) : "100%"}
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <Treemap
             data={nodes}
@@ -4777,12 +4836,8 @@ export function renderChart(
         : (numKeys[1] ?? numKeys[0] ?? "y");
     const points = data.map((d: any) => ({
       ...d,
-      ...(nameKey
-        ? { [nameKey]: humanizeCategoryLabel(d[nameKey]) }
-        : {}),
-      [xKey]: singleCat
-        ? humanizeCategoryLabel(d[xKey])
-        : (num(d[xKey]) ?? 0),
+      ...(nameKey ? { [nameKey]: humanizeCategoryLabel(d[nameKey]) } : {}),
+      [xKey]: singleCat ? humanizeCategoryLabel(d[xKey]) : (num(d[xKey]) ?? 0),
       [yKey]: num(d[yKey]) ?? 0,
     }));
 
@@ -4851,7 +4906,8 @@ export function renderChart(
             width="100%"
             height="100%"
             minWidth={0}
-            minHeight={0} initialDimension={{ width: 1, height: 1 }}
+            minHeight={0}
+            initialDimension={{ width: 1, height: 1 }}
           >
             <ScatterChart
               margin={{
@@ -5068,7 +5124,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <PieChart>
             <Pie
@@ -5383,7 +5440,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <PieChart>
             {donutTotal > 0 && !donutHasSignedSlices && (
@@ -5492,7 +5550,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={sorted}
@@ -5555,7 +5614,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <BarChart
             data={data}
@@ -5625,7 +5685,8 @@ export function renderChart(
           width="100%"
           height="100%"
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <ComposedChart
             data={paretoData}
@@ -5735,7 +5796,8 @@ export function renderChart(
           width="100%"
           height={isExpanded ? 300 : 200}
           minWidth={0}
-          minHeight={0} initialDimension={{ width: 1, height: 1 }}
+          minHeight={0}
+          initialDimension={{ width: 1, height: 1 }}
         >
           <RadialBarChart
             cx="50%"
@@ -5834,7 +5896,8 @@ export function renderChart(
     const hasCostWithoutRevenue =
       highlightCostWithoutRevenue &&
       bubbleData.some(
-        (point) => Number((point as any).y) > 0 && Number((point as any).x) <= 0,
+        (point) =>
+          Number((point as any).y) > 0 && Number((point as any).x) <= 0,
       );
     const highlightLowPerformance = Boolean(
       chart.config.spec?.highlightLowPerformance,
@@ -5860,7 +5923,9 @@ export function renderChart(
       highlightLowPerformance &&
       qualityKeys.some((key) => {
         const value = toFiniteNumber(point[key]);
-        return value !== null && value <= (qualityThresholds.get(key) ?? -Infinity);
+        return (
+          value !== null && value <= (qualityThresholds.get(key) ?? -Infinity)
+        );
       });
     const hasLowPerformance = bubbleData.some((point) =>
       isLowPerformancePoint(point as Record<string, unknown>),
@@ -5902,7 +5967,8 @@ export function renderChart(
             width="100%"
             height="100%"
             minWidth={0}
-            minHeight={0} initialDimension={{ width: 1, height: 1 }}
+            minHeight={0}
+            initialDimension={{ width: 1, height: 1 }}
           >
             <ScatterChart
               margin={{
@@ -6003,9 +6069,7 @@ export function renderChart(
                     (hasCostWithoutRevenue &&
                       Number((point as any).y) > 0 &&
                       Number((point as any).x) <= 0) ||
-                    isLowPerformancePoint(
-                      point as Record<string, unknown>,
-                    );
+                    isLowPerformancePoint(point as Record<string, unknown>);
                   return (
                     <Cell
                       key={i}
@@ -6014,7 +6078,9 @@ export function renderChart(
                           ? "#f59e0b"
                           : PIE_COLORS[i % PIE_COLORS.length]
                       }
-                      fillOpacity={hasBubbleHighlight && !highlighted ? 0.24 : 0.85}
+                      fillOpacity={
+                        hasBubbleHighlight && !highlighted ? 0.24 : 0.85
+                      }
                       stroke={highlighted ? "#fbbf24" : "none"}
                       strokeWidth={highlighted ? 3 : 0}
                     />
@@ -6073,9 +6139,7 @@ export function renderChart(
             (key) =>
               !reserved.has(key) &&
               !key.startsWith("_") &&
-              Number.isFinite(
-                Number((item as Record<string, unknown>)[key]),
-              ),
+              Number.isFinite(Number((item as Record<string, unknown>)[key])),
           ),
         ),
       ),
@@ -6521,7 +6585,8 @@ export function renderChart(
         width="100%"
         height="100%"
         minWidth={0}
-        minHeight={0} initialDimension={{ width: 1, height: 1 }}
+        minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
       >
         {(() => {
           const seriesKeys = inferNumericSeriesKeys(data);

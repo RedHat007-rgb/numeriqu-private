@@ -374,6 +374,8 @@ describe('SpecCompiler correctness contract', () => {
       model,
       ctx,
     );
+    expect(pct.ok && plain.ok).toBe(true);
+    if (!pct.ok || !plain.ok) return;
     // percent → ×100 percent-points for the UI's percent formatter
     expect(pct.sql).toContain('round(100 * (sum(gross_profit_usd)');
     // plain multiple → NOT scaled (debt-to-equity renders 0.47, not 47)

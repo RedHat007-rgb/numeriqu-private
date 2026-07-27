@@ -122,9 +122,26 @@ const HELPER_COL_RE = /(_wt$|^row_count$|_row_count$)/i;
  * Returns null when the column cannot be a measure (attribute) or cannot be
  * made accurate (ratio without resolvable components → refuse, don't average).
  */
+/** How to aggregate one side of a composed ratio, chosen from the component
+ * column's own classification: flow → sum, stock/balance → as_of (point-in-time),
+ * mean → mean. Falls back to sum when the component isn't found or has no time
+ * axis for an as-of. Generic — no per-measure knowledge. */
+function ratioTermFor(
+  column: string,
+  siblings: ColumnProfile[] | undefined,
+  timeColumn: string | undefined,
+): { agg: 'sum' | 'mean' | 'as_of'; column: string; orderBy?: string } {
+  const sib = siblings?.find((s) => s.column === column);
+  if (sib?.agg === 'semi_additive' && timeColumn)
+    return { agg: 'as_of', column, orderBy: timeColumn };
+  if (sib?.agg === 'mean') return { agg: 'mean', column };
+  return { agg: 'sum', column };
+}
+
 export function measureExprFor(
   profile: ColumnProfile,
   timeColumn: string | undefined,
+  siblings?: ColumnProfile[],
 ): { expr: MeasureExpr } | { skip: string } {
   if (
     timeColumn &&
@@ -158,19 +175,28 @@ export function measureExprFor(
           ? { kind: 'mean', column: profile.column, weight: profile.meanWeight }
           : { kind: 'mean', column: profile.column },
       };
-    case 'ratio':
+    case 'ratio': {
       if (!profile.ratioComponents) {
         return {
           skip: 'ratio measure without resolvable numerator/denominator (refusing to average a ratio)',
         };
       }
-      return {
-        expr: {
-          kind: 'ratio_of_sums',
-          numerator: profile.ratioComponents.numerator,
-          denominator: profile.ratioComponents.denominator,
-        },
-      };
+      const { numerator, denominator } = profile.ratioComponents;
+      // Each side is aggregated by ITS OWN classification: a flow is summed, a
+      // stock/balance is taken point-in-time (as_of = argMax by time), a mean is
+      // averaged. This reproduces DAX ratios that mix aggregations (e.g. a stock
+      // ÷ stock like debt-to-equity) — generic across datasets, from the profiler,
+      // no per-measure rule. When both sides are plain flows the result is exactly
+      // the classic ratio_of_sums (sum/sum), so margins/rates are unchanged.
+      const numT = ratioTermFor(numerator, siblings, timeColumn);
+      const denT = ratioTermFor(denominator, siblings, timeColumn);
+      if (numT.agg === 'sum' && denT.agg === 'sum') {
+        return {
+          expr: { kind: 'ratio_of_sums', numerator, denominator },
+        };
+      }
+      return { expr: { kind: 'ratio_of_aggs', numerator: numT, denominator: denT } };
+    }
     case 'attribute':
       return {
         skip: 'attribute column is a dimension/entity/time, not a measure',
@@ -287,7 +313,7 @@ export function buildSemanticModel(input: BuildInput): BuildResult {
         });
         continue;
       }
-      const derived = measureExprFor(p, time?.column);
+      const derived = measureExprFor(p, time?.column, profiles);
       if ('skip' in derived) {
         skipped.push({ table, column: p.column, reason: derived.skip });
         continue;

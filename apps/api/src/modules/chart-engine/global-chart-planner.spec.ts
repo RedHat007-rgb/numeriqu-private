@@ -506,6 +506,103 @@ describe('global chart planner', () => {
     }
   });
 
+  it('repairs a plan that drops requested measures from a complete cash-flow cube', async () => {
+    const cashFlowCube: Cube = {
+      view: 'cash_flow',
+      model: {
+        datasetId: 'cash_flow',
+        version: 1,
+        entities: [],
+        measures: [
+          {
+            key: 'opening_cash_balance',
+            label: 'Opening Cash Balance',
+            unit: 'USD',
+            sourceTable: 'cash_flow',
+            expr: { kind: 'sum', column: 'opening_cash_balance' },
+          },
+          {
+            key: 'closing_cash_balance',
+            label: 'Closing Cash Balance',
+            unit: 'USD',
+            sourceTable: 'cash_flow',
+            expr: { kind: 'sum', column: 'closing_cash_balance' },
+          },
+          {
+            key: 'net_cash_flow',
+            label: 'Net Cash Flow',
+            unit: 'USD',
+            sourceTable: 'cash_flow',
+            expr: { kind: 'sum', column: 'net_cash_flow' },
+          },
+          {
+            key: 'cash_balance',
+            label: 'Cash Balance',
+            unit: 'USD',
+            sourceTable: 'cash_flow',
+            expr: { kind: 'sum', column: 'closing_cash_balance' },
+          },
+        ],
+        dimensions: [],
+        time: {
+          table: 'cash_flow',
+          column: 'period_date',
+          grains: ['month', 'year'],
+        },
+        factGrain: 'one row per cash-flow category and month',
+        builtBy: 'auto+review',
+      },
+    };
+    const responses = [
+      {
+        verdict: 'chart',
+        cubeView: 'cash_flow',
+        spec: {
+          chartType: 'line',
+          measureKeys: ['cash_balance'],
+          timeGrain: 'month',
+          title: 'Cash Balance by Month',
+        },
+      },
+      {
+        verdict: 'chart',
+        cubeView: 'cash_flow',
+        spec: {
+          chartType: 'line',
+          measureKeys: [
+            'opening_cash_balance',
+            'closing_cash_balance',
+            'net_cash_flow',
+            'cash_balance',
+          ],
+          timeGrain: 'month',
+          title: 'Cash Flow Balances by Month',
+        },
+      },
+    ];
+    const calls: string[] = [];
+    const result = await planAcrossCubes(
+      'Create a line chart showing opening cash balance, closing cash balance, net cash flow, and cash balance by month.',
+      [cashFlowCube],
+      async (_system, user) => {
+        calls.push(user);
+        return JSON.stringify(responses[calls.length - 1]);
+      },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain('omitted explicitly requested catalog measure');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.spec.measureKeys).toEqual([
+        'opening_cash_balance',
+        'closing_cash_balance',
+        'net_cash_flow',
+        'cash_balance',
+      ]);
+    }
+  });
+
   it('repairs an edit clarification that asks which chart to change', async () => {
     const responses = [
       {

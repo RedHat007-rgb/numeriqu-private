@@ -22,14 +22,11 @@
 }
 
 html {
-  background: #0a1128;
+  background: transparent;
 }
 
 body {
-  background:
-    radial-gradient(900px 520px at 12% -8%, rgba(155, 77, 255, 0.13), transparent 60%),
-    radial-gradient(900px 480px at 100% 0%, rgba(0, 119, 255, 0.12), transparent 58%),
-    #0a1128;
+  background: transparent;
   color: #ffffff;
   font-family: "Numeriq Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }

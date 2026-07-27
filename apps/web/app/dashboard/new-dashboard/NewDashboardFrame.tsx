@@ -58,7 +58,7 @@ export default function NewDashboardFrame() {
   return (
     <iframe
       ref={iframeRef}
-      className="h-full w-full border-0 bg-bg-base"
+      className="h-full w-full border-0 bg-transparent"
       src="/new-dashboard/index.html"
       title="New Dashboard — CFO Insights Command Center"
       onLoad={sendDashboard}

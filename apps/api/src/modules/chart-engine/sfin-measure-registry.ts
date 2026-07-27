@@ -11,6 +11,8 @@
 import type { SemanticMeasure } from './semantic-model.types';
 
 const BALANCE_TABLE = 'v_sfin_balance_ratio_semantic';
+const CASH_FLOW_TABLE = 'v_sfin_cashflow_semantic';
+const WORKING_CAPITAL_TABLE = 'v_sfin_working_capital_semantic';
 const PERIOD = 'period_date';
 
 const asOf = (column: string) =>
@@ -19,6 +21,41 @@ const mean = (column: string) => ({ agg: 'mean', column }) as const;
 const sum = (column: string) => ({ agg: 'sum', column }) as const;
 
 const SFIN_DECLARED_MEASURES: readonly SemanticMeasure[] = [
+  {
+    key: 'opening_cash_balance_usd',
+    label: 'Opening Cash Balance',
+    unit: 'USD',
+    sourceTable: CASH_FLOW_TABLE,
+    expr: { kind: 'sum', column: 'opening_cash_balance_usd' },
+  },
+  {
+    key: 'closing_cash_balance_usd',
+    label: 'Closing Cash Balance',
+    unit: 'USD',
+    sourceTable: CASH_FLOW_TABLE,
+    expr: { kind: 'sum', column: 'closing_cash_balance_usd' },
+  },
+  {
+    key: 'cash_balance_usd',
+    label: 'Cash Balance',
+    unit: 'USD',
+    sourceTable: CASH_FLOW_TABLE,
+    expr: { kind: 'sum', column: 'closing_cash_balance_usd' },
+  },
+  {
+    key: 'net_cash_flow_usd',
+    label: 'Net Cash Flow',
+    unit: 'USD',
+    sourceTable: CASH_FLOW_TABLE,
+    expr: { kind: 'sum', column: 'net_cash_flow_usd' },
+  },
+  {
+    key: 'cash_balance_usd',
+    label: 'Cash Balance',
+    unit: 'USD',
+    sourceTable: WORKING_CAPITAL_TABLE,
+    expr: { kind: 'sum', column: 'cash_flow_closing_balance_usd' },
+  },
   {
     key: 'debt_to_equity_ratio',
     label: 'Debt-to-Equity Ratio',

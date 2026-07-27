@@ -996,6 +996,7 @@ export function buildSfinSemanticCubeDdls(
         t.org_name AS org_name,
         t.period_date AS period_date,
         t.total_closing_balance_usd AS total_closing_balance_usd${accountSubtypeSelect},
+        ifNull(c.cash_flow_closing_balance_usd, 0) AS cash_flow_closing_balance_usd,
         ifNull(a.average_days_sales_outstanding, 0) AS average_days_sales_outstanding,
         ifNull(p.average_days_payable_outstanding, 0) AS average_days_payable_outstanding
       FROM (
@@ -1015,7 +1016,13 @@ export function buildSfinSemanticCubeDdls(
           if(sum(invoice_amount_usd) = 0, 0,
             30 * sum(outstanding_payable_usd) / sum(invoice_amount_usd)) AS average_days_payable_outstanding
         FROM ${db}.v_sfin_ap_semantic GROUP BY tenant_id, org_id, period_date
-      ) p USING (tenant_id, org_id, period_date)`,
+      ) p USING (tenant_id, org_id, period_date)
+      LEFT JOIN (
+        SELECT tenant_id, org_id, toStartOfMonth(period_date) AS period_date,
+          sum(closing_cash_balance_usd) AS cash_flow_closing_balance_usd
+        FROM ${db}.v_sfin_cashflow_semantic
+        GROUP BY tenant_id, org_id, period_date
+      ) c USING (tenant_id, org_id, period_date)`,
 
     `CREATE OR REPLACE VIEW ${db}.v_sfin_payroll_reconciliation_semantic AS
       SELECT

@@ -1,10 +1,13 @@
 import { profileTable, type ColumnStats } from './data-profiler';
 import { buildSemanticModel } from './semantic-model-builder';
 import { sfinDeclaredMeasuresForTables } from './sfin-measure-registry';
+import { buildSfinSemanticCubeDdls } from './sfin-semantic-cubes';
 import { compileSpec } from './spec-compiler';
 import type { EngineChartSpec, PhysicalSchema } from './semantic-model.types';
 
 const TABLE = 'v_sfin_balance_ratio_semantic';
+const CASH_FLOW_TABLE = 'v_sfin_cashflow_semantic';
+const WORKING_CAPITAL_TABLE = 'v_sfin_working_capital_semantic';
 const numericColumns = [
   'closing_total_assets_usd',
   'closing_total_liabilities_usd',
@@ -85,6 +88,142 @@ function buildBalanceModel(columns = stats) {
 }
 
 describe('SFIN data-driven composed measure registry', () => {
+  it('overrides profiled stock semantics with the client DAX SUM declarations', () => {
+    const columns = [
+      'opening_cash_balance_usd',
+      'closing_cash_balance_usd',
+      'net_cash_flow_usd',
+    ];
+    const cashStats: ColumnStats[] = [
+      {
+        table: CASH_FLOW_TABLE,
+        column: 'period_date',
+        type: 'Date',
+        distinctCount: 2,
+        nullFraction: 0,
+        sampleValues: ['2025-12-01'],
+        rowCount: 16,
+      },
+      ...columns.map(
+        (column): ColumnStats => ({
+          table: CASH_FLOW_TABLE,
+          column,
+          type: 'Float64',
+          distinctCount: 16,
+          nullFraction: 0,
+          min: -10,
+          max: 100,
+          sampleValues: [10],
+          rowCount: 16,
+        }),
+      ),
+    ];
+    const cashSchema: PhysicalSchema = {
+      datasetId: 'numeriqu-demo',
+      introspectedAt: '2026-07-27T00:00:00.000Z',
+      relationships: [],
+      tables: [
+        {
+          name: CASH_FLOW_TABLE,
+          rowCountEstimate: 16,
+          columns: cashStats.map((column) => ({
+            name: column.column,
+            type: column.type,
+            nullable: false,
+          })),
+        },
+      ],
+    };
+    const { model } = buildSemanticModel({
+      schema: cashSchema,
+      profilesByTable: {
+        [CASH_FLOW_TABLE]: profileTable(cashStats, { allowMean: true }),
+      },
+      declaredMeasures: sfinDeclaredMeasuresForTables([CASH_FLOW_TABLE]),
+    });
+    const byKey = Object.fromEntries(
+      model.measures.map((measure) => [measure.key, measure]),
+    );
+
+    expect(byKey['opening_cash_balance_usd']?.expr).toEqual({
+      kind: 'sum',
+      column: 'opening_cash_balance_usd',
+    });
+    expect(byKey['closing_cash_balance_usd']?.expr).toEqual({
+      kind: 'sum',
+      column: 'closing_cash_balance_usd',
+    });
+    expect(byKey['cash_balance_usd']?.expr).toEqual({
+      kind: 'sum',
+      column: 'closing_cash_balance_usd',
+    });
+    expect(byKey['net_cash_flow_usd']?.expr).toEqual({
+      kind: 'sum',
+      column: 'net_cash_flow_usd',
+    });
+
+    const result = compileSpec(
+      {
+        chartType: 'line',
+        measureKeys: [
+          'opening_cash_balance_usd',
+          'closing_cash_balance_usd',
+          'net_cash_flow_usd',
+          'cash_balance_usd',
+        ],
+        timeGrain: 'month',
+        title: 'Cash flow balances',
+      },
+      model,
+      {
+        analyticsDb: 'analytics',
+        tenantId: 'tenant',
+        externalOrgIds: ['org'],
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.sql).toContain(
+      'sum(opening_cash_balance_usd) AS `__measure_0`',
+    );
+    expect(result.sql).toContain(
+      'sum(closing_cash_balance_usd) AS `__measure_1`',
+    );
+    expect(result.sql).toContain(
+      'sum(net_cash_flow_usd) AS `__measure_2`',
+    );
+    expect(result.sql).toContain(
+      'sum(closing_cash_balance_usd) AS `__measure_3`',
+    );
+    expect(result.sql).not.toContain('argMax(opening_cash_balance_usd');
+    expect(result.sql).not.toContain('argMax(closing_cash_balance_usd');
+  });
+
+  it('feeds PBIX cash balance into the consolidated working-capital cube', () => {
+    const ddl = buildSfinSemanticCubeDdls('analytics', {
+      accountSubTypes: ['Cash', 'Receivables'],
+    }).find((statement) =>
+      statement.includes(
+        'CREATE OR REPLACE VIEW analytics.v_sfin_working_capital_semantic',
+      ),
+    );
+    expect(ddl).toContain(
+      'sum(closing_cash_balance_usd) AS cash_flow_closing_balance_usd',
+    );
+    expect(
+      sfinDeclaredMeasuresForTables([WORKING_CAPITAL_TABLE]),
+    ).toContainEqual(
+      expect.objectContaining({
+        key: 'cash_balance_usd',
+        sourceTable: WORKING_CAPITAL_TABLE,
+        expr: {
+          kind: 'sum',
+          column: 'cash_flow_closing_balance_usd',
+        },
+      }),
+    );
+  });
+
   it('registers the six Q57 ratios with their DAX aggregation shapes', () => {
     const { model } = buildBalanceModel();
     const byKey = Object.fromEntries(

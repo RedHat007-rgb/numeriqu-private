@@ -10792,6 +10792,81 @@ export class AgentService {
           timeZone: 'UTC',
         }).format(month);
       };
+      if (built.spec.measureKeys.length > 1) {
+        const seriesFacts = built.spec.measureKeys
+          .map((measureKey, index) => {
+            const seriesPoints = factRows
+              .map((row) => ({
+                name: String(row.period ?? '').trim(),
+                value: this.num(row[measureKey]),
+              }))
+              .filter((point) => Number.isFinite(point.value));
+            if (seriesPoints.length === 0) return null;
+            const first = seriesPoints[0]!;
+            const last = seriesPoints[seriesPoints.length - 1]!;
+            const delta = last.value - first.value;
+            const direction =
+              delta > 0 ? 'climbed' : delta < 0 ? 'eased' : 'held steady';
+            const label = seriesInfo?.[index]?.key ?? measureKey;
+            const negativePoints = built.spec.highlightNegative
+              ? seriesPoints.filter((point) => point.value < 0)
+              : [];
+            return {
+              label,
+              first,
+              last,
+              direction,
+              negativePoints,
+              periodCount: seriesPoints.length,
+            };
+          })
+          .filter(
+            (
+              fact,
+            ): fact is {
+              label: string;
+              first: { name: string; value: number };
+              last: { name: string; value: number };
+              direction: 'climbed' | 'eased' | 'held steady';
+              negativePoints: Array<{ name: string; value: number }>;
+              periodCount: number;
+            } => fact !== null,
+          );
+        if (seriesFacts.length > 0) {
+          const latest = seriesFacts
+            .map(
+              (fact) =>
+                `${fact.label} = ${fmt(fact.last.value)} (${prettyPeriod(fact.last.name)})`,
+            )
+            .join('; ');
+          const negativeFacts = built.spec.highlightNegative
+            ? seriesFacts.flatMap((fact) =>
+                fact.negativePoints.length
+                  ? [
+                      `Highlighted negative periods for ${fact.label}: ${fact.negativePoints
+                        .map(
+                          (point) =>
+                            `${prettyPeriod(point.name)} = ${fmt(point.value)}`,
+                        )
+                        .join('; ')}`,
+                    ]
+                  : [`Highlighted negative periods for ${fact.label}: none`],
+              )
+            : [];
+          return {
+            sheet: [
+              ...lines,
+              `Kind: multi-series time series with ${seriesFacts.length} series`,
+              ...seriesFacts.map(
+                (fact) =>
+                  `${fact.label}: first ${prettyPeriod(fact.first.name)} = ${fmt(fact.first.value)}; last ${prettyPeriod(fact.last.name)} = ${fmt(fact.last.value)}; direction = ${fact.direction}; periods = ${fact.periodCount}`,
+              ),
+              ...negativeFacts,
+            ].join('\n'),
+            fallback: `Here's **${title}**. The latest values are ${latest}. Want me to compare the biggest month-over-month movements across these series?`,
+          };
+        }
+      }
       const first = points[0]!;
       const last = points[points.length - 1]!;
       const delta = last.value - first.value;

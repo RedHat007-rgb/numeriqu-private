@@ -48,6 +48,18 @@ const NAV_ITEMS: Array<{
 ];
 
 /**
+ * Report shown to orgs that have no `powerBiUrl` of their own. Before the
+ * per-org field existed this URL was compiled in and every org saw it; keeping
+ * it as the default preserves that behaviour while still letting an org
+ * override it with its own report. Override the default with
+ * NEXT_PUBLIC_POWER_BI_URL; set it to an empty string to show no button unless
+ * an org configures one.
+ */
+const DEFAULT_POWER_BI_URL =
+  process.env.NEXT_PUBLIC_POWER_BI_URL ??
+  "https://app.powerbi.com/view?r=eyJrIjoiM2JlYTFhMjAtNGVlNy00MjIzLWFmNGYtOGQ4NTMwOWE2Y2EzIiwidCI6ImYzYzVhY2ZkLTg4OGMtNGQ2Yi1hZDNiLWQyNDYwZThhMTQ0NyJ9&pageName=ebbb890dd70e7910d663";
+
+/**
  * PowerBI launch button with special effects: brand-amber gradient, a sweeping
  * shimmer on hover, and an animated glow ring. Opens the org's embedded report
  * (passed in per-org, never hardcoded) in a new tab. Collapses to an icon-only
@@ -62,7 +74,10 @@ function PowerBiButton({ url, collapsed }: { url: string; collapsed: boolean }) 
       title="Open Power BI report in a new tab"
       aria-label="Open Power BI report in a new tab"
       className={cn(
-        "group relative flex items-center gap-2.5 overflow-hidden rounded-lg px-2.5 py-2 text-sm font-semibold",
+        // Sits a step lighter than the nav links above it: 26px icon tile
+        // rather than 32px, so the pill is shorter and the label is not boxed
+        // in by its own chrome.
+        "group relative flex items-center gap-2.5 overflow-hidden rounded-lg px-3 py-2 text-[13px] font-semibold",
         "text-[#3d2b00] transition-all duration-300",
         "bg-[linear-gradient(110deg,#F2C811_0%,#F5D33f_45%,#E8A600_100%)]",
         "shadow-[0_4px_16px_-4px_rgba(242,200,17,0.55)] ring-1 ring-amber-300/50",
@@ -81,17 +96,23 @@ function PowerBiButton({ url, collapsed }: { url: string; collapsed: boolean }) 
         aria-hidden
         className="pointer-events-none absolute inset-y-0 -left-full w-1/2 skew-x-[-20deg] bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.7),transparent)] transition-transform duration-700 ease-out group-hover:translate-x-[300%]"
       />
+      {/* A white wash over amber reads as a washed-out grey box; tinting with
+          the label colour instead keeps the tile legible as a deliberate
+          element. */}
       <span
         className={cn(
-          "relative z-10 flex size-8 items-center justify-center rounded-lg bg-white/25 ring-1 ring-white/40",
+          "relative z-10 flex size-[26px] shrink-0 items-center justify-center rounded-[7px] bg-[#3d2b00]/15 ring-1 ring-[#3d2b00]/15",
         )}
       >
-        <BarChart3 className="size-4" />
+        <BarChart3 className="size-3.5" />
       </span>
       {!collapsed ? (
-        <span className="relative z-10 flex min-w-0 flex-1 items-center gap-1.5">
+        // `justify-between` pushes the launch arrow to the trailing edge. With
+        // the two crowded together the label looked squeezed into the left of
+        // an otherwise empty pill.
+        <span className="relative z-10 flex min-w-0 flex-1 items-center justify-between gap-2">
           <span className="truncate">Power BI</span>
-          <ExternalLink className="size-3.5 shrink-0 opacity-70 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:opacity-100" />
+          <ExternalLink className="size-3.5 shrink-0 opacity-65 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:opacity-100" />
         </span>
       ) : null}
     </a>
@@ -190,11 +211,15 @@ export function DashboardShell({
     item.href === "/dashboard" ? pathname === item.href : pathname.startsWith(item.href),
   );
 
-  // Per-org embedded Power BI report — config as data, not a compiled-in literal.
-  // Absent ⇒ the sidebar simply omits the button for this org.
+  // Per-org embedded Power BI report, falling back to the workspace default so
+  // every org gets the button. Gating purely on the per-org field silently
+  // removed it for every org whose `powerBiUrl` was never populated.
+  // Set NEXT_PUBLIC_POWER_BI_URL to change the default, or "" to hide the
+  // button for orgs that have no report of their own.
   const powerBiUrl = useMemo(
     () =>
-      workspaces.find((ws) => ws.organization.id === currentWorkspaceId)?.organization.powerBiUrl ??
+      workspaces.find((ws) => ws.organization.id === currentWorkspaceId)?.organization.powerBiUrl ||
+      DEFAULT_POWER_BI_URL ||
       null,
     [workspaces, currentWorkspaceId],
   );

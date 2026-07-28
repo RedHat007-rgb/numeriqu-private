@@ -518,6 +518,46 @@ body {
   box-shadow: none;
 }
 
+/* ── Operational strain panel: one surface for every card ──
+ * The metric tiles and the three insight cards used to recolour themselves by
+ * state — amber when breaching, green when safe — so a single panel showed
+ * three different card backgrounds at once. Every card now uses the same blue
+ * surface as CSAT and QA Score; the figures and threshold copy carry the
+ * status. Specificity has to match the `.strain-card.risk` /
+ * `.strain-decision.pressure` rules in index.html for these to win. */
+.strain-card.risk {
+  border-color: rgb(126 186 255 / 0.12);
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.04), transparent 28%),
+    linear-gradient(180deg, rgb(11 22 49 / 0.96), rgb(13 27 59 / 0.94));
+}
+
+.strain-card.risk .strain-number {
+  color: #7ddcff;
+  border-color: #32749e;
+  background: #0a1a35;
+}
+
+.strain-decision.pressure,
+.strain-decision.safeguard,
+.strain-decision.move {
+  border-color: #36547a;
+  background: linear-gradient(145deg, #122746, #0d1c35);
+}
+
+/* Treemap cells now carry the full-saturation Astra hues, matching what
+   DashboardPreview paints. Astra keeps its white cell labels readable on the
+   bright amber and emerald fills with a dark stroke halo (paint-order:stroke
+   on the SVG text); this is the HTML equivalent. Without it the labels on the
+   lighter cells wash out. */
+.tm-name,
+.tm-value,
+.tm-share {
+  text-shadow:
+    0 1px 2px rgb(0 0 0 / 0.55),
+    0 0 3px rgb(0 0 0 / 0.45);
+}
+
 /* The watchlist figure used to take a per-metric hue from --accent, so two
    numbers sitting side by side read as purple and amber for no reason the
    viewer can decode. The status and trend pills beneath already carry the

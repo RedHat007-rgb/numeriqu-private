@@ -3,7 +3,8 @@ import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 
 export const metadata = {
-  title: "Page not found · NumeriQu",
+  // The root layout's template appends " | NumeriQu".
+  title: "Page not found",
 };
 
 export default function NotFound() {

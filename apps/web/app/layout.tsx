@@ -18,7 +18,13 @@ const displayFont = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "NumeriQu — Strategic Financial Intelligence",
+  // Pipe separator and a `%s | NumeriQu` template, the common convention: the
+  // page's own name leads so it stays readable when the tab is narrow and the
+  // title gets truncated.
+  title: {
+    default: "NumeriQu | Strategic Financial Intelligence",
+    template: "%s | NumeriQu",
+  },
   description:
     "NumeriQu turns connected financial data into clear decisions. RAG advisors, agent automations, and CFO-grade dashboards in one calm surface.",
 };

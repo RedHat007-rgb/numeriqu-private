@@ -60,7 +60,7 @@ export default function NewDashboardFrame() {
       ref={iframeRef}
       className="h-full w-full border-0 bg-transparent"
       src="/new-dashboard/index.html"
-      title="Overview — CFO Insights Command Center"
+      title="Overview | CFO Insights Command Center"
       onLoad={sendDashboard}
     >
       Your browser does not support embedded dashboards.

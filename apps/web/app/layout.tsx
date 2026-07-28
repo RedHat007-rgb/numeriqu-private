@@ -18,9 +18,9 @@ const displayFont = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "NumeriQ — Strategic Financial Intelligence",
+  title: "NumeriQu — Strategic Financial Intelligence",
   description:
-    "NumeriQ turns connected financial data into clear decisions. RAG advisors, agent automations, and CFO-grade dashboards in one calm surface.",
+    "NumeriQu turns connected financial data into clear decisions. RAG advisors, agent automations, and CFO-grade dashboards in one calm surface.",
 };
 
 export default function RootLayout({

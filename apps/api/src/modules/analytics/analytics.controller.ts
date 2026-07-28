@@ -69,11 +69,28 @@ export class AnalyticsController {
       return null;
     })();
 
-    const [profile, monthlyTrend, executive] = await Promise.all([
-      this.financialData.getFinancialProfile(organizationId, range as any),
-      this.financialData.getMonthlyRevenueTrend(organizationId, range as any),
-      this.financialData.getExecutiveSnapshot(organizationId, range as any),
-    ]);
+    const [profile, monthlyTrend, executive, balanceSheetTrend] =
+      await Promise.all([
+        this.financialData.getFinancialProfile(organizationId, range as any),
+        this.financialData.getMonthlyRevenueTrend(organizationId, range as any),
+        this.financialData.getExecutiveSnapshot(organizationId, range as any),
+        this.financialData.getBalanceSheetTrend(organizationId, range as any),
+      ]);
+
+    // Monthly balance-sheet position. Empty for dataset modes that cannot
+    // classify accounts into assets and liabilities — consumers must treat an
+    // empty array as "no live figures", not as zeroes.
+    const balanceChart = balanceSheetTrend
+      .map((row: any) => ({
+        month: String(row.month ?? '').slice(0, 7),
+        assets: Number(row.assets) || 0,
+        liabilities: Number(row.liabilities) || 0,
+        equity: Number(row.equity) || 0,
+        currentAssets: Number(row.current_assets) || 0,
+        currentLiabilities: Number(row.current_liabilities) || 0,
+      }))
+      .filter((row) => /^\d{4}-\d{2}$/.test(row.month))
+      .sort((a, b) => a.month.localeCompare(b.month));
 
     // Build Recharts-ready monthly trend (range-filtered server-side)
     const trendMap = new Map<string, {
@@ -367,6 +384,7 @@ export class AnalyticsController {
           },
       charts: {
         monthlyTrend: monthlyChart,
+        balanceSheetTrend: balanceChart,
         orgBreakdown,
         invoiceStatus,
         cashflowWaterfall:

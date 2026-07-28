@@ -8089,7 +8089,7 @@ export function DashboardPreview({
 
               <div className="mb-6">
                 <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-feedback-success">
-                  NumeriQ Intelligence
+                  NumeriQu Intelligence
                 </p>
                 <h2 className="mt-1 text-2xl font-bold text-text-primary">
                   {expandedChart.title}
@@ -8162,7 +8162,7 @@ export function DashboardPreview({
                   />
                 </div>
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted">
-                  NumeriQ Strategic Layer
+                  NumeriQu Strategic Layer
                 </span>
               </div>
             </motion.div>

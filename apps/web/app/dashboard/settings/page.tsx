@@ -652,7 +652,7 @@ function SecurityTab({
       </div>
 
       <div className="surface-card p-6">
-        <SectionHeader title="Security practices" description="How NumeriQ protects your financial data." />
+        <SectionHeader title="Security practices" description="How NumeriQu protects your financial data." />
         <div className="grid gap-3 sm:grid-cols-2">
           {[
             { label: "Encryption at rest", status: "AES-256 for tokens", ok: true },
@@ -735,7 +735,7 @@ function PreferencesTab({ prefs, onUpdate }: {
   return (
     <div className="space-y-6">
       <div className="surface-card p-6">
-        <SectionHeader title="Financial settings" description="Control how your financial data is displayed across NumeriQ." />
+        <SectionHeader title="Financial settings" description="Control how your financial data is displayed across NumeriQu." />
         <div className="grid gap-3 sm:grid-cols-2">
           <Select
             label="Fiscal year start"
@@ -769,7 +769,7 @@ function PreferencesTab({ prefs, onUpdate }: {
       </div>
 
       <div className="surface-card p-6">
-        <SectionHeader title="Notifications" description="Control when NumeriQ sends you alerts. (Email delivery via backend — coming soon.)" />
+        <SectionHeader title="Notifications" description="Control when NumeriQu sends you alerts. (Email delivery via backend — coming soon.)" />
         <div className="space-y-2">
           <Toggle
             checked={prefs.notifySyncFailures}

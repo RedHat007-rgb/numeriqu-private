@@ -3,7 +3,7 @@ import { Button } from "../components/ui/Button";
 import { Surface } from "../components/ui/Surface";
 
 export const metadata = {
-  title: "Page not found · NumeriQ",
+  title: "Page not found · NumeriQu",
 };
 
 export default function NotFound() {

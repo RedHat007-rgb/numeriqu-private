@@ -31,7 +31,7 @@ export function Hero() {
           <div className="col-span-12 md:col-span-7 lg:col-span-6">
             <Reveal delay={180}>
               <p className="max-w-xl text-pretty text-[17px] leading-relaxed text-muted-foreground">
-                Numeriqu collapses every ERP you run - QuickBooks, Xero, and the
+                NumeriQu collapses every ERP you run - QuickBooks, Xero, and the
                 ones you haven&apos;t connected yet - into a single analytical
                 brain. It answers in plain English. It generates live,
                 CFO-grade dashboards in under three seconds. And it never makes

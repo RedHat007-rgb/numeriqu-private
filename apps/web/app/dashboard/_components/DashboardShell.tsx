@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings,
-  LayoutDashboard,
   Radar,
   LineChart,
   Bot,
@@ -26,14 +25,21 @@ import { Button } from "../../../components/ui/Button";
 import { cn } from "../../../components/ui/cn";
 import { Logo } from "../../../components/landing/logo";
 import { CommandPalette } from "./CommandPalette";
+import { ComingSoonBadge } from "./ComingSoonBadge";
 import type { WorkspaceSummary } from "../../../lib/api/types";
 
-const NAV_ITEMS: Array<{ href: string; label: string; description: string; icon: LucideIcon }> = [
-  { href: "/dashboard", label: "Overview", description: "What changed, at a glance", icon: LayoutDashboard },
-  { href: "/dashboard/signals", label: "Signals", description: "Investigate finance changes", icon: Radar },
+const NAV_ITEMS: Array<{
+  href: string;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  /** Feature is still locked — the nav marks it and the route serves a coming-soon page. */
+  comingSoon?: boolean;
+}> = [
+  { href: "/dashboard", label: "Overview", description: "CFO insights command center", icon: Gauge },
+  { href: "/dashboard/signals", label: "Signals", description: "Investigate finance changes", icon: Radar, comingSoon: true },
   { href: "/dashboard/dashboards", label: "Dashboards", description: "Saved decision surfaces", icon: LineChart },
-  { href: "/dashboard/new-dashboard", label: "New Dashboard", description: "CFO insights command center", icon: Gauge },
-  { href: "/dashboard/rag", label: "Prism", description: "Evidence-first answers, cited", icon: Search },
+  { href: "/dashboard/rag", label: "Prism", description: "Evidence-first answers, cited", icon: Search, comingSoon: true },
   { href: "/dashboard/agent", label: "Astra", description: "Turn questions into dashboards", icon: Bot },
   { href: "/dashboard/messages", label: "Messages", description: "Team conversations and direct messages", icon: MessageSquare },
   { href: "/dashboard/integrations", label: "Integrations", description: "Connect systems and sync", icon: PlugZap },
@@ -105,11 +111,13 @@ function NavLink({
   label,
   icon: Icon,
   collapsed,
+  comingSoon = false,
 }: {
   href: string;
   label: string;
   icon: LucideIcon;
   collapsed: boolean;
+  comingSoon?: boolean;
 }) {
   const pathname = usePathname();
   const normalizedHref = href.split("#")[0] ?? href;
@@ -138,25 +146,14 @@ function NavLink({
       >
         <Icon className="size-4" />
       </div>
-      {!collapsed ? (
-        label === "Prism" ? (
-          <div className="min-w-0 flex-1 pr-16">
-            <span className="block truncate font-semibold">{label}</span>
-            <span
-              className={cn(
-                "absolute right-2 top-1.5 whitespace-nowrap rounded-full px-1.5 py-0.5",
-                "bg-text-muted/10 text-[8px] font-bold uppercase leading-none tracking-[0.14em] text-text-muted ring-1 ring-text-muted/15",
-              )}
-            >
-              Coming soon
-            </span>
-          </div>
-        ) : (
-          <div className="min-w-0 flex-1">
-            <span className="block truncate font-semibold">{label}</span>
-          </div>
-        )
-      ) : null}
+      {collapsed ? (
+        comingSoon ? <ComingSoonBadge collapsed /> : null
+      ) : (
+        <div className={cn("min-w-0 flex-1", comingSoon && "pr-16")}>
+          <span className="block truncate font-semibold">{label}</span>
+          {comingSoon ? <ComingSoonBadge /> : null}
+        </div>
+      )}
     </Link>
   );
 }
@@ -278,11 +275,10 @@ export function DashboardShell({
                   </button>
                 ) : null}
                 <Logo className="h-10 w-auto shrink-0" />
-                <div className="min-w-0">
-                  <h1 className="truncate text-lg font-bold tracking-tight text-text-primary md:text-xl">
-                    {activeItem?.label ?? "Workspace"}
-                  </h1>
-                </div>
+                {/* The active nav item already reads as selected in the sidebar, so
+                    repeating it beside the wordmark just crowded the lockup. Keep it
+                    as the page's h1 for screen readers and the a11y tree. */}
+                <h1 className="sr-only">{activeItem?.label ?? "Workspace"}</h1>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
                 <span className="truncate">{tenantLabel}</span>
@@ -433,6 +429,7 @@ export function DashboardShell({
                       label={item.label}
                       icon={item.icon}
                       collapsed={navCollapsed}
+                      comingSoon={item.comingSoon}
                     />
                   ))}
                 </nav>

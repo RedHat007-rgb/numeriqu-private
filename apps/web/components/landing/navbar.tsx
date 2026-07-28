@@ -38,7 +38,7 @@ export function Navbar() {
               : "border-transparent bg-transparent",
           )}
         >
-          <Link href="/" aria-label="Numeriqu home" className="inline-flex items-center">
+          <Link href="/" aria-label="NumeriQu home" className="inline-flex items-center">
             <Logo className="h-9 w-auto" />
           </Link>
 

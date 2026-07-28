@@ -131,7 +131,7 @@ export default function InvitePage() {
                 <h1 className="text-2xl font-bold text-text-primary">You're invited</h1>
                 <p className="text-sm text-text-muted">
                   You've been invited to join{" "}
-                  <strong className="text-text-primary">{invite.orgName}</strong> on NumeriQ as a{" "}
+                  <strong className="text-text-primary">{invite.orgName}</strong> on NumeriQu as a{" "}
                   <span className="capitalize text-text-primary">{invite.role}</span>.
                 </p>
               </header>

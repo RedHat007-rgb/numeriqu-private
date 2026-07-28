@@ -319,22 +319,345 @@ body {
   transform: translateY(-1px);
 }
 
+/* ============================================================
+ * Overview-page card parity
+ * ------------------------------------------------------------
+ * Every card surface below is a 1:1 port of the corresponding
+ * `body.nq-app .dashboard-*` recipe in apps/web/app/globals.css,
+ * so the embedded dashboard reads as the same product as
+ * /dashboard (OverviewPage). Values are copied verbatim — if a
+ * recipe changes in globals.css, mirror the change here.
+ *
+ *   globals.css                  →  new-dashboard
+ *   .dashboard-metric-tile       →  .kpi-card, .client-snapshot-card,
+ *                                   .strain-card, .insight-card
+ *   .dashboard-surface           →  .card, .platform-card
+ *   .dashboard-command-card      →  .command-brief
+ *   .dashboard-brief-stat        →  .brief-signal, .watch-item, .decision-item
+ *   .dashboard-brief-aside       →  .brief-board
+ * ============================================================ */
+
+/* ── Metric tiles (.dashboard-metric-tile) ────────────────── */
 .kpi-card,
-.card,
-.platform-card,
 .client-snapshot-card,
-.brief-board,
-.brief-signal,
-.watch-item {
-  border-color: rgba(0, 119, 255, 0.16);
+.strain-card,
+.insight-card {
+  position: relative;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid rgb(126 186 255 / 0.12);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.04), transparent 28%),
+    linear-gradient(180deg, rgb(11 22 49 / 0.96), rgb(13 27 59 / 0.94));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 16px 34px -28px rgb(0 0 0 / 0.88);
 }
 
-.command-brief {
-  border-color: rgba(0, 119, 255, 0.24);
+/* One constant accent rule for every tile — the brief signals included, so a
+   brief reads the same on all six tabs instead of recolouring per metric. */
+.kpi-card::before,
+.client-snapshot-card::before,
+.strain-card::before,
+.insight-card::before,
+.brief-signal::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  width: auto;
+  height: 2px;
+  border-radius: 0;
+  opacity: 0.72;
+  background: linear-gradient(90deg, rgb(0 199 210 / 0.78), rgb(79 140 255 / 0.78), transparent 76%);
+}
+
+.kpi-card {
+  min-height: 132px;
+}
+
+/* The overview tiles brighten their border on hover — they do not lift. */
+.kpi-card,
+.strain-card,
+.client-snapshot-card {
+  transition: border-color 160ms ease;
+}
+
+.kpi-card:hover,
+.strain-card:hover,
+.client-snapshot-card:hover {
+  transform: none;
+  border-color: rgb(0 119 255 / 0.4) !important;
+  filter: none;
+}
+
+/* ── Panel surfaces (.dashboard-surface) ──────────────────── */
+.card,
+.platform-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgb(122 162 255 / 0.18);
+  border-radius: 18px;
   background:
-    radial-gradient(circle at 0 0, rgba(0, 119, 255, 0.18), transparent 34%),
-    radial-gradient(circle at 100% 0, rgba(155, 77, 255, 0.14), transparent 38%),
-    linear-gradient(150deg, #0f1837, #0a1128 72%);
+    linear-gradient(135deg, rgb(255 255 255 / 0.035), transparent 34%),
+    linear-gradient(180deg, rgb(20 31 70 / 0.96), rgb(15 24 55 / 0.98));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 16px 32px -28px rgb(0 0 0 / 0.85);
+}
+
+.card::before,
+.platform-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  opacity: 0.68;
+  background: linear-gradient(90deg, rgb(0 119 255), rgb(0 199 210), transparent 72%);
+}
+
+/* `.platform-card.layout-item` opts into `overflow:auto` for the resize
+   handle; keep the rounded clip so the top rule still hugs the corners. */
+.card.layout-item,
+.platform-card.layout-item {
+  border-radius: 18px;
+}
+
+/* ── Command brief (.dashboard-command-card) ──────────────── */
+.command-brief {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgb(143 202 255 / 0.12);
+  border-radius: 24px;
+  background:
+    linear-gradient(115deg, rgb(255 255 255 / 0.06), transparent 24%),
+    radial-gradient(circle at 0% 0%, rgb(0 199 210 / 0.12), transparent 28%),
+    radial-gradient(circle at 100% 0%, rgb(255 184 77 / 0.09), transparent 24%),
+    radial-gradient(circle at 78% 18%, rgb(79 140 255 / 0.13), transparent 22%),
+    linear-gradient(135deg, rgb(4 12 30 / 0.99), rgb(9 20 48 / 0.99) 48%, rgb(14 31 67 / 0.98));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 24px 56px -36px rgb(0 0 0 / 0.95),
+    0 0 0 1px rgb(135 196 255 / 0.04);
+}
+
+.command-brief::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.1;
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 0.04) 1px, transparent 1px),
+    linear-gradient(180deg, rgb(255 255 255 / 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+  -webkit-mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.75), transparent 85%);
+  mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.75), transparent 85%);
+}
+
+.command-brief::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 3px;
+  opacity: 0.85;
+  background: linear-gradient(90deg, rgb(0 199 210 / 0.9), rgb(255 184 77 / 0.85), rgb(79 140 255 / 0.85), transparent 82%);
+}
+
+/* Keep the brief's own content above the decorative grid overlay. */
+.command-brief > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Brief internals (ExecutiveBriefCard) ─────────────────── */
+
+/* `.dashboard-brief-stat rounded-[1.15rem] p-4` */
+.brief-signal {
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 1.15rem;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.04), transparent 28%),
+    linear-gradient(180deg, rgb(8 18 43 / 0.95), rgb(7 18 40 / 0.8));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 14px 32px -28px rgb(0 0 0 / 0.82);
+}
+
+/* `.dashboard-brief-aside rounded-[1.35rem] p-4` */
+.brief-board {
+  padding: 16px;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 1.35rem;
+  background:
+    linear-gradient(140deg, rgb(255 255 255 / 0.04), transparent 22%),
+    linear-gradient(180deg, rgb(6 16 39 / 0.96), rgb(8 18 43 / 0.92));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 14px 32px -28px rgb(0 0 0 / 0.82);
+}
+
+/* DecisionRow — `rounded-[1rem] border-white/10 bg-white/[0.04] p-3.5` */
+.decision-item {
+  padding: 14px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.04);
+  box-shadow: none;
+}
+
+/* WatchlistTile — `rounded-[1rem] border-white/10 bg-[#08152f]/72 p-4` */
+.watch-item {
+  padding: 16px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 1rem;
+  background: rgb(8 21 47 / 0.72);
+  box-shadow: none;
+}
+
+/* The watchlist figure used to take a per-metric hue from --accent, so two
+   numbers sitting side by side read as purple and amber for no reason the
+   viewer can decode. The status and trend pills beneath already carry the
+   semantics, so the number itself is neutral like every other figure. */
+.watch-value {
+  color: #ffffff;
+  border-color: rgb(255 255 255 / 0.14);
+  background: rgb(255 255 255 / 0.05);
+}
+
+/* ── Chart control strip ──────────────────────────────────
+ * The drill hint, Explore button and zoom controls sit in a row above the
+ * plot instead of floating over it. The 40px touch targets below used to
+ * overlap the top axis ticks and the x-axis labels; giving them their own
+ * band means the canvas never has anything on top of it. */
+.chart-wrap.drillable-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chart-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+/* Chart.js sizes a canvas from its parent, so the plot needs its own box —
+   otherwise it measures the whole card and draws under the strip. */
+.chart-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chart-canvas > canvas {
+  display: block;
+}
+
+/* The treemap and the geo map are their own layout containers, so instead of
+   a sibling strip they reserve a band at the top and pin the hint into it —
+   otherwise the pill sits on the largest block and hides its name. */
+.treemap.drillable-wrap,
+.geo-map.drillable-wrap {
+  padding-top: 34px;
+}
+
+.treemap.drillable-wrap > .drill-hint,
+.geo-map.drillable-wrap > .drill-hint {
+  top: 8px;
+  left: 10px;
+}
+
+/* Hint on the left, zoom + Explore pushed to the right. */
+.chart-controls > .drill-hint {
+  position: static;
+  margin-right: auto;
+}
+
+.chart-controls > .zoom-controls {
+  position: static;
+  inset: auto;
+}
+
+.chart-controls > .drill-trigger {
+  position: static;
+  flex: 0 0 auto;
+}
+
+/* ── Tile typography (OverviewPage MetricTile) ────────────── */
+.kpi-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #86a7d0;
+}
+
+.kpi-value {
+  margin: 14px 0 10px;
+  font-family: inherit;
+  font-size: clamp(1.75rem, 4.8vw, 2.2rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: #ffffff;
+  overflow-wrap: break-word;
+}
+
+.kpi-value.text {
+  font-family: inherit;
+  font-size: clamp(1.1rem, 2.6vw, 1.35rem);
+  letter-spacing: -0.02em;
+}
+
+.kpi-note {
+  margin-top: 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: #b8c8e4;
+}
+
+/* Delta pill — matches the MetricTile badge (rounded-full, tinted border). */
+/* `.kpi-card` is a column flexbox, so the pill must opt out of the default
+   cross-axis stretch to hug its label the way the MetricTile badge does. */
+.kpi-badge {
+  align-items: center;
+  align-self: flex-start;
+  width: fit-content;
+  padding: 2px 10px;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.kpi-badge.good {
+  border-color: rgb(16 185 129 / 0.25);
+  background: rgb(16 185 129 / 0.1);
+  color: rgb(16 185 129);
+}
+
+.kpi-badge.bad {
+  border-color: rgb(244 63 94 / 0.25);
+  background: rgb(244 63 94 / 0.1);
+  color: rgb(244 63 94);
+}
+
+.kpi-badge.watch {
+  border-color: rgb(245 158 11 / 0.25);
+  background: rgb(245 158 11 / 0.1);
+  color: rgb(245 158 11);
+}
+
+.kpi-badge.neutral {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.04);
+  color: #9db4d8;
 }
 
 button,
@@ -452,4 +775,198 @@ input:focus-visible,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ============================================================
+ * KPI glossary flip — port of MetricTile's info affordance and
+ * GlossaryBackFace.tsx. Behaviour lives in ./glossary.js.
+ * ============================================================ */
+
+.nq-glossary-card {
+  cursor: pointer;
+}
+
+/* The overview shows the info glyph inline beside the delta badge. This
+   dashboard's tiles have no such row, so it is pinned to the top-right —
+   clear of the 2px accent rule. */
+.nq-glossary-hint {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  color: #7f9bc4;
+  pointer-events: none;
+  transition: color 160ms ease;
+}
+
+.nq-glossary-card:hover .nq-glossary-hint,
+.nq-glossary-card:focus-visible .nq-glossary-hint {
+  color: #b8d4ff;
+}
+
+/* Keep the value clear of the glyph. */
+.nq-glossary-card .kpi-label {
+  padding-right: 24px;
+}
+
+/* An open card lifts above its neighbours and stops clipping, so the back face
+   can grow past the tile's 132px. The 2px accent rule is hidden while open —
+   the face covers it anyway, and with `overflow:visible` it would otherwise
+   poke out square-ended past the rounded corners. */
+.kpi-card.nq-glossary-open {
+  z-index: 30;
+  overflow: visible;
+}
+
+.kpi-card.nq-glossary-open::before {
+  opacity: 0;
+}
+
+/* ── Back face (`absolute inset-0 z-20 bg-[rgba(8,15,34,0.97)]`) ──
+   Anchored to the tile and at least its full size, but free to extend
+   downward — a 132px KPI tile cannot hold a definition plus its related
+   terms, and a scrollbar inside two visible lines is not a reading surface. */
+.nq-glossary-face {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  max-height: min(360px, 70vh);
+  overflow: hidden;
+  border: 1px solid rgb(126 186 255 / 0.22);
+  border-radius: 18px;
+  background: rgba(8, 15, 34, 0.97);
+  box-shadow: 0 28px 60px -28px rgb(0 0 0 / 0.95);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  text-align: left;
+}
+
+.nq-glossary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.nq-glossary-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cyan);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.nq-glossary-x {
+  display: inline-flex;
+  color: var(--muted2);
+}
+
+.nq-glossary-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.nq-glossary-term {
+  margin: 0;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.nq-glossary-def {
+  margin: 6px 0 0;
+  color: #c4d3ee;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.nq-glossary-related {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.nq-glossary-related > div + div {
+  margin-top: 8px;
+}
+
+.nq-glossary-related dt {
+  color: #7ecaff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.nq-glossary-related dd {
+  margin: 2px 0 0;
+  color: #aebfe0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.nq-glossary-acronyms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.nq-glossary-acronym {
+  padding: 2px 8px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.04);
+  color: #9db4d8;
+  font-size: 10.5px;
+}
+
+.nq-glossary-acronym b {
+  color: #cfe0fb;
+  font-weight: 600;
+}
+
+.nq-glossary-close {
+  padding: 8px 16px;
+  border: 0;
+  border-top: 1px solid rgb(255 255 255 / 0.1);
+  background: transparent;
+  color: var(--muted2);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-align: left;
+  text-transform: uppercase;
+  transition: color 160ms ease;
+}
+
+.nq-glossary-close:hover {
+  color: #ffffff;
+}
+
+/* Layout-edit mode owns the card's clicks; drop the flip affordance there. */
+.layout-editing .nq-glossary-card {
+  cursor: default;
+}
+
+.layout-editing .nq-glossary-hint {
+  display: none;
 }

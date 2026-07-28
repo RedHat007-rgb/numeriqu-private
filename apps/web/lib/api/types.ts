@@ -367,6 +367,19 @@ export type DashboardResponse = {
       payroll?: number;
       invoices: number;
     }>;
+    /**
+     * Monthly balance-sheet position. `equity` is derived server-side as
+     * assets − liabilities, never a stored constant. Empty for dataset modes
+     * that cannot classify accounts — treat empty as "no live figures".
+     */
+    balanceSheetTrend?: Array<{
+      month: string;
+      assets: number;
+      liabilities: number;
+      equity: number;
+      currentAssets: number;
+      currentLiabilities: number;
+    }>;
     orgBreakdown: Array<{
       name: string;
       value: number;

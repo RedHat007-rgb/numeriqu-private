@@ -285,7 +285,7 @@ export default function IntelligenceHub() {
             onChange={(event) => setQuery(event.target.value)}
             disabled={isStreaming}
             placeholder="Ask a finance question (runs advisor + agent in parallel)…"
-            aria-label="Ask NumeriQ"
+            aria-label="Ask NumeriQu"
             className="flex-1 rounded-full border border-default bg-surface-card/60 px-4 py-2 text-base text-text-primary outline-none placeholder:text-text-muted focus:border-accent-blue/50 disabled:opacity-60"
           />
           <Button type="submit" loading={isStreaming} disabled={!query.trim() || isStreaming}>

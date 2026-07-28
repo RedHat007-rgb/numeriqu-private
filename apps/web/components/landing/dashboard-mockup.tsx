@@ -100,7 +100,7 @@ export function DashboardMockup({ className }: { className?: string }) {
               <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-60 animate-pulse-dot" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
             </span>
-            app.Numeriqu.com / acme-holdings
+            app.numeriqu.com / acme-holdings
           </div>
           <div className="flex items-center gap-1.5">
             <span className="rounded-md border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground">

@@ -159,7 +159,7 @@ function OrgGraph() {
               <div className="absolute inset-6 rounded-full border border-border/50" />
               <div className="text-center">
                 <div className="font-mono text-[9px] uppercase tracking-[0.22em] text-muted-foreground">
-                  Numeriqu
+                  NumeriQu
                 </div>
                 <div className="font-serif text-[22px] leading-tight text-foreground sm:text-[26px]">
                   One brain

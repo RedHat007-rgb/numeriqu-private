@@ -37,7 +37,7 @@ export function Footer() {
       <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
         <div className="grid gap-12 lg:grid-cols-[1.4fr_2fr]">
           <div>
-            <Link href="/" aria-label="Numeriqu home" className="inline-flex items-center">
+            <Link href="/" aria-label="NumeriQu home" className="inline-flex items-center">
               <Logo className="h-10 w-auto" />
             </Link>
             <p className="mt-4 max-w-sm text-[14px] leading-relaxed text-muted-foreground">
@@ -78,7 +78,7 @@ export function Footer() {
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-4 border-t border-border/60 pt-6 text-[12px] text-muted-foreground sm:flex-row sm:items-center">
-          <div>© {new Date().getFullYear()} Numeriqu, Inc. All rights reserved.</div>
+          <div>© {new Date().getFullYear()} NumeriQu, Inc. All rights reserved.</div>
           <div className="flex items-center gap-5">
             <Link href="#" className="hover:text-foreground">Privacy</Link>
             <Link href="#" className="hover:text-foreground">Terms</Link>

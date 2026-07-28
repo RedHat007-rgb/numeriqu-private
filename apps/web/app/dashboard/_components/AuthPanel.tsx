@@ -36,7 +36,7 @@ export function AuthPanel({
             </p>
             <h1 className="text-3xl font-bold text-text-primary">Sign in to your workspace</h1>
             <p className="text-sm text-text-muted">
-              NumeriQ uses backend-managed session tokens with OTP verification.
+              NumeriQu uses backend-managed session tokens with OTP verification.
             </p>
           </header>
 

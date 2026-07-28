@@ -45,7 +45,7 @@ export function Logo({ className }: { className?: string }) {
         fontWeight="800"
         letterSpacing="1.2"
       >
-        NUMERIQU
+        NumeriQu
       </text>
     </svg>
   )

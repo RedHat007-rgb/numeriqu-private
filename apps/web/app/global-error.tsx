@@ -45,7 +45,7 @@ export default function GlobalError({
             Critical error
           </p>
           <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>
-            NumeriQ hit an unexpected error
+            NumeriQu hit an unexpected error
           </h1>
           <p style={{ color: "#8b92b8", fontSize: 14, marginBottom: 24 }}>
             The team has been notified. Please retry or sign in again.

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, LayoutDashboard, LineChart, Bot, BookOpen, PlugZap, Users, Shield, Gauge } from "lucide-react";
+import { Search, LineChart, Bot, BookOpen, PlugZap, Users, Shield, Gauge } from "lucide-react";
 import { cn } from "../../../components/ui/cn";
 import { useNumeriquApi } from "../../../lib/useNumeriquApi";
 
@@ -109,9 +109,8 @@ export function CommandPalette({
 
   const baseCommands: Command[] = useMemo(() => {
     const nav = [
-      { href: "/dashboard", label: "Overview", detail: "What changed, at a glance", icon: LayoutDashboard },
+      { href: "/dashboard", label: "Overview", detail: "CFO insights command center", icon: Gauge },
       { href: "/dashboard/dashboards", label: "Dashboards", detail: "Saved decision surfaces", icon: LineChart },
-      { href: "/dashboard/new-dashboard", label: "New Dashboard", detail: "CFO insights command center", icon: Gauge },
       { href: "/dashboard/rag", label: "Prism", detail: "Evidence-first answers, cited", icon: BookOpen },
       { href: "/dashboard/agent", label: "Astra", detail: "Turn questions into dashboards", icon: Bot },
       { href: "/dashboard/integrations", label: "Integrations", detail: "Connect systems and sync", icon: PlugZap },

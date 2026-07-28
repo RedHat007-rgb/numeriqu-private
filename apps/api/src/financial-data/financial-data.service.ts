@@ -1499,6 +1499,66 @@ export class FinancialDataService {
       return [];
     }
   }
+
+  /**
+   * Monthly balance-sheet position: assets, liabilities, equity and the
+   * current-asset/liability split.
+   *
+   * Equity is NOT read from a stored column — the semantic cube derives it as
+   * assets − liabilities per month, so it moves with the ledger. Anything that
+   * divides by equity (return on equity, debt-to-equity) is only meaningful
+   * against that derived figure.
+   *
+   * Classifying accounts into assets and liabilities needs the `account_type`
+   * and `account_group` columns, which only the star-finance trial balance
+   * carries. Other dataset modes return [] and the caller keeps whatever
+   * figures it already had rather than being handed zeroes.
+   */
+  async getBalanceSheetTrend(tenantId: string, range?: any): Promise<any[]> {
+    try {
+      const activeConns = await prisma.erpConnection.findMany({
+        where: { organizationId: tenantId, status: 'ACTIVE' },
+        select: { externalOrganizationId: true, metadata: true },
+      });
+      const activeOrgIds = activeConns.map((c) => c.externalOrganizationId);
+      if (activeOrgIds.length === 0) return [];
+      if (!this.isStarSchemaOrg(activeConns)) return [];
+
+      const prefix = this.starSchemaPrefix(activeConns);
+      const time = this.timeWhere(
+        range,
+        'period_date',
+        this.starSchemaLatestAnchor(prefix),
+      );
+      const result = await this.clickhouse.query({
+        query: `
+          SELECT
+            toStartOfMonth(period_date) AS month,
+            round(sum(closing_total_assets_usd), 2) AS assets,
+            round(sum(closing_total_liabilities_usd), 2) AS liabilities,
+            round(sum(closing_total_equity_usd), 2) AS equity,
+            round(sum(closing_current_assets_usd), 2) AS current_assets,
+            round(sum(closing_current_liabilities_usd), 2) AS current_liabilities
+          FROM ${this.dbName}.v_${prefix}_balance_ratio_semantic
+          WHERE tenant_id = {tenantId:String}
+            AND org_id = {orgId:String}
+            ${time}
+          GROUP BY month
+          ORDER BY month ASC
+        `,
+        query_params: { tenantId, orgId: activeOrgIds[0] },
+        format: 'JSONEachRow',
+        clickhouse_settings: SAFE_QUERY_SETTINGS,
+      });
+      return (await result.json()) as any[];
+    } catch (e: any) {
+      this.logger.error(
+        `[FinancialData] Balance-sheet trend query failed: ${e.message}`,
+      );
+      return [];
+    }
+  }
+
   /**
    * Invoice List — Gold Layer only
    */

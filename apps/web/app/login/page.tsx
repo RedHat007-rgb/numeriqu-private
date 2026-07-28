@@ -233,7 +233,7 @@ export default function LoginPage() {
       <div aria-hidden className="pointer-events-none absolute inset-0 nq-grain opacity-55" />
 
       <div className="relative mx-auto flex max-w-6xl items-center justify-between pb-10">
-        <Link href="/" aria-label="NumeriQ home" className="inline-flex items-center">
+        <Link href="/" aria-label="NumeriQu home" className="inline-flex items-center">
           <Logo className="h-10 w-auto" />
         </Link>
       </div>

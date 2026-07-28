@@ -77,7 +77,7 @@ export function Ask() {
           <div className="col-span-12 lg:col-span-5 lg:pt-10">
             <Reveal delay={160}>
               <p className="max-w-md text-[16px] leading-relaxed text-muted-foreground">
-                Type the way you think. Numeriqu plans the answer, queries the
+                Type the way you think. NumeriQu plans the answer, queries the
                 ledgers, picks the right shapes for the data, and renders a
                 dashboard that&apos;s ready to share, or to act on.
               </p>
@@ -91,7 +91,7 @@ export function Ask() {
             <div className="col-span-12 lg:col-span-5">
               <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/70 backdrop-blur-md">
                 <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                  <span>Numeriqu Agent</span>
+                  <span>NumeriQu Agent</span>
                   <span className="flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse-dot" />
                     Live

@@ -513,7 +513,15 @@
 
   function ensureLaunchButton() {
     const bar = document.querySelector(".controlbar");
-    if (!bar || document.getElementById("nqAgendaLaunch")) return;
+    if (!bar) return;
+    // The control bar is a grid; the stylesheet pins this button to the right
+    // end of the page-nav row so it costs no vertical space of its own. A stray
+    // copy parented elsewhere (older markup, re-render) gets pulled back.
+    const existing = document.getElementById("nqAgendaLaunch");
+    if (existing) {
+      if (existing.parentElement !== bar) bar.appendChild(existing);
+      return;
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.id = "nqAgendaLaunch";
